@@ -1,0 +1,34 @@
+﻿{
+  "watchlistStatus": ["관심", "관망", "매수후보", "보유중", "제외"],
+  "newsSources": ["naver_news", "naver", ""],
+  "collectionRunStatus": ["running", "success", "failed", "partial"],
+  "disclosureCollectDays": [
+    { "value": 7, "label": "7일" },
+    { "value": 30, "label": "30일" },
+    { "value": 90, "label": "90일" },
+    { "value": 180, "label": "180일" }
+  ],
+  "disclosurePageCount": [
+    { "value": 10, "label": "10건" },
+    { "value": 50, "label": "50건" },
+    { "value": 100, "label": "100건" }
+  ],
+  "classificationTargetType": [
+    { "value": "news", "label": "뉴스" },
+    { "value": "disclosure", "label": "공시" }
+  ],
+  "classificationRuleGroup": [
+    { "value": "tag", "label": "태그" },
+    { "value": "sentiment", "label": "감성" },
+    { "value": "importance", "label": "중요도" },
+    { "value": "disclosure_event_type", "label": "공시 이벤트" },
+    { "value": "disclosure_risk_level", "label": "공시 리스크" }
+  ],
+  "classificationOutputField": [
+    { "value": "ai_tags", "label": "태그" },
+    { "value": "ai_sentiment", "label": "감성" },
+    { "value": "ai_importance_score", "label": "중요도" },
+    { "value": "ai_event_type", "label": "공시 이벤트 유형" },
+    { "value": "ai_risk_level", "label": "공시 리스크 수준" }
+  ]
+}

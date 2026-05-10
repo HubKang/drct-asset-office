@@ -1,0 +1,15 @@
+[
+  {
+    "id": 1,
+    "stock_id": 1,
+    "stock_code": "005930",
+    "stock_name": "\uc0bc\uc131\uc804\uc790",
+    "status": "\uad00\uc2ec",
+    "interest_reason": "\ubc18\ub3c4\uccb4 \uc5c5\ud669 \ud68c\ubcf5 \uae30\ub300",
+    "entry_condition": "20\uc77c\uc120 \uc9c0\uc9c0",
+    "exit_condition": "\uc804\uc800\uc810 \uc774\ud0c8",
+    "risk_note": "\ub2e8\uae30 \ubcc0\ub3d9\uc131 \uc720\uc758",
+    "registered_at": "2026-05-09T09:00:00+09:00",
+    "updated_at": "2026-05-09T09:00:00+09:00"
+  }
+]

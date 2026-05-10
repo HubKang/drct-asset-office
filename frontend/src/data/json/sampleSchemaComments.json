@@ -1,0 +1,5 @@
+[
+  { "table_name": "stocks", "column_name": null, "comment_ko": "\uc885\ubaa9 \ub9c8\uc2a4\ud130 \uc815\ubcf4" },
+  { "table_name": "stocks", "column_name": "stock_code", "comment_ko": "\uc885\ubaa9 \ucf54\ub4dc" },
+  { "table_name": "watchlist", "column_name": "status", "comment_ko": "\uad00\uc2ec \uc0c1\ud0dc" }
+]

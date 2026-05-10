@@ -1,0 +1,45 @@
+﻿export type NewsItem = {
+  id: number;
+  stock_id: number | null;
+  title: string;
+  source: string | null;
+  url: string | null;
+  published_at: string | null;
+  collected_at: string;
+  raw_text_path: string | null;
+  summary: string | null;
+  sentiment: string | null;
+  importance_score: number;
+  ai_summary?: string | null;
+  ai_sentiment?: string | null;
+  ai_importance_score?: number | null;
+  ai_tags?: string | null;
+  ai_processed_at?: string | null;
+  ai_summary_error?: string | null;
+  created_at: string;
+};
+
+export type NewsListParams = {
+  stock_id?: number;
+  keyword?: string;
+  source?: string;
+  limit?: number;
+  offset?: number;
+};
+
+export type NewsCollectRequest = {
+  stock_id: number;
+  providers: string[];
+  display: number;
+  sort: string;
+};
+
+export type NewsCollectResponse = {
+  collector_name: string;
+  status: string;
+  target: string;
+  collected_count: number;
+  saved_count: number;
+  skipped_count: number;
+  message: string;
+};
