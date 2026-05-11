@@ -4,6 +4,7 @@ from sqlalchemy import Select, not_, select
 from sqlalchemy.orm import Session
 
 from backend.app.entities.news import NewsItem
+from backend.app.entities.stock import Stock
 
 
 class NewsRepository:
@@ -31,8 +32,20 @@ class NewsRepository:
             stmt = stmt.where((NewsItem.title.like(keyword_like)) | (NewsItem.summary.like(keyword_like)))
         if source:
             stmt = stmt.where(NewsItem.source == source)
-        stmt = stmt.order_by(NewsItem.id.desc()).limit(limit).offset(offset)
+        stmt = stmt.order_by(NewsItem.created_at.desc(), NewsItem.id.desc()).limit(limit).offset(offset)
         return list(self.db.scalars(stmt).all())
+
+    def list_with_stock(self, stock_id: int | None, keyword: str | None, source: str | None, limit: int, offset: int) -> list[tuple[NewsItem, Stock | None]]:
+        stmt: Select[tuple[NewsItem, Stock | None]] = select(NewsItem, Stock).join(Stock, NewsItem.stock_id == Stock.id, isouter=True)
+        if stock_id is not None:
+            stmt = stmt.where(NewsItem.stock_id == stock_id)
+        if keyword:
+            keyword_like = f"%{keyword}%"
+            stmt = stmt.where((NewsItem.title.like(keyword_like)) | (NewsItem.summary.like(keyword_like)))
+        if source:
+            stmt = stmt.where(NewsItem.source == source)
+        stmt = stmt.order_by(NewsItem.created_at.desc(), NewsItem.id.desc()).limit(limit).offset(offset)
+        return list(self.db.execute(stmt).all())
 
     def list_recent_by_stock(self, stock_id: int, limit: int) -> list[NewsItem]:
         stmt: Select[tuple[NewsItem]] = (

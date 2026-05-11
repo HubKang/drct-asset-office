@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS watchlist (
     entry_condition TEXT,
     exit_condition TEXT,
     risk_note TEXT,
+    is_active INTEGER NOT NULL DEFAULT 1,
     registered_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE CASCADE
@@ -72,6 +73,30 @@ CREATE TABLE IF NOT EXISTS disclosures (
     ai_processed_at TEXT,
     ai_summary_error TEXT,
     created_at TEXT NOT NULL,
+    FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS stock_daily_prices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    stock_id INTEGER NOT NULL,
+    trade_date TEXT NOT NULL,
+    open_price REAL,
+    high_price REAL,
+    low_price REAL,
+    close_price REAL,
+    change_price REAL,
+    change_rate REAL,
+    volume INTEGER,
+    trading_value INTEGER,
+    ma5 REAL,
+    ma10 REAL,
+    ma20 REAL,
+    ma60 REAL,
+    ma120 REAL,
+    ma240 REAL,
+    source TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
     FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE CASCADE
 );
 
@@ -214,6 +239,9 @@ CREATE INDEX IF NOT EXISTS idx_news_items_stock_id ON news_items(stock_id);
 CREATE INDEX IF NOT EXISTS idx_news_items_published_at ON news_items(published_at);
 CREATE INDEX IF NOT EXISTS idx_disclosures_stock_id ON disclosures(stock_id);
 CREATE INDEX IF NOT EXISTS idx_disclosures_disclosed_at ON disclosures(disclosed_at);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_stock_daily_prices_stock_date ON stock_daily_prices(stock_id, trade_date);
+CREATE INDEX IF NOT EXISTS idx_stock_daily_prices_stock_date ON stock_daily_prices(stock_id, trade_date);
+CREATE INDEX IF NOT EXISTS idx_stock_daily_prices_trade_date ON stock_daily_prices(trade_date);
 CREATE INDEX IF NOT EXISTS idx_price_daily_stock_date ON price_daily(stock_id, trade_date);
 CREATE INDEX IF NOT EXISTS idx_research_reports_stock_id ON research_reports(stock_id);
 CREATE INDEX IF NOT EXISTS idx_investment_decisions_stock_id ON investment_decisions(stock_id);
@@ -228,6 +256,7 @@ INSERT OR IGNORE INTO schema_comments (table_name, column_name, comment_ko, crea
 ('watchlist', NULL, '관심종목 관리 정보', CURRENT_TIMESTAMP),
 ('news_items', NULL, '뉴스 수집 및 요약 정보', CURRENT_TIMESTAMP),
 ('disclosures', NULL, '공시 수집 및 요약 정보', CURRENT_TIMESTAMP),
+('stock_daily_prices', NULL, '관심종목 일봉/이동평균 데이터', CURRENT_TIMESTAMP),
 ('price_daily', NULL, '일별 시세 정보', CURRENT_TIMESTAMP),
 ('research_reports', NULL, '리서치 보고서 메타정보', CURRENT_TIMESTAMP),
 ('gpt_advisories', NULL, 'GPT 자문 결과 정보', CURRENT_TIMESTAMP),
@@ -261,6 +290,7 @@ INSERT OR IGNORE INTO schema_comments (table_name, column_name, comment_ko, crea
 ('watchlist', 'entry_condition', '진입 조건', CURRENT_TIMESTAMP),
 ('watchlist', 'exit_condition', '이탈 조건', CURRENT_TIMESTAMP),
 ('watchlist', 'risk_note', '리스크 메모', CURRENT_TIMESTAMP),
+('watchlist', 'is_active', '활성 여부(1:활성, 0:비활성)', CURRENT_TIMESTAMP),
 ('watchlist', 'registered_at', '등록 시각(YYYY-MM-DD HH:MM:SS TEXT)', CURRENT_TIMESTAMP),
 ('watchlist', 'updated_at', '수정 시각(YYYY-MM-DD HH:MM:SS TEXT)', CURRENT_TIMESTAMP),
 ('news_items', 'id', '뉴스 PK', CURRENT_TIMESTAMP),
@@ -299,6 +329,26 @@ INSERT OR IGNORE INTO schema_comments (table_name, column_name, comment_ko, crea
 ('disclosures', 'ai_processed_at', 'AI 처리 시각(YYYY-MM-DD HH:MM:SS TEXT)', CURRENT_TIMESTAMP),
 ('disclosures', 'ai_summary_error', 'AI 요약 실패 메시지', CURRENT_TIMESTAMP),
 ('disclosures', 'created_at', '생성 시각(YYYY-MM-DD HH:MM:SS TEXT)', CURRENT_TIMESTAMP),
+('stock_daily_prices', 'id', '일봉 PK', CURRENT_TIMESTAMP),
+('stock_daily_prices', 'stock_id', '종목 FK', CURRENT_TIMESTAMP),
+('stock_daily_prices', 'trade_date', '거래일(YYYY-MM-DD)', CURRENT_TIMESTAMP),
+('stock_daily_prices', 'open_price', '시가', CURRENT_TIMESTAMP),
+('stock_daily_prices', 'high_price', '고가', CURRENT_TIMESTAMP),
+('stock_daily_prices', 'low_price', '저가', CURRENT_TIMESTAMP),
+('stock_daily_prices', 'close_price', '종가', CURRENT_TIMESTAMP),
+('stock_daily_prices', 'change_price', '전일대비 가격 변화', CURRENT_TIMESTAMP),
+('stock_daily_prices', 'change_rate', '등락률(%)', CURRENT_TIMESTAMP),
+('stock_daily_prices', 'volume', '거래량', CURRENT_TIMESTAMP),
+('stock_daily_prices', 'trading_value', '거래대금', CURRENT_TIMESTAMP),
+('stock_daily_prices', 'ma5', '5일 이동평균', CURRENT_TIMESTAMP),
+('stock_daily_prices', 'ma10', '10일 이동평균', CURRENT_TIMESTAMP),
+('stock_daily_prices', 'ma20', '20일 이동평균', CURRENT_TIMESTAMP),
+('stock_daily_prices', 'ma60', '60일 이동평균', CURRENT_TIMESTAMP),
+('stock_daily_prices', 'ma120', '120일 이동평균', CURRENT_TIMESTAMP),
+('stock_daily_prices', 'ma240', '240일 이동평균', CURRENT_TIMESTAMP),
+('stock_daily_prices', 'source', '데이터 소스(mock/증권사API)', CURRENT_TIMESTAMP),
+('stock_daily_prices', 'created_at', '생성 시각(YYYY-MM-DD HH:MM:SS TEXT)', CURRENT_TIMESTAMP),
+('stock_daily_prices', 'updated_at', '수정 시각(YYYY-MM-DD HH:MM:SS TEXT)', CURRENT_TIMESTAMP),
 ('price_daily', 'id', '일별시세 PK', CURRENT_TIMESTAMP),
 ('price_daily', 'stock_id', '종목 FK', CURRENT_TIMESTAMP),
 ('price_daily', 'trade_date', '거래일(YYYY-MM-DD)', CURRENT_TIMESTAMP),

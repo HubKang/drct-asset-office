@@ -3,7 +3,9 @@ backend/.env
 frontend/.env
 
 db/*.sqlite3
+db/*.sqlite3-journal
 *.sqlite3
+*.sqlite3-journal
 
 node_modules/
 frontend/node_modules/

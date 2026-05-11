@@ -1,5 +1,13 @@
 import type { AiSummarizeResponse } from "@/types/analysis";
-import type { NewsCollectRequest, NewsCollectResponse, NewsItem, NewsListParams } from "@/types/news";
+import type {
+  NewsCollectRequest,
+  NewsCollectResponse,
+  NewsCollectSelectedResponse,
+  NewsCollectSelectedWatchlistRequest,
+  NewsCollectWatchlistRequest,
+  NewsItem,
+  NewsListParams,
+} from "@/types/news";
 
 const sample: NewsItem[] = [
   {
@@ -22,7 +30,10 @@ export const newsMockRepository = {
   async listNews(params?: NewsListParams): Promise<NewsItem[]> {
     let result = [...sample];
     if (params?.stock_id !== undefined) result = result.filter((n) => n.stock_id === params.stock_id);
-    if (params?.keyword) result = result.filter((n) => n.title.includes(params.keyword as string) || (n.summary || "").includes(params.keyword as string));
+    if (params?.keyword) {
+      const keyword = params.keyword;
+      result = result.filter((n) => n.title.includes(keyword) || (n.summary || "").includes(keyword));
+    }
     if (params?.source) result = result.filter((n) => (n.source || "") === params.source);
     const offset = params?.offset ?? 0;
     const limit = params?.limit ?? 50;
@@ -42,6 +53,35 @@ export const newsMockRepository = {
       saved_count: 0,
       skipped_count: payload.display,
       message: "mock mode: collection not executed",
+    };
+  },
+  async collectNewsForWatchlist(payload: NewsCollectWatchlistRequest): Promise<NewsCollectResponse> {
+    return {
+      collector_name: "naver_news_collector",
+      status: "success",
+      target: "watchlist",
+      collected_count: payload.display,
+      saved_count: 0,
+      skipped_count: payload.display,
+      message: "mock mode: watchlist collection not executed",
+    };
+  },
+  async collectNewsForSelectedWatchlist(payload: NewsCollectSelectedWatchlistRequest): Promise<NewsCollectSelectedResponse> {
+    return {
+      requested_count: payload.stock_ids.length,
+      success_count: payload.stock_ids.length,
+      failed_count: 0,
+      message: "mock mode: selected watchlist news collection not executed",
+      results: payload.stock_ids.map((stockId) => ({
+        stock_id: stockId,
+        stock_code: `MOCK-${stockId}`,
+        stock_name: `Mock Stock ${stockId}`,
+        status: "success",
+        collected_count: payload.display,
+        saved_count: 0,
+        skipped_count: payload.display,
+        message: "mock success",
+      })),
     };
   },
   async summarizeSelectedNews(newsIds: number[]): Promise<AiSummarizeResponse> {

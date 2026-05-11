@@ -4,6 +4,7 @@ from sqlalchemy import Select, not_, select
 from sqlalchemy.orm import Session
 
 from backend.app.entities.disclosure import Disclosure
+from backend.app.entities.stock import Stock
 
 
 class DisclosureRepository:
@@ -38,8 +39,27 @@ class DisclosureRepository:
             stmt = stmt.where(Disclosure.disclosure_title.like(keyword_like))
         if disclosure_type:
             stmt = stmt.where(Disclosure.disclosure_type == disclosure_type)
-        stmt = stmt.order_by(Disclosure.id.desc()).limit(limit).offset(offset)
+        stmt = stmt.order_by(Disclosure.created_at.desc(), Disclosure.id.desc()).limit(limit).offset(offset)
         return list(self.db.scalars(stmt).all())
+
+    def list_with_stock(
+        self,
+        stock_id: int | None,
+        keyword: str | None,
+        disclosure_type: str | None,
+        limit: int,
+        offset: int,
+    ) -> list[tuple[Disclosure, Stock | None]]:
+        stmt: Select[tuple[Disclosure, Stock | None]] = select(Disclosure, Stock).join(Stock, Disclosure.stock_id == Stock.id, isouter=True)
+        if stock_id is not None:
+            stmt = stmt.where(Disclosure.stock_id == stock_id)
+        if keyword:
+            keyword_like = f"%{keyword}%"
+            stmt = stmt.where(Disclosure.disclosure_title.like(keyword_like))
+        if disclosure_type:
+            stmt = stmt.where(Disclosure.disclosure_type == disclosure_type)
+        stmt = stmt.order_by(Disclosure.created_at.desc(), Disclosure.id.desc()).limit(limit).offset(offset)
+        return list(self.db.execute(stmt).all())
 
     def list_recent_by_stock(self, stock_id: int, limit: int) -> list[Disclosure]:
         stmt: Select[tuple[Disclosure]] = (

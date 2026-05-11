@@ -23,10 +23,16 @@ function SchemaCommentsPage() {
       <PageHeader title="스키마 코멘트" description="데이터 사전 기준으로 테이블/컬럼 한글 설명을 조회합니다." />
 
       <SectionCard title="조회 필터">
-        <div className="flex gap-2">
+        <form
+          className="flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void load();
+          }}
+        >
           <input className="input-control" placeholder="table_name 필터" value={tableName} onChange={(e) => setTableName(e.target.value)} />
-          <button className="btn btn-primary" onClick={load}>조회</button>
-        </div>
+          <button type="submit" className="btn btn-primary">조회</button>
+        </form>
       </SectionCard>
 
       <SectionCard title="데이터 사전">

@@ -64,6 +64,31 @@ function DisclosuresPage() {
     return map;
   }, [stocks]);
 
+  const renderStockLabel = (item: Disclosure) => {
+    if (item.stock_name && item.stock_code) return `${item.stock_name} (${item.stock_code})`;
+    if (item.stock_name) return item.stock_name;
+    if (item.stock_code) return item.stock_code;
+    if (item.stock_id && stockNameMap.get(item.stock_id)) return stockNameMap.get(item.stock_id) as string;
+    return "-";
+  };
+
+  const renderStockCell = (item: Disclosure) => {
+    if (item.stock_name && item.stock_code) {
+      return (
+        <div className="stock-cell">
+          <strong>{item.stock_name}</strong>
+          <span>{item.stock_code}</span>
+        </div>
+      );
+    }
+    if (item.stock_name) return <div className="stock-cell"><strong>{item.stock_name}</strong></div>;
+    if (item.stock_code) return <div className="stock-cell"><span>{item.stock_code}</span></div>;
+    if (item.stock_id && stockNameMap.get(item.stock_id)) {
+      return <div className="stock-cell"><strong>{stockNameMap.get(item.stock_id) as string}</strong></div>;
+    }
+    return "-";
+  };
+
   const loadDisclosures = async (overrides?: { stock_id?: number; offset?: number }) => {
     setLoading(true);
     setError("");
@@ -290,7 +315,7 @@ function DisclosuresPage() {
 
       <SectionCard title="검색">
         <form onSubmit={onSearch} className="grid grid-cols-1 gap-2 md:grid-cols-7">
-          <input className="input-control" placeholder="stock_id" value={stockId} onChange={(e) => setStockId(e.target.value)} />
+          <input className="input-control" placeholder="종목 ID" value={stockId} onChange={(e) => setStockId(e.target.value)} />
           <div className="relative md:col-span-2">
             <Search size={16} className="absolute left-3 top-3.5 text-slate-400" />
             <input className="input-control pl-9" placeholder="keyword" value={keyword} onChange={(e) => setKeyword(e.target.value)} />
@@ -385,7 +410,7 @@ function DisclosuresPage() {
                             />
                           </td>
                           <td className="cell-nowrap">{disclosure.id}</td>
-                          <td className="cell-nowrap">{disclosure.stock_id}</td>
+                          <td>{renderStockCell(disclosure)}</td>
                           <td className="min-w-[320px] cell-title cell-clamp-2">{disclosure.disclosure_title}</td>
                           <td className="cell-nowrap cell-muted">{disclosure.disclosed_at ?? "-"}</td>
                           <td><StatusBadge label={event} variant="event" /></td>
@@ -425,8 +450,7 @@ function DisclosuresPage() {
             <>
               <h3 className="detail-title">{selectedDisclosure.disclosure_title}</h3>
               <div className="detail-meta">
-                <StatusBadge label={`종목 ${selectedDisclosure.stock_id}`} tone="blue" />
-                {stockNameMap.get(selectedDisclosure.stock_id) ? <StatusBadge label={stockNameMap.get(selectedDisclosure.stock_id) as string} tone="slate" /> : null}
+                <StatusBadge label={`종목 ${renderStockLabel(selectedDisclosure)}`} tone="blue" />
                 <StatusBadge label={eventLabel(selectedDisclosure.ai_event_type)} variant="event" />
                 <StatusBadge label={riskMeta(selectedDisclosure.ai_risk_level).label} variant={riskMeta(selectedDisclosure.ai_risk_level).variant} />
                 <StatusBadge label={importanceMeta(selectedDisclosure.ai_importance_score ?? selectedDisclosure.importance_score).label} variant={importanceMeta(selectedDisclosure.ai_importance_score ?? selectedDisclosure.importance_score).variant} />
@@ -437,6 +461,7 @@ function DisclosuresPage() {
                 <div className="detail-body">
                   <p>공시 유형: {selectedDisclosure.disclosure_type ?? "-"}</p>
                   <p>공시일: {selectedDisclosure.disclosed_at ?? "-"}</p>
+                  <p>수집일: {selectedDisclosure.created_at ?? "-"}</p>
                   <p>AI 처리일시: {selectedDisclosure.ai_processed_at ?? "-"}</p>
                 </div>
               </div>

@@ -2,6 +2,7 @@
 
 import html
 import json
+import logging
 import os
 import re
 from datetime import date, datetime, timedelta
@@ -22,6 +23,8 @@ from backend.app.repositories.disclosure_repository import DisclosureRepository
 from backend.app.repositories.news_repository import NewsRepository
 from backend.app.repositories.stock_repository import StockRepository
 from backend.app.repositories.watchlist_repository import WatchlistRepository
+
+logger = logging.getLogger(__name__)
 
 
 class CollectorService:
@@ -68,6 +71,12 @@ class CollectorService:
 
     def _today_kst(self) -> date:
         return datetime.now(ZoneInfo("Asia/Seoul")).date()
+
+    def _normalize_stock_code_for_dart(self, stock_code: str | None) -> str:
+        code = (stock_code or "").strip()
+        if code.startswith("A") and len(code) == 7 and code[1:].isdigit():
+            return code[1:]
+        return code
 
     def _news_raw_dir(self) -> Path:
         raw_dir = os.getenv("NEWS_RAW_DIR", "./data/raw/news")
@@ -122,16 +131,26 @@ class CollectorService:
 
         news_to_save: list[NewsItem] = []
         skipped_count = 0
+        skip_reasons: dict[str, int] = {}
         seen_urls: set[str] = set()
 
+        def add_skip(reason: str, count: int = 1) -> None:
+            skip_reasons[reason] = skip_reasons.get(reason, 0) + count
+
         for item in items:
-            title = self._normalize_text(item.get("title")) or "(no title)"
             url = item.get("originallink") or item.get("link")
+            title = self._normalize_text(item.get("title")) or "(no title)"
+            if not url:
+                skipped_count += 1
+                add_skip("missing_url")
+                continue
             if url and url in seen_urls:
                 skipped_count += 1
+                add_skip("duplicate_url")
                 continue
             if url and self.news_repo.get_by_url(url):
                 skipped_count += 1
+                add_skip("duplicate_url")
                 continue
             if url:
                 seen_urls.add(url)
@@ -155,11 +174,14 @@ class CollectorService:
 
         saved_count, skipped_bulk = self.news_repo.bulk_create_skip_duplicates(news_to_save)
         skipped_count += skipped_bulk
+        if skipped_bulk > 0:
+            add_skip("duplicate_url", skipped_bulk)
         collected_count = len(items)
+        skip_reason_text = ",".join(f"{k}:{v}" for k, v in sorted(skip_reasons.items())) if skip_reasons else "none"
 
         message = (
             f"keyword={search_keyword}, total={total}, collected_count={collected_count}, "
-            f"saved_count={saved_count}, skipped_count={skipped_count}"
+            f"saved_count={saved_count}, skipped_count={skipped_count}, skip_reasons={{{skip_reason_text}}}"
         )
         self.run_repo.mark_success(run, message)
 
@@ -171,12 +193,13 @@ class CollectorService:
             "saved_count": saved_count,
             "skipped_count": skipped_count,
             "message": message,
+            "skip_reasons": skip_reasons,
         }
 
     def collect_news_for_watchlist(self, providers: list[str], display: int, sort: str) -> dict:
         self._validate_providers(providers)
         run = self.run_repo.create_running("naver_news_collector", "watchlist")
-        rows = self.watchlist_repo.list_with_stock(status=None, keyword=None, limit=1000, offset=0)
+        rows = self.watchlist_repo.list_with_stock(status=None, keyword=None, market=None, is_active=1, limit=1000, offset=0)
         if not rows:
             self.run_repo.mark_success(run, "watchlist is empty")
             return {
@@ -194,7 +217,7 @@ class CollectorService:
         skipped_total = 0
         failed_symbols: list[str] = []
 
-        for watchlist, stock_code, _stock_name in rows:
+        for watchlist, stock in rows:
             try:
                 result = self.collect_news_for_stock(
                     stock_id=watchlist.stock_id,
@@ -206,7 +229,7 @@ class CollectorService:
                 saved_total += result["saved_count"]
                 skipped_total += result["skipped_count"]
             except HTTPException:
-                failed_symbols.append(stock_code)
+                failed_symbols.append(stock.stock_code)
 
         if failed_symbols:
             msg = f"partial success with child runs, failed: {', '.join(failed_symbols)}"
@@ -230,6 +253,123 @@ class CollectorService:
             "message": msg,
         }
 
+    def collect_news_for_selected_watchlist(
+        self,
+        stock_ids: list[int],
+        providers: list[str],
+        display: int,
+        sort: str,
+    ) -> dict:
+        self._validate_providers(providers)
+        selected_ids = [int(stock_id) for stock_id in stock_ids if isinstance(stock_id, int)]
+        if not selected_ids:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="선택된 종목이 없습니다.")
+
+        active_watchlist_stock_ids = set(self.watchlist_repo.list_active_stock_ids())
+        run_codes: list[str] = []
+        for stock_id in selected_ids:
+            stock = self.stock_repo.get_by_id(stock_id)
+            if stock:
+                run_codes.append(stock.stock_code)
+        target_value = f"selected:{','.join(run_codes)}" if run_codes else "selected:unknown"
+        run = self.run_repo.create_running("watchlist_selected_news_collector", target_value)
+
+        success_count = 0
+        failed_count = 0
+        skipped_count = 0
+        results: list[dict] = []
+
+        for stock_id in selected_ids:
+            stock = self.stock_repo.get_by_id(stock_id)
+            if not stock:
+                failed_count += 1
+                results.append(
+                    {
+                        "stock_id": stock_id,
+                        "stock_code": "",
+                        "stock_name": "",
+                        "status": "failed",
+                        "collected_count": 0,
+                        "saved_count": 0,
+                        "skipped_count": 0,
+                        "message": "stock not found",
+                    }
+                )
+                continue
+
+            if stock_id not in active_watchlist_stock_ids:
+                skipped_count += 1
+                results.append(
+                    {
+                        "stock_id": stock.id,
+                        "stock_code": stock.stock_code,
+                        "stock_name": stock.stock_name,
+                        "normalized_stock_code": self._normalize_stock_code_for_dart(stock.stock_code),
+                        "corp_code": None,
+                        "status": "skipped",
+                        "collected_count": 0,
+                        "saved_count": 0,
+                        "skipped_count": 0,
+                        "message": "활성 관심종목이 아니어서 건너뜀",
+                    }
+                )
+                continue
+
+            try:
+                result = self.collect_news_for_stock(
+                    stock_id=stock.id,
+                    providers=providers,
+                    display=display,
+                    sort=sort,
+                )
+                success_count += 1
+                results.append(
+                    {
+                        "stock_id": stock.id,
+                        "stock_code": stock.stock_code,
+                        "stock_name": stock.stock_name,
+                        "status": "success",
+                        "collected_count": result["collected_count"],
+                        "saved_count": result["saved_count"],
+                        "skipped_count": result["skipped_count"],
+                        "message": result["message"],
+                    }
+                )
+            except HTTPException as exc:
+                failed_count += 1
+                results.append(
+                    {
+                        "stock_id": stock.id,
+                        "stock_code": stock.stock_code,
+                        "stock_name": stock.stock_name,
+                        "status": "failed",
+                        "collected_count": 0,
+                        "saved_count": 0,
+                        "skipped_count": 0,
+                        "message": str(exc.detail),
+                    }
+                )
+
+        requested_count = len(selected_ids)
+        if failed_count > 0 and success_count > 0:
+            summary = f"선택 관심종목 뉴스 수집 부분 완료 (요청 {requested_count}, 성공 {success_count}, 실패 {failed_count}, 건너뜀 {skipped_count})"
+            self.run_repo.mark_partial(run, summary)
+        elif failed_count == requested_count and skipped_count == 0:
+            summary = f"선택 관심종목 뉴스 수집 실패 (요청 {requested_count}, 성공 0, 실패 {failed_count})"
+            self.run_repo.mark_failed(run, summary)
+        else:
+            summary = f"선택 관심종목 뉴스 수집 완료 (요청 {requested_count}, 성공 {success_count}, 실패 {failed_count}, 건너뜀 {skipped_count})"
+            self.run_repo.mark_success(run, summary)
+
+        return {
+            "requested_count": requested_count,
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "skipped_count": skipped_count,
+            "message": summary,
+            "results": results,
+        }
+
     def collect_disclosures_for_stock(self, stock_id: int, days: int = DART_DISCLOSURE_DEFAULT_DAYS, page_count: int = DART_PAGE_COUNT) -> dict:
         stock = self.stock_repo.get_by_id(stock_id)
         if not stock:
@@ -240,21 +380,56 @@ class CollectorService:
 
         try:
             collector.ensure_corp_code_file()
-            corp_code = collector.find_corp_code_by_stock_code(stock.stock_code)
+            normalized_code = self._normalize_stock_code_for_dart(stock.stock_code)
+            corp_code = collector.find_corp_code_by_stock_code(normalized_code)
             if not corp_code:
-                self.run_repo.mark_failed(run, f"corp_code not found for stock_code={stock.stock_code}")
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="corp_code not found")
+                message = f"{stock.stock_code} {stock.stock_name}: DART 기업코드를 찾을 수 없어 공시 수집을 건너뜀"
+                self.run_repo.mark_success(run, message)
+                return {
+                    "collector_name": collector.name,
+                    "status": "skipped",
+                    "target": stock.stock_code,
+                    "collected_count": 0,
+                    "saved_count": 0,
+                    "skipped_count": 1,
+                    "message": message,
+                    "skip_reasons": {"corp_code_not_found": 1},
+                    "normalized_stock_code": normalized_code,
+                    "corp_code": None,
+                }
 
             today = self._today_kst()
             safe_days = days if days > 0 else DART_DISCLOSURE_DEFAULT_DAYS
             bgn_de = (today - timedelta(days=safe_days)).strftime("%Y%m%d")
             end_de = today.strftime("%Y%m%d")
+            logger.info(
+                "[DART] request stock_code=%s normalized_stock_code=%s stock_name=%s corp_code=%s bgn_de=%s end_de=%s page_no=1 page_count=%s",
+                stock.stock_code,
+                normalized_code,
+                stock.stock_name,
+                corp_code,
+                bgn_de,
+                end_de,
+                page_count,
+            )
 
             response_payload = collector.collect_by_corp_code(
                 corp_code=corp_code,
                 bgn_de=bgn_de,
                 end_de=end_de,
                 page_count=page_count,
+            )
+            response_raw = response_payload.get("response", {})
+            response_preview = json.dumps(response_raw, ensure_ascii=False)[:300]
+            logger.info(
+                "[DART] response stock_code=%s normalized_stock_code=%s corp_code=%s status=%s message=%s list_count=%s response_preview=%s",
+                stock.stock_code,
+                normalized_code,
+                corp_code,
+                response_raw.get("status"),
+                response_raw.get("message"),
+                len(response_payload.get("list", [])),
+                response_preview,
             )
             response_raw_path = collector.save_disclosure_response(stock.stock_code, response_payload)
             items = response_payload.get("list", [])
@@ -285,10 +460,16 @@ class CollectorService:
             saved_count, skipped_count = self.disclosure_repo.bulk_create_skip_duplicates(disclosure_to_save)
             collected_count = len(items)
 
-            message = (
-                f"corp_code={corp_code}, collected_count={collected_count}, "
-                f"saved_count={saved_count}, skipped_count={skipped_count}"
-            )
+            if collected_count == 0:
+                message = (
+                    f"corp_code={corp_code}, 조회기간={bgn_de[:4]}-{bgn_de[4:6]}-{bgn_de[6:8]}~{end_de[:4]}-{end_de[4:6]}-{end_de[6:8]}, "
+                    "DART 정상 응답, 해당 기간 공시 0건, 저장 0건"
+                )
+            else:
+                message = (
+                    f"corp_code={corp_code}, collected_count={collected_count}, "
+                    f"saved_count={saved_count}, skipped_count={skipped_count}"
+                )
             self.run_repo.mark_success(run, message)
 
             return {
@@ -299,6 +480,9 @@ class CollectorService:
                 "saved_count": saved_count,
                 "skipped_count": skipped_count,
                 "message": message,
+                "skip_reasons": {"duplicate_receipt_no": skipped_count} if skipped_count > 0 else {},
+                "normalized_stock_code": normalized_code,
+                "corp_code": corp_code,
             }
         except HTTPException:
             raise
@@ -311,7 +495,7 @@ class CollectorService:
 
     def collect_disclosures_for_watchlist(self, days: int = DART_DISCLOSURE_DEFAULT_DAYS, page_count: int = DART_PAGE_COUNT) -> dict:
         run = self.run_repo.create_running("dart_disclosure_collector", "watchlist")
-        rows = self.watchlist_repo.list_with_stock(status=None, keyword=None, limit=1000, offset=0)
+        rows = self.watchlist_repo.list_with_stock(status=None, keyword=None, market=None, is_active=1, limit=1000, offset=0)
         if not rows:
             self.run_repo.mark_success(run, "watchlist is empty")
             return {
@@ -329,7 +513,7 @@ class CollectorService:
         skipped_total = 0
         failed_symbols: list[str] = []
 
-        for watchlist, stock_code, _stock_name in rows:
+        for watchlist, stock in rows:
             try:
                 result = self.collect_disclosures_for_stock(
                     stock_id=watchlist.stock_id,
@@ -340,7 +524,7 @@ class CollectorService:
                 saved_total += result["saved_count"]
                 skipped_total += result["skipped_count"]
             except HTTPException:
-                failed_symbols.append(stock_code)
+                failed_symbols.append(stock.stock_code)
 
         if failed_symbols:
             msg = (
@@ -365,6 +549,125 @@ class CollectorService:
             "saved_count": saved_total,
             "skipped_count": skipped_total,
             "message": msg,
+        }
+
+    def collect_disclosures_for_selected_watchlist(
+        self,
+        stock_ids: list[int],
+        days: int = DART_DISCLOSURE_DEFAULT_DAYS,
+        page_count: int = DART_PAGE_COUNT,
+    ) -> dict:
+        selected_ids = [int(stock_id) for stock_id in stock_ids if isinstance(stock_id, int)]
+        if not selected_ids:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="선택된 종목이 없습니다.")
+
+        active_watchlist_stock_ids = set(self.watchlist_repo.list_active_stock_ids())
+        run_codes: list[str] = []
+        for stock_id in selected_ids:
+            stock = self.stock_repo.get_by_id(stock_id)
+            if stock:
+                run_codes.append(stock.stock_code)
+        target_value = f"selected:{','.join(run_codes)}" if run_codes else "selected:unknown"
+        run = self.run_repo.create_running("watchlist_selected_disclosure_collector", target_value)
+
+        success_count = 0
+        failed_count = 0
+        skipped_count = 0
+        results: list[dict] = []
+
+        for stock_id in selected_ids:
+            stock = self.stock_repo.get_by_id(stock_id)
+            if not stock:
+                failed_count += 1
+                results.append(
+                    {
+                        "stock_id": stock_id,
+                        "stock_code": "",
+                        "stock_name": "",
+                        "status": "failed",
+                        "collected_count": 0,
+                        "saved_count": 0,
+                        "skipped_count": 0,
+                        "message": "stock not found",
+                    }
+                )
+                continue
+
+            if stock_id not in active_watchlist_stock_ids:
+                skipped_count += 1
+                results.append(
+                    {
+                        "stock_id": stock.id,
+                        "stock_code": stock.stock_code,
+                        "stock_name": stock.stock_name,
+                        "status": "skipped",
+                        "collected_count": 0,
+                        "saved_count": 0,
+                        "skipped_count": 0,
+                        "message": "활성 관심종목이 아니어서 건너뜀",
+                    }
+                )
+                continue
+
+            try:
+                result = self.collect_disclosures_for_stock(
+                    stock_id=stock.id,
+                    days=days,
+                    page_count=page_count,
+                )
+                if result.get("status") == "skipped":
+                    skipped_count += 1
+                else:
+                    success_count += 1
+                results.append(
+                    {
+                        "stock_id": stock.id,
+                        "stock_code": stock.stock_code,
+                        "stock_name": stock.stock_name,
+                        "normalized_stock_code": result.get("normalized_stock_code") or self._normalize_stock_code_for_dart(stock.stock_code),
+                        "corp_code": result.get("corp_code"),
+                        "status": result.get("status", "success"),
+                        "collected_count": result["collected_count"],
+                        "saved_count": result["saved_count"],
+                        "skipped_count": result["skipped_count"],
+                        "message": result["message"],
+                    }
+                )
+            except HTTPException as exc:
+                failed_count += 1
+                results.append(
+                    {
+                        "stock_id": stock.id,
+                        "stock_code": stock.stock_code,
+                        "stock_name": stock.stock_name,
+                        "normalized_stock_code": self._normalize_stock_code_for_dart(stock.stock_code),
+                        "corp_code": None,
+                        "status": "failed",
+                        "collected_count": 0,
+                        "saved_count": 0,
+                        "skipped_count": 0,
+                        "message": str(exc.detail),
+                    }
+                )
+
+        requested_count = len(selected_ids)
+        if failed_count > 0 and success_count > 0:
+            summary = f"선택 관심종목 공시 수집 부분 완료 (요청 {requested_count}, 성공 {success_count}, 실패 {failed_count}, 건너뜀 {skipped_count})"
+            self.run_repo.mark_partial(run, summary)
+        elif failed_count == requested_count and skipped_count == 0:
+            summary = f"선택 관심종목 공시 수집 실패 (요청 {requested_count}, 성공 0, 실패 {failed_count})"
+            self.run_repo.mark_failed(run, summary)
+        else:
+            summary = f"선택 관심종목 공시 수집 완료 (요청 {requested_count}, 성공 {success_count}, 실패 {failed_count}, 건너뜀 {skipped_count})"
+            self.run_repo.mark_success(run, summary)
+
+        return {
+            "requested_count": requested_count,
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "skipped_count": skipped_count,
+            "message": summary,
+            "results": results,
         }
 
 

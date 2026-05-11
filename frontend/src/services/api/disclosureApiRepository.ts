@@ -4,6 +4,8 @@ import type {
   Disclosure,
   DisclosureCollectRequest,
   DisclosureCollectResponse,
+  DisclosureCollectSelectedResponse,
+  DisclosureCollectSelectedWatchlistRequest,
   DisclosureCollectWatchlistRequest,
   DisclosureListParams,
 } from "@/types/disclosure";
@@ -23,6 +25,8 @@ export const disclosureApiRepository = {
     apiRequest<DisclosureCollectResponse>("/collectors/disclosures", { method: "POST", body: JSON.stringify(payload) }),
   collectDisclosuresForWatchlist: (payload: DisclosureCollectWatchlistRequest) =>
     apiRequest<DisclosureCollectResponse>("/collectors/disclosures/watchlist", { method: "POST", body: JSON.stringify(payload) }),
+  collectDisclosuresForSelectedWatchlist: (payload: DisclosureCollectSelectedWatchlistRequest) =>
+    apiRequest<DisclosureCollectSelectedResponse>("/collectors/disclosures/watchlist/selected", { method: "POST", body: JSON.stringify(payload) }),
   summarizeSelectedDisclosures: (disclosureIds: number[]) =>
     apiRequest<AiSummarizeResponse>("/analysis/disclosures/ai-summarize", {
       method: "POST",

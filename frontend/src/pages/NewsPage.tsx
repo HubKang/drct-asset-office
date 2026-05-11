@@ -56,6 +56,31 @@ function NewsPage() {
     return map;
   }, [stocks]);
 
+  const renderStockLabel = (item: NewsItem) => {
+    if (item.stock_name && item.stock_code) return `${item.stock_name} (${item.stock_code})`;
+    if (item.stock_name) return item.stock_name;
+    if (item.stock_code) return item.stock_code;
+    if (item.stock_id && stockNameMap.get(item.stock_id)) return stockNameMap.get(item.stock_id) as string;
+    return "-";
+  };
+
+  const renderStockCell = (item: NewsItem) => {
+    if (item.stock_name && item.stock_code) {
+      return (
+        <div className="stock-cell">
+          <strong>{item.stock_name}</strong>
+          <span>{item.stock_code}</span>
+        </div>
+      );
+    }
+    if (item.stock_name) return <div className="stock-cell"><strong>{item.stock_name}</strong></div>;
+    if (item.stock_code) return <div className="stock-cell"><span>{item.stock_code}</span></div>;
+    if (item.stock_id && stockNameMap.get(item.stock_id)) {
+      return <div className="stock-cell"><strong>{stockNameMap.get(item.stock_id) as string}</strong></div>;
+    }
+    return "-";
+  };
+
   const loadNews = async (overrides?: { stock_id?: number; offset?: number }) => {
     setLoading(true);
     setError("");
@@ -220,7 +245,7 @@ function NewsPage() {
             <option value="50">50건</option>
           </select>
           <select className="select-control" value={collectSort} onChange={(e) => setCollectSort(e.target.value)}>
-            <option value="date">최신순(date)</option>
+            <option value="date">뉴스 발행 최신순(date)</option>
             <option value="sim">정확도순(sim)</option>
           </select>
           <button className="btn btn-primary" onClick={onCollect} disabled={collectLoading}>
@@ -250,7 +275,7 @@ function NewsPage() {
 
       <SectionCard title="검색">
         <form onSubmit={onSearch} className="grid grid-cols-1 gap-2 md:grid-cols-7">
-          <input className="input-control" placeholder="stock_id" value={stockId} onChange={(e) => setStockId(e.target.value)} />
+          <input className="input-control" placeholder="종목 ID" value={stockId} onChange={(e) => setStockId(e.target.value)} />
           <div className="relative md:col-span-2">
             <Search size={16} className="absolute left-3 top-3.5 text-slate-400" />
             <input className="input-control pl-9" placeholder="keyword" value={keyword} onChange={(e) => setKeyword(e.target.value)} />
@@ -344,7 +369,7 @@ function NewsPage() {
                             />
                           </td>
                           <td className="cell-nowrap">{news.id}</td>
-                          <td className="cell-nowrap">{news.stock_id ?? "-"}</td>
+                          <td>{renderStockCell(news)}</td>
                           <td className="min-w-[280px] cell-title cell-clamp-2">{news.title}</td>
                           <td className="min-w-[100px] cell-nowrap">{news.source ?? "-"}</td>
                           <td className="min-w-[140px] cell-nowrap cell-muted">{news.published_at ?? "-"}</td>
@@ -384,10 +409,7 @@ function NewsPage() {
             <>
               <h3 className="detail-title">{selectedNews.title}</h3>
               <div className="detail-meta">
-                <StatusBadge label={`종목 ${selectedNews.stock_id ?? "-"}`} tone="blue" />
-                {selectedNews.stock_id && stockNameMap.get(selectedNews.stock_id) ? (
-                  <StatusBadge label={stockNameMap.get(selectedNews.stock_id) as string} tone="slate" />
-                ) : null}
+                <StatusBadge label={`종목 ${renderStockLabel(selectedNews)}`} tone="blue" />
                 <StatusBadge label={importanceMeta(selectedNews.ai_importance_score ?? selectedNews.importance_score).label} variant={importanceMeta(selectedNews.ai_importance_score ?? selectedNews.importance_score).variant} />
                 <StatusBadge label={sentimentMeta(selectedNews.ai_sentiment ?? selectedNews.sentiment).label} variant={sentimentMeta(selectedNews.ai_sentiment ?? selectedNews.sentiment).variant} />
               </div>
@@ -397,6 +419,7 @@ function NewsPage() {
                 <div className="detail-body">
                   <p>출처: {selectedNews.source ?? "-"}</p>
                   <p>발행일: {selectedNews.published_at ?? "-"}</p>
+                  <p>수집일: {selectedNews.created_at ?? "-"}</p>
                   <p>AI 처리일시: {selectedNews.ai_processed_at ?? "-"}</p>
                 </div>
               </div>

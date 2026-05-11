@@ -8,6 +8,8 @@ class DisclosureResponse(BaseModel):
 
     id: int
     stock_id: int
+    stock_code: str | None = None
+    stock_name: str | None = None
     dart_receipt_no: str | None
     disclosure_title: str
     disclosure_type: str | None

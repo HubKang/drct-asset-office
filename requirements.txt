@@ -4,5 +4,6 @@ sqlalchemy
 python-dotenv
 pydantic
 pytest
+httpx
 requests
 tzdata

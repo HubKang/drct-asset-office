@@ -1,6 +1,14 @@
 import { apiRequest } from "@/services/api/apiClient";
 import type { AiSummarizeResponse } from "@/types/analysis";
-import type { NewsCollectRequest, NewsCollectResponse, NewsItem, NewsListParams } from "@/types/news";
+import type {
+  NewsCollectRequest,
+  NewsCollectResponse,
+  NewsCollectSelectedResponse,
+  NewsCollectSelectedWatchlistRequest,
+  NewsCollectWatchlistRequest,
+  NewsItem,
+  NewsListParams,
+} from "@/types/news";
 
 export const newsApiRepository = {
   listNews: (params?: NewsListParams) => {
@@ -15,6 +23,10 @@ export const newsApiRepository = {
   getNews: (newsId: number) => apiRequest<NewsItem>(`/news/${newsId}`),
   collectNewsForStock: (payload: NewsCollectRequest) =>
     apiRequest<NewsCollectResponse>("/collectors/news", { method: "POST", body: JSON.stringify(payload) }),
+  collectNewsForWatchlist: (payload: NewsCollectWatchlistRequest) =>
+    apiRequest<NewsCollectResponse>("/collectors/news/watchlist", { method: "POST", body: JSON.stringify(payload) }),
+  collectNewsForSelectedWatchlist: (payload: NewsCollectSelectedWatchlistRequest) =>
+    apiRequest<NewsCollectSelectedResponse>("/collectors/news/watchlist/selected", { method: "POST", body: JSON.stringify(payload) }),
   summarizeSelectedNews: (newsIds: number[]) =>
     apiRequest<AiSummarizeResponse>("/analysis/news/ai-summarize", {
       method: "POST",

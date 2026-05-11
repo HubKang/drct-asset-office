@@ -16,5 +16,6 @@ class Watchlist(Base):
     entry_condition: Mapped[str | None] = mapped_column(Text, nullable=True)
     exit_condition: Mapped[str | None] = mapped_column(Text, nullable=True)
     risk_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     registered_at: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)

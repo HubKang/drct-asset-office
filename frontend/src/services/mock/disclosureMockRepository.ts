@@ -3,6 +3,8 @@ import type {
   Disclosure,
   DisclosureCollectRequest,
   DisclosureCollectResponse,
+  DisclosureCollectSelectedResponse,
+  DisclosureCollectSelectedWatchlistRequest,
   DisclosureCollectWatchlistRequest,
   DisclosureListParams,
 } from "@/types/disclosure";
@@ -62,6 +64,24 @@ export const disclosureMockRepository = {
       saved_count: 0,
       skipped_count: payload.page_count,
       message: "mock mode: watchlist disclosure collection not executed",
+    };
+  },
+  async collectDisclosuresForSelectedWatchlist(payload: DisclosureCollectSelectedWatchlistRequest): Promise<DisclosureCollectSelectedResponse> {
+    return {
+      requested_count: payload.stock_ids.length,
+      success_count: payload.stock_ids.length,
+      failed_count: 0,
+      message: "mock mode: selected watchlist disclosure collection not executed",
+      results: payload.stock_ids.map((stockId) => ({
+        stock_id: stockId,
+        stock_code: `MOCK-${stockId}`,
+        stock_name: `Mock Stock ${stockId}`,
+        status: "success",
+        collected_count: payload.page_count,
+        saved_count: 0,
+        skipped_count: payload.page_count,
+        message: "mock success",
+      })),
     };
   },
   async summarizeSelectedDisclosures(disclosureIds: number[]): Promise<AiSummarizeResponse> {

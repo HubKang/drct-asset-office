@@ -28,6 +28,24 @@ class WatchlistUpdate(BaseModel):
     entry_condition: str | None = None
     exit_condition: str | None = None
     risk_note: str | None = None
+    is_active: int | None = None
+
+
+class WatchlistBulkCreate(BaseModel):
+    stock_ids: list[int]
+    memo: str | None = None
+
+
+class WatchlistBulkCreateResponse(BaseModel):
+    requested_count: int
+    inserted_count: int
+    reactivated_count: int
+    skipped_count: int
+    message: str
+
+
+class WatchlistStockIdsResponse(BaseModel):
+    stock_ids: list[int]
 
 
 class WatchlistResponse(BaseModel):
@@ -40,6 +58,7 @@ class WatchlistResponse(BaseModel):
     entry_condition: str | None
     exit_condition: str | None
     risk_note: str | None
+    is_active: int
     registered_at: str
     updated_at: str
 
@@ -51,10 +70,13 @@ class WatchlistListItem(BaseModel):
     stock_id: int
     stock_code: str
     stock_name: str
+    market: str | None
+    security_type: str | None
     status: str
     interest_reason: str | None
     entry_condition: str | None
     exit_condition: str | None
     risk_note: str | None
+    is_active: int
     registered_at: str
     updated_at: str

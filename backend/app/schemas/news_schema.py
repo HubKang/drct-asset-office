@@ -8,6 +8,8 @@ class NewsResponse(BaseModel):
 
     id: int
     stock_id: int | None
+    stock_code: str | None = None
+    stock_name: str | None = None
     title: str
     source: str | None
     url: str | None

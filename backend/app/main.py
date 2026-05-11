@@ -14,10 +14,13 @@ from backend.app.api.routes_news import router as news_router
 from backend.app.api.routes_reports import router as reports_router
 from backend.app.api.routes_schema_comments import router as schema_comments_router
 from backend.app.api.routes_stocks import router as stocks_router
+from backend.app.api.routes_stock_prices import router as stock_prices_router
 from backend.app.api.routes_watchlist import router as watchlist_router
+from backend.app.core.database import ensure_runtime_schema
 from backend.app.core.logging import setup_logging
 
 setup_logging()
+ensure_runtime_schema()
 
 app = FastAPI(title="DrCT Asset API")
 app.add_middleware(
@@ -33,6 +36,7 @@ app.add_middleware(
 
 app.include_router(health_router)
 app.include_router(stocks_router)
+app.include_router(stock_prices_router)
 app.include_router(watchlist_router)
 app.include_router(schema_comments_router)
 app.include_router(news_router)

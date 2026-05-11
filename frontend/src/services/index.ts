@@ -5,6 +5,7 @@ import { disclosureApiRepository } from "@/services/api/disclosureApiRepository"
 import { newsApiRepository } from "@/services/api/newsApiRepository";
 import { schemaCommentApiRepository } from "@/services/api/schemaCommentApiRepository";
 import { stockApiRepository } from "@/services/api/stockApiRepository";
+import { stockPriceApiRepository } from "@/services/api/stockPriceApiRepository";
 import { watchlistApiRepository } from "@/services/api/watchlistApiRepository";
 import { advisoryPackageMockRepository } from "@/services/mock/advisoryPackageMockRepository";
 import { classificationRuleMockRepository } from "@/services/mock/classificationRuleMockRepository";
@@ -13,6 +14,7 @@ import { disclosureMockRepository } from "@/services/mock/disclosureMockReposito
 import { newsMockRepository } from "@/services/mock/newsMockRepository";
 import { schemaCommentMockRepository } from "@/services/mock/schemaCommentMockRepository";
 import { stockMockRepository } from "@/services/mock/stockMockRepository";
+import { stockPriceMockRepository } from "@/services/mock/stockPriceMockRepository";
 import { watchlistMockRepository } from "@/services/mock/watchlistMockRepository";
 import { appConfig } from "@/services/config/appConfig";
 
@@ -20,6 +22,7 @@ const useMock = appConfig.dataSource !== "api";
 
 export const repositories = {
   stocks: useMock ? stockMockRepository : stockApiRepository,
+  stockPrices: useMock ? stockPriceMockRepository : stockPriceApiRepository,
   watchlist: useMock ? watchlistMockRepository : watchlistApiRepository,
   schemaComments: useMock ? schemaCommentMockRepository : schemaCommentApiRepository,
   news: useMock ? newsMockRepository : newsApiRepository,

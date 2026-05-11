@@ -4,6 +4,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from backend.app.repositories.disclosure_repository import DisclosureRepository
+from backend.app.schemas.disclosure_schema import DisclosureResponse
 
 
 class DisclosureService:
@@ -18,13 +19,25 @@ class DisclosureService:
         limit: int,
         offset: int,
     ):
-        return self.repo.list(
+        rows = self.repo.list_with_stock(
             stock_id=stock_id,
             keyword=keyword,
             disclosure_type=disclosure_type,
             limit=limit,
             offset=offset,
         )
+        result: list[DisclosureResponse] = []
+        for disclosure, stock in rows:
+            result.append(
+                DisclosureResponse.model_validate(
+                    {
+                        **disclosure.__dict__,
+                        "stock_code": stock.stock_code if stock else None,
+                        "stock_name": stock.stock_name if stock else None,
+                    }
+                )
+            )
+        return result
 
     def get_disclosure(self, disclosure_id: int):
         item = self.repo.get_by_id(disclosure_id)

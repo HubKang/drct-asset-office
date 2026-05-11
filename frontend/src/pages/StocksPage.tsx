@@ -219,7 +219,13 @@ function StocksPage() {
       </SectionCard>
 
       <SectionCard title="검색">
-        <div className="stock-search-row">
+        <form
+          className="stock-search-row"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void onSearch();
+          }}
+        >
           <select className="select-control" value={marketFilter} onChange={(e) => setMarketFilter(e.target.value as MarketFilter)}>
             <option value="ALL">전체</option>
             <option value="KOSPI">KOSPI</option>
@@ -244,13 +250,13 @@ function StocksPage() {
               onChange={(e) => setKeyword(e.target.value)}
             />
           </div>
-          <button className="btn btn-primary stock-search-btn" onClick={onSearch}>
+          <button type="submit" className="btn btn-primary stock-search-btn">
             검색
           </button>
-          <button className="btn btn-secondary stock-search-btn" onClick={onResetSearch}>
+          <button type="button" className="btn btn-secondary stock-search-btn" onClick={onResetSearch}>
             초기화
           </button>
-        </div>
+        </form>
       </SectionCard>
 
       {editId ? (

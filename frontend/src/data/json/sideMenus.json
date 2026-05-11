@@ -2,7 +2,7 @@
   { "menuKey": "investment", "title": "대시보드", "routeKey": "dashboard" },
   { "menuKey": "investment", "title": "GPT 자문 패키지", "routeKey": "advisory-packages" },
   { "menuKey": "investment", "title": "종목 관리", "routeKey": "stocks" },
-  { "menuKey": "investment", "title": "관심종목 관리", "routeKey": "watchlist" },
+  { "menuKey": "investment", "title": "관심종목 Pool", "routeKey": "watchlist" },
   { "menuKey": "data", "title": "스키마 코멘트", "routeKey": "schema-comments" },
   { "menuKey": "data", "title": "뉴스 관리", "routeKey": "news" },
   { "menuKey": "data", "title": "공시 관리", "routeKey": "disclosures" },

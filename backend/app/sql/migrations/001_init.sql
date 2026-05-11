@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS watchlist (
     entry_condition TEXT,
     exit_condition TEXT,
     risk_note TEXT,
+    is_active INTEGER NOT NULL DEFAULT 1,
     registered_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE CASCADE
@@ -202,6 +203,7 @@ INSERT OR IGNORE INTO schema_comments (table_name, column_name, comment_ko, crea
 ('watchlist', 'entry_condition', '진입 조건', CURRENT_TIMESTAMP),
 ('watchlist', 'exit_condition', '이탈 조건', CURRENT_TIMESTAMP),
 ('watchlist', 'risk_note', '리스크 메모', CURRENT_TIMESTAMP),
+('watchlist', 'is_active', '활성 여부(1:활성, 0:비활성)', CURRENT_TIMESTAMP),
 ('watchlist', 'registered_at', '등록 시각(YYYY-MM-DD HH:MM:SS TEXT)', CURRENT_TIMESTAMP),
 ('watchlist', 'updated_at', '수정 시각(YYYY-MM-DD HH:MM:SS TEXT)', CURRENT_TIMESTAMP),
 ('news_items', 'id', '뉴스 PK', CURRENT_TIMESTAMP),
