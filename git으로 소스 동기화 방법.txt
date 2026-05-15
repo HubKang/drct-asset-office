@@ -1,0 +1,30 @@
+cd "D:\12. Automation\Codex\01. DrCT에셋\drct-asset-office"
+
+python scripts/check_db_health.py
+
+git status
+git ls-files | findstr /i ".env sqlite sqlite3 db journal wal shm"
+
+cd frontend
+npm run build
+cd ..
+
+.venv\Scripts\python.exe -m pytest backend\tests
+
+git status --short
+
+git add backend/app
+git add backend/tests
+git add frontend/src
+git add docs
+git add scripts
+git add requirements.txt
+git add .gitignore
+
+git status
+
+git commit -m "feat: add GPT advisory evidence package and market metrics UI"
+
+git remote -v
+
+git push origin main
