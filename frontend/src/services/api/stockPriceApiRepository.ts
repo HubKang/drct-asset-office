@@ -1,9 +1,12 @@
 import { apiRequest } from "@/services/api/apiClient";
 import type {
+  AdvisoryEvidencePackageResponse,
+  MarketMetricsSummaryResponse,
   SelectedStockPriceCollectRequest,
-  SelectedStockPriceUpdateRequest,
-  StockDailyPrice,
+  StockDailyPriceListResponse,
   StockPriceCollectResult,
+  StockPriceFactSummaryResponse,
+  StockPriceSummaryResponse,
 } from "@/types/stockPrice";
 
 export const stockPriceApiRepository = {
@@ -12,18 +15,71 @@ export const stockPriceApiRepository = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  updateSelected: (payload: SelectedStockPriceUpdateRequest) =>
-    apiRequest<StockPriceCollectResult>("/stock-prices/update/selected", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
-  listDaily: (stockId: number, params?: { start_date?: string; end_date?: string; limit?: number; offset?: number }) => {
+  listSummary: (params?: { keyword?: string; market?: string; source?: string; limit?: number; offset?: number }) => {
     const search = new URLSearchParams();
-    if (params?.start_date) search.set("start_date", params.start_date);
-    if (params?.end_date) search.set("end_date", params.end_date);
+    if (params?.keyword) search.set("keyword", params.keyword);
+    if (params?.market) search.set("market", params.market);
+    if (params?.source) search.set("source", params.source);
     if (params?.limit !== undefined) search.set("limit", String(params.limit));
     if (params?.offset !== undefined) search.set("offset", String(params.offset));
     const query = search.toString();
-    return apiRequest<StockDailyPrice[]>(`/stock-prices/${stockId}/daily${query ? `?${query}` : ""}`);
+    return apiRequest<StockPriceSummaryResponse>(`/stock-prices/summary${query ? `?${query}` : ""}`);
+  },
+  listDaily: (stockId: number, params?: { start_date?: string; end_date?: string; source?: string; limit?: number; offset?: number }) => {
+    const search = new URLSearchParams();
+    if (params?.start_date) search.set("start_date", params.start_date);
+    if (params?.end_date) search.set("end_date", params.end_date);
+    if (params?.source) search.set("source", params.source);
+    if (params?.limit !== undefined) search.set("limit", String(params.limit));
+    if (params?.offset !== undefined) search.set("offset", String(params.offset));
+    const query = search.toString();
+    return apiRequest<StockDailyPriceListResponse>(`/stock-prices/${stockId}/daily${query ? `?${query}` : ""}`);
+  },
+  getSummary: (stockId: number, params?: { source?: string }) => {
+    const search = new URLSearchParams();
+    if (params?.source) search.set("source", params.source);
+    const query = search.toString();
+    return apiRequest<StockPriceFactSummaryResponse>(`/stock-prices/${stockId}/summary${query ? `?${query}` : ""}`);
+  },
+  getMarketMetricsSummary: (stockId: number, params?: { source?: string }) => {
+    const search = new URLSearchParams();
+    if (params?.source) search.set("source", params.source);
+    const query = search.toString();
+    return apiRequest<MarketMetricsSummaryResponse>(`/market-metrics/${stockId}/summary${query ? `?${query}` : ""}`);
+  },
+  getAdvisoryEvidencePackage: (
+    stockId: number,
+    params?: {
+      price_source?: string;
+      market_metrics_source?: string;
+      include_candle_reference?: boolean;
+      lookback_days?: number;
+      recent_candle_limit?: number;
+      include_raw_candles?: boolean;
+      pattern_window?: number;
+      similar_case_limit?: number;
+      strategy_horizon?: string;
+      include_scenario_questions?: boolean;
+    },
+  ) => {
+    const search = new URLSearchParams();
+    if (params?.price_source) search.set("price_source", params.price_source);
+    if (params?.market_metrics_source) search.set("market_metrics_source", params.market_metrics_source);
+    if (params?.include_candle_reference !== undefined) {
+      search.set("include_candle_reference", String(params.include_candle_reference));
+    }
+    if (params?.lookback_days !== undefined) search.set("lookback_days", String(params.lookback_days));
+    if (params?.recent_candle_limit !== undefined) search.set("recent_candle_limit", String(params.recent_candle_limit));
+    if (params?.include_raw_candles !== undefined) search.set("include_raw_candles", String(params.include_raw_candles));
+    if (params?.pattern_window !== undefined) search.set("pattern_window", String(params.pattern_window));
+    if (params?.similar_case_limit !== undefined) search.set("similar_case_limit", String(params.similar_case_limit));
+    if (params?.strategy_horizon) search.set("strategy_horizon", params.strategy_horizon);
+    if (params?.include_scenario_questions !== undefined) {
+      search.set("include_scenario_questions", String(params.include_scenario_questions));
+    }
+    const query = search.toString();
+    return apiRequest<AdvisoryEvidencePackageResponse>(
+      `/advisory/evidence-package/${stockId}${query ? `?${query}` : ""}`,
+    );
   },
 };

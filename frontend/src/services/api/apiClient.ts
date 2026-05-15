@@ -17,11 +17,22 @@ export async function apiRequest<T>(path: string, options?: ApiRequestOptions): 
   const url = `${appConfig.apiBaseUrl}${path}`;
   const { timeoutMs, ...requestOptions } = options || {};
   const controller = new AbortController();
+  const method = requestOptions.method || "GET";
   const timeout = timeoutMs
     ? setTimeout(() => {
         controller.abort();
       }, timeoutMs)
     : null;
+
+  if (import.meta.env.DEV) {
+    console.info(
+      `[API REQUEST] ${JSON.stringify({
+        method,
+        path,
+        body: requestOptions.body ?? null,
+      })}`,
+    );
+  }
 
   let response: Response;
   try {
@@ -56,5 +67,16 @@ export async function apiRequest<T>(path: string, options?: ApiRequestOptions): 
   if (response.status === 204) {
     return undefined as T;
   }
+
+  if (import.meta.env.DEV) {
+    console.info(
+      `[API RESPONSE] ${JSON.stringify({
+        method,
+        path,
+        status: response.status,
+      })}`,
+    );
+  }
+
   return (await response.json()) as T;
 }

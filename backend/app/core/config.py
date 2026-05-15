@@ -28,14 +28,17 @@ DART_API_KEY = os.getenv("DART_API_KEY")
 DART_RAW_DIR = os.getenv("DART_RAW_DIR", "./data/raw/dart")
 DART_DISCLOSURE_DEFAULT_DAYS = int(os.getenv("DART_DISCLOSURE_DEFAULT_DAYS", "30"))
 DART_PAGE_COUNT = int(os.getenv("DART_PAGE_COUNT", "100"))
-KRX_API_SERVICE_KEY = os.getenv("KRX_API_SERVICE_KEY")
-KRX_API_BASE_URL = os.getenv(
-    "KRX_API_BASE_URL",
+DATA_API_SERVICE_KEY = os.getenv("DATA_API_SERVICE_KEY", "").strip()
+DATA_API_BASE_URL = os.getenv(
+    "DATA_API_BASE_URL",
     "https://apis.data.go.kr/1160100/service/GetKrxListedInfoService/getItemInfo",
 )
-KRX_API_KEY_MODE = os.getenv("KRX_API_KEY_MODE", "encoded").lower()
-KRX_API_TIMEOUT_SECONDS = int(os.getenv("KRX_API_TIMEOUT_SECONDS", "15"))
-KRX_API_MAX_PAGES = int(os.getenv("KRX_API_MAX_PAGES", "10"))
+DATA_API_KEY_MODE = os.getenv("DATA_API_KEY_MODE", "encoded").lower()
+DATA_API_TIMEOUT_SECONDS = int(os.getenv("DATA_API_TIMEOUT_SECONDS", "15"))
+DATA_API_MAX_PAGES = int(os.getenv("DATA_API_MAX_PAGES", "10"))
+KRX_OPEN_API_AUTH_KEY = os.getenv("KRX_OPEN_API_AUTH_KEY", "").strip()
+KRX_OPEN_API_BASE_URL = os.getenv("KRX_OPEN_API_BASE_URL", "https://data-dbg.krx.co.kr/svc/apis").strip()
+KRX_OPEN_API_TIMEOUT_SECONDS = int(os.getenv("KRX_OPEN_API_TIMEOUT_SECONDS", "20"))
 
 LMSTUDIO_BASE_URL = os.getenv("LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1")
 LMSTUDIO_MODEL = os.getenv("LMSTUDIO_MODEL", "google/gemma-4-e2b")
@@ -58,6 +61,17 @@ LLM_ITEM_SUMMARY_MAX_OUTPUT_TOKENS = int(os.getenv("LLM_ITEM_SUMMARY_MAX_OUTPUT_
 LLM_ITEM_SUMMARY_RETRY_COUNT = int(os.getenv("LLM_ITEM_SUMMARY_RETRY_COUNT", "1"))
 AI_SUMMARY_BATCH_NEWS_LIMIT = int(os.getenv("AI_SUMMARY_BATCH_NEWS_LIMIT", "10"))
 AI_SUMMARY_BATCH_DISCLOSURE_LIMIT = int(os.getenv("AI_SUMMARY_BATCH_DISCLOSURE_LIMIT", "10"))
+KIS_APP_KEY = os.getenv("KIS_APP_KEY", "").strip()
+KIS_APP_SECRET = os.getenv("KIS_APP_SECRET", "").strip()
+KIS_BASE_URL = os.getenv("KIS_BASE_URL", "https://openapi.koreainvestment.com:9443").strip()
+KIS_PAPER_BASE_URL = os.getenv("KIS_PAPER_BASE_URL", "https://openapivts.koreainvestment.com:29443").strip()
+KIS_USE_PAPER = os.getenv("KIS_USE_PAPER", "true").strip().lower() in {"1", "true", "yes", "y", "on"}
+KIS_ACCOUNT_NO = os.getenv("KIS_ACCOUNT_NO", "").strip()
+KIS_PRODUCT_CODE = os.getenv("KIS_PRODUCT_CODE", "01").strip()
+KIS_ACCESS_TOKEN = os.getenv("KIS_ACCESS_TOKEN", "").strip()
+KIS_TOKEN_EXPIRES_AT = os.getenv("KIS_TOKEN_EXPIRES_AT", "").strip()
+KIS_TIMEOUT_SECONDS = int(os.getenv("KIS_TIMEOUT_SECONDS", "15"))
+KIS_DAILY_MAX_ROWS = int(os.getenv("KIS_DAILY_MAX_ROWS", "100"))
 
 
 def now_kst() -> str:

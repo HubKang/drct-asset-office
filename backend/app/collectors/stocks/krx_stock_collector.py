@@ -11,11 +11,11 @@ import xml.etree.ElementTree as ET
 import requests
 
 from backend.app.core.config import (
-    KRX_API_BASE_URL,
-    KRX_API_KEY_MODE,
-    KRX_API_MAX_PAGES,
-    KRX_API_SERVICE_KEY,
-    KRX_API_TIMEOUT_SECONDS,
+    DATA_API_BASE_URL,
+    DATA_API_KEY_MODE,
+    DATA_API_MAX_PAGES,
+    DATA_API_SERVICE_KEY,
+    DATA_API_TIMEOUT_SECONDS,
 )
 
 logger = logging.getLogger(__name__)
@@ -23,17 +23,17 @@ logger = logging.getLogger(__name__)
 
 class KrxStockCollector:
     def __init__(self) -> None:
-        self.base_url = KRX_API_BASE_URL
-        self.service_key = KRX_API_SERVICE_KEY or ""
-        self.key_mode = KRX_API_KEY_MODE
-        self.timeout = KRX_API_TIMEOUT_SECONDS
-        self.max_pages = KRX_API_MAX_PAGES
+        self.base_url = DATA_API_BASE_URL
+        self.service_key = DATA_API_SERVICE_KEY or ""
+        self.key_mode = DATA_API_KEY_MODE
+        self.timeout = DATA_API_TIMEOUT_SECONDS
+        self.max_pages = DATA_API_MAX_PAGES
 
     def collect_all(self) -> list[dict[str, str | None]]:
         if not self.service_key:
             raise ValueError(
-                "KRX_API_SERVICE_KEY is not configured. "
-                "Set KRX_API_SERVICE_KEY in .env. (Encoded key recommended for URL query mode)"
+                "DATA_API_SERVICE_KEY is not configured. "
+                "Set DATA_API_SERVICE_KEY in .env. (Encoded key recommended for URL query mode)"
             )
 
         first_payload = self._request_page(page_no=1, num_of_rows=1000)
@@ -108,12 +108,12 @@ class KrxStockCollector:
         except requests.RequestException as exc:
             raise ValueError(
                 "Failed to call KRX listed-info API. "
-                "Check network, KRX_API_BASE_URL, and key type (Encoding/Decoding)."
+                "Check network, DATA_API_BASE_URL, and key type (Encoding/Decoding)."
             ) from exc
         if response.status_code >= 400:
             raise ValueError(
                 f"KRX API HTTP error status={response.status_code}. "
-                "Check KRX_API_KEY_MODE and service key type (Encoding/Decoding)."
+                "Check DATA_API_KEY_MODE and service key type (Encoding/Decoding)."
             )
         elapsed = perf_counter() - started
 
@@ -131,8 +131,8 @@ class KrxStockCollector:
             raise ValueError(
                 "KRX API authentication/request failed "
                 f"(code={result_code}, message={result_msg}). "
-                "Try Encoding key with KRX_API_KEY_MODE=encoded "
-                "or Decoding key with KRX_API_KEY_MODE=decoded."
+                "Try Encoding key with DATA_API_KEY_MODE=encoded "
+                "or Decoding key with DATA_API_KEY_MODE=decoded."
             )
 
         items_count = len(self._extract_items(data))

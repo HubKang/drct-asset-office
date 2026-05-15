@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from sqlalchemy import Select, select, text
+from sqlalchemy import Select, and_, func, select, text
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import now_kst
+from backend.app.entities.stock import Stock
 from backend.app.entities.stock_daily_price import StockDailyPrice
 
 
@@ -60,18 +61,46 @@ class StockPriceRepository:
                     "updated_at": now,
                 }
             )
-        self.db.execute(sql, params)
-        self.db.commit()
+        try:
+            self.db.execute(sql, params)
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
         return len(rows)
 
-    def list_by_stock(self, stock_id: int, start_date: str | None, end_date: str | None, limit: int, offset: int) -> list[StockDailyPrice]:
+    def upsert_daily_prices(self, stock_id: int, source: str, rows: list[dict]) -> int:
+        return self.upsert_daily_rows(stock_id=stock_id, source=source, rows=rows)
+
+    def list_by_stock(
+        self,
+        stock_id: int,
+        start_date: str | None,
+        end_date: str | None,
+        source: str | None,
+        limit: int,
+        offset: int,
+    ) -> list[StockDailyPrice]:
         stmt: Select[tuple[StockDailyPrice]] = select(StockDailyPrice).where(StockDailyPrice.stock_id == stock_id)
         if start_date:
             stmt = stmt.where(StockDailyPrice.trade_date >= start_date)
         if end_date:
             stmt = stmt.where(StockDailyPrice.trade_date <= end_date)
+        if source:
+            stmt = stmt.where(StockDailyPrice.source == source)
         stmt = stmt.order_by(StockDailyPrice.trade_date.desc(), StockDailyPrice.id.desc()).limit(limit).offset(offset)
         return list(self.db.scalars(stmt).all())
+
+    def list_daily_prices(
+        self,
+        stock_id: int,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        source: str | None = None,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> list[StockDailyPrice]:
+        return self.list_by_stock(stock_id=stock_id, start_date=start_date, end_date=end_date, source=source, limit=limit, offset=offset)
 
     def list_by_stock_asc(self, stock_id: int) -> list[StockDailyPrice]:
         stmt: Select[tuple[StockDailyPrice]] = (
@@ -80,6 +109,9 @@ class StockPriceRepository:
             .order_by(StockDailyPrice.trade_date.asc(), StockDailyPrice.id.asc())
         )
         return list(self.db.scalars(stmt).all())
+
+    def get_prices_for_ma_calculation(self, stock_id: int) -> list[StockDailyPrice]:
+        return self.list_by_stock_asc(stock_id=stock_id)
 
     def update_moving_averages(
         self,
@@ -105,3 +137,124 @@ class StockPriceRepository:
 
     def commit(self) -> None:
         self.db.commit()
+
+    def count_by_stock(self, stock_id: int) -> int:
+        stmt = select(func.count(StockDailyPrice.id)).where(StockDailyPrice.stock_id == stock_id)
+        return int(self.db.scalar(stmt) or 0)
+
+    def count_prices_by_stock(self, stock_id: int, source: str | None = None) -> int:
+        stmt = select(func.count(StockDailyPrice.id)).where(StockDailyPrice.stock_id == stock_id)
+        if source:
+            stmt = stmt.where(StockDailyPrice.source == source)
+        return int(self.db.scalar(stmt) or 0)
+
+    def get_latest_trade_date(self, stock_id: int, source: str | None = None) -> str | None:
+        stmt = select(func.max(StockDailyPrice.trade_date)).where(StockDailyPrice.stock_id == stock_id)
+        if source:
+            stmt = stmt.where(StockDailyPrice.source == source)
+        return self.db.scalar(stmt)
+
+    def get_stock_summary_window(self, stock_id: int, source: str = "pykrx") -> dict | None:
+        stmt = (
+            select(
+                func.count(StockDailyPrice.id).label("price_count"),
+                func.min(StockDailyPrice.trade_date).label("min_trade_date"),
+                func.max(StockDailyPrice.trade_date).label("max_trade_date"),
+            )
+            .where(StockDailyPrice.stock_id == stock_id, StockDailyPrice.source == source)
+        )
+        row = self.db.execute(stmt).mappings().one()
+        if not row["price_count"]:
+            return None
+        return dict(row)
+
+    def list_recent_rows(self, stock_id: int, source: str = "pykrx", limit: int = 252) -> list[StockDailyPrice]:
+        return self.list_by_stock(
+            stock_id=stock_id,
+            start_date=None,
+            end_date=None,
+            source=source,
+            limit=limit,
+            offset=0,
+        )
+
+    def list_price_summary(
+        self,
+        keyword: str | None,
+        market: str | None,
+        source: str | None,
+        limit: int,
+        offset: int,
+    ) -> list[dict]:
+        base_stmt = (
+            select(
+                StockDailyPrice.stock_id.label("stock_id"),
+                func.count(StockDailyPrice.id).label("price_count"),
+                func.min(StockDailyPrice.trade_date).label("min_trade_date"),
+                func.max(StockDailyPrice.trade_date).label("max_trade_date"),
+            )
+            .group_by(StockDailyPrice.stock_id)
+        )
+        if source:
+            base_stmt = base_stmt.where(StockDailyPrice.source == source)
+        summary_subq = base_stmt.subquery()
+
+        latest_subq = (
+            select(
+                StockDailyPrice.stock_id.label("stock_id"),
+                StockDailyPrice.trade_date.label("trade_date"),
+                StockDailyPrice.close_price.label("latest_close_price"),
+                StockDailyPrice.volume.label("latest_volume"),
+                StockDailyPrice.trading_value.label("latest_trading_value"),
+                StockDailyPrice.ma5.label("latest_ma5"),
+                StockDailyPrice.ma20.label("latest_ma20"),
+                StockDailyPrice.ma60.label("latest_ma60"),
+                StockDailyPrice.ma120.label("latest_ma120"),
+                StockDailyPrice.ma240.label("latest_ma240"),
+                StockDailyPrice.source.label("source"),
+            )
+            .join(
+                summary_subq,
+                and_(
+                    StockDailyPrice.stock_id == summary_subq.c.stock_id,
+                    StockDailyPrice.trade_date == summary_subq.c.max_trade_date,
+                ),
+            )
+            .subquery()
+        )
+
+        stmt = (
+            select(
+                Stock.id.label("stock_id"),
+                Stock.stock_code.label("stock_code"),
+                Stock.stock_name.label("stock_name"),
+                Stock.market.label("market"),
+                Stock.security_type.label("security_type"),
+                summary_subq.c.price_count,
+                summary_subq.c.min_trade_date,
+                summary_subq.c.max_trade_date,
+                latest_subq.c.latest_close_price,
+                latest_subq.c.latest_volume,
+                latest_subq.c.latest_trading_value,
+                latest_subq.c.latest_ma5,
+                latest_subq.c.latest_ma20,
+                latest_subq.c.latest_ma60,
+                latest_subq.c.latest_ma120,
+                latest_subq.c.latest_ma240,
+                latest_subq.c.source,
+            )
+            .join(summary_subq, Stock.id == summary_subq.c.stock_id)
+            .join(latest_subq, Stock.id == latest_subq.c.stock_id)
+        )
+
+        if keyword:
+            keyword_like = f"%{keyword}%"
+            stmt = stmt.where((Stock.stock_code.like(keyword_like)) | (Stock.stock_name.like(keyword_like)))
+        if market:
+            stmt = stmt.where(Stock.market == market)
+        if source:
+            stmt = stmt.where(latest_subq.c.source == source)
+
+        stmt = stmt.order_by(summary_subq.c.max_trade_date.desc(), Stock.stock_name.asc()).limit(limit).offset(offset)
+        rows = self.db.execute(stmt).mappings().all()
+        return [dict(r) for r in rows]

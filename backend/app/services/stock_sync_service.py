@@ -46,7 +46,7 @@ class StockSyncService:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
-                    "KRX_API_SERVICE_KEY is not configured. "
+                    "DATA_API_SERVICE_KEY is not configured. "
                     "Add it to .env. For requests params, use the Decoding key."
                 ),
             )

@@ -6,9 +6,10 @@ from sqlalchemy.orm import Session
 from backend.app.core.database import get_db
 from backend.app.schemas.stock_price_schema import (
     SelectedStockPriceCollectRequest,
-    StockDailyPriceResponse,
     StockPriceCollectResult,
-    StockPriceUpdateRequest,
+    StockDailyPriceListResponse,
+    StockPriceFactSummaryResponse,
+    StockPriceSummaryResponse,
 )
 from backend.app.services.stock_price_service import StockPriceService
 
@@ -24,27 +25,48 @@ def collect_selected_prices(payload: SelectedStockPriceCollectRequest, db: Sessi
     )
 
 
-@router.post("/stock-prices/update/selected", response_model=StockPriceCollectResult)
-def update_selected_prices(payload: StockPriceUpdateRequest, db: Session = Depends(get_db)) -> StockPriceCollectResult:
-    return StockPriceService(db).update_selected_recent(
-        stock_ids=payload.stock_ids,
-        source=payload.source,
+@router.get("/stock-prices/summary", response_model=StockPriceSummaryResponse)
+def list_stock_price_summary(
+    keyword: str | None = Query(default=None),
+    market: str | None = Query(default=None),
+    source: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+) -> StockPriceSummaryResponse:
+    return StockPriceService(db).list_summary(
+        keyword=keyword,
+        market=market,
+        source=source,
+        limit=limit,
+        offset=offset,
     )
 
 
-@router.get("/stock-prices/{stock_id}/daily", response_model=list[StockDailyPriceResponse])
+@router.get("/stock-prices/{stock_id}/summary", response_model=StockPriceFactSummaryResponse)
+def get_stock_price_summary(
+    stock_id: int,
+    source: str = Query(default="pykrx"),
+    db: Session = Depends(get_db),
+) -> StockPriceFactSummaryResponse:
+    return StockPriceService(db).get_summary(stock_id=stock_id, source=source)
+
+
+@router.get("/stock-prices/{stock_id}/daily", response_model=StockDailyPriceListResponse)
 def list_stock_daily_prices(
     stock_id: int,
     start_date: str | None = Query(default=None),
     end_date: str | None = Query(default=None),
+    source: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=2000),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
-) -> list[StockDailyPriceResponse]:
+) -> StockDailyPriceListResponse:
     return StockPriceService(db).list_daily(
         stock_id=stock_id,
         start_date=start_date,
         end_date=end_date,
+        source=source,
         limit=limit,
         offset=offset,
     )

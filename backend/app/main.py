@@ -10,6 +10,7 @@ from backend.app.api.routes_collection_runs import router as collection_runs_rou
 from backend.app.api.routes_classification_rules import router as classification_rules_router
 from backend.app.api.routes_disclosures import router as disclosures_router
 from backend.app.api.routes_health import router as health_router
+from backend.app.api.routes_market_metrics import router as market_metrics_router
 from backend.app.api.routes_news import router as news_router
 from backend.app.api.routes_reports import router as reports_router
 from backend.app.api.routes_schema_comments import router as schema_comments_router
@@ -37,6 +38,7 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(stocks_router)
 app.include_router(stock_prices_router)
+app.include_router(market_metrics_router)
 app.include_router(watchlist_router)
 app.include_router(schema_comments_router)
 app.include_router(news_router)

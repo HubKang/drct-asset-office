@@ -100,6 +100,27 @@ CREATE TABLE IF NOT EXISTS stock_daily_prices (
     FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS stock_daily_market_metrics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    stock_id INTEGER NOT NULL,
+    trade_date TEXT NOT NULL,
+    market TEXT,
+    close_price REAL,
+    market_cap INTEGER,
+    listed_shares INTEGER,
+    trading_volume INTEGER,
+    trading_value INTEGER,
+    market_cap_rank INTEGER,
+    trading_value_rank INTEGER,
+    market_trading_value_rank INTEGER,
+    trading_value_percentile REAL,
+    market_trading_value_percentile REAL,
+    source TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS price_daily (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     stock_id INTEGER NOT NULL,
@@ -240,8 +261,17 @@ CREATE INDEX IF NOT EXISTS idx_news_items_published_at ON news_items(published_a
 CREATE INDEX IF NOT EXISTS idx_disclosures_stock_id ON disclosures(stock_id);
 CREATE INDEX IF NOT EXISTS idx_disclosures_disclosed_at ON disclosures(disclosed_at);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_stock_daily_prices_stock_date ON stock_daily_prices(stock_id, trade_date);
+CREATE INDEX IF NOT EXISTS idx_stock_daily_prices_stock_id ON stock_daily_prices(stock_id);
 CREATE INDEX IF NOT EXISTS idx_stock_daily_prices_stock_date ON stock_daily_prices(stock_id, trade_date);
+CREATE INDEX IF NOT EXISTS idx_stock_daily_prices_stock_trade_date ON stock_daily_prices(stock_id, trade_date);
 CREATE INDEX IF NOT EXISTS idx_stock_daily_prices_trade_date ON stock_daily_prices(trade_date);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_stock_daily_market_metrics_stock_date_source ON stock_daily_market_metrics(stock_id, trade_date, source);
+CREATE INDEX IF NOT EXISTS idx_stock_daily_market_metrics_trade_date ON stock_daily_market_metrics(trade_date);
+CREATE INDEX IF NOT EXISTS idx_stock_daily_market_metrics_stock_id ON stock_daily_market_metrics(stock_id);
+CREATE INDEX IF NOT EXISTS idx_stock_daily_market_metrics_source ON stock_daily_market_metrics(source);
+CREATE INDEX IF NOT EXISTS idx_stock_daily_market_metrics_trade_rank ON stock_daily_market_metrics(trade_date, trading_value_rank);
+CREATE INDEX IF NOT EXISTS idx_stock_daily_market_metrics_trade_market_rank ON stock_daily_market_metrics(trade_date, market, market_trading_value_rank);
+CREATE INDEX IF NOT EXISTS idx_stock_daily_market_metrics_stock_trade_source ON stock_daily_market_metrics(stock_id, trade_date, source);
 CREATE INDEX IF NOT EXISTS idx_price_daily_stock_date ON price_daily(stock_id, trade_date);
 CREATE INDEX IF NOT EXISTS idx_research_reports_stock_id ON research_reports(stock_id);
 CREATE INDEX IF NOT EXISTS idx_investment_decisions_stock_id ON investment_decisions(stock_id);
@@ -257,6 +287,7 @@ INSERT OR IGNORE INTO schema_comments (table_name, column_name, comment_ko, crea
 ('news_items', NULL, '뉴스 수집 및 요약 정보', CURRENT_TIMESTAMP),
 ('disclosures', NULL, '공시 수집 및 요약 정보', CURRENT_TIMESTAMP),
 ('stock_daily_prices', NULL, '관심종목 일봉/이동평균 데이터', CURRENT_TIMESTAMP),
+('stock_daily_market_metrics', NULL, '시장지표 일별 데이터(거래대금/시가총액/순위)', CURRENT_TIMESTAMP),
 ('price_daily', NULL, '일별 시세 정보', CURRENT_TIMESTAMP),
 ('research_reports', NULL, '리서치 보고서 메타정보', CURRENT_TIMESTAMP),
 ('gpt_advisories', NULL, 'GPT 자문 결과 정보', CURRENT_TIMESTAMP),
@@ -349,6 +380,23 @@ INSERT OR IGNORE INTO schema_comments (table_name, column_name, comment_ko, crea
 ('stock_daily_prices', 'source', '데이터 소스(mock/증권사API)', CURRENT_TIMESTAMP),
 ('stock_daily_prices', 'created_at', '생성 시각(YYYY-MM-DD HH:MM:SS TEXT)', CURRENT_TIMESTAMP),
 ('stock_daily_prices', 'updated_at', '수정 시각(YYYY-MM-DD HH:MM:SS TEXT)', CURRENT_TIMESTAMP),
+('stock_daily_market_metrics', 'id', '시장지표 PK', CURRENT_TIMESTAMP),
+('stock_daily_market_metrics', 'stock_id', '종목 FK', CURRENT_TIMESTAMP),
+('stock_daily_market_metrics', 'trade_date', '거래일(YYYY-MM-DD)', CURRENT_TIMESTAMP),
+('stock_daily_market_metrics', 'market', '시장 구분', CURRENT_TIMESTAMP),
+('stock_daily_market_metrics', 'close_price', '종가', CURRENT_TIMESTAMP),
+('stock_daily_market_metrics', 'market_cap', '시가총액', CURRENT_TIMESTAMP),
+('stock_daily_market_metrics', 'listed_shares', '상장주식수', CURRENT_TIMESTAMP),
+('stock_daily_market_metrics', 'trading_volume', '거래량', CURRENT_TIMESTAMP),
+('stock_daily_market_metrics', 'trading_value', '거래대금', CURRENT_TIMESTAMP),
+('stock_daily_market_metrics', 'market_cap_rank', '시가총액 순위', CURRENT_TIMESTAMP),
+('stock_daily_market_metrics', 'trading_value_rank', '전체 시장 거래대금 순위', CURRENT_TIMESTAMP),
+('stock_daily_market_metrics', 'market_trading_value_rank', '시장 내 거래대금 순위', CURRENT_TIMESTAMP),
+('stock_daily_market_metrics', 'trading_value_percentile', '전체 시장 거래대금 백분위', CURRENT_TIMESTAMP),
+('stock_daily_market_metrics', 'market_trading_value_percentile', '시장 내 거래대금 백분위', CURRENT_TIMESTAMP),
+('stock_daily_market_metrics', 'source', '데이터 소스(marcap)', CURRENT_TIMESTAMP),
+('stock_daily_market_metrics', 'created_at', '생성 시각(YYYY-MM-DD HH:MM:SS TEXT)', CURRENT_TIMESTAMP),
+('stock_daily_market_metrics', 'updated_at', '수정 시각(YYYY-MM-DD HH:MM:SS TEXT)', CURRENT_TIMESTAMP),
 ('price_daily', 'id', '일별시세 PK', CURRENT_TIMESTAMP),
 ('price_daily', 'stock_id', '종목 FK', CURRENT_TIMESTAMP),
 ('price_daily', 'trade_date', '거래일(YYYY-MM-DD)', CURRENT_TIMESTAMP),

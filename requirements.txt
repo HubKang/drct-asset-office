@@ -7,3 +7,7 @@ pytest
 httpx
 requests
 tzdata
+pykrx
+pyarrow
+# marcap upstream reference: https://github.com/FinanceData/marcap
+# The upstream repository is vendored in this project because it is not pip-installable as a package.

@@ -232,18 +232,23 @@ drct-asset-office/
 ## 24. KRX 종목 마스터 동기화 설정
 1. 공공데이터포털에서 금융위원회_KRX상장종목정보 API 키 발급
 2. 루트 `.env` 설정
-   - `KRX_API_SERVICE_KEY=...`
-   - `KRX_API_BASE_URL=https://apis.data.go.kr/1160100/service/GetKrxListedInfoService/getItemInfo`
-   - `KRX_API_KEY_MODE=encoded`
-   - `KRX_API_TIMEOUT_SECONDS=15`
-   - `KRX_API_MAX_PAGES=10`
+   - `DATA_API_SERVICE_KEY=...`
+   - `DATA_API_BASE_URL=https://apis.data.go.kr/1160100/service/GetKrxListedInfoService/getItemInfo`
+   - `DATA_API_KEY_MODE=encoded`
+   - `DATA_API_TIMEOUT_SECONDS=15`
+   - `DATA_API_MAX_PAGES=10`
 3. 키 유형 주의
-   - `KRX_API_KEY_MODE=encoded`: serviceKey를 URL query 문자열에 직접 부착(Encoding 키 권장)
-   - `KRX_API_KEY_MODE=decoded`: serviceKey를 `requests params`로 전달(Decoding 키 권장)
-4. 동기화 API 호출 예시
+   - `DATA_API_KEY_MODE=encoded`: serviceKey를 URL query 문자열에 직접 부착(Encoding 키 권장)
+   - `DATA_API_KEY_MODE=decoded`: serviceKey를 `requests params`로 전달(Decoding 키 권장)
+4. 환경변수 구분
+   - `DATA_API_SERVICE_KEY`: data.go.kr 공공데이터포털 전용
+   - `DATA_API_BASE_URL`, `DATA_API_KEY_MODE`, `DATA_API_TIMEOUT_SECONDS`, `DATA_API_MAX_PAGES`: data.go.kr 전용 보조 설정
+   - `KRX_OPEN_API_AUTH_KEY`: KRX Open API 전용
+   - `KRX_API_SERVICE_KEY`: 더 이상 사용하지 않음
+5. 동기화 API 호출 예시
    - `curl -X POST http://127.0.0.1:8000/stocks/sync -H "Content-Type: application/json" -d "{\"markets\":[\"KOSPI\"],\"dry_run\":true,\"deactivate_missing\":true}"`
-5. `/v1/chat/completions`를 curl로 짧은 요청 테스트
-6. 형식 검증 실패 시 `data/debug/llm_failed`의 실패 파일 확인
+6. `/v1/chat/completions`를 curl로 짧은 요청 테스트
+7. 형식 검증 실패 시 `data/debug/llm_failed`의 실패 파일 확인
 
 ## 24. 10D 뉴스·공시 1건 단위 AI 요약
 1. migration 적용

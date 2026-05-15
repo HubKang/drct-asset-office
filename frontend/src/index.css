@@ -637,6 +637,199 @@ a:focus-visible {
   min-width: 0;
 }
 
+.price-search-row {
+  display: grid;
+  grid-template-columns: 140px minmax(220px, 1fr) 100px 100px;
+  gap: 10px;
+  align-items: center;
+}
+
+.price-page-content {
+  display: grid;
+  grid-template-columns: 420px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.price-stock-list-card {
+  min-width: 0;
+}
+
+.price-daily-table-card {
+  min-width: 0;
+}
+
+.price-section-note {
+  margin: 0 0 12px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.price-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.price-meta-card {
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 10px 12px;
+}
+
+.price-meta-label {
+  margin: 0 0 4px;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.price-meta-card strong {
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.price-detail-stack {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.price-detail-section {
+  display: grid;
+  gap: 10px;
+}
+
+.price-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.price-detail-header h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.price-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.price-status-inline {
+  display: inline-flex;
+  align-items: center;
+}
+
+.price-card-note {
+  margin: 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.evidence-note-block {
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 12px;
+  background: #f8fafc;
+  padding: 12px 14px;
+}
+
+.evidence-note-warning {
+  border-color: #fecaca;
+  background: #fff7ed;
+}
+
+.evidence-note-title {
+  margin: 0 0 8px;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.evidence-note-list {
+  margin: 0;
+  padding-left: 18px;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.evidence-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.evidence-options-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+}
+
+.evidence-option-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 10px 12px;
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.evidence-option-check input {
+  margin: 0;
+}
+
+.evidence-option-field {
+  display: grid;
+  gap: 6px;
+}
+
+.evidence-option-field span {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.evidence-json-view {
+  margin: 0;
+  padding: 14px;
+  border-radius: 12px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-size: 12px;
+  line-height: 1.55;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.price-daily-table-shell {
+  overflow-x: auto;
+}
+
+.price-daily-table th,
+.price-daily-table td {
+  white-space: nowrap;
+}
+
+.numeric-cell {
+  text-align: right;
+}
+
 .pool-action-row {
   display: flex;
   flex-wrap: wrap;
@@ -1065,6 +1258,10 @@ a:focus-visible {
     grid-template-columns: 1fr;
   }
 
+  .price-search-row {
+    grid-template-columns: 1fr;
+  }
+
   .watchlist-search-row-pool {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1076,6 +1273,26 @@ a:focus-visible {
 
 @media (max-width: 1200px) {
   .watchlist-pool-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .price-page-content {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .price-meta-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .evidence-options-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .price-meta-grid {
     grid-template-columns: 1fr;
   }
 }

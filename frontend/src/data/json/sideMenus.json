@@ -6,6 +6,7 @@
   { "menuKey": "data", "title": "스키마 코멘트", "routeKey": "schema-comments" },
   { "menuKey": "data", "title": "뉴스 관리", "routeKey": "news" },
   { "menuKey": "data", "title": "공시 관리", "routeKey": "disclosures" },
+  { "menuKey": "data", "title": "가격·캔들 관리", "routeKey": "stock-prices" },
   { "menuKey": "data", "title": "수집 이력", "routeKey": "collection-runs" },
   { "menuKey": "data", "title": "분류 규칙 관리", "routeKey": "classification-rules" },
   { "menuKey": "system", "title": "설정", "routeKey": "settings" }
