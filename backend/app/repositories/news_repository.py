@@ -1,10 +1,11 @@
 ﻿from __future__ import annotations
 
-from sqlalchemy import Select, not_, select
+from sqlalchemy import Select, case, func, not_, select
 from sqlalchemy.orm import Session
 
 from backend.app.entities.news import NewsItem
 from backend.app.entities.stock import Stock
+from backend.app.entities.watchlist import Watchlist
 
 
 class NewsRepository:
@@ -23,10 +24,12 @@ class NewsRepository:
     def get_by_url(self, url: str) -> NewsItem | None:
         return self.db.scalar(select(NewsItem).where(NewsItem.url == url))
 
-    def list(self, stock_id: int | None, keyword: str | None, source: str | None, limit: int, offset: int) -> list[NewsItem]:
+    def list(self, stock_id: int | None, stock_ids: list[int] | None, keyword: str | None, source: str | None, limit: int, offset: int) -> list[NewsItem]:
         stmt: Select[tuple[NewsItem]] = select(NewsItem)
         if stock_id is not None:
             stmt = stmt.where(NewsItem.stock_id == stock_id)
+        elif stock_ids:
+            stmt = stmt.where(NewsItem.stock_id.in_(stock_ids))
         if keyword:
             keyword_like = f"%{keyword}%"
             stmt = stmt.where((NewsItem.title.like(keyword_like)) | (NewsItem.summary.like(keyword_like)))
@@ -35,16 +38,37 @@ class NewsRepository:
         stmt = stmt.order_by(NewsItem.created_at.desc(), NewsItem.id.desc()).limit(limit).offset(offset)
         return list(self.db.scalars(stmt).all())
 
-    def list_with_stock(self, stock_id: int | None, keyword: str | None, source: str | None, limit: int, offset: int) -> list[tuple[NewsItem, Stock | None]]:
+    def list_with_stock(self, stock_id: int | None, stock_ids: list[int] | None, keyword: str | None, source: str | None, limit: int, offset: int) -> list[tuple[NewsItem, Stock | None]]:
         stmt: Select[tuple[NewsItem, Stock | None]] = select(NewsItem, Stock).join(Stock, NewsItem.stock_id == Stock.id, isouter=True)
         if stock_id is not None:
             stmt = stmt.where(NewsItem.stock_id == stock_id)
+        elif stock_ids:
+            stmt = stmt.where(NewsItem.stock_id.in_(stock_ids))
         if keyword:
             keyword_like = f"%{keyword}%"
             stmt = stmt.where((NewsItem.title.like(keyword_like)) | (NewsItem.summary.like(keyword_like)))
         if source:
             stmt = stmt.where(NewsItem.source == source)
         stmt = stmt.order_by(NewsItem.created_at.desc(), NewsItem.id.desc()).limit(limit).offset(offset)
+        return list(self.db.execute(stmt).all())
+
+    def list_collection_targets(self) -> list[tuple[int, str, str, int, int, str | None]]:
+        ai_processed_count = func.sum(case((NewsItem.ai_processed_at.is_not(None), 1), else_=0))
+        stmt = (
+            select(
+                Stock.id,
+                Stock.stock_code,
+                Stock.stock_name,
+                func.count(NewsItem.id),
+                ai_processed_count,
+                func.max(NewsItem.collected_at),
+            )
+            .join(Watchlist, Watchlist.stock_id == Stock.id)
+            .join(NewsItem, NewsItem.stock_id == Stock.id, isouter=True)
+            .where(Watchlist.is_active == 1)
+            .group_by(Stock.id, Stock.stock_code, Stock.stock_name)
+            .order_by(Stock.stock_name.asc())
+        )
         return list(self.db.execute(stmt).all())
 
     def list_recent_by_stock(self, stock_id: int, limit: int) -> list[NewsItem]:

@@ -1,6 +1,7 @@
 import type { AiSummarizeResponse } from "@/types/analysis";
 import type {
   NewsCollectRequest,
+  NewsCollectionTarget,
   NewsCollectResponse,
   NewsCollectSelectedResponse,
   NewsCollectSelectedWatchlistRequest,
@@ -30,6 +31,7 @@ export const newsMockRepository = {
   async listNews(params?: NewsListParams): Promise<NewsItem[]> {
     let result = [...sample];
     if (params?.stock_id !== undefined) result = result.filter((n) => n.stock_id === params.stock_id);
+    if (params?.stock_ids?.length) result = result.filter((n) => n.stock_id !== null && params.stock_ids?.includes(n.stock_id));
     if (params?.keyword) {
       const keyword = params.keyword;
       result = result.filter((n) => n.title.includes(keyword) || (n.summary || "").includes(keyword));
@@ -38,6 +40,18 @@ export const newsMockRepository = {
     const offset = params?.offset ?? 0;
     const limit = params?.limit ?? 50;
     return result.slice(offset, offset + limit);
+  },
+  async listCollectionTargets(): Promise<NewsCollectionTarget[]> {
+    return [
+      {
+        stock_id: 1,
+        stock_code: "005930",
+        stock_name: "삼성전자",
+        news_count: 1,
+        ai_processed_count: 0,
+        latest_collected_at: "2026-05-09T09:10:00+09:00",
+      },
+    ];
   },
   async getNews(newsId: number): Promise<NewsItem> {
     const found = sample.find((n) => n.id === newsId);

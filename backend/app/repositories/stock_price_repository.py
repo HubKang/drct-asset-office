@@ -102,6 +102,53 @@ class StockPriceRepository:
     ) -> list[StockDailyPrice]:
         return self.list_by_stock(stock_id=stock_id, start_date=start_date, end_date=end_date, source=source, limit=limit, offset=offset)
 
+    def list_by_stock_with_technical_indicators(
+        self,
+        stock_id: int,
+        start_date: str | None,
+        end_date: str | None,
+        source: str | None,
+        limit: int,
+        offset: int,
+    ) -> list[dict]:
+        where_clauses = ["p.stock_id = :stock_id"]
+        params: dict[str, object] = {"stock_id": stock_id, "limit": limit, "offset": offset}
+        if start_date:
+            where_clauses.append("p.trade_date >= :start_date")
+            params["start_date"] = start_date
+        if end_date:
+            where_clauses.append("p.trade_date <= :end_date")
+            params["end_date"] = end_date
+        if source:
+            where_clauses.append("p.source = :source")
+            params["source"] = source
+
+        sql = text(
+            f"""
+            SELECT
+                p.id, p.stock_id, p.trade_date,
+                p.open_price, p.high_price, p.low_price, p.close_price,
+                p.change_price, p.change_rate, p.volume, p.trading_value,
+                p.ma5, p.ma10, p.ma20, p.ma60, p.ma120, p.ma240,
+                p.source, p.created_at, p.updated_at,
+                t.rsi14, t.macd, t.macd_signal, t.macd_histogram,
+                t.bb_upper, t.bb_middle, t.bb_lower, t.bb_width, t.bb_close_position,
+                t.atr14, t.atr14_ratio_to_close,
+                t.ma20_gap_pct, t.volume_5_20_ratio,
+                t.source AS technical_indicator_source,
+                t.calculation_version AS technical_indicator_calculation_version
+            FROM stock_daily_prices p
+            LEFT JOIN stock_daily_technical_indicators t
+              ON t.stock_id = p.stock_id
+             AND t.trade_date = p.trade_date
+            WHERE {" AND ".join(where_clauses)}
+            ORDER BY p.trade_date DESC, p.id DESC
+            LIMIT :limit OFFSET :offset
+            """
+        )
+        rows = self.db.execute(sql, params).mappings().all()
+        return [dict(r) for r in rows]
+
     def list_by_stock_asc(self, stock_id: int) -> list[StockDailyPrice]:
         stmt: Select[tuple[StockDailyPrice]] = (
             select(StockDailyPrice)

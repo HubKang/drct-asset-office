@@ -127,7 +127,7 @@ function CollectionRunsPage() {
           <div className="relative md:col-span-2">
             <p className="mb-1 text-xs text-slate-600">수집기명</p>
             <Search size={16} className="absolute left-3 top-8 text-slate-400" />
-            <input className="input-control pl-9" placeholder="collector_name" value={collectorName} onChange={(e) => setCollectorName(e.target.value)} />
+            <input className="input-control pl-9" placeholder="수집명 또는 내부 수집기명" value={collectorName} onChange={(e) => setCollectorName(e.target.value)} />
           </div>
           <div>
             <p className="mb-1 text-xs text-slate-600">상태</p>
@@ -140,7 +140,7 @@ function CollectionRunsPage() {
           </div>
           <div>
             <p className="mb-1 text-xs text-slate-600">대상</p>
-            <input className="input-control" placeholder="target" value={target} onChange={(e) => setTarget(e.target.value)} />
+            <input className="input-control" placeholder="대상 종목코드 또는 target" value={target} onChange={(e) => setTarget(e.target.value)} />
           </div>
           <div>
             <p className="mb-1 text-xs text-slate-600">조회 건수</p>
@@ -190,7 +190,8 @@ function CollectionRunsPage() {
               <thead>
                 <tr>
                   <th>ID</th>
-                  <th>수집기명</th>
+                  <th>수집명</th>
+                  <th>실행유형</th>
                   <th>대상</th>
                   <th>상태</th>
                   <th>시작일시</th>
@@ -204,7 +205,8 @@ function CollectionRunsPage() {
                 {items.map((r) => (
                   <tr key={r.id}>
                     <td>{r.id}</td>
-                    <td>{r.collector_name}</td>
+                    <td>{r.collector_display_name || r.collector_name}</td>
+                    <td>{r.run_type_label || "-"}</td>
                     <td>{r.target || "-"}</td>
                     <td><StatusBadge label={statusLabel[r.status] || r.status} tone={statusTone[r.status] || "slate"} /></td>
                     <td>{r.started_at}</td>
@@ -232,7 +234,10 @@ function CollectionRunsPage() {
         <SectionCard title="상세 메시지">
           <div className="space-y-1 text-sm">
             <p><span className="text-muted">ID:</span> {selectedRun.id}</p>
-            <p><span className="text-muted">수집기명:</span> {selectedRun.collector_name}</p>
+            <p><span className="text-muted">수집명:</span> {selectedRun.collector_display_name || selectedRun.collector_name}</p>
+            <p><span className="text-muted">내부 수집기명:</span> {selectedRun.collector_name}</p>
+            <p><span className="text-muted">실행유형:</span> {selectedRun.run_type_label || "-"}</p>
+            <p><span className="text-muted">그룹:</span> {selectedRun.collector_group_label || "-"}</p>
             <p><span className="text-muted">대상:</span> {selectedRun.target || "-"}</p>
             <p><span className="text-muted">상태:</span> {statusLabel[selectedRun.status] || selectedRun.status}</p>
             <p><span className="text-muted">시작일시:</span> {selectedRun.started_at}</p>

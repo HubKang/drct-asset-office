@@ -9,8 +9,11 @@ from backend.app.api.routes_collectors import router as collectors_router
 from backend.app.api.routes_collection_runs import router as collection_runs_router
 from backend.app.api.routes_classification_rules import router as classification_rules_router
 from backend.app.api.routes_disclosures import router as disclosures_router
+from backend.app.api.routes_gpt_prompt_templates import router as gpt_prompt_templates_router
 from backend.app.api.routes_health import router as health_router
 from backend.app.api.routes_market_metrics import router as market_metrics_router
+from backend.app.api.routes_market_theme_candidates import router as market_theme_candidates_router
+from backend.app.api.routes_market_themes import router as market_themes_router
 from backend.app.api.routes_news import router as news_router
 from backend.app.api.routes_reports import router as reports_router
 from backend.app.api.routes_schema_comments import router as schema_comments_router
@@ -39,6 +42,8 @@ app.include_router(health_router)
 app.include_router(stocks_router)
 app.include_router(stock_prices_router)
 app.include_router(market_metrics_router)
+app.include_router(market_themes_router)
+app.include_router(market_theme_candidates_router)
 app.include_router(watchlist_router)
 app.include_router(schema_comments_router)
 app.include_router(news_router)
@@ -49,3 +54,4 @@ app.include_router(classification_rules_router)
 app.include_router(analysis_router)
 app.include_router(reports_router)
 app.include_router(advisory_packages_router)
+app.include_router(gpt_prompt_templates_router)

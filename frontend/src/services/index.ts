@@ -3,6 +3,8 @@ import { classificationRuleApiRepository } from "@/services/api/classificationRu
 import { collectionRunApiRepository } from "@/services/api/collectionRunApiRepository";
 import { disclosureApiRepository } from "@/services/api/disclosureApiRepository";
 import { newsApiRepository } from "@/services/api/newsApiRepository";
+import { marketThemeApiRepository } from "@/services/api/marketThemeApiRepository";
+import { gptPromptTemplateApiRepository } from "@/services/api/gptPromptTemplateApiRepository";
 import { schemaCommentApiRepository } from "@/services/api/schemaCommentApiRepository";
 import { stockApiRepository } from "@/services/api/stockApiRepository";
 import { stockPriceApiRepository } from "@/services/api/stockPriceApiRepository";
@@ -12,6 +14,8 @@ import { classificationRuleMockRepository } from "@/services/mock/classification
 import { collectionRunMockRepository } from "@/services/mock/collectionRunMockRepository";
 import { disclosureMockRepository } from "@/services/mock/disclosureMockRepository";
 import { newsMockRepository } from "@/services/mock/newsMockRepository";
+import { marketThemeMockRepository } from "@/services/mock/marketThemeMockRepository";
+import { gptPromptTemplateMockRepository } from "@/services/mock/gptPromptTemplateMockRepository";
 import { schemaCommentMockRepository } from "@/services/mock/schemaCommentMockRepository";
 import { stockMockRepository } from "@/services/mock/stockMockRepository";
 import { stockPriceMockRepository } from "@/services/mock/stockPriceMockRepository";
@@ -26,10 +30,12 @@ export const repositories = {
   watchlist: useMock ? watchlistMockRepository : watchlistApiRepository,
   schemaComments: useMock ? schemaCommentMockRepository : schemaCommentApiRepository,
   news: useMock ? newsMockRepository : newsApiRepository,
+  marketThemes: useMock ? marketThemeMockRepository : marketThemeApiRepository,
   disclosures: useMock ? disclosureMockRepository : disclosureApiRepository,
   advisoryPackages: useMock ? advisoryPackageMockRepository : advisoryPackageApiRepository,
   collectionRuns: useMock ? collectionRunMockRepository : collectionRunApiRepository,
   classificationRules: useMock ? classificationRuleMockRepository : classificationRuleApiRepository,
+  gptPromptTemplates: useMock ? gptPromptTemplateMockRepository : gptPromptTemplateApiRepository,
 };
 
 export const dataSourceLabel = useMock ? "mock" : "api";

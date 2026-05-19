@@ -16,6 +16,7 @@ from backend.app.repositories.stock_price_repository import StockPriceRepository
 from backend.app.repositories.stock_repository import StockRepository
 from backend.app.repositories.watchlist_repository import WatchlistRepository
 from backend.app.schemas.stock_price_schema import StockDailyPriceListItem
+from backend.app.services.technical_indicator_service import TechnicalIndicatorService
 
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,7 @@ class StockPriceService:
         self.run_repo = CollectionRunRepository(db)
         self.mock_collector = MockPriceCollector()
         self.pykrx_collector = PykrxPriceCollector()
+        self.technical_indicator_service = TechnicalIndicatorService(db)
 
     @staticmethod
     def _validate_selected_stock_ids(stock_ids: list[int]) -> list[int]:
@@ -162,6 +164,7 @@ class StockPriceService:
         failed_count = 0
         skipped_count = 0
         saved_total = 0
+        technical_saved_total = 0
         results: list[dict] = []
 
         for sid in selected_ids:
@@ -225,8 +228,26 @@ class StockPriceService:
                 )
                 success_count += 1
                 saved_total += saved_count
+                technical_saved_count = 0
+                technical_latest_trade_date = None
+                technical_error = None
+                try:
+                    technical_result = self.technical_indicator_service.calculate_and_save_for_stock(stock.id)
+                    technical_saved_count = int(technical_result["saved_count"])
+                    technical_latest_trade_date = technical_result.get("latest_trade_date")
+                    technical_saved_total += technical_saved_count
+                except Exception as technical_exc:
+                    technical_error = str(technical_exc)
+                    logger.warning(
+                        "technical indicators calculate/save failed: stock_id=%s source=%s error=%s",
+                        stock.id,
+                        source,
+                        technical_error,
+                    )
 
                 result_message = "조회기간 내 신규 거래일 없음" if collected_count == 0 else mode_message
+                if technical_error:
+                    result_message = f"{result_message} / 기술적 지표 저장 경고: {technical_error}"
                 results.append(
                     {
                         "stock_id": stock.id,
@@ -239,6 +260,8 @@ class StockPriceService:
                         "to_date": to_date.isoformat(),
                         "collected_count": collected_count,
                         "saved_count": saved_count,
+                        "technical_indicator_saved_count": technical_saved_count,
+                        "technical_indicator_latest_trade_date": technical_latest_trade_date,
                         "source": source,
                         "message": result_message,
                     }
@@ -296,7 +319,7 @@ class StockPriceService:
         requested = len(selected_ids)
         run_message = (
             f"requested={requested} success={success_count} failed={failed_count} "
-            f"skipped={skipped_count} saved={saved_total} source={source}"
+            f"skipped={skipped_count} saved={saved_total} technical_saved={technical_saved_total} source={source}"
         )
         if failed_count > 0 and success_count == 0:
             self.run_repo.mark_failed(run, run_message)
@@ -313,9 +336,49 @@ class StockPriceService:
             "failed_count": failed_count,
             "skipped_count": skipped_count,
             "saved_count": saved_total,
+            "technical_indicator_saved_count": technical_saved_total,
             "source": source,
             "message": "선택 종목 캔들 수집 완료",
             "results": results,
+        }
+
+    def calculate_and_save_technical_indicators(self, stock_id: int) -> dict:
+        stock = self.stock_repo.get_by_id(stock_id)
+        if not stock:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="stock not found")
+        return self.technical_indicator_service.calculate_and_save_for_stock(stock_id=stock_id)
+
+    def calculate_and_save_technical_indicators_for_selected(self, stock_ids: list[int]) -> dict:
+        selected_ids = self._validate_selected_stock_ids(stock_ids)
+        items: list[dict] = []
+        success_count = 0
+        failed_count = 0
+        saved_total = 0
+        for stock_id in selected_ids:
+            try:
+                result = self.calculate_and_save_technical_indicators(stock_id)
+                success_count += 1
+                saved_total += int(result["saved_count"])
+                items.append({**result, "status": "success"})
+            except Exception as exc:
+                failed_count += 1
+                items.append(
+                    {
+                        "stock_id": stock_id,
+                        "calculated_count": 0,
+                        "saved_count": 0,
+                        "latest_trade_date": None,
+                        "message": str(exc),
+                        "status": "failed",
+                    }
+                )
+        return {
+            "total_requested": len(selected_ids),
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "saved_count": saved_total,
+            "items": items,
+            "message": "선택 종목 기술적 지표 재계산이 완료되었습니다.",
         }
 
     def list_summary(self, keyword: str | None, market: str | None, source: str | None, limit: int, offset: int) -> dict:
@@ -411,7 +474,7 @@ class StockPriceService:
         stock = self.stock_repo.get_by_id(stock_id)
         if not stock:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="stock not found")
-        rows = self.price_repo.list_by_stock(
+        rows = self.price_repo.list_by_stock_with_technical_indicators(
             stock_id=stock_id,
             start_date=start_date,
             end_date=end_date,
@@ -419,33 +482,7 @@ class StockPriceService:
             limit=limit,
             offset=offset,
         )
-        items = [
-            StockDailyPriceListItem(
-                id=row.id,
-                stock_id=row.stock_id,
-                stock_code=stock.stock_code,
-                stock_name=stock.stock_name,
-                trade_date=row.trade_date,
-                open_price=row.open_price,
-                high_price=row.high_price,
-                low_price=row.low_price,
-                close_price=row.close_price,
-                change_price=row.change_price,
-                change_rate=row.change_rate,
-                volume=row.volume,
-                trading_value=row.trading_value,
-                ma5=row.ma5,
-                ma10=row.ma10,
-                ma20=row.ma20,
-                ma60=row.ma60,
-                ma120=row.ma120,
-                ma240=row.ma240,
-                source=row.source,
-                created_at=row.created_at,
-                updated_at=row.updated_at,
-            )
-            for row in rows
-        ]
+        items = [StockDailyPriceListItem(**row, stock_code=stock.stock_code, stock_name=stock.stock_name) for row in rows]
         return {
             "stock_id": stock.id,
             "stock_code": stock.stock_code,

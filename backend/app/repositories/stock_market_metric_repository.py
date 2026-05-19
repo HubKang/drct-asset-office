@@ -85,3 +85,29 @@ class StockMarketMetricRepository:
             .limit(1)
         )
         return self.db.scalars(stmt).first()
+
+    def get_latest_by_stock_id_with_source_priority(
+        self,
+        stock_id: int,
+        source_priority: list[str],
+    ) -> tuple[StockDailyMarketMetric | None, str | None]:
+        if not source_priority:
+            return None, None
+        stmt: Select[tuple[StockDailyMarketMetric]] = (
+            select(StockDailyMarketMetric)
+            .where(
+                StockDailyMarketMetric.stock_id == stock_id,
+                StockDailyMarketMetric.source.in_(source_priority),
+            )
+            .order_by(StockDailyMarketMetric.trade_date.desc(), StockDailyMarketMetric.id.desc())
+            .limit(50)
+        )
+        rows = list(self.db.scalars(stmt).all())
+        if not rows:
+            return None, None
+        rank_map = {source: idx for idx, source in enumerate(source_priority)}
+        max_trade_date = max(row.trade_date for row in rows)
+        latest_rows = [row for row in rows if row.trade_date == max_trade_date]
+        latest_rows.sort(key=lambda row: (rank_map.get(row.source, 9999), -row.id))
+        selected = latest_rows[0]
+        return selected, selected.source

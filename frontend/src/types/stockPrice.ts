@@ -18,6 +18,21 @@ export type StockDailyPrice = {
   ma60: number | null;
   ma120: number | null;
   ma240: number | null;
+  rsi14?: number | null;
+  macd?: number | null;
+  macd_signal?: number | null;
+  macd_histogram?: number | null;
+  bb_upper?: number | null;
+  bb_middle?: number | null;
+  bb_lower?: number | null;
+  bb_width?: number | null;
+  bb_close_position?: string | null;
+  atr14?: number | null;
+  atr14_ratio_to_close?: number | null;
+  ma20_gap_pct?: number | null;
+  volume_5_20_ratio?: number | null;
+  technical_indicator_source?: string | null;
+  technical_indicator_calculation_version?: string | null;
   source: string | null;
   created_at: string;
   updated_at: string;
@@ -40,6 +55,8 @@ export type StockPriceCollectItemResult = {
   to_date?: string | null;
   collected_count?: number;
   saved_count: number;
+  technical_indicator_saved_count?: number;
+  technical_indicator_latest_trade_date?: string | null;
   source?: string | null;
   message: string | null;
 };
@@ -50,9 +67,60 @@ export type StockPriceCollectResult = {
   failed_count: number;
   skipped_count: number;
   saved_count: number;
+  technical_indicator_saved_count?: number;
   source?: string | null;
   message: string;
   results: StockPriceCollectItemResult[];
+};
+
+export type SelectedMarketMetricsCollectRequest = {
+  stock_ids: number[];
+  source?: string;
+};
+
+export type SelectedMarketMetricsCollectItem = {
+  stock_id: number;
+  stock_code: string;
+  stock_name: string;
+  trade_date?: string | null;
+  source: string;
+  status: string;
+  error_type?: string | null;
+  message?: string | null;
+  saved_count: number;
+};
+
+export type SelectedMarketMetricsCollectResult = {
+  success: boolean;
+  source: string;
+  requested_count: number;
+  success_count: number;
+  failed_count: number;
+  skipped_count: number;
+  saved_count: number;
+  message: string;
+  results: SelectedMarketMetricsCollectItem[];
+};
+
+export type TechnicalIndicatorCalculationResult = {
+  stock_id: number;
+  calculated_count: number;
+  saved_count: number;
+  latest_trade_date: string | null;
+  message: string;
+};
+
+export type TechnicalIndicatorBatchCalculationItem = TechnicalIndicatorCalculationResult & {
+  status: string;
+};
+
+export type TechnicalIndicatorBatchCalculationResult = {
+  total_requested: number;
+  success_count: number;
+  failed_count: number;
+  saved_count: number;
+  items: TechnicalIndicatorBatchCalculationItem[];
+  message: string;
 };
 
 export type StockDailyPriceListResponse = {
@@ -117,12 +185,19 @@ export type MarketMetricsSummaryResponse = {
   source: string;
   latest_market_metrics_date: string;
   latest_price_trade_date: string | null;
+  date_gap_days?: number | null;
+  date_gap_label?: string | null;
+  freshness_status?: string | null;
+  freshness_label?: string | null;
+  freshness_message?: string | null;
   is_stale: boolean;
   stale_days: number | null;
   staleness_level: string;
   market: string | null;
   trading_value: number | null;
+  trading_value_display?: string | null;
   market_cap: number | null;
+  market_cap_display?: string | null;
   listed_shares: number | null;
   trading_volume: number | null;
   market_cap_rank: number | null;
@@ -130,6 +205,7 @@ export type MarketMetricsSummaryResponse = {
   market_trading_value_rank: number | null;
   trading_value_percentile: number | null;
   market_trading_value_percentile: number | null;
+  unit_notes?: Record<string, string> | null;
   data_note: string;
 };
 
@@ -157,12 +233,19 @@ export type EvidencePriceSummaryBlock = {
 export type EvidenceMarketMetricsSummaryBlock = {
   latest_market_metrics_date: string;
   latest_price_trade_date: string | null;
+  date_gap_days?: number | null;
+  date_gap_label?: string | null;
+  freshness_status?: string | null;
+  freshness_label?: string | null;
+  freshness_message?: string | null;
   is_stale: boolean;
   stale_days: number | null;
   staleness_level: string;
   market: string | null;
   trading_value: number | null;
+  trading_value_display?: string | null;
   market_cap: number | null;
+  market_cap_display?: string | null;
   listed_shares: number | null;
   trading_volume: number | null;
   trading_value_rank: number | null;
@@ -170,6 +253,7 @@ export type EvidenceMarketMetricsSummaryBlock = {
   trading_value_percentile: number | null;
   market_trading_value_percentile: number | null;
   source: string;
+  unit_notes?: Record<string, string> | null;
   data_note: string;
 };
 
@@ -193,14 +277,37 @@ export type EvidenceRecentCandleItem = {
 };
 
 export type EvidenceSimilarPatternCase = {
-  case_id: string;
-  reference_end_trade_date: string;
-  comparison_start_trade_date: string;
-  comparison_end_trade_date: string;
-  similarity_score: number;
-  historical_next_5d_change_rate: number | null;
-  historical_next_20d_change_rate: number | null;
-  note: string;
+  rank: number;
+  start_date: string;
+  end_date: string;
+  trading_days: number;
+  overall_similarity_score: number;
+  price_similarity_score: number;
+  ma_position_similarity_score: number;
+  volume_similarity_score: number;
+  start_close: number | null;
+  end_close: number | null;
+  return_rate: number | null;
+  max_return_after_pattern: number | null;
+  min_return_after_pattern: number | null;
+  after_5d_return: number | null;
+  after_10d_return: number | null;
+  after_20d_return: number | null;
+  gpt_note_ko: string;
+};
+
+export type EvidenceSimilarPatternCasesBlock = {
+  included: boolean;
+  method: string;
+  search_trading_days: number;
+  pattern_window: number;
+  pattern_ma: number;
+  requested_limit: number;
+  returned_count: number;
+  weight: Record<string, number>;
+  base_pattern: Record<string, unknown> | null;
+  cases: EvidenceSimilarPatternCase[];
+  data_quality_notes: string[];
 };
 
 export type EvidencePriceCandleReferenceBlock = {
@@ -215,7 +322,7 @@ export type EvidencePriceCandleReferenceBlock = {
   end_trade_date: string | null;
   timeframe_summaries: EvidenceTimeframeSummaryBlock[];
   recent_candles: EvidenceRecentCandleItem[];
-  similar_pattern_cases: EvidenceSimilarPatternCase[];
+  similar_pattern_cases: EvidenceSimilarPatternCasesBlock | null;
   caution_note: string | null;
 };
 
@@ -237,6 +344,13 @@ export type AdvisoryEvidencePackageResponse = {
   strategy_horizon_context: EvidenceStrategyHorizonContextBlock | null;
   analysis_horizon_weights: EvidenceAnalysisHorizonWeightsBlock | null;
   scenario_questions_for_gpt: string[];
+  news_summary_block: Record<string, unknown> | null;
+  disclosure_summary_block: Record<string, unknown> | null;
+  risk_summary_block: Record<string, unknown> | null;
+  recent_event_timeline: Record<string, unknown>[];
+  technical_indicators_block: Record<string, unknown> | null;
+  data_freshness_block: Record<string, unknown> | null;
+  executive_summary_for_gpt: Record<string, unknown> | null;
   news_summary: Record<string, unknown> | null;
   disclosure_summary: Record<string, unknown> | null;
   risk_summary: Record<string, unknown> | null;

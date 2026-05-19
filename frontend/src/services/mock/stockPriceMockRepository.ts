@@ -1,11 +1,15 @@
 import type {
   AdvisoryEvidencePackageResponse,
   MarketMetricsSummaryResponse,
+  SelectedMarketMetricsCollectRequest,
+  SelectedMarketMetricsCollectResult,
   SelectedStockPriceCollectRequest,
   StockDailyPriceListResponse,
   StockPriceCollectResult,
   StockPriceFactSummaryResponse,
   StockPriceSummaryResponse,
+  TechnicalIndicatorBatchCalculationResult,
+  TechnicalIndicatorCalculationResult,
 } from "@/types/stockPrice";
 
 export const stockPriceMockRepository = {
@@ -26,6 +30,58 @@ export const stockPriceMockRepository = {
         status: "success",
         saved_count: perStock,
         message: "mock backfill",
+      })),
+    };
+  },
+
+  async collectSelectedMarketMetrics(payload: SelectedMarketMetricsCollectRequest): Promise<SelectedMarketMetricsCollectResult> {
+    return {
+      success: true,
+      source: payload.source ?? "kis_api",
+      requested_count: payload.stock_ids.length,
+      success_count: payload.stock_ids.length,
+      failed_count: 0,
+      skipped_count: 0,
+      saved_count: payload.stock_ids.length,
+      message: "mock market metrics collect complete",
+      results: payload.stock_ids.map((stockId) => ({
+        stock_id: stockId,
+        stock_code: `MOCK-${stockId}`,
+        stock_name: `Mock Stock ${stockId}`,
+        trade_date: "2026-05-19",
+        source: payload.source ?? "kis_api",
+        status: "success",
+        error_type: null,
+        message: "시장지표 갱신 완료",
+        saved_count: 1,
+      })),
+    };
+  },
+
+  async calculateTechnicalIndicators(stockId: number): Promise<TechnicalIndicatorCalculationResult> {
+    return {
+      stock_id: stockId,
+      calculated_count: 252,
+      saved_count: 252,
+      latest_trade_date: "2026-05-13",
+      message: "기술적 지표 계산 및 저장이 완료되었습니다.",
+    };
+  },
+
+  async calculateTechnicalIndicatorsForSelected(stockIds: number[]): Promise<TechnicalIndicatorBatchCalculationResult> {
+    return {
+      total_requested: stockIds.length,
+      success_count: stockIds.length,
+      failed_count: 0,
+      saved_count: stockIds.length * 252,
+      message: "선택 종목 기술적 지표 재계산이 완료되었습니다.",
+      items: stockIds.map((stockId) => ({
+        stock_id: stockId,
+        calculated_count: 252,
+        saved_count: 252,
+        latest_trade_date: "2026-05-13",
+        message: "기술적 지표 계산 및 저장이 완료되었습니다.",
+        status: "success",
       })),
     };
   },
@@ -92,13 +148,13 @@ export const stockPriceMockRepository = {
     };
   },
 
-  async getAdvisoryEvidencePackage(stockId: number): Promise<AdvisoryEvidencePackageResponse> {
+  async getAdvisoryEvidencePackage(
+    stockId: number,
+    params?: { include_news_disclosures_risk?: boolean; include_technical_indicators?: boolean },
+  ): Promise<AdvisoryEvidencePackageResponse> {
+    const includeNews = params?.include_news_disclosures_risk ?? true;
     return {
-      stock: {
-        stock_id: stockId,
-        stock_code: `MOCK-${stockId}`,
-        stock_name: `Mock Stock ${stockId}`,
-      },
+      stock: { stock_id: stockId, stock_code: `MOCK-${stockId}`, stock_name: `Mock Stock ${stockId}` },
       price_summary: {
         latest_trade_date: "2026-05-12",
         latest_close_price: 12345,
@@ -129,7 +185,7 @@ export const stockPriceMockRepository = {
         trading_value_percentile: 78.45,
         market_trading_value_percentile: 82.13,
         source: "marcap",
-        data_note: "시장지표는 2026-02-20 기준이며 최신 가격 데이터 기준일 2026-05-12보다 오래되었습니다.",
+        data_note: "시장지표는 2026-02-20 기준이며 최신 가격 기준일 2026-05-12보다 오래되었습니다.",
       },
       price_candle_reference: {
         included: true,
@@ -146,52 +202,116 @@ export const stockPriceMockRepository = {
           { label: "20d", start_trade_date: "2026-04-15", end_trade_date: "2026-05-12", change_rate: 4.23, highest_price: 13100, lowest_price: 11120 },
         ],
         recent_candles: [],
-        similar_pattern_cases: [
-          {
-            case_id: "pattern_case_1",
-            reference_end_trade_date: "2026-05-12",
-            comparison_start_trade_date: "2025-09-02",
-            comparison_end_trade_date: "2025-09-29",
-            similarity_score: 92.44,
-            historical_next_5d_change_rate: 3.21,
-            historical_next_20d_change_rate: 5.77,
-            note: "과거 유사 패턴은 참고 사례일 뿐이며 향후 주가 움직임을 보장하지 않습니다.",
-          },
-        ],
-        caution_note: "과거 유사 패턴은 참고 사례일 뿐입니다. 유사 패턴 이후 실제 수익률은 예측값이 아니며 자동 매수·매도 신호로 해석하면 안 됩니다.",
+        similar_pattern_cases: {
+          included: true,
+          method: "price_ma_volume_weighted_similarity",
+          search_trading_days: 252,
+          pattern_window: 20,
+          pattern_ma: 20,
+          requested_limit: 5,
+          returned_count: 1,
+          weight: { price_flow: 0.5, ma_position: 0.3, volume_change: 0.2 },
+          base_pattern: { start_date: "2026-04-15", end_date: "2026-05-12", trading_days: 20, latest_close: 12345, selected_ma_value: 11800 },
+          cases: [
+            {
+              rank: 1,
+              start_date: "2025-09-02",
+              end_date: "2025-09-29",
+              trading_days: 20,
+              overall_similarity_score: 92.44,
+              price_similarity_score: 95.1,
+              ma_position_similarity_score: 90.4,
+              volume_similarity_score: 84.9,
+              start_close: 10000,
+              end_close: 10800,
+              return_rate: 8.0,
+              max_return_after_pattern: 9.2,
+              min_return_after_pattern: -2.5,
+              after_5d_return: 3.21,
+              after_10d_return: 4.85,
+              after_20d_return: 5.77,
+              gpt_note_ko: "과거 참고 사례이며 이후 수익률은 예측이 아니라 참고값입니다.",
+            },
+          ],
+          data_quality_notes: ["거래대금은 현재 유사도 계산에 포함하지 않았습니다."],
+        },
+        caution_note: "과거 유사 패턴은 참고 사례입니다.",
       },
-      strategy_horizon_context: {
-        selected_horizon: "both",
-        horizon_notes: [
-          "단기 가격 흐름과 장기 구조 요인을 함께 검토합니다.",
-          "스윙 관점과 장기 관점에서 각각 다른 확인 포인트를 구분합니다.",
-        ],
+      strategy_horizon_context: { selected_horizon: "both", horizon_notes: ["단기/장기 관점을 함께 검토합니다."] },
+      analysis_horizon_weights: { swing_weight: 0.5, long_term_weight: 0.5 },
+      scenario_questions_for_gpt: ["자동 매수/매도 판단 없이 근거 중심으로 정리해 주세요."],
+      news_summary_block: {
+        included: includeNews,
+        lookback_days: 30,
+        max_items: 5,
+        total_found: includeNews ? 1 : 0,
+        items: includeNews ? [{ news_id: 1, title: "샘플 뉴스", published_at: "2026-05-12" }] : [],
       },
-      analysis_horizon_weights: {
-        swing_weight: 0.5,
-        long_term_weight: 0.5,
+      disclosure_summary_block: {
+        included: includeNews,
+        lookback_days: 30,
+        max_items: 5,
+        total_found: includeNews ? 1 : 0,
+        items: includeNews ? [{ disclosure_id: 1, title: "샘플 공시", disclosed_at: "2026-05-11" }] : [],
       },
-      scenario_questions_for_gpt: [
-        "최근 가격 요약과 캔들 참조 데이터를 바탕으로 현재 주가 위치를 설명해 주세요.",
-        "자동 매수·매도 판단 없이, 사용자가 직접 판단할 수 있도록 근거 중심으로 정리해 주세요.",
-        "과거 유사 패턴이 제공된 경우, 이를 예측이 아니라 참고 사례로만 해석해 주세요.",
-      ],
+      risk_summary_block: {
+        included: includeNews,
+        lookback_days: 30,
+        news_risk_counts: { high: 0, medium: 0, low: 0, unknown: 1 },
+        disclosure_risk_counts: { high: 0, medium: 1, low: 0, unknown: 0 },
+        combined_risk_counts: { high: 0, medium: 1, low: 0, unknown: 1 },
+        highest_risk_level: includeNews ? "medium" : "unknown",
+        risk_summary_ko: includeNews ? "최근 30일 기준 medium Risk 항목이 일부 확인되었습니다." : "옵션 비활성화 상태입니다.",
+        caution_notes_ko: ["투자 판단 자동화가 아닌 참고 자료입니다."],
+      },
+      recent_event_timeline: includeNews ? [{ event_date: "2026-05-12", source_type: "news", title: "샘플 뉴스", summary: "요약" }] : [],
+      technical_indicators_block: {
+        included: true,
+        as_of_date: "2026-05-12",
+        lookback_days: 252,
+        indicators: {
+          rsi: { period: 14, value: 54.2, status_ko: "중립에 가까운 구간", note_ko: "참고 지표" },
+          macd: { fast_period: 12, slow_period: 26, signal_period: 9, macd: 12.1, signal: 10.4, histogram: 1.7, status_ko: "단기 평균이 장기 평균보다 높은 구간", note_ko: "참고 지표" },
+          bollinger_bands: { period: 20, stddev_multiplier: 2, upper_band: 13200, middle_band: 12400, lower_band: 11600, band_width: 0.129, close_position: "중심선 부근", note_ko: "참고 지표" },
+          atr: { period: 14, value: 210.2, atr_ratio_to_close: 1.7, note_ko: "변동성 참고" },
+          moving_average_gap: { close: 12345, ma5_gap_pct: 1.2, ma10_gap_pct: 1.8, ma20_gap_pct: 2.4, ma60_gap_pct: 4.1, ma120_gap_pct: 6.8, ma240_gap_pct: 9.3, note_ko: "위치 참고값" },
+          volume_ratio: { volume: 345678, volume_ma5: 332100, volume_ma20: 301220, volume_5_20_ratio: 1.1025, note_ko: "거래량 참고값" },
+        },
+        interpretation_notes_ko: ["기술적 지표는 보조 참고 정보입니다."],
+        data_quality_notes: [],
+      },
+      data_freshness_block: {
+        package_generated_at: "2026-05-13 10:52:27",
+        price: { source: "pykrx", latest_trade_date: "2026-05-12", status_ko: "가격 데이터가 확인되었습니다." },
+        market_metrics: { source: "marcap", latest_trade_date: "2026-02-20", stale: true, status_ko: "시장지표 기준일이 가격 기준일보다 오래되었습니다." },
+        technical_indicators: { source: "stored", latest_trade_date: "2026-05-12", calculation_version: "v1", status_ko: "저장된 기술적 지표를 사용했습니다." },
+        news_disclosures: { lookback_days: 30, news_count: includeNews ? 1 : 0, disclosure_count: includeNews ? 1 : 0, status_ko: "최근 뉴스·공시 데이터가 확인되었습니다." },
+        overall_data_confidence: { level: "medium", summary_ko: "가격과 기술적 지표는 확인되지만 시장지표 최신성은 별도 확인이 필요합니다." },
+        notes_ko: ["시장지표는 source와 기준일을 함께 확인해야 합니다."],
+      },
+      executive_summary_for_gpt: {
+        summary_ko: "이 패키지는 가격, 기술적 지표, 뉴스·공시·Risk, 유사 패턴을 함께 검토하기 위한 GPT 분석용 근거 자료입니다.",
+        key_points: ["가격과 기술적 지표 기준일 확인", "시장지표 source/stale 확인", "유사 패턴은 참고 사례"],
+        analyst_focus_points: ["가격 흐름과 기술적 지표 방향 일치 여부", "뉴스·공시·Risk와 가격 연결 검토", "시장지표 기준일 주의"],
+        caution_points: ["자동 매수/매도 판단 아님", "목표가 단정 금지", "최종 판단은 사용자 수행"],
+        data_confidence_level: "medium",
+        generated_basis: {
+          price: true,
+          market_metrics: true,
+          technical_indicators: true,
+          news_disclosures_risk: includeNews,
+          similar_patterns: true,
+        },
+      },
       news_summary: null,
       disclosure_summary: null,
       risk_summary: null,
       theme_summary: null,
       telegram_theme_summary: null,
-      data_quality_notes: [
-        "시장지표 데이터가 최신 가격 데이터보다 오래되었습니다. 현재 수급 판단에는 최신성 차이를 반드시 고려해야 합니다.",
-        "시장지표는 2026-02-20 기준이며 최신 가격 데이터 기준일 2026-05-12보다 오래되었습니다.",
-        "과거 유사 패턴은 참고 사례일 뿐이며 향후 주가 움직임을 보장하지 않습니다.",
-        "유사 패턴 이후 실제 수익률은 예측값이 아니라 시나리오 검토용 참고 정보입니다.",
-      ],
+      data_quality_notes: ["거래대금은 현재 유사도 계산에 포함하지 않았습니다."],
       instruction_guardrails: [
-        "이 패키지는 GPT 자문을 위한 사실형 근거 자료로만 사용해야 합니다.",
-        "이 패키지만으로 자동 매수, 매도, 목표가 결론을 생성하지 마십시오.",
-        "시장지표가 오래되었거나 누락된 경우, 해석 전에 그 한계를 먼저 명시하십시오.",
-        "과거 유사 패턴은 예측이 아니라 참고 사례로만 다루십시오.",
+        "이 패키지는 자동 투자 판단 자료가 아닙니다.",
+        "자동 매수/매도, 목표가 단정 표현을 생성하지 않습니다.",
       ],
       generated_at: "2026-05-13 10:52:27",
     };

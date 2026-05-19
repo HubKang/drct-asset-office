@@ -14,3 +14,8 @@ class CollectionRunResponse(BaseModel):
     finished_at: str | None
     message: str | None
     created_at: str
+    collector_display_name: str | None = None
+    run_type: str | None = None
+    run_type_label: str | None = None
+    collector_group: str | None = None
+    collector_group_label: str | None = None

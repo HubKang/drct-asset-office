@@ -10,6 +10,9 @@ from backend.app.schemas.stock_price_schema import (
     StockDailyPriceListResponse,
     StockPriceFactSummaryResponse,
     StockPriceSummaryResponse,
+    TechnicalIndicatorBatchCalculateRequest,
+    TechnicalIndicatorBatchCalculateResponse,
+    TechnicalIndicatorCalculateResponse,
 )
 from backend.app.services.stock_price_service import StockPriceService
 
@@ -41,6 +44,19 @@ def list_stock_price_summary(
         limit=limit,
         offset=offset,
     )
+
+
+@router.post("/technical-indicators/calculate/stock/{stock_id}", response_model=TechnicalIndicatorCalculateResponse)
+def calculate_technical_indicators_for_stock(stock_id: int, db: Session = Depends(get_db)) -> TechnicalIndicatorCalculateResponse:
+    return StockPriceService(db).calculate_and_save_technical_indicators(stock_id=stock_id)
+
+
+@router.post("/technical-indicators/calculate/selected", response_model=TechnicalIndicatorBatchCalculateResponse)
+def calculate_technical_indicators_for_selected(
+    payload: TechnicalIndicatorBatchCalculateRequest,
+    db: Session = Depends(get_db),
+) -> TechnicalIndicatorBatchCalculateResponse:
+    return StockPriceService(db).calculate_and_save_technical_indicators_for_selected(stock_ids=payload.stock_ids)
 
 
 @router.get("/stock-prices/{stock_id}/summary", response_model=StockPriceFactSummaryResponse)

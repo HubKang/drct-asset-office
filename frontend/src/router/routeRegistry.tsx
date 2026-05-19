@@ -1,8 +1,10 @@
-import AdvisoryPackagePage from "@/pages/AdvisoryPackagePage";
+﻿import AdvisoryPackagePage from "@/pages/AdvisoryPackagePage";
 import ClassificationRulesPage from "@/pages/ClassificationRulesPage";
 import CollectionRunsPage from "@/pages/CollectionRunsPage";
 import DashboardPage from "@/pages/DashboardPage";
 import DisclosuresPage from "@/pages/DisclosuresPage";
+import GptPromptSettingsPage from "@/pages/GptPromptSettingsPage";
+import MarketThemesPage from "@/pages/MarketThemesPage";
 import NewsPage from "@/pages/NewsPage";
 import SchemaCommentsPage from "@/pages/SchemaCommentsPage";
 import StockPricesPage from "@/pages/StockPricesPage";
@@ -28,13 +30,8 @@ export const routeRegistry: RouteItem[] = [
   { routeKey: "disclosures", path: "/disclosures", title: "공시 관리", description: "DART 공시 수집/요약 결과 조회", component: <DisclosuresPage /> },
   { routeKey: "collection-runs", path: "/collection-runs", title: "수집 이력", description: "수집 실행 로그 확인", component: <CollectionRunsPage /> },
   { routeKey: "classification-rules", path: "/classification-rules", title: "분류 규칙 관리", description: "뉴스/공시 자동 분류 규칙 관리", component: <ClassificationRulesPage /> },
-  {
-    routeKey: "settings",
-    path: "/settings",
-    title: "설정",
-    description: "시스템 설정 준비중",
-    component: <div className="rounded-xl border border-slate-200 bg-white p-6">설정 화면 준비중입니다.</div>,
-  },
+  { routeKey: "market-themes", path: "/market-themes", title: "시장 테마 관리", description: "테마 등록/종목 매핑 관리", component: <MarketThemesPage /> },
+  { routeKey: "settings", path: "/settings", title: "설정", description: "GPT 분석 프롬프트 설정 관리", component: <GptPromptSettingsPage /> },
 ];
 
 export const routeRegistryMap = Object.fromEntries(routeRegistry.map((route) => [route.routeKey, route]));

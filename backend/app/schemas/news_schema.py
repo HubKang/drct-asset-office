@@ -26,3 +26,12 @@ class NewsResponse(BaseModel):
     ai_processed_at: str | None
     ai_summary_error: str | None
     created_at: str
+
+
+class NewsCollectionTargetResponse(BaseModel):
+    stock_id: int
+    stock_code: str
+    stock_name: str
+    news_count: int
+    ai_processed_count: int
+    latest_collected_at: str | None

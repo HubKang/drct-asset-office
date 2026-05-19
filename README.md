@@ -317,3 +317,92 @@ WHERE ai_summary LIKE '{%'
   - `POST /classification-rules/{rule_id}/deactivate`
 - 초기 규칙 적용
   - `sqlite3 db/drct_asset.sqlite3 < backend/app/sql/migrations/005_create_classification_rules.sql`
+
+## 27. 19단계: GPT 자문 근거 패키지 뉴스·공시·Risk 연결
+- API: `GET /advisory/evidence-package/{stock_id}`
+- 신규 옵션: `include_news_disclosures_risk` (기본값 `true`)
+- 신규 응답 블록:
+  - `news_summary_block` (최근 30일, 최대 5건)
+  - `disclosure_summary_block` (최근 30일, 최대 5건)
+  - `risk_summary_block` (`high/medium/low/unknown` 집계 및 요약)
+  - `recent_event_timeline` (뉴스+공시 통합 최신순 흐름)
+- 화면: 가격·캔들 관리 > GPT 자문 패키지 옵션에 `뉴스·공시·Risk 포함` 체크박스 추가
+- 주의:
+  - 뉴스·공시·Risk는 투자 판단 참고 자료이며 자동 매수/매도 판단이 아님
+  - 목표가 단정/확정 예측 문구를 생성하지 않음
+  - 최종 투자 판단은 사용자 책임
+
+## 28. 20단계: 유사 패턴 분석 고도화
+- API: `GET /advisory/evidence-package/{stock_id}`
+- 핵심 옵션:
+  - `include_similar_patterns=true`
+  - `pattern_window` (기본 20, 5~60)
+  - `similar_case_limit` (기본 5, 1~20)
+  - `pattern_ma` (5/10/20/60/120/240)
+  - `search_trading_days` (기본 252)
+- 계산식(로직 기반, LLM 미사용):
+  - 가격 흐름 유사도 50%
+  - 이평선 위치 유사도 30%
+  - 거래량 변화 유사도 20%
+- 응답 위치:
+  - `price_candle_reference.similar_pattern_cases`
+- 해석 원칙:
+  - 과거 유사 패턴은 예측이 아니라 참고 사례
+  - 후속 5/10/20거래일 수익률은 과거 참고값
+  - 자동 매수/매도 판단, 목표가 단정 문구 금지
+
+## 29. 21단계: 기술적 지표 확장
+- API: `GET /advisory/evidence-package/{stock_id}`
+- 옵션: `include_technical_indicators=true|false` (기본 true)
+- 추가 블록: `technical_indicators_block`
+- 포함 지표:
+  - RSI(14)
+  - MACD(12,26,9)
+  - 볼린저밴드(20, 2σ)
+  - ATR(14)
+  - 이평선 이격도(ma5/10/20/60/120/240)
+  - 거래량 5일/20일 비율
+- 원칙:
+  - 기술적 지표는 참고 정보
+  - 자동 매수/매도 판단 아님
+  - 데이터 부족 시 null과 품질 메모 제공
+
+## 30. 21.5단계: 기술적 지표 DB 저장 구조 추가
+- 신규 테이블: `stock_daily_technical_indicators`
+- key/index:
+  - unique: `(stock_id, trade_date)`
+  - 조회 인덱스: `stock_id`, `trade_date`, `stock_id+trade_date`
+- 저장 방식:
+  - 가격 수집 후 기술적 지표를 계산하여 upsert 저장
+  - `calculation_version`(기본 `v1`)과 `source` 저장
+- API:
+  - 수동 계산: `POST /technical-indicators/calculate/stock/{stock_id}`
+  - 자문 패키지: 저장 지표 우선, 미존재 시 실시간 계산 fallback
+  - `technical_indicators_block.source`: `stored` 또는 `calculated_fallback`
+
+## 31. 21.6단계: 가격 조회 화면 지표 표시 + 수동 재계산 버튼
+- 가격 일봉 조회 API에 기술적 지표 조인(LEFT JOIN) 반영
+- 화면 컬럼 추가:
+  - `RSI14`, `MACD Hist`, `BB 위치`, `ATR%`, `MA20 이격도`, `거래량 5/20`
+- 관심종목 Pool 액션 추가:
+  - `기술적 지표 재계산` 버튼(선택 캔들 수집 버튼 옆)
+- 수동 재계산 API:
+  - 단건: `POST /technical-indicators/calculate/stock/{stock_id}`
+  - 선택 다건: `POST /technical-indicators/calculate/selected`
+
+## 32. 21.7-1단계: 데이터 기준일/품질 표시 강화 + KRX Open API 테스트
+- GPT 근거 패키지에 `data_freshness_block` 추가
+- 기준일/품질 표시 강화:
+  - 가격 기준일/source
+  - 시장지표 기준일/source/stale
+  - 기술적 지표 기준일/source
+  - 뉴스·공시 lookback/건수
+- KRX 테스트 스크립트:
+  - `scripts/test_krx_open_api_market_metrics.py`
+  - 인증키 원문은 출력하지 않고 로딩 여부/길이만 확인
+
+## 33. 21.7-2단계: GPT 자문 패키지 사용성 개선
+- `executive_summary_for_gpt` 블록 추가
+- GPT 옵션 영역 그룹화
+- `GPT 분석 요청문+JSON 복사` 버튼 추가
+- 관심종목 Pool → 가격 수집 → 기술지표 재계산 → GPT 패키지 생성 흐름 안내 강화

@@ -23,10 +23,20 @@ export type NewsItem = {
 
 export type NewsListParams = {
   stock_id?: number;
+  stock_ids?: number[];
   keyword?: string;
   source?: string;
   limit?: number;
   offset?: number;
+};
+
+export type NewsCollectionTarget = {
+  stock_id: number;
+  stock_code: string;
+  stock_name: string;
+  news_count: number;
+  ai_processed_count: number;
+  latest_collected_at: string | null;
 };
 
 export type NewsCollectRequest = {

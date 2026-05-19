@@ -8,7 +8,7 @@ import { repositories } from "@/services";
 import type { DisclosureCollectSelectedResponse } from "@/types/disclosure";
 import type { NewsCollectSelectedResponse } from "@/types/news";
 import type { Stock } from "@/types/stock";
-import type { StockPriceCollectResult } from "@/types/stockPrice";
+import type { SelectedMarketMetricsCollectResult, StockPriceCollectResult } from "@/types/stockPrice";
 import type { Watchlist, WatchlistBulkCreateResponse } from "@/types/watchlist";
 
 const STOCK_TYPES = [
@@ -33,13 +33,46 @@ const WATCHLIST_STATE_OPTIONS = [
   { value: -1, label: "전체" },
 ] as const;
 
+type WatchlistStatus = "not_registered" | "active" | "inactive";
+
 function securityTypeLabel(value?: string | null): string {
   return STOCK_TYPES.find((item) => item.value === value)?.label ?? "기타";
+}
+
+function stockStatusLabel(isActive?: number | null): string {
+  return isActive === 1 ? "정상" : "비활성";
+}
+
+function watchlistStatusLabel(status: WatchlistStatus): string {
+  if (status === "active") return "관심등록";
+  if (status === "inactive") return "관심비활성";
+  return "미등록";
 }
 
 function formatDate(value?: string | null): string {
   if (!value) return "-";
   return value.slice(0, 10);
+}
+
+function safeMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    const candidates = [record.detail, record.message, record.error];
+    for (const value of candidates) {
+      if (typeof value === "string" && value.trim()) return value;
+      if (Array.isArray(value) && value.length > 0) {
+        const first = value[0];
+        if (typeof first === "string") return first;
+        if (first && typeof first === "object") {
+          const msg = (first as Record<string, unknown>).msg;
+          if (typeof msg === "string" && msg.trim()) return msg;
+        }
+      }
+    }
+  }
+  return fallback;
 }
 
 function WatchlistPage() {
@@ -50,6 +83,7 @@ function WatchlistPage() {
   const [stocks, setStocks] = useState<Stock[]>([]);
   const [watchlist, setWatchlist] = useState<Watchlist[]>([]);
   const [watchlistStockIds, setWatchlistStockIds] = useState<number[]>([]);
+  const [watchlistStatusByStockId, setWatchlistStatusByStockId] = useState<Record<number, WatchlistStatus>>({});
 
   const [stockMarket, setStockMarket] = useState("");
   const [stockSecurityType, setStockSecurityType] = useState("common_stock");
@@ -74,30 +108,78 @@ function WatchlistPage() {
 
   const [bulkResult, setBulkResult] = useState<WatchlistBulkCreateResponse | null>(null);
   const [selectedNewsCollectResult, setSelectedNewsCollectResult] = useState<NewsCollectSelectedResponse | null>(null);
-  const [selectedDisclosureCollectResult, setSelectedDisclosureCollectResult] = useState<DisclosureCollectSelectedResponse | null>(null);
+  const [selectedDisclosureCollectResult, setSelectedDisclosureCollectResult] =
+    useState<DisclosureCollectSelectedResponse | null>(null);
   const [selectedPriceCollectResult, setSelectedPriceCollectResult] = useState<StockPriceCollectResult | null>(null);
+  const [selectedMarketMetricsCollectResult, setSelectedMarketMetricsCollectResult] =
+    useState<SelectedMarketMetricsCollectResult | null>(null);
+  const [selectedTechnicalIndicatorResult, setSelectedTechnicalIndicatorResult] = useState<{
+    success_count: number;
+    failed_count: number;
+    saved_count: number;
+  } | null>(null);
+
+  const fetchAllWatchlistRows = async (): Promise<Watchlist[]> => {
+    const pageLimit = 500;
+    const maxPages = 50;
+    const rows: Watchlist[] = [];
+    let offset = 0;
+
+    for (let page = 0; page < maxPages; page += 1) {
+      const pageRows = await repositories.watchlist.list({
+        is_active: undefined,
+        limit: pageLimit,
+        offset,
+      });
+      rows.push(...pageRows);
+
+      if (pageRows.length < pageLimit) {
+        break;
+      }
+      offset += pageLimit;
+    }
+
+    return rows;
+  };
 
   const loadStocks = async (nextOffset = stockOffset) => {
     setLoadingStocks(true);
     setStockError("");
     try {
-      const [stockRows, activeStockIds] = await Promise.all([
-        repositories.stocks.list({
-          market: stockMarket || undefined,
-          security_type: stockSecurityType || undefined,
-          keyword: stockKeyword || undefined,
-          is_active: 1,
-          limit: stockLimit,
-          offset: nextOffset,
-        }),
-        repositories.watchlist.listStockIds(),
-      ]);
-      setStocks(stockRows);
-      setWatchlistStockIds(activeStockIds);
+      const stockRows = await repositories.stocks.list({
+        market: stockMarket || undefined,
+        security_type: stockSecurityType || undefined,
+        keyword: stockKeyword || undefined,
+        is_active: 1,
+        limit: stockLimit,
+        offset: nextOffset,
+      });
+
+      setStocks(Array.isArray(stockRows) ? stockRows : []);
     } catch (error) {
-      setStockError(error instanceof Error ? error.message : "전체 종목 조회 중 오류가 발생했습니다.");
+      setStockError(safeMessage(error, "전체 종목 조회 중 오류가 발생했습니다."));
+      setStocks([]);
+      return;
     } finally {
       setLoadingStocks(false);
+    }
+
+    try {
+      const [activeStockIds, allWatchlistRows] = await Promise.all([
+        repositories.watchlist.listStockIds(),
+        fetchAllWatchlistRows(),
+      ]);
+      const nextStatusByStockId: Record<number, WatchlistStatus> = {};
+      allWatchlistRows.forEach((item) => {
+        nextStatusByStockId[item.stock_id] = item.is_active === 1 ? "active" : "inactive";
+      });
+      setWatchlistStockIds(Array.isArray(activeStockIds) ? activeStockIds : []);
+      setWatchlistStatusByStockId(nextStatusByStockId);
+    } catch (error) {
+      // watchlist 상태 맵 조회 실패는 전체 종목 검색 결과 노출을 막지 않도록 분리한다.
+      setWatchlistStockIds([]);
+      setWatchlistStatusByStockId({});
+      setStockError((prev) => prev || safeMessage(error, "관심종목 상태 조회 중 오류가 발생했습니다."));
     }
   };
 
@@ -112,9 +194,10 @@ function WatchlistPage() {
         limit: watchlistLimit,
         offset: nextOffset,
       });
-      setWatchlist(rows);
+      setWatchlist(Array.isArray(rows) ? rows : []);
     } catch (error) {
-      setWatchlistError(error instanceof Error ? error.message : "관심종목 Pool 조회 중 오류가 발생했습니다.");
+      setWatchlistError(safeMessage(error, "관심종목 Pool 조회 중 오류가 발생했습니다."));
+      setWatchlist([]);
     } finally {
       setLoadingWatchlist(false);
     }
@@ -128,11 +211,16 @@ function WatchlistPage() {
     void refreshAll(0, 0);
   }, []);
 
-  const registeredStockIdSet = useMemo(() => new Set(watchlistStockIds), [watchlistStockIds]);
+  const registeredStockIdSet = useMemo(
+    () => new Set(Object.keys(watchlistStatusByStockId).map((id) => Number(id))),
+    [watchlistStatusByStockId],
+  );
+
   const currentSelectableStockIds = useMemo(
     () => stocks.filter((item) => !registeredStockIdSet.has(item.id)).map((item) => item.id),
     [stocks, registeredStockIdSet],
   );
+
   const allSelectableStocksChecked =
     currentSelectableStockIds.length > 0 && currentSelectableStockIds.every((id) => selectedStockIds.includes(id));
 
@@ -149,10 +237,12 @@ function WatchlistPage() {
     setSelectedNewsCollectResult(null);
     setSelectedDisclosureCollectResult(null);
     setSelectedPriceCollectResult(null);
+    setSelectedMarketMetricsCollectResult(null);
+    setSelectedTechnicalIndicatorResult(null);
     try {
       await action();
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "작업 실행 중 오류가 발생했습니다.");
+      setActionError(safeMessage(error, "작업 실행 중 오류가 발생했습니다."));
     } finally {
       setActionLoading("");
     }
@@ -163,6 +253,7 @@ function WatchlistPage() {
       setActionError("추가할 종목을 먼저 선택해 주세요.");
       return;
     }
+
     await runAction("bulk-add", async () => {
       const result = await repositories.watchlist.bulkAdd({
         stock_ids: selectedStockIds,
@@ -185,9 +276,7 @@ function WatchlistPage() {
         sort: "date",
       });
       setSelectedNewsCollectResult(result);
-      setActionMessage(
-        `선택 뉴스 수집 완료: 요청 ${result.requested_count}건, 성공 ${result.success_count}건, 실패 ${result.failed_count}건`,
-      );
+      setActionMessage(`선택 뉴스 수집 완료: 요청 ${result.requested_count}건, 성공 ${result.success_count}건, 실패 ${result.failed_count}건`);
     });
   };
 
@@ -200,9 +289,7 @@ function WatchlistPage() {
         page_count: 100,
       });
       setSelectedDisclosureCollectResult(result);
-      setActionMessage(
-        `선택 공시 수집 완료: 요청 ${result.requested_count}건, 성공 ${result.success_count}건, 실패 ${result.failed_count}건`,
-      );
+      setActionMessage(`선택 공시 수집 완료: 요청 ${result.requested_count}건, 성공 ${result.success_count}건, 실패 ${result.failed_count}건`);
     });
   };
 
@@ -215,9 +302,39 @@ function WatchlistPage() {
         source: "pykrx",
       });
       setSelectedPriceCollectResult(result);
-      setActionMessage(
-        `선택 캔들 수집 완료: 요청 ${result.requested_count}건, 성공 ${result.success_count}건, 실패 ${result.failed_count}건, 저장 ${result.saved_count}건, source=pykrx`,
-      );
+      setActionMessage(`선택 캔들 수집 완료: 요청 ${result.requested_count}건, 성공 ${result.success_count}건, 실패 ${result.failed_count}건, 저장 ${result.saved_count}건`);
+    });
+  };
+
+  const onCollectSelectedMarketMetrics = async () => {
+    if (selectedWatchlistStockIds.length === 0) {
+      setActionError("시장지표를 갱신할 관심종목을 선택해 주세요.");
+      return;
+    }
+
+    await runAction("collect-selected-market-metrics", async () => {
+      const result = await repositories.stockPrices.collectSelectedMarketMetrics({
+        stock_ids: selectedWatchlistStockIds,
+        source: "kis_api",
+      });
+      setSelectedMarketMetricsCollectResult(result);
+      setActionMessage(`선택 시장지표 갱신 완료: 성공 ${result.success_count}건, 실패 ${result.failed_count}건`);
+    });
+  };
+
+  const onRecalculateSelectedTechnicalIndicators = async () => {
+    if (selectedWatchlistStockIds.length === 0) {
+      setActionError("기술적 지표를 재계산할 종목을 선택해 주세요.");
+      return;
+    }
+    await runAction("recalculate-selected-technical-indicators", async () => {
+      const result = await repositories.stockPrices.calculateTechnicalIndicatorsForSelected(selectedWatchlistStockIds);
+      setSelectedTechnicalIndicatorResult({
+        success_count: result.success_count,
+        failed_count: result.failed_count,
+        saved_count: result.saved_count,
+      });
+      setActionMessage(`기술적 지표 재계산 완료: 성공 ${result.success_count}건, 실패 ${result.failed_count}건, 저장 ${result.saved_count}건`);
     });
   };
 
@@ -232,45 +349,41 @@ function WatchlistPage() {
     <div className="space-y-4">
       <PageHeader
         title="관심종목 Pool"
-        description="관심종목 Pool은 DrCT에셋에서 뉴스, 공시, 가격·캔들 데이터를 우선 수집하고 분석할 종목 목록입니다."
+        description="관심종목 Pool은 뉴스, 공시, 가격·캔들 데이터 수집 및 분석의 기준이 되는 종목 목록입니다."
         action={<StatusBadge label={`활성 ${watchlistStockIds.length}건`} tone="blue" />}
       />
 
       <SectionCard title="빠른 작업">
-        <p className="watchlist-quick-desc">
-          선택한 관심종목의 실제 운영 데이터를 기준으로 수집합니다. 캔들 수집은 항상 PyKRX 기준으로 실행되며, 최초 수집은 최근 2년,
-          이후에는 자동으로 증분 또는 최신 구간 재조회로 분기됩니다.
-        </p>
         <div className="pool-action-row">
           <button className="btn btn-primary" disabled={selectedWatchlistStockIds.length === 0 || actionLoading === "collect-selected-news"} onClick={() => void onCollectSelectedNews()}>
             {actionLoading === "collect-selected-news" ? "선택 뉴스 수집 중..." : "선택 뉴스 수집"}
           </button>
-          <button
-            className="btn btn-primary"
-            disabled={selectedWatchlistStockIds.length === 0 || actionLoading === "collect-selected-disclosures"}
-            onClick={() => void onCollectSelectedDisclosures()}
-          >
+          <button className="btn btn-primary" disabled={selectedWatchlistStockIds.length === 0 || actionLoading === "collect-selected-disclosures"} onClick={() => void onCollectSelectedDisclosures()}>
             {actionLoading === "collect-selected-disclosures" ? "선택 공시 수집 중..." : "선택 공시 수집"}
           </button>
           <button className="btn btn-secondary" disabled={selectedWatchlistStockIds.length === 0 || actionLoading === "collect-selected-candles"} onClick={() => void onCollectSelectedCandles()}>
             {actionLoading === "collect-selected-candles" ? "선택 캔들 수집 중..." : "선택 캔들 수집"}
           </button>
+          <button className="btn btn-secondary" disabled={selectedWatchlistStockIds.length === 0 || actionLoading === "collect-selected-market-metrics"} onClick={() => void onCollectSelectedMarketMetrics()}>
+            {actionLoading === "collect-selected-market-metrics" ? "시장지표 갱신 중..." : "선택 시장지표 갱신"}
+          </button>
+          <button className="btn btn-secondary" disabled={selectedWatchlistStockIds.length === 0 || actionLoading === "recalculate-selected-technical-indicators"} onClick={() => void onRecalculateSelectedTechnicalIndicators()}>
+            {actionLoading === "recalculate-selected-technical-indicators" ? "기술적 지표 재계산 중..." : "기술적 지표 재계산"}
+          </button>
           <button className="btn btn-secondary" onClick={() => navigate("/advisory-packages")}>
             GPT 자문 패키지
           </button>
         </div>
-        <p className="watchlist-quick-note">
-          관심종목을 선택하면 뉴스, 공시, 캔들 수집을 각각 실행할 수 있습니다. 운영 화면에서는 캔들 수집 source를 노출하지 않고 PyKRX로 고정합니다.
-        </p>
 
         {actionMessage ? <div className="inline-result">{actionMessage}</div> : null}
         {actionError ? <div className="inline-result inline-error">{actionError}</div> : null}
+
         {bulkResult ? (
           <div className="inline-result">
-            요청 {bulkResult.requested_count}건 / 추가 {bulkResult.inserted_count}건 / 재활성화 {bulkResult.reactivated_count}건 / 건너뜀{" "}
-            {bulkResult.skipped_count}건
+            요청 {bulkResult.requested_count}건 / 추가 {bulkResult.inserted_count}건 / 재활성화 {bulkResult.reactivated_count}건 / 건너뜀 {bulkResult.skipped_count}건
           </div>
         ) : null}
+
         {selectedNewsCollectResult ? (
           <div className={`inline-result ${selectedNewsCollectResult.failed_count > 0 ? "inline-warning" : "inline-success"}`}>선택 뉴스 수집 결과 확인 완료</div>
         ) : null}
@@ -279,6 +392,12 @@ function WatchlistPage() {
         ) : null}
         {selectedPriceCollectResult ? (
           <div className={`inline-result ${selectedPriceCollectResult.failed_count > 0 ? "inline-warning" : "inline-success"}`}>선택 캔들 수집 결과 확인 완료</div>
+        ) : null}
+        {selectedMarketMetricsCollectResult ? (
+          <div className={`inline-result ${selectedMarketMetricsCollectResult.failed_count > 0 ? "inline-warning" : "inline-success"}`}>선택 시장지표 갱신 결과 확인 완료</div>
+        ) : null}
+        {selectedTechnicalIndicatorResult ? (
+          <div className={`inline-result ${selectedTechnicalIndicatorResult.failed_count > 0 ? "inline-warning" : "inline-success"}`}>선택 기술적 지표 재계산 결과 확인 완료</div>
         ) : null}
       </SectionCard>
 
@@ -360,13 +479,14 @@ function WatchlistPage() {
                     <th>종목명</th>
                     <th>시장</th>
                     <th>종목유형</th>
-                    <th>활성</th>
-                    <th>추가상태</th>
+                    <th>종목상태</th>
+                    <th>관심상태</th>
                   </tr>
                 </thead>
                 <tbody>
                   {stocks.map((stock) => {
-                    const registered = registeredStockIdSet.has(stock.id);
+                    const watchlistStatus = watchlistStatusByStockId[stock.id] ?? "not_registered";
+                    const registered = watchlistStatus !== "not_registered";
                     return (
                       <tr key={stock.id}>
                         <td className="selection-cell">
@@ -386,10 +506,10 @@ function WatchlistPage() {
                         <td>{stock.market || "-"}</td>
                         <td>{securityTypeLabel(stock.security_type)}</td>
                         <td>
-                          <StatusBadge label={stock.is_active === 1 ? "활성" : "비활성"} tone={stock.is_active === 1 ? "emerald" : "slate"} />
+                          <StatusBadge label={stockStatusLabel(stock.is_active)} tone={stock.is_active === 1 ? "emerald" : "slate"} />
                         </td>
                         <td>
-                          <StatusBadge label={registered ? "등록됨" : "추가 가능"} tone={registered ? "blue" : "slate"} />
+                          <StatusBadge label={watchlistStatusLabel(watchlistStatus)} tone={watchlistStatus === "active" ? "blue" : watchlistStatus === "inactive" ? "amber" : "slate"} />
                         </td>
                       </tr>
                     );
@@ -486,7 +606,7 @@ function WatchlistPage() {
                     <th>종목명</th>
                     <th>시장</th>
                     <th>종목유형</th>
-                    <th>상태</th>
+                    <th>관심상태</th>
                     <th>등록일</th>
                   </tr>
                 </thead>
@@ -506,7 +626,7 @@ function WatchlistPage() {
                           />
                           {item.is_active === 1 ? (
                             <button className="btn btn-secondary btn-table-sm" onClick={() => void onToggleWatchlistActive(item, 0)} disabled={actionLoading === `watchlist-${item.id}-0`}>
-                              비활성
+                              비활성화
                             </button>
                           ) : (
                             <button className="btn btn-secondary btn-table-sm" onClick={() => void onToggleWatchlistActive(item, 1)} disabled={actionLoading === `watchlist-${item.id}-1`}>
@@ -520,7 +640,7 @@ function WatchlistPage() {
                       <td>{item.market || "-"}</td>
                       <td>{securityTypeLabel(item.security_type)}</td>
                       <td>
-                        <StatusBadge label={item.is_active === 1 ? "활성" : "비활성"} tone={item.is_active === 1 ? "emerald" : "slate"} />
+                        <StatusBadge label={item.is_active === 1 ? "관심등록" : "관심비활성"} tone={item.is_active === 1 ? "emerald" : "amber"} />
                       </td>
                       <td>{formatDate(item.registered_at)}</td>
                     </tr>

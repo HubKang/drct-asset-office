@@ -2,11 +2,15 @@ import { apiRequest } from "@/services/api/apiClient";
 import type {
   AdvisoryEvidencePackageResponse,
   MarketMetricsSummaryResponse,
+  SelectedMarketMetricsCollectRequest,
+  SelectedMarketMetricsCollectResult,
   SelectedStockPriceCollectRequest,
   StockDailyPriceListResponse,
   StockPriceCollectResult,
   StockPriceFactSummaryResponse,
   StockPriceSummaryResponse,
+  TechnicalIndicatorBatchCalculationResult,
+  TechnicalIndicatorCalculationResult,
 } from "@/types/stockPrice";
 
 export const stockPriceApiRepository = {
@@ -14,6 +18,23 @@ export const stockPriceApiRepository = {
     apiRequest<StockPriceCollectResult>("/stock-prices/collect/selected", {
       method: "POST",
       body: JSON.stringify(payload),
+    }),
+  collectSelectedMarketMetrics: (payload: SelectedMarketMetricsCollectRequest) =>
+    apiRequest<SelectedMarketMetricsCollectResult>("/market-metrics/collect/selected", {
+      method: "POST",
+      body: JSON.stringify({
+        stock_ids: payload.stock_ids,
+        source: payload.source ?? "kis_api",
+      }),
+    }),
+  calculateTechnicalIndicators: (stockId: number) =>
+    apiRequest<TechnicalIndicatorCalculationResult>(`/technical-indicators/calculate/stock/${stockId}`, {
+      method: "POST",
+    }),
+  calculateTechnicalIndicatorsForSelected: (stockIds: number[]) =>
+    apiRequest<TechnicalIndicatorBatchCalculationResult>("/technical-indicators/calculate/selected", {
+      method: "POST",
+      body: JSON.stringify({ stock_ids: stockIds }),
     }),
   listSummary: (params?: { keyword?: string; market?: string; source?: string; limit?: number; offset?: number }) => {
     const search = new URLSearchParams();
@@ -56,10 +77,15 @@ export const stockPriceApiRepository = {
       lookback_days?: number;
       recent_candle_limit?: number;
       include_raw_candles?: boolean;
+      include_similar_patterns?: boolean;
       pattern_window?: number;
       similar_case_limit?: number;
+      pattern_ma?: number;
+      search_trading_days?: number;
       strategy_horizon?: string;
       include_scenario_questions?: boolean;
+      include_news_disclosures_risk?: boolean;
+      include_technical_indicators?: boolean;
     },
   ) => {
     const search = new URLSearchParams();
@@ -71,11 +97,20 @@ export const stockPriceApiRepository = {
     if (params?.lookback_days !== undefined) search.set("lookback_days", String(params.lookback_days));
     if (params?.recent_candle_limit !== undefined) search.set("recent_candle_limit", String(params.recent_candle_limit));
     if (params?.include_raw_candles !== undefined) search.set("include_raw_candles", String(params.include_raw_candles));
+    if (params?.include_similar_patterns !== undefined) search.set("include_similar_patterns", String(params.include_similar_patterns));
     if (params?.pattern_window !== undefined) search.set("pattern_window", String(params.pattern_window));
     if (params?.similar_case_limit !== undefined) search.set("similar_case_limit", String(params.similar_case_limit));
+    if (params?.pattern_ma !== undefined) search.set("pattern_ma", String(params.pattern_ma));
+    if (params?.search_trading_days !== undefined) search.set("search_trading_days", String(params.search_trading_days));
     if (params?.strategy_horizon) search.set("strategy_horizon", params.strategy_horizon);
     if (params?.include_scenario_questions !== undefined) {
       search.set("include_scenario_questions", String(params.include_scenario_questions));
+    }
+    if (params?.include_news_disclosures_risk !== undefined) {
+      search.set("include_news_disclosures_risk", String(params.include_news_disclosures_risk));
+    }
+    if (params?.include_technical_indicators !== undefined) {
+      search.set("include_technical_indicators", String(params.include_technical_indicators));
     }
     const query = search.toString();
     return apiRequest<AdvisoryEvidencePackageResponse>(

@@ -121,6 +121,37 @@ CREATE TABLE IF NOT EXISTS stock_daily_market_metrics (
     FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS stock_daily_technical_indicators (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    stock_id INTEGER NOT NULL,
+    trade_date TEXT NOT NULL,
+    rsi14 REAL,
+    macd REAL,
+    macd_signal REAL,
+    macd_histogram REAL,
+    bb_upper REAL,
+    bb_middle REAL,
+    bb_lower REAL,
+    bb_width REAL,
+    bb_close_position TEXT,
+    atr14 REAL,
+    atr14_ratio_to_close REAL,
+    ma5_gap_pct REAL,
+    ma10_gap_pct REAL,
+    ma20_gap_pct REAL,
+    ma60_gap_pct REAL,
+    ma120_gap_pct REAL,
+    ma240_gap_pct REAL,
+    volume_ma5 REAL,
+    volume_ma20 REAL,
+    volume_5_20_ratio REAL,
+    source TEXT NOT NULL DEFAULT 'calculated',
+    calculation_version TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS price_daily (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     stock_id INTEGER NOT NULL,
@@ -245,6 +276,70 @@ CREATE TABLE IF NOT EXISTS classification_rules (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS gpt_prompt_templates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    prompt_key TEXT NOT NULL UNIQUE,
+    prompt_name TEXT NOT NULL,
+    prompt_type TEXT NOT NULL,
+    description TEXT,
+    template_text TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    is_default INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS market_themes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    theme_name TEXT NOT NULL,
+    theme_code TEXT NOT NULL UNIQUE,
+    theme_type TEXT NOT NULL,
+    description TEXT,
+    keywords TEXT NOT NULL DEFAULT '[]',
+    parent_theme_id INTEGER,
+    is_supply_theme INTEGER NOT NULL DEFAULT 0,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (parent_theme_id) REFERENCES market_themes(id)
+);
+
+CREATE TABLE IF NOT EXISTS market_theme_stocks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    theme_id INTEGER NOT NULL,
+    stock_id INTEGER NOT NULL,
+    mapping_source TEXT NOT NULL DEFAULT 'manual',
+    confidence_score REAL,
+    is_primary INTEGER NOT NULL DEFAULT 0,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (theme_id, stock_id),
+    FOREIGN KEY (theme_id) REFERENCES market_themes(id) ON DELETE CASCADE,
+    FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS market_theme_stock_candidates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    theme_id INTEGER NOT NULL,
+    stock_id INTEGER NOT NULL,
+    candidate_source TEXT NOT NULL,
+    confidence_score REAL,
+    matched_keywords TEXT,
+    evidence_count INTEGER NOT NULL DEFAULT 1,
+    evidence_summary TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    review_memo TEXT,
+    reviewed_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (theme_id, stock_id, candidate_source),
+    FOREIGN KEY (theme_id) REFERENCES market_themes(id) ON DELETE CASCADE,
+    FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS schema_comments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     table_name TEXT NOT NULL,
@@ -266,12 +361,18 @@ CREATE INDEX IF NOT EXISTS idx_stock_daily_prices_stock_date ON stock_daily_pric
 CREATE INDEX IF NOT EXISTS idx_stock_daily_prices_stock_trade_date ON stock_daily_prices(stock_id, trade_date);
 CREATE INDEX IF NOT EXISTS idx_stock_daily_prices_trade_date ON stock_daily_prices(trade_date);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_stock_daily_market_metrics_stock_date_source ON stock_daily_market_metrics(stock_id, trade_date, source);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_stock_daily_technical_indicators_stock_date ON stock_daily_technical_indicators(stock_id, trade_date);
 CREATE INDEX IF NOT EXISTS idx_stock_daily_market_metrics_trade_date ON stock_daily_market_metrics(trade_date);
 CREATE INDEX IF NOT EXISTS idx_stock_daily_market_metrics_stock_id ON stock_daily_market_metrics(stock_id);
 CREATE INDEX IF NOT EXISTS idx_stock_daily_market_metrics_source ON stock_daily_market_metrics(source);
 CREATE INDEX IF NOT EXISTS idx_stock_daily_market_metrics_trade_rank ON stock_daily_market_metrics(trade_date, trading_value_rank);
 CREATE INDEX IF NOT EXISTS idx_stock_daily_market_metrics_trade_market_rank ON stock_daily_market_metrics(trade_date, market, market_trading_value_rank);
 CREATE INDEX IF NOT EXISTS idx_stock_daily_market_metrics_stock_trade_source ON stock_daily_market_metrics(stock_id, trade_date, source);
+CREATE INDEX IF NOT EXISTS idx_stock_daily_technical_indicators_stock_id ON stock_daily_technical_indicators(stock_id);
+CREATE INDEX IF NOT EXISTS idx_stock_daily_technical_indicators_trade_date ON stock_daily_technical_indicators(trade_date);
+CREATE INDEX IF NOT EXISTS idx_stock_daily_technical_indicators_stock_trade_date ON stock_daily_technical_indicators(stock_id, trade_date);
+CREATE INDEX IF NOT EXISTS idx_stock_daily_technical_indicators_rsi14 ON stock_daily_technical_indicators(rsi14);
+CREATE INDEX IF NOT EXISTS idx_stock_daily_technical_indicators_volume_ratio ON stock_daily_technical_indicators(volume_5_20_ratio);
 CREATE INDEX IF NOT EXISTS idx_price_daily_stock_date ON price_daily(stock_id, trade_date);
 CREATE INDEX IF NOT EXISTS idx_research_reports_stock_id ON research_reports(stock_id);
 CREATE INDEX IF NOT EXISTS idx_investment_decisions_stock_id ON investment_decisions(stock_id);
@@ -280,6 +381,34 @@ CREATE INDEX IF NOT EXISTS idx_analysis_source_items_stock_source ON analysis_so
 CREATE INDEX IF NOT EXISTS idx_analysis_source_items_report ON analysis_source_items(report_id);
 CREATE INDEX IF NOT EXISTS idx_classification_rules_target ON classification_rules(target_type, rule_group, is_active);
 CREATE INDEX IF NOT EXISTS idx_classification_rules_priority ON classification_rules(priority);
+CREATE INDEX IF NOT EXISTS idx_gpt_prompt_templates_prompt_type ON gpt_prompt_templates(prompt_type);
+CREATE INDEX IF NOT EXISTS idx_market_themes_active_sort ON market_themes(is_active, sort_order);
+CREATE INDEX IF NOT EXISTS idx_market_themes_type ON market_themes(theme_type);
+CREATE INDEX IF NOT EXISTS idx_market_themes_supply_active_sort ON market_themes(is_supply_theme, is_active, sort_order);
+CREATE INDEX IF NOT EXISTS idx_market_theme_stocks_theme_active ON market_theme_stocks(theme_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_market_theme_stocks_stock_active ON market_theme_stocks(stock_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_market_theme_stock_candidates_status_updated ON market_theme_stock_candidates(status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_market_theme_stock_candidates_theme_stock ON market_theme_stock_candidates(theme_id, stock_id);
+
+INSERT OR IGNORE INTO market_themes
+(theme_name, theme_code, theme_type, description, keywords, parent_theme_id, is_supply_theme, is_active, sort_order, created_at, updated_at)
+VALUES
+('AI', 'ai', 'theme', 'AI 관련 시장 테마', '["AI","인공지능","생성형AI","데이터센터","GPU","LLM","AI반도체"]', NULL, 0, 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+('반도체', 'semiconductor', 'theme', '반도체 관련 시장 테마', '["반도체","메모리","파운드리","HBM","시스템반도체","장비"]', NULL, 0, 1, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+('전력기기', 'power_equipment', 'theme', '전력기기 관련 시장 테마', '["전력기기","변압기","송전","배전","전력망","HVDC","초고압","변전소","전선"]', NULL, 0, 1, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+('전력망', 'power_grid', 'theme', '전력망 관련 시장 테마', '["전력망","송전망","배전망","변전","HVDC"]', NULL, 0, 1, 4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+('변압기', 'transformer', 'theme', '변압기 관련 시장 테마', '["변압기","초고압","배전변압기","송전"]', NULL, 0, 1, 5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+('방산', 'defense', 'theme', '방위산업 관련 시장 테마', '["방산","방위산업","무기체계","미사일","장갑차","K9","국방","수출계약"]', NULL, 0, 1, 6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+('조선', 'shipbuilding', 'theme', '조선 관련 시장 테마', '["조선","선박","LNG선","해양플랜트"]', NULL, 0, 1, 7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+('로봇', 'robot', 'theme', '로봇 관련 시장 테마', '["로봇","협동로봇","자동화","휴머노이드"]', NULL, 0, 1, 8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+('바이오', 'bio', 'theme', '바이오 관련 시장 테마', '["바이오","임상","신약","FDA","품목허가","항암제","치료제"]', NULL, 0, 1, 9, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+('원전', 'nuclear_power', 'theme', '원전 관련 시장 테마', '["원전","원자력","SMR","원전수출"]', NULL, 0, 1, 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+('2차전지', 'secondary_battery', 'theme', '2차전지 관련 시장 테마', '["2차전지","배터리","양극재","음극재","전해질"]', NULL, 0, 1, 11, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+('데이터센터', 'data_center', 'theme', '데이터센터 관련 시장 테마', '["데이터센터","서버","전력수요","냉각"]', NULL, 0, 1, 12, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+('우주항공', 'aerospace', 'theme', '우주항공 관련 시장 테마', '["우주항공","위성","발사체","항공엔진"]', NULL, 0, 1, 13, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+('화장품', 'cosmetics', 'theme', '화장품 관련 시장 테마', '["화장품","K뷰티","면세","수출"]', NULL, 0, 1, 14, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+('엔터', 'entertainment', 'theme', '엔터테인먼트 관련 시장 테마', '["엔터","콘서트","음반","IP"]', NULL, 0, 1, 15, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+('자동차부품', 'auto_parts', 'theme', '자동차부품 관련 시장 테마', '["자동차부품","전장","모듈","완성차공급"]', NULL, 0, 1, 16, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
 
 INSERT OR IGNORE INTO schema_comments (table_name, column_name, comment_ko, created_at) VALUES
 ('stocks', NULL, '종목 마스터 정보', CURRENT_TIMESTAMP),

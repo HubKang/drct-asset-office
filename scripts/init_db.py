@@ -111,6 +111,55 @@ def ensure_stock_daily_market_metrics_table(conn: sqlite3.Connection) -> None:
     )
 
 
+def ensure_stock_daily_technical_indicators_table(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS stock_daily_technical_indicators (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            stock_id INTEGER NOT NULL,
+            trade_date TEXT NOT NULL,
+            rsi14 REAL,
+            macd REAL,
+            macd_signal REAL,
+            macd_histogram REAL,
+            bb_upper REAL,
+            bb_middle REAL,
+            bb_lower REAL,
+            bb_width REAL,
+            bb_close_position TEXT,
+            atr14 REAL,
+            atr14_ratio_to_close REAL,
+            ma5_gap_pct REAL,
+            ma10_gap_pct REAL,
+            ma20_gap_pct REAL,
+            ma60_gap_pct REAL,
+            ma120_gap_pct REAL,
+            ma240_gap_pct REAL,
+            volume_ma5 REAL,
+            volume_ma20 REAL,
+            volume_5_20_ratio REAL,
+            source TEXT NOT NULL DEFAULT 'calculated',
+            calculation_version TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE CASCADE
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_stock_daily_technical_indicators_stock_date
+            ON stock_daily_technical_indicators(stock_id, trade_date);
+        CREATE INDEX IF NOT EXISTS idx_stock_daily_technical_indicators_stock_id
+            ON stock_daily_technical_indicators(stock_id);
+        CREATE INDEX IF NOT EXISTS idx_stock_daily_technical_indicators_trade_date
+            ON stock_daily_technical_indicators(trade_date);
+        CREATE INDEX IF NOT EXISTS idx_stock_daily_technical_indicators_stock_trade_date
+            ON stock_daily_technical_indicators(stock_id, trade_date);
+        CREATE INDEX IF NOT EXISTS idx_stock_daily_technical_indicators_rsi14
+            ON stock_daily_technical_indicators(rsi14);
+        CREATE INDEX IF NOT EXISTS idx_stock_daily_technical_indicators_volume_ratio
+            ON stock_daily_technical_indicators(volume_5_20_ratio);
+        """
+    )
+
+
 def main() -> None:
     project_root = PROJECT_ROOT
     if not DATABASE_URL.startswith("sqlite:///"):
@@ -145,6 +194,7 @@ def main() -> None:
         ensure_stock_master_columns(conn)
         ensure_stock_daily_prices_table(conn)
         ensure_stock_daily_market_metrics_table(conn)
+        ensure_stock_daily_technical_indicators_table(conn)
         conn.commit()
 
     print(f"[DB] DATABASE_URL={DATABASE_URL}")

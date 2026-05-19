@@ -1,15 +1,26 @@
-import { Search } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import EmptyState from "@/components/common/EmptyState";
+import { X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import StatusBadge from "@/components/common/StatusBadge";
-import codes from "@/data/json/codes.json";
 import { repositories } from "@/services";
 import type { AiSummarizeResponse } from "@/types/analysis";
-import type { Disclosure, DisclosureCollectResponse } from "@/types/disclosure";
-import type { Stock } from "@/types/stock";
+import type { Disclosure, DisclosureCollectResponse, DisclosureCollectSelectedResponse } from "@/types/disclosure";
+import type { Watchlist } from "@/types/watchlist";
+
+type WatchlistDisclosureTarget = {
+  stock_id: number;
+  stock_code: string;
+  stock_name: string;
+  disclosure_count: number;
+  ai_processed_count: number;
+  latest_disclosed_at: string | null;
+};
+
+function disclosureStatusMeta(item: Disclosure): { label: string; tone: "emerald" | "slate" } {
+  if (item.ai_summary || item.ai_processed_at) return { label: "완료", tone: "emerald" };
+  return { label: "미처리", tone: "slate" };
+}
 
 function riskMeta(risk?: string | null): { label: string; variant: "risk-high" | "risk-medium" | "risk-low" | "risk-unknown" } {
   const value = (risk || "").toLowerCase();
@@ -27,479 +38,417 @@ function importanceMeta(score?: number | null): { label: string; variant: "impor
 }
 
 function eventLabel(eventType?: string | null): string {
-  if (!eventType || eventType === "unknown") return "기타";
+  if (!eventType || eventType.toLowerCase() === "unknown") return "기타";
   return eventType;
 }
 
-function DisclosuresPage() {
-  const navigate = useNavigate();
+function formatDate(value?: string | null): string {
+  if (!value) return "-";
+  return value.replace("T", " ").slice(0, 16);
+}
 
+function DisclosuresPage() {
+  const [targets, setTargets] = useState<WatchlistDisclosureTarget[]>([]);
   const [items, setItems] = useState<Disclosure[]>([]);
-  const [stocks, setStocks] = useState<Stock[]>([]);
   const [selectedDisclosure, setSelectedDisclosure] = useState<Disclosure | null>(null);
-  const [selectedDisclosureIds, setSelectedDisclosureIds] = useState<number[]>([]);
+  const [isDisclosureDrawerOpen, setIsDisclosureDrawerOpen] = useState(false);
+
+  const [currentStockId, setCurrentStockId] = useState<number | null>(null);
+  const [checkedStockIds, setCheckedStockIds] = useState<number[]>([]);
+  const [watchlistKeyword, setWatchlistKeyword] = useState("");
+  const [watchlistFilter, setWatchlistFilter] = useState("");
+
+  const [collectDays, setCollectDays] = useState("30");
+  const [collectPageCount, setCollectPageCount] = useState("100");
+  const [sortOrder, setSortOrder] = useState("date");
+
+  const [watchlistLoading, setWatchlistLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const [stockId, setStockId] = useState("");
-  const [keyword, setKeyword] = useState("");
-  const [disclosureType, setDisclosureType] = useState("");
-  const [limit, setLimit] = useState("50");
-  const [offset, setOffset] = useState("0");
-
-  const [collectStockId, setCollectStockId] = useState("");
-  const [collectDays, setCollectDays] = useState("30");
-  const [collectPageCount, setCollectPageCount] = useState("100");
   const [collectLoading, setCollectLoading] = useState(false);
   const [collectError, setCollectError] = useState("");
-  const [collectResult, setCollectResult] = useState<DisclosureCollectResponse | null>(null);
+  const [collectResult, setCollectResult] = useState<DisclosureCollectResponse | DisclosureCollectSelectedResponse | null>(null);
 
   const [summarizeLoading, setSummarizeLoading] = useState(false);
   const [summarizeError, setSummarizeError] = useState("");
   const [summarizeResult, setSummarizeResult] = useState<AiSummarizeResponse | null>(null);
 
-  const stockNameMap = useMemo(() => {
-    const map = new Map<number, string>();
-    stocks.forEach((stock) => map.set(stock.id, `${stock.stock_name} (${stock.stock_code})`));
-    return map;
-  }, [stocks]);
+  const filteredTargets = useMemo(() => {
+    const q = watchlistFilter.trim().toLowerCase();
+    if (!q) return targets;
+    return targets.filter((target) => target.stock_name.toLowerCase().includes(q) || target.stock_code.toLowerCase().includes(q));
+  }, [targets, watchlistFilter]);
 
-  const renderStockLabel = (item: Disclosure) => {
-    if (item.stock_name && item.stock_code) return `${item.stock_name} (${item.stock_code})`;
-    if (item.stock_name) return item.stock_name;
-    if (item.stock_code) return item.stock_code;
-    if (item.stock_id && stockNameMap.get(item.stock_id)) return stockNameMap.get(item.stock_id) as string;
-    return "-";
+  const sortedItems = useMemo(() => {
+    const copied = [...items];
+    if (sortOrder === "score") {
+      return copied.sort((a, b) => (b.ai_importance_score ?? b.importance_score ?? 0) - (a.ai_importance_score ?? a.importance_score ?? 0));
+    }
+    return copied.sort((a, b) => String(b.disclosed_at ?? "").localeCompare(String(a.disclosed_at ?? "")));
+  }, [items, sortOrder]);
+
+  const processedCount = sortedItems.filter((item) => Boolean(item.ai_summary || item.ai_processed_at)).length;
+  const activeTarget = useMemo(() => targets.find((target) => target.stock_id === currentStockId), [targets, currentStockId]);
+
+  const resolveTargetStockIds = (): number[] => {
+    if (checkedStockIds.length > 0) return checkedStockIds;
+    if (currentStockId) return [currentStockId];
+    return [];
   };
 
-  const renderStockCell = (item: Disclosure) => {
-    if (item.stock_name && item.stock_code) {
-      return (
-        <div className="stock-cell">
-          <strong>{item.stock_name}</strong>
-          <span>{item.stock_code}</span>
-        </div>
-      );
-    }
-    if (item.stock_name) return <div className="stock-cell"><strong>{item.stock_name}</strong></div>;
-    if (item.stock_code) return <div className="stock-cell"><span>{item.stock_code}</span></div>;
-    if (item.stock_id && stockNameMap.get(item.stock_id)) {
-      return <div className="stock-cell"><strong>{stockNameMap.get(item.stock_id) as string}</strong></div>;
-    }
-    return "-";
+  const buildTargets = (watchlist: Watchlist[], disclosures: Disclosure[]): WatchlistDisclosureTarget[] => {
+    return watchlist.map((item) => {
+      const stockDisclosures = disclosures.filter((disclosure) => disclosure.stock_id === item.stock_id);
+      const latestDisclosedAt = stockDisclosures
+        .map((disclosure) => disclosure.disclosed_at)
+        .filter((value): value is string => Boolean(value))
+        .sort((a, b) => b.localeCompare(a))[0] ?? null;
+      return {
+        stock_id: item.stock_id,
+        stock_code: item.stock_code,
+        stock_name: item.stock_name,
+        disclosure_count: stockDisclosures.length,
+        ai_processed_count: stockDisclosures.filter((disclosure) => Boolean(disclosure.ai_summary || disclosure.ai_processed_at)).length,
+        latest_disclosed_at: latestDisclosedAt,
+      };
+    });
   };
 
-  const loadDisclosures = async (overrides?: { stock_id?: number; offset?: number }) => {
+  const loadTargets = async () => {
+    setWatchlistLoading(true);
+    try {
+      const watchlist = await repositories.watchlist.list({ is_active: 1, limit: 200, offset: 0 });
+      const disclosures = await repositories.disclosures.listDisclosures({ limit: 500, offset: 0 });
+      const nextTargets = buildTargets(watchlist, disclosures);
+      setTargets(nextTargets);
+      setCurrentStockId((prev) => prev ?? nextTargets[0]?.stock_id ?? null);
+    } finally {
+      setWatchlistLoading(false);
+    }
+  };
+
+  const loadDisclosuresByStock = async (stockId: number | null) => {
+    if (!stockId) {
+      setItems([]);
+      setSelectedDisclosure(null);
+      return;
+    }
     setLoading(true);
     setError("");
     try {
-      const data = await repositories.disclosures.listDisclosures({
-        stock_id: overrides?.stock_id ?? (stockId ? Number(stockId) : undefined),
-        keyword: keyword || undefined,
-        disclosure_type: disclosureType || undefined,
-        limit: Number(limit) || 50,
-        offset: overrides?.offset ?? (Number(offset) || 0),
-      });
+      const data = await repositories.disclosures.listDisclosures({ stock_id: stockId, limit: 100, offset: 0 });
       setItems(data);
-      setSelectedDisclosure((prev) => {
-        if (data.length === 0) return null;
-        if (!prev) return data[0];
-        const found = data.find((item) => item.id === prev.id);
-        return found ?? data[0];
-      });
-    } catch {
-      setError("공시 데이터를 불러오지 못했습니다.");
+      setSelectedDisclosure(data[0] ?? null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "공시 목록 조회 중 오류가 발생했습니다.");
+      setItems([]);
+      setSelectedDisclosure(null);
     } finally {
       setLoading(false);
     }
   };
 
-  const loadStocks = async () => {
-    try {
-      const data = await repositories.stocks.list();
-      setStocks(data);
-      if (data.length > 0 && !collectStockId) setCollectStockId(String(data[0].id));
-    } catch {
-      // ignore stock load errors here
-    }
-  };
-
   useEffect(() => {
-    loadDisclosures();
-    loadStocks();
+    void loadTargets();
   }, []);
 
-  const onSearch = async (e: FormEvent) => {
-    e.preventDefault();
-    setOffset("0");
-    setSelectedDisclosure(null);
-    setSelectedDisclosureIds([]);
-    await loadDisclosures({ offset: 0 });
-  };
-
-  const onReset = async () => {
-    setStockId("");
-    setKeyword("");
-    setDisclosureType("");
-    setLimit("50");
-    setOffset("0");
-    setSelectedDisclosure(null);
-    setSelectedDisclosureIds([]);
-    setSummarizeError("");
+  useEffect(() => {
+    setCollectResult(null);
     setSummarizeResult(null);
-    setTimeout(() => {
-      loadDisclosures({ stock_id: undefined, offset: 0 });
-    }, 0);
+    void loadDisclosuresByStock(currentStockId);
+  }, [currentStockId]);
+
+  useEffect(() => {
+    const onEsc = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsDisclosureDrawerOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onEsc);
+    return () => window.removeEventListener("keydown", onEsc);
+  }, []);
+
+  const toggleStockCheck = (stockId: number) => {
+    setCheckedStockIds((prev) => (prev.includes(stockId) ? prev.filter((id) => id !== stockId) : [...prev, stockId]));
   };
 
-  const onCollectForStock = async () => {
-    if (!collectStockId) {
-      setCollectError("종목을 선택해주세요.");
-      return;
+  const handleOpenDisclosureDetail = (disclosure: Disclosure) => {
+    setSelectedDisclosure(disclosure);
+    setIsDisclosureDrawerOpen(true);
+  };
+
+  const handleCloseDisclosureDetail = () => {
+    setIsDisclosureDrawerOpen(false);
+    setSelectedDisclosure(null);
+  };
+
+  const onCollectSelected = async (): Promise<boolean> => {
+    const targetStockIds = resolveTargetStockIds();
+    if (targetStockIds.length === 0) {
+      setCollectError("작업할 관심종목을 선택해 주세요.");
+      return false;
     }
+
     setCollectLoading(true);
     setCollectError("");
     setCollectResult(null);
     try {
-      const result = await repositories.disclosures.collectDisclosuresForStock({
-        stock_id: Number(collectStockId),
+      const result = await repositories.disclosures.collectDisclosuresForSelectedWatchlist({
+        stock_ids: targetStockIds,
         days: Number(collectDays),
         page_count: Number(collectPageCount),
       });
       setCollectResult(result);
-      setStockId(String(collectStockId));
-      setOffset("0");
-      setSelectedDisclosure(null);
-      setSelectedDisclosureIds([]);
-      await loadDisclosures({ stock_id: Number(collectStockId), offset: 0 });
+      await loadTargets();
+      await loadDisclosuresByStock(currentStockId);
+      return true;
     } catch (e) {
-      const message = e instanceof Error ? e.message : "공시 수집 실행 중 오류가 발생했습니다.";
-      setCollectError(message);
+      setCollectError(e instanceof Error ? e.message : "선택 공시 수집 중 오류가 발생했습니다.");
+      return false;
     } finally {
       setCollectLoading(false);
     }
   };
 
-  const onCollectForWatchlist = async () => {
-    setCollectLoading(true);
-    setCollectError("");
-    setCollectResult(null);
-    try {
-      const result = await repositories.disclosures.collectDisclosuresForWatchlist({
-        days: Number(collectDays),
-        page_count: Number(collectPageCount),
-      });
-      setCollectResult(result);
-      setOffset("0");
-      setSelectedDisclosure(null);
-      setSelectedDisclosureIds([]);
-      await loadDisclosures({ offset: 0 });
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "관심종목 공시 수집 실행 중 오류가 발생했습니다.";
-      setCollectError(message);
-    } finally {
-      setCollectLoading(false);
+  const onSummarizeSelected = async (): Promise<boolean> => {
+    const targetStockIds = resolveTargetStockIds();
+    if (targetStockIds.length === 0) {
+      setSummarizeError("작업할 관심종목을 선택해 주세요.");
+      return false;
     }
-  };
 
-  const onSummarizeSelected = async () => {
-    if (selectedDisclosureIds.length === 0) return;
+    const results = await Promise.all(
+      targetStockIds.map((stockId) => repositories.disclosures.listDisclosures({ stock_id: stockId, limit: 100, offset: 0 })),
+    );
+    const ids = results.flat().filter((item) => !item.ai_summary && !item.ai_processed_at).map((item) => item.id);
+    const uniqueIds = Array.from(new Set(ids));
+    if (uniqueIds.length === 0) {
+      setSummarizeError("처리할 미처리 공시가 없습니다.");
+      return false;
+    }
+
     setSummarizeLoading(true);
     setSummarizeError("");
     setSummarizeResult(null);
     try {
-      const result = await repositories.disclosures.summarizeSelectedDisclosures(selectedDisclosureIds);
+      const result = await repositories.disclosures.summarizeSelectedDisclosures(uniqueIds);
       setSummarizeResult(result);
-      setSelectedDisclosureIds([]);
-      await loadDisclosures();
+      await loadTargets();
+      await loadDisclosuresByStock(currentStockId);
+      return true;
     } catch (e) {
-      setSummarizeError(e instanceof Error ? e.message : "선택 공시 AI 요약 실행 중 오류가 발생했습니다.");
+      setSummarizeError(e instanceof Error ? e.message : "선택 AI 처리 중 오류가 발생했습니다.");
+      return false;
     } finally {
       setSummarizeLoading(false);
     }
   };
 
-  const unknownRiskCount = useMemo(
-    () => items.filter((d) => !d.ai_risk_level || d.ai_risk_level.toLowerCase() === "unknown").length,
-    [items],
-  );
-
-  const numericOffset = Number(offset) || 0;
-  const numericLimit = Number(limit) || 50;
-  const canGoPrev = numericOffset > 0;
-  const canGoNext = items.length >= numericLimit;
-
-  const currentPageDisclosureIds = useMemo(() => items.map((item) => item.id), [items]);
-  const allCurrentPageDisclosuresSelected =
-    currentPageDisclosureIds.length > 0 && currentPageDisclosureIds.every((id) => selectedDisclosureIds.includes(id));
-
-  const onToggleSelectAllCurrentPage = () => {
-    if (allCurrentPageDisclosuresSelected) {
-      setSelectedDisclosureIds((prev) => prev.filter((id) => !currentPageDisclosureIds.includes(id)));
-      return;
-    }
-    setSelectedDisclosureIds((prev) => Array.from(new Set([...prev, ...currentPageDisclosureIds])));
+  const onCollectAndSummarize = async () => {
+    const collected = await onCollectSelected();
+    if (!collected) return;
+    await onSummarizeSelected();
   };
 
-  const onPrevPage = async () => {
-    const nextOffset = Math.max(0, numericOffset - numericLimit);
-    setOffset(String(nextOffset));
-    setSelectedDisclosure(null);
-    setSelectedDisclosureIds([]);
-    await loadDisclosures({ offset: nextOffset });
-  };
-
-  const onNextPage = async () => {
-    const nextOffset = numericOffset + numericLimit;
-    setOffset(String(nextOffset));
-    setSelectedDisclosure(null);
-    setSelectedDisclosureIds([]);
-    await loadDisclosures({ offset: nextOffset });
-  };
+  const onSearchTargets = () => setWatchlistFilter(watchlistKeyword);
 
   return (
     <div className="space-y-4">
       <PageHeader
-        title="공시 분석"
-        description="공시 이벤트 유형과 리스크 수준을 우선 확인하고, 투자 근거를 정리합니다."
-        action={<StatusBadge label={`미분류 리스크 ${unknownRiskCount}건`} tone={unknownRiskCount > 0 ? "amber" : "emerald"} />}
+        title="공시 관리"
+        description="관심종목을 선택하면 해당 종목의 공시가 자동 조회됩니다."
+        action={(
+          <div className="flex flex-wrap gap-2">
+            <StatusBadge label="데이터 소스: API" tone="slate" />
+            <StatusBadge label="API 정상" tone="emerald" />
+            <StatusBadge label={`AI 처리 ${processedCount}/${sortedItems.length || 0}`} tone="blue" />
+          </div>
+        )}
       />
 
-      <SectionCard title="공시 수집 실행">
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-6">
-          <select className="select-control md:col-span-2" value={collectStockId} onChange={(e) => setCollectStockId(e.target.value)}>
-            <option value="">종목 선택</option>
-            {stocks.map((s) => (
-              <option key={s.id} value={s.id}>{`${s.stock_name} (${s.stock_code})`}</option>
-            ))}
-          </select>
+      <div className="flex w-full flex-nowrap items-center gap-1.5 overflow-hidden whitespace-nowrap">
+        <input
+          className="input-control !min-h-[34px] w-[170px] max-w-[170px] shrink-0 px-2 py-1 text-[12px]"
+          placeholder="종목명/종목코드"
+          value={watchlistKeyword}
+          onChange={(e) => setWatchlistKeyword(e.target.value)}
+        />
+        <button type="button" className="btn btn-secondary !min-h-[34px] w-[60px] shrink-0 px-2 text-[12px]" onClick={onSearchTargets}>검색</button>
+        <button type="button" className="btn btn-primary !min-h-[34px] w-[116px] shrink-0 px-2 text-[12px]" disabled={collectLoading} onClick={() => void onCollectSelected()}>
+          {collectLoading ? "수집 중..." : "선택 공시 수집"}
+        </button>
+        <button type="button" className="btn btn-secondary !min-h-[34px] w-[110px] shrink-0 px-2 text-[12px]" disabled={summarizeLoading} onClick={() => void onSummarizeSelected()}>
+          {summarizeLoading ? "AI 처리 중..." : "선택 AI 처리"}
+        </button>
+        <button type="button" className="btn btn-secondary !min-h-[34px] w-[132px] shrink-0 px-2 text-[12px]" disabled={collectLoading || summarizeLoading} onClick={() => void onCollectAndSummarize()}>
+          선택 수집+AI 처리
+        </button>
+        <select className="select-control !min-h-[34px] w-[110px] max-w-[110px] shrink-0 px-2 py-1 text-[12px]" value={collectDays} onChange={(e) => setCollectDays(e.target.value)}>
+          <option value="7">최근 7일</option>
+          <option value="30">최근 30일</option>
+          <option value="90">최근 90일</option>
+        </select>
+        <select className="select-control !min-h-[34px] w-[110px] max-w-[110px] shrink-0 px-2 py-1 text-[12px]" value={collectPageCount} onChange={(e) => setCollectPageCount(e.target.value)}>
+          <option value="50">수집 50건</option>
+          <option value="100">수집 100건</option>
+          <option value="200">수집 200건</option>
+        </select>
+        <select className="select-control !min-h-[34px] w-[100px] max-w-[100px] shrink-0 px-2 py-1 text-[12px]" value={sortOrder} onChange={(e) => setSortOrder(e.target.value)}>
+          <option value="date">최신순</option>
+          <option value="score">점수순</option>
+        </select>
+      </div>
 
-          <select className="select-control" value={collectDays} onChange={(e) => setCollectDays(e.target.value)}>
-            {(codes as any).disclosureCollectDays?.map((d: { value: number; label: string }) => (
-              <option key={d.value} value={d.value}>{d.label}</option>
-            ))}
-          </select>
+      {collectError ? <p className="text-xs text-rose-600">{collectError}</p> : null}
+      {collectResult ? <div className="inline-result">{"requested_count" in collectResult ? `선택 공시 수집 완료: 성공 ${collectResult.success_count}건 / 실패 ${collectResult.failed_count}건` : collectResult.message}</div> : null}
+      {summarizeResult ? <div className="inline-result">{`선택 AI 처리 완료: 성공 ${summarizeResult.success_count ?? 0}건 / 실패 ${summarizeResult.failed_count ?? 0}건`}</div> : null}
+      {summarizeError ? <div className="inline-result inline-error">{summarizeError}</div> : null}
 
-          <select className="select-control" value={collectPageCount} onChange={(e) => setCollectPageCount(e.target.value)}>
-            {(codes as any).disclosurePageCount?.map((d: { value: number; label: string }) => (
-              <option key={d.value} value={d.value}>{d.label}</option>
-            ))}
-          </select>
-
-          <button className="btn btn-primary" onClick={onCollectForStock} disabled={collectLoading}>
-            {collectLoading ? "수집 중..." : "공시 수집 실행"}
-          </button>
-          <button className="btn btn-secondary" onClick={onCollectForWatchlist} disabled={collectLoading}>
-            관심종목 전체 수집
-          </button>
+      <div className="grid w-full min-w-0 grid-cols-[3fr_7fr] items-stretch gap-4">
+        <div className="min-w-0">
+          <SectionCard title="관심종목 목록">
+            <div className="table-shell max-h-[620px] overflow-auto">
+              <table className="data-table compact-table min-w-[560px]">
+                <thead>
+                  <tr>
+                    <th>선택</th>
+                    <th>종목명</th>
+                    <th>공시수</th>
+                    <th>AI처리</th>
+                    <th>최근공시</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {watchlistLoading ? (
+                    <tr><td colSpan={5} className="py-4 text-center text-muted">관심종목을 불러오는 중입니다.</td></tr>
+                  ) : filteredTargets.length === 0 ? (
+                    <tr><td colSpan={5} className="py-4 text-center text-muted">관심종목이 없습니다.</td></tr>
+                  ) : (
+                    filteredTargets.map((target) => {
+                      const isChecked = checkedStockIds.includes(target.stock_id);
+                      const isCurrent = currentStockId === target.stock_id;
+                      return (
+                        <tr key={target.stock_id} className={isCurrent ? "selected-row row-clickable" : "row-clickable"} onClick={() => setCurrentStockId(target.stock_id)}>
+                          <td onClick={(e) => e.stopPropagation()}>
+                            <input type="checkbox" checked={isChecked} onClick={(event) => event.stopPropagation()} onChange={() => toggleStockCheck(target.stock_id)} />
+                          </td>
+                          <td>{`${target.stock_name} (${target.stock_code})`}</td>
+                          <td>{target.disclosure_count}</td>
+                          <td>{`${target.ai_processed_count}/${target.disclosure_count}`}</td>
+                          <td className="cell-nowrap">{formatDate(target.latest_disclosed_at)}</td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </SectionCard>
         </div>
 
-        {collectError ? <p className="mt-3 text-sm text-rose-600">{collectError}</p> : null}
+        <div className="min-w-0">
+          <SectionCard title={`공시 목록${activeTarget ? ` - ${activeTarget.stock_name}` : ""}`}>
+            {currentStockId === null ? <p className="text-sm text-muted">좌측 관심종목을 선택하면 해당 종목의 공시 목록이 표시됩니다.</p> : null}
+            {loading ? <p className="text-sm text-muted">공시를 불러오는 중입니다.</p> : null}
+            {error ? <p className="text-sm text-rose-600">{error}</p> : null}
+            {!loading && !error && currentStockId !== null && sortedItems.length === 0 ? (
+              <p className="text-sm text-muted">선택한 종목의 수집된 공시가 없습니다. 상단의 "선택 공시 수집" 버튼으로 공시를 수집해 주세요.</p>
+            ) : null}
 
-        {collectResult ? (
-          <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
-            <div className="grid grid-cols-2 gap-2 md:grid-cols-6">
-              <div><p className="text-xs text-muted">상태</p><p className="font-semibold">{collectResult.status}</p></div>
-              <div><p className="text-xs text-muted">대상</p><p className="font-semibold">{collectResult.target}</p></div>
-              <div><p className="text-xs text-muted">수집 건수</p><p className="font-semibold">{collectResult.collected_count}</p></div>
-              <div><p className="text-xs text-muted">저장 건수</p><p className="font-semibold">{collectResult.saved_count}</p></div>
-              <div><p className="text-xs text-muted">중복 제외 건수</p><p className="font-semibold">{collectResult.skipped_count}</p></div>
-              <div className="col-span-2 md:col-span-1"><p className="text-xs text-muted">메시지</p><p className="font-semibold">{collectResult.message}</p></div>
-            </div>
-            <div className="mt-3">
-              <button type="button" className="btn btn-secondary" onClick={() => navigate("/collection-runs")}>수집 이력 확인</button>
-            </div>
-          </div>
-        ) : null}
-      </SectionCard>
-
-      <SectionCard title="검색">
-        <form onSubmit={onSearch} className="grid grid-cols-1 gap-2 md:grid-cols-7">
-          <input className="input-control" placeholder="종목 ID" value={stockId} onChange={(e) => setStockId(e.target.value)} />
-          <div className="relative md:col-span-2">
-            <Search size={16} className="absolute left-3 top-3.5 text-slate-400" />
-            <input className="input-control pl-9" placeholder="keyword" value={keyword} onChange={(e) => setKeyword(e.target.value)} />
-          </div>
-          <input className="input-control" placeholder="disclosure_type" value={disclosureType} onChange={(e) => setDisclosureType(e.target.value)} />
-          <select className="select-control" value={limit} onChange={(e) => setLimit(e.target.value)}>
-            <option value="20">20</option>
-            <option value="50">50</option>
-            <option value="100">100</option>
-          </select>
-          <input className="input-control" placeholder="offset" value={offset} onChange={(e) => setOffset(e.target.value)} />
-          <div className="flex gap-2">
-            <button type="submit" className="btn btn-primary">검색</button>
-            <button type="button" className="btn btn-secondary" onClick={onReset}>초기화</button>
-          </div>
-        </form>
-      </SectionCard>
-
-      <div className="content-split">
-        <SectionCard title="공시 목록" className="list-panel">
-          {loading ? <p className="text-sm text-muted">조회 중입니다.</p> : null}
-          {error ? <p className="text-sm text-rose-600">{error}</p> : null}
-          {!loading && !error && items.length === 0 ? <EmptyState message="공시 데이터가 없습니다." /> : null}
-
-          {!loading && !error && items.length > 0 ? (
-            <>
-              <div className="action-row">
-                <div className="action-row-left">
-                  <button type="button" className="btn btn-secondary" onClick={onSummarizeSelected} disabled={summarizeLoading || selectedDisclosureIds.length === 0}>
-                    {summarizeLoading ? "AI 요약 중..." : `선택 ${selectedDisclosureIds.length}건 AI 요약`}
-                  </button>
-                </div>
-                <div className="action-row-right">
-                  <button type="button" className="btn btn-secondary" onClick={() => navigate("/collection-runs")}>수집 이력 확인</button>
-                </div>
-              </div>
-
-              {summarizeResult ? (
-                <div className="inline-result">
-                  {summarizeResult.message || "선택 공시 AI 요약이 완료되었습니다."} (처리 {summarizeResult.processed_count ?? 0} / 성공 {summarizeResult.success_count ?? 0} / 실패 {summarizeResult.failed_count ?? 0})
-                </div>
-              ) : null}
-              {summarizeError ? <div className="inline-result inline-error">{summarizeError}</div> : null}
-
-              <div className="table-shell">
-                <table className="data-table compact-table min-w-[980px]">
+            {!loading && !error && sortedItems.length > 0 ? (
+              <div className="table-shell max-h-[620px] overflow-auto">
+                <table className="data-table compact-table min-w-[1020px]">
                   <thead>
                     <tr>
-                      <th className="selection-cell">
-                        <input
-                          className="selection-checkbox"
-                          type="checkbox"
-                          checked={allCurrentPageDisclosuresSelected}
-                          onChange={onToggleSelectAllCurrentPage}
-                        />
-                      </th>
-                      <th>ID</th>
-                      <th>종목</th>
-                      <th>공시 제목</th>
-                      <th>공시일</th>
+                      <th>AI처리</th>
+                      <th>종목명</th>
+                      <th className="min-w-[380px]">공시제목</th>
                       <th>이벤트</th>
                       <th>리스크</th>
                       <th>중요도</th>
-                      <th>AI</th>
+                      <th>공시일</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {items.map((disclosure) => {
-                      const event = eventLabel(disclosure.ai_event_type);
-                      const risk = riskMeta(disclosure.ai_risk_level);
-                      const importance = importanceMeta(disclosure.ai_importance_score ?? disclosure.importance_score);
-                      const selected = selectedDisclosure?.id === disclosure.id || selectedDisclosureIds.includes(disclosure.id);
+                    {sortedItems.map((item) => {
+                      const aiStatus = disclosureStatusMeta(item);
+                      const event = eventLabel(item.ai_event_type ?? item.disclosure_type);
+                      const risk = riskMeta(item.ai_risk_level);
+                      const importance = importanceMeta(item.ai_importance_score ?? item.importance_score);
                       return (
-                        <tr
-                          key={disclosure.id}
-                          className={selected ? "selected-row row-clickable" : "row-clickable"}
-                          onClick={() => setSelectedDisclosure(disclosure)}
-                        >
-                          <td className="selection-cell">
-                            <input
-                              className="selection-checkbox"
-                              type="checkbox"
-                              checked={selectedDisclosureIds.includes(disclosure.id)}
-                              onClick={(e) => e.stopPropagation()}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setSelectedDisclosureIds((prev) => Array.from(new Set([...prev, disclosure.id])));
-                                  return;
-                                }
-                                setSelectedDisclosureIds((prev) => prev.filter((id) => id !== disclosure.id));
-                              }}
-                            />
-                          </td>
-                          <td className="cell-nowrap">{disclosure.id}</td>
-                          <td>{renderStockCell(disclosure)}</td>
-                          <td className="min-w-[320px] cell-title cell-clamp-2">{disclosure.disclosure_title}</td>
-                          <td className="cell-nowrap cell-muted">{disclosure.disclosed_at ?? "-"}</td>
+                        <tr key={item.id} className="row-clickable" onClick={() => handleOpenDisclosureDetail(item)}>
+                          <td><StatusBadge label={aiStatus.label} tone={aiStatus.tone} /></td>
+                          <td className="cell-nowrap">{item.stock_name ?? item.stock_code ?? "-"}</td>
+                          <td className="cell-title cell-clamp-2" title={item.disclosure_title}>{item.disclosure_title}</td>
                           <td><StatusBadge label={event} variant="event" /></td>
                           <td><StatusBadge label={risk.label} variant={risk.variant} /></td>
                           <td><StatusBadge label={importance.label} variant={importance.variant} /></td>
-                          <td>
-                            {disclosure.ai_summary ? (
-                              <StatusBadge label="완료" tone="emerald" />
-                            ) : disclosure.ai_summary_error ? (
-                              <StatusBadge label="오류" tone="rose" />
-                            ) : (
-                              <StatusBadge label="미처리" tone="slate" />
-                            )}
-                          </td>
+                          <td className="cell-nowrap cell-muted">{formatDate(item.disclosed_at)}</td>
                         </tr>
                       );
                     })}
                   </tbody>
                 </table>
               </div>
-
-              <div className="pagination-bar">
-                <div className="pagination-info">offset {offset} / {items.length}건 조회</div>
-                <div className="flex gap-2">
-                  <button type="button" className="btn btn-secondary" onClick={onPrevPage} disabled={!canGoPrev}>이전</button>
-                  <button type="button" className="btn btn-secondary" onClick={onNextPage} disabled={!canGoNext}>다음</button>
-                </div>
-              </div>
-            </>
-          ) : null}
-        </SectionCard>
-
-        <SectionCard title="상세 분석" className="detail-panel">
-          {!selectedDisclosure ? (
-            <EmptyState message="공시를 선택하세요." />
-          ) : (
-            <>
-              <h3 className="detail-title">{selectedDisclosure.disclosure_title}</h3>
-              <div className="detail-meta">
-                <StatusBadge label={`종목 ${renderStockLabel(selectedDisclosure)}`} tone="blue" />
-                <StatusBadge label={eventLabel(selectedDisclosure.ai_event_type)} variant="event" />
-                <StatusBadge label={riskMeta(selectedDisclosure.ai_risk_level).label} variant={riskMeta(selectedDisclosure.ai_risk_level).variant} />
-                <StatusBadge label={importanceMeta(selectedDisclosure.ai_importance_score ?? selectedDisclosure.importance_score).label} variant={importanceMeta(selectedDisclosure.ai_importance_score ?? selectedDisclosure.importance_score).variant} />
-              </div>
-
-              <div className="detail-section">
-                <p className="detail-label">기본 정보</p>
-                <div className="detail-body">
-                  <p>공시 유형: {selectedDisclosure.disclosure_type ?? "-"}</p>
-                  <p>공시일: {selectedDisclosure.disclosed_at ?? "-"}</p>
-                  <p>수집일: {selectedDisclosure.created_at ?? "-"}</p>
-                  <p>AI 처리일시: {selectedDisclosure.ai_processed_at ?? "-"}</p>
-                </div>
-              </div>
-
-              <div className="detail-section">
-                <p className="detail-label">태그</p>
-                <div className="flex flex-wrap gap-1">
-                  {(selectedDisclosure.ai_tags || "").split(",").map((tag) => tag.trim()).filter(Boolean).map((tag) => (
-                    <StatusBadge key={`${selectedDisclosure.id}-${tag}`} label={tag} tone="slate" />
-                  ))}
-                  {!(selectedDisclosure.ai_tags || "").trim() ? <StatusBadge label="미분류" tone="slate" /> : null}
-                </div>
-              </div>
-
-              <div className="detail-section">
-                <p className="detail-label">AI 요약</p>
-                <p className="detail-body">{selectedDisclosure.ai_summary ?? "AI 요약이 없습니다."}</p>
-              </div>
-
-              {selectedDisclosure.ai_summary_error ? (
-                <div className="detail-section">
-                  <p className="detail-label">요약 오류</p>
-                  <p className="detail-body text-rose-700">{selectedDisclosure.ai_summary_error}</p>
-                </div>
-              ) : null}
-
-              <div className="detail-section">
-                <p className="detail-label">원문 링크</p>
-                {selectedDisclosure.url ? (
-                  <a className="btn btn-secondary" href={selectedDisclosure.url} target="_blank" rel="noreferrer">원문 열기</a>
-                ) : (
-                  <p className="detail-body">원문 링크가 없습니다.</p>
-                )}
-              </div>
-            </>
-          )}
-        </SectionCard>
+            ) : null}
+          </SectionCard>
+        </div>
       </div>
+
+      {isDisclosureDrawerOpen && selectedDisclosure ? (
+        <div className="fixed inset-0 z-[999] bg-slate-900/30" onClick={handleCloseDisclosureDetail}>
+          <aside className="absolute right-0 top-0 h-full w-full max-w-[520px] overflow-auto border-l bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="sticky top-0 flex items-center justify-between border-b bg-white p-4">
+              <h3 className="text-lg font-semibold">공시 상세</h3>
+              <button type="button" className="btn btn-secondary !min-h-[30px] px-2" onClick={handleCloseDisclosureDetail}><X size={16} /></button>
+            </div>
+            <div className="p-4">
+              <div className="space-y-3">
+                <h4 className="detail-title">{selectedDisclosure.disclosure_title}</h4>
+                <div className="detail-section">
+                  <p className="detail-label">기본 정보</p>
+                  <div className="detail-body">
+                    <p>{`종목명: ${selectedDisclosure.stock_name ?? "-"}`}</p>
+                    <p>{`종목코드: ${selectedDisclosure.stock_code ?? "-"}`}</p>
+                    <p>{`공시일: ${formatDate(selectedDisclosure.disclosed_at)}`}</p>
+                    <p>{`접수일: ${formatDate(selectedDisclosure.disclosed_at)}`}</p>
+                    <p>{`출처: DART`}</p>
+                    <p>{`접수번호: ${selectedDisclosure.dart_receipt_no ?? "-"}`}</p>
+                  </div>
+                </div>
+                <div className="detail-section">
+                  <p className="detail-label">AI 분석 정보</p>
+                  <div className="detail-body">
+                    <p>{`AI 처리 여부: ${selectedDisclosure.ai_summary || selectedDisclosure.ai_processed_at ? "완료" : "미처리"}`}</p>
+                    <p>{`AI 처리일: ${formatDate(selectedDisclosure.ai_processed_at)}`}</p>
+                    <p>{`이벤트: ${eventLabel(selectedDisclosure.ai_event_type ?? selectedDisclosure.disclosure_type)}`}</p>
+                    <p>{`리스크: ${riskMeta(selectedDisclosure.ai_risk_level).label}`}</p>
+                    <p>{`중요도: ${selectedDisclosure.ai_importance_score ?? selectedDisclosure.importance_score ?? "-"}`}</p>
+                    <p>{`tag: ${selectedDisclosure.ai_tags ?? "-"}`}</p>
+                    <p>{`score: ${selectedDisclosure.ai_importance_score ?? selectedDisclosure.importance_score ?? "-"}`}</p>
+                    <p>sentiment: -</p>
+                    <p>{`risk_level: ${selectedDisclosure.ai_risk_level ?? "-"}`}</p>
+                    <p>{`event_type: ${selectedDisclosure.ai_event_type ?? selectedDisclosure.disclosure_type ?? "-"}`}</p>
+                  </div>
+                </div>
+                <div className="detail-section">
+                  <p className="detail-label">AI 요약</p>
+                  <p className="detail-body">{selectedDisclosure.ai_summary ?? "아직 AI 처리가 완료되지 않은 공시입니다."}</p>
+                </div>
+                <div className="detail-section">
+                  <p className="detail-label">원문 링크</p>
+                  {selectedDisclosure.url ? (
+                    <a className="btn btn-secondary !min-h-[34px] px-3 text-[13px]" href={selectedDisclosure.url} target="_blank" rel="noreferrer">DART 원문 열기</a>
+                  ) : (
+                    <p className="detail-body">원문 링크가 없습니다.</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </aside>
+        </div>
+      ) : null}
     </div>
   );
 }
