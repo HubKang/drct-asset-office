@@ -8,6 +8,7 @@
   { "menuKey": "data", "title": "공시 관리", "routeKey": "disclosures" },
   { "menuKey": "data", "title": "가격·캔들 관리", "routeKey": "stock-prices" },
   { "menuKey": "data", "title": "시장 테마 관리", "routeKey": "market-themes" },
+  { "menuKey": "data", "title": "시장 트렌드 분석", "routeKey": "market-trends" },
   { "menuKey": "data", "title": "수집 이력", "routeKey": "collection-runs" },
   { "menuKey": "data", "title": "분류 규칙 관리", "routeKey": "classification-rules" },
   { "menuKey": "system", "title": "설정", "routeKey": "settings" }

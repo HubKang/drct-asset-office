@@ -14,6 +14,7 @@ from backend.app.api.routes_health import router as health_router
 from backend.app.api.routes_market_metrics import router as market_metrics_router
 from backend.app.api.routes_market_theme_candidates import router as market_theme_candidates_router
 from backend.app.api.routes_market_themes import router as market_themes_router
+from backend.app.api.routes_market_trends import router as market_trends_router
 from backend.app.api.routes_news import router as news_router
 from backend.app.api.routes_reports import router as reports_router
 from backend.app.api.routes_schema_comments import router as schema_comments_router
@@ -44,6 +45,7 @@ app.include_router(stock_prices_router)
 app.include_router(market_metrics_router)
 app.include_router(market_themes_router)
 app.include_router(market_theme_candidates_router)
+app.include_router(market_trends_router)
 app.include_router(watchlist_router)
 app.include_router(schema_comments_router)
 app.include_router(news_router)

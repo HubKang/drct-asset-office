@@ -252,3 +252,91 @@ def ensure_runtime_schema() -> None:
                     int(row["sort_order"]),
                 ),
             )
+
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS trend_detection_settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                setting_key TEXT NOT NULL UNIQUE,
+                setting_name TEXT NOT NULL,
+                min_market_cap INTEGER NOT NULL,
+                min_trading_value INTEGER NOT NULL,
+                min_change_rate REAL NOT NULL,
+                min_intraday_range_rate REAL,
+                use_intraday_range INTEGER NOT NULL DEFAULT 0,
+                market_scope TEXT NOT NULL DEFAULT 'ALL',
+                is_active INTEGER NOT NULL DEFAULT 1,
+                is_default INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            INSERT OR IGNORE INTO trend_detection_settings
+            (setting_key, setting_name, min_market_cap, min_trading_value, min_change_rate, min_intraday_range_rate,
+             use_intraday_range, market_scope, is_active, is_default, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """,
+            (
+                "default_supply_event",
+                "기본 수급 이벤트 감지 조건",
+                200_000_000_000,
+                50_000_000_000,
+                15.0,
+                6.0,
+                0,
+                "ALL",
+                1,
+                1,
+            ),
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_trend_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                trade_date TEXT NOT NULL,
+                stock_id INTEGER NOT NULL,
+                stock_code TEXT,
+                stock_name TEXT,
+                market_type TEXT,
+                market_cap INTEGER,
+                trading_value INTEGER,
+                change_rate REAL,
+                intraday_range_rate REAL,
+                event_type TEXT NOT NULL DEFAULT 'supply_surge',
+                detection_setting_id INTEGER,
+                applied_min_market_cap INTEGER,
+                applied_min_trading_value INTEGER,
+                applied_min_change_rate REAL,
+                applied_min_intraday_range_rate REAL,
+                applied_use_intraday_range INTEGER,
+                theme_id INTEGER,
+                theme_status TEXT NOT NULL DEFAULT 'unassigned',
+                primary_theme_id INTEGER,
+                reason_summary TEXT,
+                user_memo TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(trade_date, stock_id, event_type),
+                FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE CASCADE,
+                FOREIGN KEY (theme_id) REFERENCES market_themes(id),
+                FOREIGN KEY (primary_theme_id) REFERENCES market_themes(id),
+                FOREIGN KEY (detection_setting_id) REFERENCES trend_detection_settings(id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_trend_detection_settings_active_default "
+            "ON trend_detection_settings(is_active, is_default, updated_at)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_trend_events_trade_date_active "
+            "ON market_trend_events(trade_date, is_active)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_trend_events_theme_status "
+            "ON market_trend_events(theme_status, trade_date, is_active)"
+        )

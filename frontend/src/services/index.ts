@@ -4,6 +4,7 @@ import { collectionRunApiRepository } from "@/services/api/collectionRunApiRepos
 import { disclosureApiRepository } from "@/services/api/disclosureApiRepository";
 import { newsApiRepository } from "@/services/api/newsApiRepository";
 import { marketThemeApiRepository } from "@/services/api/marketThemeApiRepository";
+import { marketTrendApiRepository } from "@/services/api/marketTrendApiRepository";
 import { gptPromptTemplateApiRepository } from "@/services/api/gptPromptTemplateApiRepository";
 import { schemaCommentApiRepository } from "@/services/api/schemaCommentApiRepository";
 import { stockApiRepository } from "@/services/api/stockApiRepository";
@@ -31,6 +32,7 @@ export const repositories = {
   schemaComments: useMock ? schemaCommentMockRepository : schemaCommentApiRepository,
   news: useMock ? newsMockRepository : newsApiRepository,
   marketThemes: useMock ? marketThemeMockRepository : marketThemeApiRepository,
+  marketTrends: marketTrendApiRepository,
   disclosures: useMock ? disclosureMockRepository : disclosureApiRepository,
   advisoryPackages: useMock ? advisoryPackageMockRepository : advisoryPackageApiRepository,
   collectionRuns: useMock ? collectionRunMockRepository : collectionRunApiRepository,
