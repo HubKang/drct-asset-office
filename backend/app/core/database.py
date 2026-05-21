@@ -263,6 +263,9 @@ def ensure_runtime_schema() -> None:
                 min_trading_value INTEGER NOT NULL,
                 min_change_rate REAL NOT NULL,
                 min_intraday_range_rate REAL,
+                use_market_cap INTEGER NOT NULL DEFAULT 1,
+                use_trading_value INTEGER NOT NULL DEFAULT 1,
+                use_change_rate INTEGER NOT NULL DEFAULT 1,
                 use_intraday_range INTEGER NOT NULL DEFAULT 0,
                 market_scope TEXT NOT NULL DEFAULT 'ALL',
                 is_active INTEGER NOT NULL DEFAULT 1,
@@ -272,12 +275,21 @@ def ensure_runtime_schema() -> None:
             )
             """
         )
+        trend_setting_columns = {
+            str(row[1]) for row in conn.exec_driver_sql("PRAGMA table_info(trend_detection_settings)").fetchall()
+        }
+        if "use_market_cap" not in trend_setting_columns:
+            conn.exec_driver_sql("ALTER TABLE trend_detection_settings ADD COLUMN use_market_cap INTEGER NOT NULL DEFAULT 1")
+        if "use_trading_value" not in trend_setting_columns:
+            conn.exec_driver_sql("ALTER TABLE trend_detection_settings ADD COLUMN use_trading_value INTEGER NOT NULL DEFAULT 1")
+        if "use_change_rate" not in trend_setting_columns:
+            conn.exec_driver_sql("ALTER TABLE trend_detection_settings ADD COLUMN use_change_rate INTEGER NOT NULL DEFAULT 1")
         conn.exec_driver_sql(
             """
             INSERT OR IGNORE INTO trend_detection_settings
             (setting_key, setting_name, min_market_cap, min_trading_value, min_change_rate, min_intraday_range_rate,
-             use_intraday_range, market_scope, is_active, is_default, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+             use_market_cap, use_trading_value, use_change_rate, use_intraday_range, market_scope, is_active, is_default, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 "default_supply_event",
@@ -286,6 +298,9 @@ def ensure_runtime_schema() -> None:
                 50_000_000_000,
                 15.0,
                 6.0,
+                1,
+                1,
+                1,
                 0,
                 "ALL",
                 1,
@@ -311,6 +326,9 @@ def ensure_runtime_schema() -> None:
                 applied_min_trading_value INTEGER,
                 applied_min_change_rate REAL,
                 applied_min_intraday_range_rate REAL,
+                applied_use_market_cap INTEGER,
+                applied_use_trading_value INTEGER,
+                applied_use_change_rate INTEGER,
                 applied_use_intraday_range INTEGER,
                 theme_id INTEGER,
                 theme_status TEXT NOT NULL DEFAULT 'unassigned',
@@ -328,6 +346,111 @@ def ensure_runtime_schema() -> None:
             )
             """
         )
+        market_trend_event_columns = {
+            str(row[1]) for row in conn.exec_driver_sql("PRAGMA table_info(market_trend_events)").fetchall()
+        }
+        if "detection_source" not in market_trend_event_columns:
+            conn.exec_driver_sql(
+                "ALTER TABLE market_trend_events ADD COLUMN detection_source TEXT"
+            )
+        if "applied_use_market_cap" not in market_trend_event_columns:
+            conn.exec_driver_sql("ALTER TABLE market_trend_events ADD COLUMN applied_use_market_cap INTEGER")
+        if "applied_use_trading_value" not in market_trend_event_columns:
+            conn.exec_driver_sql("ALTER TABLE market_trend_events ADD COLUMN applied_use_trading_value INTEGER")
+        if "applied_use_change_rate" not in market_trend_event_columns:
+            conn.exec_driver_sql("ALTER TABLE market_trend_events ADD COLUMN applied_use_change_rate INTEGER")
+        if "condition_seq" not in market_trend_event_columns:
+            conn.exec_driver_sql("ALTER TABLE market_trend_events ADD COLUMN condition_seq TEXT")
+        if "condition_name" not in market_trend_event_columns:
+            conn.exec_driver_sql("ALTER TABLE market_trend_events ADD COLUMN condition_name TEXT")
+        if "detected_at" not in market_trend_event_columns:
+            conn.exec_driver_sql("ALTER TABLE market_trend_events ADD COLUMN detected_at TEXT")
+        if "deleted_at" not in market_trend_event_columns:
+            conn.exec_driver_sql("ALTER TABLE market_trend_events ADD COLUMN deleted_at TEXT")
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_trend_event_theme_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER NOT NULL,
+                market_theme_id INTEGER NOT NULL,
+                link_reason TEXT,
+                user_memo TEXT,
+                is_primary INTEGER NOT NULL DEFAULT 0,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                deleted_at TEXT,
+                UNIQUE(event_id, market_theme_id),
+                FOREIGN KEY (event_id) REFERENCES market_trend_events(id) ON DELETE CASCADE,
+                FOREIGN KEY (market_theme_id) REFERENCES market_themes(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_price_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                snapshot_date TEXT NOT NULL,
+                snapshot_time TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'pykrx',
+                market_scope TEXT NOT NULL DEFAULT 'ALL',
+                stock_id INTEGER,
+                stock_code TEXT NOT NULL,
+                stock_name TEXT,
+                market_type TEXT,
+                open_price INTEGER,
+                high_price INTEGER,
+                low_price INTEGER,
+                close_price INTEGER,
+                volume INTEGER,
+                trading_value INTEGER,
+                market_cap INTEGER,
+                change_rate REAL,
+                intraday_range_rate REAL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE SET NULL
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS kiwoom_condition_searches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                condition_seq TEXT NOT NULL,
+                condition_name TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'kiwoom_rest',
+                is_active INTEGER NOT NULL DEFAULT 1,
+                last_synced_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(source, condition_seq)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS kiwoom_condition_result_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                condition_id INTEGER,
+                condition_seq TEXT NOT NULL,
+                condition_name TEXT,
+                stock_code TEXT NOT NULL,
+                stock_code_raw TEXT,
+                stock_name TEXT,
+                current_price INTEGER,
+                change_rate REAL,
+                intraday_change_rate REAL,
+                trading_value INTEGER,
+                volume INTEGER,
+                detected_at TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'kiwoom_rest',
+                source_api TEXT,
+                raw_json TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (condition_id) REFERENCES kiwoom_condition_searches(id) ON DELETE SET NULL
+            )
+            """
+        )
         conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_trend_detection_settings_active_default "
             "ON trend_detection_settings(is_active, is_default, updated_at)"
@@ -339,4 +462,60 @@ def ensure_runtime_schema() -> None:
         conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_market_trend_events_theme_status "
             "ON market_trend_events(theme_status, trade_date, is_active)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_trend_events_detection_source "
+            "ON market_trend_events(detection_source, trade_date, is_active)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_trend_events_condition_seq "
+            "ON market_trend_events(condition_seq, trade_date, is_active)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_trend_event_theme_links_event_active "
+            "ON market_trend_event_theme_links(event_id, is_active)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_trend_event_theme_links_theme_active "
+            "ON market_trend_event_theme_links(market_theme_id, is_active)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_price_snapshots_stock_code "
+            "ON market_price_snapshots(stock_code)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_price_snapshots_snapshot_date "
+            "ON market_price_snapshots(snapshot_date)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_price_snapshots_market_type "
+            "ON market_price_snapshots(market_type)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_price_snapshots_trading_value "
+            "ON market_price_snapshots(trading_value)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_price_snapshots_change_rate "
+            "ON market_price_snapshots(change_rate)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_price_snapshots_market_cap "
+            "ON market_price_snapshots(market_cap)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_kiwoom_condition_searches_source_seq "
+            "ON kiwoom_condition_searches(source, condition_seq)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_kiwoom_condition_result_items_condition_seq "
+            "ON kiwoom_condition_result_items(condition_seq)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_kiwoom_condition_result_items_stock_code "
+            "ON kiwoom_condition_result_items(stock_code)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_kiwoom_condition_result_items_detected_at "
+            "ON kiwoom_condition_result_items(detected_at)"
         )

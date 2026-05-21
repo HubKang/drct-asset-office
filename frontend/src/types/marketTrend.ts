@@ -1,4 +1,4 @@
-export type MarketScope = "ALL" | "KOSPI" | "KOSDAQ";
+﻿export type MarketScope = "ALL" | "KOSPI" | "KOSDAQ";
 export type ThemeStatus =
   | "unassigned"
   | "manual_assigned"
@@ -16,14 +16,20 @@ export type TrendDetectionSetting = {
   min_trading_value_krw_100m: number;
   min_change_rate: number;
   min_intraday_range_rate: number | null;
+  use_market_cap: boolean;
+  use_trading_value: boolean;
+  use_change_rate: boolean;
   use_intraday_range: boolean;
   market_scope: MarketScope;
   is_active: boolean;
 };
 
 export type UpdateTrendDetectionSettingRequest = {
+  use_market_cap: boolean;
   min_market_cap_krw_100m: number;
+  use_trading_value: boolean;
   min_trading_value_krw_100m: number;
+  use_change_rate: boolean;
   min_change_rate: number;
   min_intraday_range_rate: number | null;
   use_intraday_range: boolean;
@@ -42,6 +48,8 @@ export type MarketTrendEvent = {
   trading_value: number | null;
   change_rate: number | null;
   intraday_range_rate: number | null;
+  event_type: string;
+  detection_source: string | null;
   theme_id: number | null;
   theme_name: string | null;
   theme_status: ThemeStatus;
@@ -54,6 +62,70 @@ export type MarketTrendEvent = {
     min_intraday_range_rate: number | null;
     use_intraday_range: boolean;
   };
+};
+
+export type MarketPriceSnapshot = {
+  snapshot_date: string;
+  snapshot_time: string;
+  stock_id: number | null;
+  stock_code: string;
+  stock_name: string | null;
+  market_type: string | null;
+  close_price: number | null;
+  change_rate: number | null;
+  trading_value: number | null;
+  market_cap: number | null;
+  intraday_range_rate: number | null;
+};
+
+export type CollectMarketPriceSnapshotsRequest = {
+  snapshot_date?: string | null;
+  market_scope?: MarketScope;
+  collect_mode?: "stock_loop" | "market_bulk" | "auto";
+  limit?: number | null;
+};
+
+export type CollectMarketPriceSnapshotsResponse = {
+  snapshot_date: string;
+  snapshot_time: string;
+  source: string;
+  market_scope: MarketScope;
+  collect_mode: "stock_loop" | "market_bulk" | "auto";
+  requested_count: number;
+  collected_count: number;
+  inserted_count: number;
+  failed_count: number;
+  skipped_count: number;
+  matched_stock_count: number;
+  unmatched_stock_count: number;
+  failed_markets: string[];
+  failed_items: string[];
+  message: string;
+};
+
+export type DetectEventsFromSnapshotRequest = {
+  snapshot_date?: string | null;
+};
+
+export type DetectEventsFromSnapshotResponse = {
+  snapshot_date: string;
+  source_snapshot_count: number;
+  filtered_count: number;
+  inserted_count: number;
+  updated_count: number;
+  duplicated_count: number;
+  applied_condition: {
+    use_market_cap: boolean;
+    min_market_cap_krw_100m: number | null;
+    use_trading_value: boolean;
+    min_trading_value_krw_100m: number | null;
+    use_change_rate: boolean;
+    min_change_rate: number;
+    use_intraday_range: boolean;
+    min_intraday_range_rate: number | null;
+    market_scope: MarketScope;
+  };
+  message: string;
 };
 
 export type CollectMarketTrendEventsRequest = {
@@ -84,6 +156,16 @@ export type AssignThemeToTrendEventRequest = {
   is_primary_for_theme?: boolean;
 };
 
+export type AssignThemeToTrendEventResponse = {
+  event_id: number;
+  theme_id: number;
+  theme_name: string;
+  theme_status: ThemeStatus;
+  added_to_theme_stocks: boolean;
+  already_mapped: boolean;
+  message: string;
+};
+
 export type DailyThemeFlowItem = {
   theme_id: number;
   theme_name: string;
@@ -109,3 +191,191 @@ export type DailyThemeFlowResponse = {
   items: DailyThemeFlowItem[];
 };
 
+export type KiwoomConditionItem = {
+  id: number;
+  condition_seq: string;
+  condition_name: string;
+  source: string;
+  is_active: number;
+  last_synced_at: string | null;
+};
+
+export type SyncKiwoomConditionsRequest = {
+  source?: string;
+  items: Array<{ condition_seq: string; condition_name: string }>;
+};
+
+export type SyncKiwoomConditionsResponse = {
+  success: boolean;
+  inserted_count: number;
+  updated_count: number;
+  total_count: number;
+};
+
+export type KiwoomConditionResultItem = {
+  id?: number;
+  condition_seq?: string;
+  condition_name?: string | null;
+  stock_code: string;
+  stock_code_raw?: string | null;
+  stock_name?: string | null;
+  current_price?: number | null;
+  change_rate?: number | null;
+  intraday_change_rate?: number | null;
+  trading_value?: number | null;
+  volume?: number | null;
+  estimated_trading_value?: number | null;
+  detected_at?: string;
+  source_api?: string | null;
+  raw?: Record<string, unknown> | null;
+};
+
+export type KiwoomConditionPreviewRequest = {
+  condition_name?: string | null;
+  header_mode?: "full" | "auth-only" | "none";
+  login_mode?: "header" | "message-bearer" | "message-token";
+  search_type?: string;
+  stex_tp?: string;
+};
+
+export type KiwoomConditionPreviewResponse = {
+  success: boolean;
+  condition_seq: string;
+  condition_name?: string | null;
+  item_count: number;
+  items: KiwoomConditionResultItem[];
+  error_message?: string | null;
+};
+
+export type SaveKiwoomConditionResultsRequest = {
+  condition_name?: string | null;
+  source?: string;
+  items: KiwoomConditionResultItem[];
+};
+
+export type SaveKiwoomConditionResultsResponse = {
+  success: boolean;
+  saved_count: number;
+  skipped_count: number;
+};
+
+export type SaveKiwoomMarketEventsRequest = {
+  condition_seq: string;
+  condition_name?: string | null;
+  source?: string;
+  items: KiwoomConditionResultItem[];
+};
+
+export type SaveKiwoomMarketEventsResponse = {
+  success: boolean;
+  saved_count: number;
+  updated_count: number;
+  unmatched_count: number;
+  unmatched_items: string[];
+};
+
+export type KiwoomMarketEventItem = {
+  event_id: number;
+  trade_date: string;
+  stock_code: string | null;
+  stock_name: string | null;
+  market_type: string | null;
+  change_rate: number | null;
+  theme_status: string | null;
+  condition_seq: string | null;
+  condition_name: string | null;
+  user_memo: string | null;
+  detected_at: string | null;
+  updated_at: string | null;
+};
+
+export type KiwoomMarketEventListResponse = {
+  items: KiwoomMarketEventItem[];
+};
+
+export type UpdateKiwoomMarketEventRequest = {
+  theme_status?: string | null;
+  user_memo?: string | null;
+};
+
+export type UpdateKiwoomMarketEventResponse = {
+  success: boolean;
+  item: KiwoomMarketEventItem;
+};
+
+export type DeleteKiwoomMarketEventResponse = {
+  success: boolean;
+  event_id: number;
+};
+
+export type MarketEventThemeLink = {
+  link_id: number;
+  event_id: number;
+  market_theme_id: number;
+  theme_name: string;
+  link_reason: string | null;
+  user_memo: string | null;
+  is_primary: number;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type MarketEventThemeLinkListResponse = {
+  items: MarketEventThemeLink[];
+};
+
+export type AddMarketEventThemeLinkRequest = {
+  market_theme_id: number;
+  link_reason?: string | null;
+  user_memo?: string | null;
+  is_primary?: number;
+};
+
+export type AddMarketEventThemeLinkResponse = {
+  success: boolean;
+  item: MarketEventThemeLink;
+};
+
+export type RemoveMarketEventThemeLinkResponse = {
+  success: boolean;
+  link_id: number;
+};
+
+export type DailyThemeFlowSummary = {
+  market_theme_id: number;
+  theme_name: string;
+  event_count: number;
+  stock_count: number;
+  avg_change_rate: number | null;
+  max_change_rate: number | null;
+  estimated_trading_value_sum: number;
+  representative_stocks: string[];
+};
+
+export type DailyThemeFlowStock = {
+  event_id: number;
+  market_theme_id: number;
+  theme_name: string;
+  stock_code: string;
+  stock_name: string;
+  change_rate: number | null;
+  current_price: number | null;
+  volume: number | null;
+  estimated_trading_value: number | null;
+  condition_seq: string | null;
+  condition_name: string | null;
+};
+
+export type DailyThemeFlowSummaryResponse = {
+  success: boolean;
+  trade_date: string;
+  items: DailyThemeFlowSummary[];
+};
+
+export type DailyThemeFlowStocksResponse = {
+  success: boolean;
+  trade_date: string;
+  market_theme_id: number;
+  theme_name: string | null;
+  items: DailyThemeFlowStock[];
+};

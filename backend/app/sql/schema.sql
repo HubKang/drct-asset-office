@@ -358,6 +358,44 @@ CREATE INDEX IF NOT EXISTS idx_disclosures_disclosed_at ON disclosures(disclosed
 CREATE UNIQUE INDEX IF NOT EXISTS ux_stock_daily_prices_stock_date ON stock_daily_prices(stock_id, trade_date);
 CREATE INDEX IF NOT EXISTS idx_stock_daily_prices_stock_id ON stock_daily_prices(stock_id);
 CREATE INDEX IF NOT EXISTS idx_stock_daily_prices_stock_date ON stock_daily_prices(stock_id, trade_date);
+
+CREATE TABLE IF NOT EXISTS kiwoom_condition_searches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    condition_seq TEXT NOT NULL,
+    condition_name TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'kiwoom_rest',
+    is_active INTEGER NOT NULL DEFAULT 1,
+    last_synced_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (source, condition_seq)
+);
+
+CREATE TABLE IF NOT EXISTS kiwoom_condition_result_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    condition_id INTEGER,
+    condition_seq TEXT NOT NULL,
+    condition_name TEXT,
+    stock_code TEXT NOT NULL,
+    stock_code_raw TEXT,
+    stock_name TEXT,
+    current_price INTEGER,
+    change_rate REAL,
+    intraday_change_rate REAL,
+    trading_value INTEGER,
+    volume INTEGER,
+    detected_at TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'kiwoom_rest',
+    source_api TEXT,
+    raw_json TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (condition_id) REFERENCES kiwoom_condition_searches(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_kiwoom_condition_searches_source_seq ON kiwoom_condition_searches(source, condition_seq);
+CREATE INDEX IF NOT EXISTS idx_kiwoom_condition_result_items_condition_seq ON kiwoom_condition_result_items(condition_seq);
+CREATE INDEX IF NOT EXISTS idx_kiwoom_condition_result_items_stock_code ON kiwoom_condition_result_items(stock_code);
+CREATE INDEX IF NOT EXISTS idx_kiwoom_condition_result_items_detected_at ON kiwoom_condition_result_items(detected_at);
 CREATE INDEX IF NOT EXISTS idx_stock_daily_prices_stock_trade_date ON stock_daily_prices(stock_id, trade_date);
 CREATE INDEX IF NOT EXISTS idx_stock_daily_prices_trade_date ON stock_daily_prices(trade_date);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_stock_daily_market_metrics_stock_date_source ON stock_daily_market_metrics(stock_id, trade_date, source);

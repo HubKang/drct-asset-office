@@ -1,0 +1,24 @@
+{
+  "success": false,
+  "stage": "exception",
+  "env_file_path": "D:\\21. Codex\\04. DrCT에셋\\drct-asset-office\\.env",
+  "ws_url": "wss://api.kiwoom.com:10000/api/dostk/websocket",
+  "use_proxy": false,
+  "proxy_env_exists": {
+    "HTTP_PROXY": true,
+    "HTTPS_PROXY": true,
+    "ALL_PROXY": true
+  },
+  "header_mode": "none",
+  "login_mode": "message-bearer",
+  "tcp_connect_success": true,
+  "resolved_ip": "58.229.136.158",
+  "websocket_connect_success": false,
+  "login_success": false,
+  "cnsrlst_success": false,
+  "condition_count": 0,
+  "error_type": "ConnectionRefusedError",
+  "error_message": "[WinError 10061] 대상 컴퓨터에서 연결을 거부했으므로 연결하지 못했습니다",
+  "raw_messages": [],
+  "created_at": "2026-05-21T11:12:27"
+}

@@ -9,6 +9,7 @@ from backend.app.api.routes_collectors import router as collectors_router
 from backend.app.api.routes_collection_runs import router as collection_runs_router
 from backend.app.api.routes_classification_rules import router as classification_rules_router
 from backend.app.api.routes_disclosures import router as disclosures_router
+from backend.app.api.routes_external_kiwoom import router as external_kiwoom_router
 from backend.app.api.routes_gpt_prompt_templates import router as gpt_prompt_templates_router
 from backend.app.api.routes_health import router as health_router
 from backend.app.api.routes_market_metrics import router as market_metrics_router
@@ -57,3 +58,4 @@ app.include_router(analysis_router)
 app.include_router(reports_router)
 app.include_router(advisory_packages_router)
 app.include_router(gpt_prompt_templates_router)
+app.include_router(external_kiwoom_router)

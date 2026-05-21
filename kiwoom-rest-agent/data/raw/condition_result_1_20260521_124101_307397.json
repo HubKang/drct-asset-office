@@ -1,0 +1,58 @@
+{
+  "success": false,
+  "stage": "failed",
+  "websocket_connect_success": true,
+  "login_success": true,
+  "cnsrreq_success": false,
+  "condition_seq": "1",
+  "condition_name": "01. 500억+10%이상",
+  "header_mode": "none",
+  "login_mode": "message-token",
+  "search_type": "0",
+  "stex_tp": "K",
+  "header_keys": [],
+  "response": null,
+  "raw_messages": [
+    {
+      "stage": "login_send",
+      "sent": {
+        "trnm": "LOGIN",
+        "token": "***MASKED***"
+      }
+    },
+    {
+      "stage": "login_wait_ack",
+      "received": {
+        "trnm": "LOGIN",
+        "return_code": 0,
+        "return_msg": "",
+        "sor_yn": "Y"
+      }
+    },
+    {
+      "stage": "cnsrreq_send",
+      "sent": {
+        "trnm": "CNSRREQ",
+        "seq": "1",
+        "search_type": "0",
+        "stex_tp": "K",
+        "condition_name": "01. 500억+10%이상"
+      }
+    },
+    {
+      "stage": "cnsrreq_wait_response",
+      "received": {
+        "trnm": "PING"
+      }
+    }
+  ],
+  "login_message_sent": true,
+  "login_ack_received": true,
+  "cnsrreq_message_sent": true,
+  "cnsrreq_response_received": false,
+  "login_return_code": 0,
+  "login_return_msg": "",
+  "first_error_code": null,
+  "first_error_message": null,
+  "failure_reason": "CNSRREQ_RESPONSE_NOT_FOUND_OR_ERROR"
+}
