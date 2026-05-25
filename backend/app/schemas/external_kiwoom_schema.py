@@ -111,6 +111,10 @@ class KiwoomConditionPreviewResponse(BaseModel):
     api_id: str | None = None
     condition_seq: str
     condition_name: str | None = None
+    requested_condition_seq: str | None = None
+    requested_condition_name: str | None = None
+    resolved_condition_seq: str | None = None
+    resolved_condition_name: str | None = None
     return_code: str | None = None
     return_msg: str | None = None
     item_count: int
@@ -123,6 +127,7 @@ class KiwoomConditionPreviewResponse(BaseModel):
 class KiwoomMarketEventSaveRequest(BaseModel):
     condition_seq: str
     condition_name: str | None = None
+    detected_date: str | None = None
     source: str = "kiwoom_rest"
     items: list[KiwoomConditionResultItemIn] = Field(default_factory=list)
 
@@ -236,6 +241,7 @@ class DailyThemeFlowStockItem(BaseModel):
     estimated_trading_value: int | None = None
     condition_seq: str | None = None
     condition_name: str | None = None
+    user_memo: str | None = None
 
 
 class DailyThemeFlowStocksResponse(BaseModel):

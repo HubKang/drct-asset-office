@@ -370,7 +370,7 @@ function WatchlistPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="관심종목 Pool"
+        title="관심종목 Data수집"
         description="관심종목 Pool은 뉴스, 공시, 가격·캔들 데이터 수집 및 분석의 기준이 되는 종목 목록입니다."
         action={<StatusBadge label={`활성 ${watchlistStockIds.length}건`} tone="blue" />}
       />

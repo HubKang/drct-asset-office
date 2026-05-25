@@ -62,11 +62,10 @@ function MarketThemesPage() {
 
   const [formThemeId, setFormThemeId] = useState<number | null>(null);
   const [themeName, setThemeName] = useState("");
-  const [themeCode, setThemeCode] = useState("");
   const [themeType, setThemeType] = useState<MarketThemeType>("theme");
   const [description, setDescription] = useState("");
   const [keywordsText, setKeywordsText] = useState("");
-  const [sortOrder, setSortOrder] = useState(0);
+  const [sortOrder, setSortOrder] = useState(100);
   const [isSupplyTheme, setIsSupplyTheme] = useState(0);
   const [isActive, setIsActive] = useState(1);
 
@@ -93,11 +92,10 @@ function MarketThemesPage() {
   const resetForm = () => {
     setFormThemeId(null);
     setThemeName("");
-    setThemeCode("");
     setThemeType("theme");
     setDescription("");
     setKeywordsText("");
-    setSortOrder(0);
+    setSortOrder(100);
     setIsSupplyTheme(0);
     setIsActive(1);
   };
@@ -158,7 +156,6 @@ function MarketThemesPage() {
   const onEditTheme = (theme: MarketTheme) => {
     setFormThemeId(theme.id);
     setThemeName(theme.theme_name);
-    setThemeCode(theme.theme_code);
     setThemeType(theme.theme_type);
     setDescription(theme.description ?? "");
     setKeywordsText(theme.keywords.join("\n"));
@@ -177,16 +174,7 @@ function MarketThemesPage() {
       setError("테마명은 필수입니다.");
       return;
     }
-    if (!formThemeId && !themeCode.trim()) {
-      setError("테마 코드는 필수입니다.");
-      return;
-    }
-
     const keywords = parseKeywordsInput(keywordsText);
-    if (keywords.length === 0) {
-      setError("키워드를 입력해 주세요.");
-      return;
-    }
 
     try {
       if (formThemeId) {
@@ -202,7 +190,6 @@ function MarketThemesPage() {
       } else {
         await repositories.marketThemes.create({
           theme_name: themeName.trim(),
-          theme_code: themeCode.trim(),
           theme_type: themeType,
           description: description.trim() || null,
           keywords,
@@ -464,7 +451,7 @@ function MarketThemesPage() {
                           <div className="flex gap-1">
                             <button
                               type="button"
-                              className="btn btn-secondary"
+                              className="btn btn-secondary !min-h-[34px] px-3 py-1"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 onEditTheme(row);
@@ -474,7 +461,7 @@ function MarketThemesPage() {
                             </button>
                             <button
                               type="button"
-                              className="btn btn-secondary"
+                              className="btn btn-secondary !min-h-[34px] px-3 py-1"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 void onDeactivateTheme(row.id);
@@ -503,15 +490,6 @@ function MarketThemesPage() {
                 <label className="space-y-1">
                   <span>테마명</span>
                   <input className="input-control" value={themeName} onChange={(e) => setThemeName(e.target.value)} />
-                </label>
-                <label className="space-y-1">
-                  <span>테마 코드</span>
-                  <input
-                    className="input-control"
-                    value={themeCode}
-                    disabled={Boolean(formThemeId)}
-                    onChange={(e) => setThemeCode(e.target.value)}
-                  />
                 </label>
                 <label className="space-y-1">
                   <span>유형</span>
@@ -736,6 +714,11 @@ function MarketThemesPage() {
                     placeholder="예: HJ중공업 또는 097230"
                     value={stockSearchKeyword}
                     onChange={(e) => setStockSearchKeyword(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key !== "Enter") return;
+                      e.preventDefault();
+                      void onSearchStocks();
+                    }}
                   />
                   <button
                     type="button"
@@ -789,7 +772,7 @@ function MarketThemesPage() {
           </SectionCard>
 
           <SectionCard title={`연결 종목 목록${selectedTheme ? ` - ${selectedTheme.theme_name}` : ""}`}>
-            <div className="table-shell max-h-[360px] overflow-auto">
+            <div className="table-shell">
               <table className="data-table compact-table">
                 <thead>
                   <tr>

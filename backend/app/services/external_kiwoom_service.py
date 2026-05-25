@@ -419,8 +419,12 @@ class ExternalKiwoomService:
             success=success,
             source=str(fetched.get("source") or "kiwoom_ws"),
             api_id=str(fetched.get("api_id") or "CNSRREQ"),
-            condition_seq=str(condition_seq),
-            condition_name=payload.condition_name,
+            condition_seq=str(fetched.get("condition_seq") or condition_seq),
+            condition_name=(fetched.get("condition_name") if fetched.get("condition_name") is not None else payload.condition_name),
+            requested_condition_seq=str(fetched.get("requested_condition_seq") or condition_seq),
+            requested_condition_name=(fetched.get("requested_condition_name") if fetched.get("requested_condition_name") is not None else payload.condition_name),
+            resolved_condition_seq=(str(fetched.get("resolved_condition_seq")) if fetched.get("resolved_condition_seq") is not None else None),
+            resolved_condition_name=(fetched.get("resolved_condition_name") if fetched.get("resolved_condition_name") is not None else None),
             return_code=return_code or None,
             return_msg=return_msg,
             item_count=len(items),
@@ -432,12 +436,14 @@ class ExternalKiwoomService:
 
     def save_market_events(self, payload: KiwoomMarketEventSaveRequest) -> KiwoomMarketEventSaveResponse:
         now = now_kst()
-        trade_date = datetime.now().strftime("%Y-%m-%d")
+        default_trade_date = datetime.strptime(now, "%Y-%m-%d %H:%M:%S").date().isoformat()
+        payload_trade_date = (payload.detected_date or "").strip() if payload.detected_date else ""
         saved_count = 0
         updated_count = 0
         unmatched_items: list[str] = []
 
         for item in payload.items:
+            event_trade_date = payload_trade_date or (str(item.detected_at or "")[:10] if item.detected_at else "") or default_trade_date
             code = normalize_stock_code(item.stock_code or item.stock_code_raw)
             if len(code) != 6:
                 unmatched_items.append(item.stock_code or item.stock_code_raw or "")
@@ -472,7 +478,7 @@ class ExternalKiwoomService:
                     LIMIT 1
                     """
                 ),
-                {"trade_date": trade_date, "stock_id": stock_id, "condition_seq": payload.condition_seq},
+                {"trade_date": event_trade_date, "stock_id": stock_id, "condition_seq": payload.condition_seq},
             ).mappings().first()
 
             estimated_trading_value = self._estimate_trading_value(item.current_price, item.volume)
@@ -505,7 +511,7 @@ class ExternalKiwoomService:
                         "change_rate": item.intraday_change_rate if item.intraday_change_rate is not None else item.change_rate,
                         "condition_seq": payload.condition_seq,
                         "condition_name": payload.condition_name,
-                        "detected_at": now,
+                        "detected_at": item.detected_at or now,
                         "updated_at": now,
                     },
                 )
@@ -536,7 +542,7 @@ class ExternalKiwoomService:
                         """
                     ),
                     {
-                        "trade_date": trade_date,
+                        "trade_date": event_trade_date,
                         "stock_id": stock_id,
                         "stock_code": code,
                         "stock_name": item.stock_name or stock["stock_name"],
@@ -547,7 +553,7 @@ class ExternalKiwoomService:
                         "updated_at": now,
                         "condition_seq": payload.condition_seq,
                         "condition_name": payload.condition_name,
-                        "detected_at": now,
+                        "detected_at": item.detected_at or now,
                     },
                 )
                 saved_count += 1
@@ -823,6 +829,7 @@ class ExternalKiwoomService:
                     mte.change_rate AS change_rate,
                     mte.condition_seq AS condition_seq,
                     mte.condition_name AS condition_name,
+                    mte.user_memo AS user_memo,
                     mte.trading_value AS trading_value
                 FROM market_trend_events mte
                 JOIN market_trend_event_theme_links l ON l.event_id = mte.id
@@ -861,6 +868,7 @@ class ExternalKiwoomService:
                 estimated_trading_value=int(row["trading_value"]) if row["trading_value"] is not None else None,
                 condition_seq=row["condition_seq"],
                 condition_name=row["condition_name"],
+                user_memo=row["user_memo"],
             )
         items = list(dedup.values())
         return DailyThemeFlowStocksResponse(

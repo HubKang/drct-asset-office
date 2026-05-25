@@ -121,6 +121,7 @@ function MarketTrendsPage() {
   const [monthlyEndDate, setMonthlyEndDate] = useState<string>("");
   const [selectedMonthlyDate, setSelectedMonthlyDate] = useState<string>("");
   const [monthlyLoading, setMonthlyLoading] = useState<boolean>(false);
+  const [eventNameSortOrder, setEventNameSortOrder] = useState<SortOrder>("asc");
 
   const toggleSort = <T extends string,>(prev: { key: T; order: SortOrder }, key: T): { key: T; order: SortOrder } => {
     if (prev.key === key) {
@@ -133,7 +134,7 @@ function MarketTrendsPage() {
     const arr = [...conditions];
     arr.sort((a, b) => {
       let cmp = 0;
-      if (conditionSort.key === "condition_seq") cmp = Number(a.condition_seq) - Number(b.condition_seq);
+      if (conditionSort.key === "condition_seq") cmp = a.condition_seq.localeCompare(b.condition_seq, "ko");
       else cmp = a.condition_name.localeCompare(b.condition_name, "ko");
       return conditionSort.order === "asc" ? cmp : -cmp;
     });
@@ -159,6 +160,18 @@ function MarketTrendsPage() {
   }, [results, resultSort]);
 
   const selectedItems = useMemo(() => sortedResults.filter((r) => checkedMap[getResultRowKey(r)]), [checkedMap, sortedResults]);
+  const allResultChecked = useMemo(
+    () => sortedResults.length > 0 && sortedResults.every((r) => Boolean(checkedMap[getResultRowKey(r)])),
+    [sortedResults, checkedMap],
+  );
+  const sortedEvents = useMemo(() => {
+    const arr = [...events];
+    arr.sort((a, b) => {
+      const cmp = (a.stock_name || "").localeCompare(b.stock_name || "", "ko");
+      return eventNameSortOrder === "asc" ? cmp : -cmp;
+    });
+    return arr;
+  }, [events, eventNameSortOrder]);
   const sortMark = (active: boolean, order: SortOrder) => (active ? (order === "asc" ? " ▲" : " ▼") : "");
 
   const loadConditions = async () => {
@@ -250,6 +263,7 @@ function MarketTrendsPage() {
       const res = await repositories.marketTrends.saveKiwoomMarketEvents({
         condition_seq: selectedConditionSeq,
         condition_name: selectedConditionName,
+        detected_date: tradeDate,
         source: "kiwoom_rest",
         items: selectedItems,
       });
@@ -260,13 +274,15 @@ function MarketTrendsPage() {
     }
   };
 
-  const loadEvents = async () => {
+  const loadEvents = async (targetDate?: string) => {
     setError("");
     try {
-      const res = await repositories.marketTrends.getKiwoomMarketEvents(tradeDate, 200);
-      setEvents(res.items);
+      const baseDate = targetDate || tradeDate;
+      const res = await repositories.marketTrends.getKiwoomMarketEvents(baseDate, 200);
+      const fetchedEvents = [...(res.items ?? [])];
+      setEvents(fetchedEvents);
       const draftMap: Record<number, { theme_status: string; user_memo: string; selected_theme_id: string }> = {};
-      for (const item of res.items) {
+      for (const item of fetchedEvents) {
         draftMap[item.event_id] = {
           theme_status: item.theme_status || "unassigned",
           user_memo: item.user_memo || "",
@@ -276,7 +292,7 @@ function MarketTrendsPage() {
       setEventDrafts(draftMap);
 
       const linkEntries = await Promise.all(
-        res.items.map(async (item) => {
+        fetchedEvents.map(async (item) => {
           const linkRes = await repositories.marketTrends.getKiwoomMarketEventThemes(item.event_id);
           return [item.event_id, linkRes.items] as const;
         }),
@@ -492,6 +508,12 @@ function MarketTrendsPage() {
     }
   }, [activeTab]);
 
+  useEffect(() => {
+    if (activeTab === "kiwoom") {
+      void loadEvents(tradeDate);
+    }
+  }, [tradeDate, activeTab]);
+
   const monthlyCells = useMemo(() => buildCalendarCells(monthlyBaseMonth, monthlyCalendarDays), [monthlyBaseMonth, monthlyCalendarDays]);
   const monthlyTopThemes = useMemo(() => monthlyTrendThemes.slice(0, 5), [monthlyTrendThemes]);
   const todayDate = useMemo(() => new Date().toISOString().slice(0, 10), []);
@@ -565,11 +587,11 @@ function MarketTrendsPage() {
                 </button>
               </div>
               <p className="text-xs text-muted mb-2">조건검색 목록은 Kiwoom REST API에서 직접 조회하며, 새로고침 시 최신 조건식 목록을 반영합니다.</p>
-              <div className="table-shell max-h-[420px] overflow-auto">
-                <table className="data-table compact-table">
+              <div className="table-shell max-h-[420px] overflow-y-auto overflow-x-hidden">
+                <table className="data-table compact-table table-fixed w-full">
                   <thead>
                     <tr>
-                      <th className="cursor-pointer" onClick={() => setConditionSort((p) => toggleSort(p, "condition_seq"))}>조건식 번호{sortMark(conditionSort.key === "condition_seq", conditionSort.order)}</th>
+                      <th className="cursor-pointer w-[92px]" onClick={() => setConditionSort((p) => toggleSort(p, "condition_seq"))}>조건식 번호{sortMark(conditionSort.key === "condition_seq", conditionSort.order)}</th>
                       <th className="cursor-pointer" onClick={() => setConditionSort((p) => toggleSort(p, "condition_name"))}>조건식명{sortMark(conditionSort.key === "condition_name", conditionSort.order)}</th>
                     </tr>
                   </thead>
@@ -579,7 +601,7 @@ function MarketTrendsPage() {
                       return (
                         <tr key={c.id} className={`cursor-pointer ${selected ? "bg-blue-50" : ""}`} onClick={() => { setSelectedConditionSeq(c.condition_seq); setSelectedConditionName(c.condition_name); }}>
                           <td>{c.condition_seq}</td>
-                          <td className="max-w-[220px] truncate" title={c.condition_name}>{c.condition_name}</td>
+                          <td className="whitespace-normal break-words leading-5" title={c.condition_name}>{c.condition_name}</td>
                         </tr>
                       );
                     })}
@@ -601,7 +623,20 @@ function MarketTrendsPage() {
                 <table className="data-table compact-table">
                   <thead>
                     <tr>
-                      <th>체크</th>
+                      <th>
+                        <label className="inline-flex items-center gap-1">
+                          <input
+                            type="checkbox"
+                            checked={allResultChecked}
+                            onChange={(e) => {
+                              const next: Record<string, boolean> = {};
+                              for (const row of sortedResults) next[getResultRowKey(row)] = e.target.checked;
+                              setCheckedMap(next);
+                            }}
+                          />
+                          <span>체크</span>
+                        </label>
+                      </th>
                       <th className="cursor-pointer" onClick={() => setResultSort((p) => toggleSort(p, "stock_code"))}>종목코드{sortMark(resultSort.key === "stock_code", resultSort.order)}</th>
                       <th className="cursor-pointer" onClick={() => setResultSort((p) => toggleSort(p, "stock_name"))}>종목명{sortMark(resultSort.key === "stock_name", resultSort.order)}</th>
                       <th className="cursor-pointer" style={{ textAlign: "right" }} onClick={() => setResultSort((p) => toggleSort(p, "current_price"))}>현재가{sortMark(resultSort.key === "current_price", resultSort.order)}</th>
@@ -636,15 +671,15 @@ function MarketTrendsPage() {
               <input className="input-control" style={{ width: "160px", minWidth: "160px" }} type="date" value={tradeDate} onChange={(e) => setTradeDate(e.target.value)} />
               <button type="button" className="btn btn-secondary" onClick={() => void loadEvents()}>조회</button>
             </div>
-            <div className="table-shell max-h-[380px] overflow-auto">
+            <div className="table-shell">
               <table className="data-table compact-table">
                 <thead>
                   <tr>
-                    <th>감지일</th><th>종목코드</th><th>종목명</th><th>시장</th><th className="text-right">등락률</th><th>연결 테마</th><th>메모</th><th>관리</th>
+                    <th>감지일</th><th>종목코드</th><th className="cursor-pointer" onClick={() => setEventNameSortOrder((p) => (p === "asc" ? "desc" : "asc"))}>종목명{sortMark(true, eventNameSortOrder)}</th><th>시장</th><th className="text-right">등락률</th><th>연결 테마</th><th>메모</th><th>관리</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {events.map((e) => {
+                  {sortedEvents.map((e) => {
                     const draft = eventDrafts[e.event_id] ?? { theme_status: "unassigned", user_memo: "", selected_theme_id: "" };
                     const links = eventThemeLinksMap[e.event_id] ?? [];
                     return (
@@ -682,7 +717,17 @@ function MarketTrendsPage() {
         <div className="space-y-4">
           <SectionCard title="일별 테마 수급 흐름">
             <div className="flex gap-2 items-end mb-3 flex-wrap">
-              <input className="input-control" style={{ width: "160px", minWidth: "160px" }} type="date" value={tradeDate} onChange={(e) => setTradeDate(e.target.value)} />
+              <input
+                className="input-control"
+                style={{ width: "160px", minWidth: "160px" }}
+                type="date"
+                value={tradeDate}
+                onChange={(e) => {
+                  const nextDate = e.target.value;
+                  setTradeDate(nextDate);
+                  void loadEvents(nextDate);
+                }}
+              />
               <button type="button" className="btn btn-primary" onClick={() => void loadFlow()}>조회</button>
               <button type="button" className="btn btn-secondary" onClick={() => setRankEditMode((p) => !p)}>{rankEditMode ? "편집 취소" : "순위 편집"}</button>
               {rankEditMode ? <button type="button" className="btn btn-primary" onClick={() => void saveDailyRanks()}>순위 저장</button> : null}
@@ -772,6 +817,11 @@ function MarketTrendsPage() {
                           <td>
                             <div>{row.stock_name}</div>
                             <div className="text-xs text-muted">{row.stock_code}</div>
+                            {row.user_memo ? (
+                              <div className="text-[11px] text-slate-500 truncate max-w-[220px]" title={row.user_memo}>
+                                메모: {row.user_memo}
+                              </div>
+                            ) : null}
                           </td>
                           <td>{chartCell(weekUrl, `${row.stock_code}-week`)}</td>
                           <td>{chartCell(month3Url, `${row.stock_code}-month3`)}</td>

@@ -18,7 +18,7 @@ export type MarketTheme = {
 
 export type MarketThemeCreateInput = {
   theme_name: string;
-  theme_code: string;
+  theme_code?: string;
   theme_type: MarketThemeType;
   description?: string | null;
   keywords: string[];

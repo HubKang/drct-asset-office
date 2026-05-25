@@ -533,7 +533,7 @@ function StockPricesPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="가격·캔들 관리"
+        title="관심종목 Data분석"
         description="운영 화면에서는 Kiwoom REST 가격 데이터와 시장지표를 함께 확인합니다."
       />
 

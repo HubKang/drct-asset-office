@@ -79,23 +79,31 @@ class KiwoomRestConditionProvider:
         search_type: str = "0",
         stex_tp: str = "K",
     ) -> dict[str, Any]:
+        requested_seq = str(condition_seq or "").strip()
+        requested_name = self._to_str_or_none(condition_name)
         payload = self._fetch_condition_result_via_ws(
             condition_seq=condition_seq,
             condition_name=condition_name,
             search_type=search_type,
             stex_tp=stex_tp,
         )
+        resolved_seq = self._to_str_or_none(payload.get("_resolved_condition_seq")) or requested_seq
+        resolved_name = self._to_str_or_none(payload.get("_resolved_condition_name")) or requested_name
         items, list_key_used, parse_input_count = self._normalize_condition_results(
             payload,
-            condition_seq=condition_seq,
-            condition_name=condition_name,
+            condition_seq=resolved_seq,
+            condition_name=resolved_name,
         )
         parsing_error = parse_input_count > 0 and len(items) == 0
         return {
             "source": "kiwoom_ws",
             "api_id": "CNSRREQ",
-            "condition_seq": str(condition_seq),
-            "condition_name": condition_name,
+            "condition_seq": resolved_seq,
+            "condition_name": resolved_name,
+            "requested_condition_seq": requested_seq,
+            "requested_condition_name": requested_name,
+            "resolved_condition_seq": resolved_seq,
+            "resolved_condition_name": resolved_name,
             "fetched_at": now_kst(),
             "return_code": self._to_str_or_none(payload.get("return_code")),
             "return_msg": self._to_str_or_none(payload.get("return_msg")),
@@ -106,6 +114,12 @@ class KiwoomRestConditionProvider:
                 "top_level_keys": list(payload.keys())[:20],
                 "list_key_used": list_key_used,
                 "parse_input_count": parse_input_count,
+                "request_condition_seq": requested_seq,
+                "request_condition_name": requested_name,
+                "resolved_condition_seq": resolved_seq,
+                "resolved_condition_name": resolved_name,
+                "resolved_by": self._to_str_or_none(payload.get("_resolved_by")),
+                "available_condition_count": self._to_int_or_none(payload.get("_available_condition_count")),
             },
         }
 
@@ -134,21 +148,43 @@ class KiwoomRestConditionProvider:
                 if not isinstance(login_msg, dict) or str(login_msg.get("return_code")) not in {"0", "000000"}:
                     return {"return_code": "1", "return_msg": "LOGIN 실패", "raw_messages": raw_messages}
                 ws.send(json.dumps({"trnm": "CNSRLST"}, ensure_ascii=False))
-                _ = self._wait_for_message(ws, timeout=self.ws_timeout_seconds, stages=raw_messages, stage="cnsrlst_wait_response", target_trnm="CNSRLST")
+                cnsrlst_msg = self._wait_for_message(ws, timeout=self.ws_timeout_seconds, stages=raw_messages, stage="cnsrlst_wait_response", target_trnm="CNSRLST")
+                if not isinstance(cnsrlst_msg, dict):
+                    return {"return_code": "1", "return_msg": "CNSRLST 응답을 수신하지 못했습니다.", "raw_messages": raw_messages}
+                resolved = self._resolve_requested_condition(
+                    payload=cnsrlst_msg,
+                    requested_seq=str(condition_seq or "").strip(),
+                    requested_name=self._to_str_or_none(condition_name),
+                )
+                if not resolved.get("ok"):
+                    return {
+                        "return_code": "1",
+                        "return_msg": str(resolved.get("message") or "선택한 조건식을 CNSRLST 목록에서 찾지 못했습니다."),
+                        "raw_messages": raw_messages,
+                        "_resolved_condition_seq": condition_seq,
+                        "_resolved_condition_name": condition_name,
+                        "_resolved_by": resolved.get("matched_by"),
+                        "_available_condition_count": resolved.get("available_count"),
+                    }
                 req = {
                     "trnm": "CNSRREQ",
-                    "seq": str(condition_seq),
+                    "seq": str(resolved.get("condition_seq") or condition_seq),
                     "search_type": str(search_type),
                     "stex_tp": str(stex_tp),
                     "cont_yn": "N",
                     "next_key": "",
                 }
-                if condition_name:
-                    req["condition_name"] = condition_name
+                resolved_name = self._to_str_or_none(resolved.get("condition_name"))
+                if resolved_name:
+                    req["condition_name"] = resolved_name
                 ws.send(json.dumps(req, ensure_ascii=False))
                 cnsrreq_msg = self._wait_for_message(ws, timeout=self.ws_timeout_seconds, stages=raw_messages, stage="cnsrreq_wait_response", target_trnm="CNSRREQ")
                 if isinstance(cnsrreq_msg, dict):
                     cnsrreq_msg["raw_messages"] = raw_messages
+                    cnsrreq_msg["_resolved_condition_seq"] = str(resolved.get("condition_seq") or condition_seq)
+                    cnsrreq_msg["_resolved_condition_name"] = resolved_name or condition_name
+                    cnsrreq_msg["_resolved_by"] = resolved.get("matched_by")
+                    cnsrreq_msg["_available_condition_count"] = resolved.get("available_count")
                     return cnsrreq_msg
                 return {"return_code": "1", "return_msg": "CNSRREQ 응답을 수신하지 못했습니다.", "raw_messages": raw_messages}
             finally:
@@ -264,6 +300,42 @@ class KiwoomRestConditionProvider:
             if seq and name:
                 out.append({"condition_seq": seq, "condition_name": name})
         return out
+
+    def _resolve_requested_condition(
+        self,
+        *,
+        payload: dict[str, Any],
+        requested_seq: str,
+        requested_name: str | None,
+    ) -> dict[str, Any]:
+        conditions = self._normalize_condition_list(payload)
+        if not conditions:
+            return {"ok": False, "message": "조건식 목록이 비어 있습니다.", "available_count": 0, "matched_by": None}
+        seq_exact = next((x for x in conditions if str(x.get("condition_seq") or "").strip() == requested_seq), None)
+        if seq_exact:
+            return {
+                "ok": True,
+                "condition_seq": str(seq_exact.get("condition_seq") or ""),
+                "condition_name": str(seq_exact.get("condition_name") or ""),
+                "available_count": len(conditions),
+                "matched_by": "seq_exact",
+            }
+        if requested_name:
+            name_exact = next((x for x in conditions if str(x.get("condition_name") or "").strip() == requested_name), None)
+            if name_exact:
+                return {
+                    "ok": True,
+                    "condition_seq": str(name_exact.get("condition_seq") or ""),
+                    "condition_name": str(name_exact.get("condition_name") or ""),
+                    "available_count": len(conditions),
+                    "matched_by": "name_exact",
+                }
+        return {
+            "ok": False,
+            "message": f"요청 조건식을 CNSRLST에서 찾지 못했습니다. requested_seq={requested_seq}",
+            "available_count": len(conditions),
+            "matched_by": None,
+        }
 
     def _normalize_condition_results(
         self,

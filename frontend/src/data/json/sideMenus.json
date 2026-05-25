@@ -3,8 +3,8 @@
   { "menuKey": "home", "title": "GPT 자문 패키지", "routeKey": "advisory-packages" },
 
   { "menuKey": "stocks", "title": "종목 관리", "routeKey": "stocks" },
-  { "menuKey": "stocks", "title": "관심종목 Pool", "routeKey": "watchlist" },
-  { "menuKey": "stocks", "title": "가격·캔들 관리", "routeKey": "stock-prices" },
+  { "menuKey": "stocks", "title": "관심종목 Data수집", "routeKey": "watchlist" },
+  { "menuKey": "stocks", "title": "관심종목 Data분석", "routeKey": "stock-prices" },
 
   { "menuKey": "market", "title": "시장 테마 관리", "routeKey": "market-themes" },
   { "menuKey": "market", "title": "시장 트렌드 분석", "routeKey": "market-trends" },

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -25,6 +26,18 @@ class MarketThemeService:
     def _normalize_keywords(keywords: list[str]) -> list[str]:
         normalized = [item.strip() for item in keywords if item and item.strip()]
         return list(dict.fromkeys(normalized))
+
+    def _generate_theme_code(self, theme_name: str, requested_code: str | None = None) -> str:
+        base_raw = (requested_code or "").strip() or theme_name.strip()
+        base = re.sub(r"[^a-z0-9]+", "-", base_raw.lower()).strip("-")
+        if not base:
+            base = "theme"
+        candidate = base
+        suffix = 1
+        while self.repo.get_by_theme_code(candidate):
+            suffix += 1
+            candidate = f"{base}-{suffix}"
+        return candidate
 
     def _to_response(self, row: MarketTheme, stock_count: int) -> MarketThemeResponse:
         return MarketThemeResponse(
@@ -72,15 +85,12 @@ class MarketThemeService:
         if payload.theme_type not in ALLOWED_THEME_TYPES:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid theme_type")
 
-        exists = self.repo.get_by_theme_code(payload.theme_code)
-        if exists:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="theme_code already exists")
-
         keywords = self._normalize_keywords(payload.keywords)
+        theme_code = self._generate_theme_code(payload.theme_name, payload.theme_code)
         now = now_kst()
         row = MarketTheme(
             theme_name=payload.theme_name.strip(),
-            theme_code=payload.theme_code.strip(),
+            theme_code=theme_code,
             theme_type=payload.theme_type.strip(),
             description=payload.description,
             keywords=json.dumps(keywords, ensure_ascii=False),

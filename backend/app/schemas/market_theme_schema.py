@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class MarketThemeCreateRequest(BaseModel):
     theme_name: str = Field(min_length=1)
-    theme_code: str = Field(min_length=1)
+    theme_code: str | None = None
     theme_type: str = Field(min_length=1)
     description: str | None = None
     keywords: list[str] = Field(default_factory=list)

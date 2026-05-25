@@ -262,6 +262,10 @@ export type KiwoomConditionPreviewResponse = {
   api_id?: string | null;
   condition_seq: string;
   condition_name?: string | null;
+  requested_condition_seq?: string | null;
+  requested_condition_name?: string | null;
+  resolved_condition_seq?: string | null;
+  resolved_condition_name?: string | null;
   return_code?: string | null;
   return_msg?: string | null;
   item_count: number;
@@ -286,6 +290,7 @@ export type SaveKiwoomConditionResultsResponse = {
 export type SaveKiwoomMarketEventsRequest = {
   condition_seq: string;
   condition_name?: string | null;
+  detected_date?: string | null;
   source?: string;
   items: KiwoomConditionResultItem[];
 };
@@ -393,6 +398,7 @@ export type DailyThemeFlowStock = {
   estimated_trading_value: number | null;
   condition_seq: string | null;
   condition_name: string | null;
+  user_memo?: string | null;
 };
 
 export type DailyThemeFlowSummaryResponse = {

@@ -273,6 +273,11 @@ function DisclosuresPage() {
           placeholder="종목명/종목코드"
           value={watchlistKeyword}
           onChange={(e) => setWatchlistKeyword(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            onSearchTargets();
+          }}
         />
         <button type="button" className="btn btn-secondary !min-h-[34px] w-[60px] shrink-0 px-2 text-[12px]" onClick={onSearchTargets}>검색</button>
         <button type="button" className="btn btn-primary !min-h-[34px] w-[116px] shrink-0 px-2 text-[12px]" disabled={collectLoading} onClick={() => void onCollectSelected()}>
