@@ -1,7 +1,0 @@
-{
-  "success": false,
-  "message": "조건검색 목록조회 실패",
-  "error": "[WinError 10061] 대상 컴퓨터에서 연결을 거부했으므로 연결하지 못했습니다",
-  "ws_url": "wss://api.kiwoom.com:10000/api/dostk/websocket",
-  "env_file_path": "D:\\21. Codex\\04. DrCT에셋\\drct-asset-office\\.env"
-}

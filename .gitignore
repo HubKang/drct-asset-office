@@ -22,6 +22,11 @@ frontend/node_modules/
 dist/
 frontend/dist/
 
+
+# Frontend build cache
+frontend/*.tsbuildinfo
+*.tsbuildinfo
+
 # Python cache
 .venv/
 venv/
@@ -35,3 +40,12 @@ reports/
 
 logs/
 *.log
+*.session
+*.session-journal
+backend/.local/
+backend/.local/telegram_sessions/
+
+
+# Kiwoom legacy agent runtime outputs
+kiwoom-rest-agent/data/**
+

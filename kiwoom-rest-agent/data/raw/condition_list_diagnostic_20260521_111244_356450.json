@@ -1,8 +1,0 @@
-{
-  "diagnose_only": true,
-  "host": "api.kiwoom.com",
-  "port": 10000,
-  "resolved_ip": "58.229.136.158",
-  "tcp_connect_success": true,
-  "error": null
-}

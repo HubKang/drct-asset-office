@@ -1,6 +1,0 @@
-{
-  "success": false,
-  "base_url": "https://api.kiwoom.com",
-  "env_file_path": "D:\\21. Codex\\04. DrCT에셋\\drct-asset-office\\.env",
-  "error": "asdict() should be called on dataclass instances"
-}
