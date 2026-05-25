@@ -11,6 +11,7 @@ from backend.app.entities.stock import Stock
 from backend.app.repositories.collection_run_repository import CollectionRunRepository
 from backend.app.repositories.stock_repository import StockRepository
 from backend.app.schemas.stock_sync_schema import StockSyncResponse
+from backend.app.utils.stock_code_utils import normalize_kr_stock_code
 
 
 @dataclass
@@ -83,13 +84,13 @@ class StockSyncService:
             existing_map = {
                 stock.stock_code: stock
                 for stock in self.stock_repo.get_by_codes(
-                    sorted({item["stock_code"] for item in eligible_items if item.get("stock_code")})
+                    sorted({normalize_kr_stock_code(item["stock_code"]) for item in eligible_items if item.get("stock_code")})
                 )
             }
 
             sync_time = now_kst()
             for item in eligible_items:
-                code = (item.get("stock_code") or "").strip()
+                code = normalize_kr_stock_code(item.get("stock_code"))
                 if not code:
                     counts.skipped_count += 1
                     continue
@@ -153,7 +154,7 @@ class StockSyncService:
             if deactivate_missing:
                 for market in normalized_markets:
                     valid_codes = {
-                        item["stock_code"]
+                        normalize_kr_stock_code(item["stock_code"])
                         for item in eligible_items
                         if item.get("stock_code") and item.get("market") == market
                     }

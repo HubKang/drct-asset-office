@@ -23,6 +23,7 @@ class StockDailyMarketMetric(Base):
     market_trading_value_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
     trading_value_percentile: Mapped[float | None] = mapped_column(Float, nullable=True)
     market_trading_value_percentile: Mapped[float | None] = mapped_column(Float, nullable=True)
+    foreign_ownership_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
     source: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)

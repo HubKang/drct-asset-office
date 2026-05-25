@@ -205,8 +205,30 @@ export type MarketMetricsSummaryResponse = {
   market_trading_value_rank: number | null;
   trading_value_percentile: number | null;
   market_trading_value_percentile: number | null;
+  foreign_ownership_ratio?: number | null;
+  used_api_ids?: string[] | null;
+  source_label?: string | null;
   unit_notes?: Record<string, string> | null;
   data_note: string;
+};
+
+export type MarketIndexSnapshot = {
+  market: string;
+  index_value: number | null;
+  change_value: number | null;
+  change_rate: number | null;
+  volume: number | null;
+  trading_value: number | null;
+  base_date: string | null;
+};
+
+export type MarketIndicatorsOverviewResponse = {
+  source: string;
+  base_date: string | null;
+  fetched_at: string;
+  kospi: MarketIndexSnapshot;
+  kosdaq: MarketIndexSnapshot;
+  message: string | null;
 };
 
 export type EvidenceStockBlock = {
@@ -252,6 +274,9 @@ export type EvidenceMarketMetricsSummaryBlock = {
   market_trading_value_rank: number | null;
   trading_value_percentile: number | null;
   market_trading_value_percentile: number | null;
+  foreign_ownership_ratio?: number | null;
+  used_api_ids?: string[] | null;
+  source_label?: string | null;
   source: string;
   unit_notes?: Record<string, string> | null;
   data_note: string;

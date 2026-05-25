@@ -212,6 +212,24 @@ export type SyncKiwoomConditionsResponse = {
   total_count: number;
 };
 
+export type RefreshKiwoomConditionsResponse = {
+  success: boolean;
+  source: string;
+  api_id: string;
+  return_code?: string | null;
+  return_msg?: string | null;
+  condition_count: number;
+  inserted: number;
+  updated: number;
+  total: number;
+  top_level_keys: string[];
+  sample_conditions: Array<{
+    condition_no: string;
+    condition_name: string;
+  }>;
+  message?: string | null;
+};
+
 export type KiwoomConditionResultItem = {
   id?: number;
   condition_seq?: string;
@@ -240,10 +258,16 @@ export type KiwoomConditionPreviewRequest = {
 
 export type KiwoomConditionPreviewResponse = {
   success: boolean;
+  source?: string | null;
+  api_id?: string | null;
   condition_seq: string;
   condition_name?: string | null;
+  return_code?: string | null;
+  return_msg?: string | null;
   item_count: number;
   items: KiwoomConditionResultItem[];
+  parsing_error?: boolean;
+  debug?: Record<string, unknown>;
   error_message?: string | null;
 };
 
@@ -350,6 +374,11 @@ export type DailyThemeFlowSummary = {
   max_change_rate: number | null;
   estimated_trading_value_sum: number;
   representative_stocks: string[];
+  auto_rank: number | null;
+  manual_rank: number | null;
+  final_rank: number | null;
+  rank_score: number;
+  rank_basis: "auto" | "manual";
 };
 
 export type DailyThemeFlowStock = {
@@ -378,4 +407,76 @@ export type DailyThemeFlowStocksResponse = {
   market_theme_id: number;
   theme_name: string | null;
   items: DailyThemeFlowStock[];
+};
+
+export type MonthlyThemeFlowCalendarTheme = {
+  rank: number;
+  market_theme_id: number;
+  theme_name: string;
+  stock_count: number;
+  event_count: number;
+  avg_change_rate: number | null;
+  max_change_rate: number | null;
+  estimated_trading_value_sum: number;
+  auto_rank: number | null;
+  manual_rank: number | null;
+  final_rank: number | null;
+  rank_score: number;
+  rank_basis: "auto" | "manual";
+};
+
+export type MonthlyThemeFlowCalendarDay = {
+  trade_date: string;
+  themes: MonthlyThemeFlowCalendarTheme[];
+};
+
+export type MonthlyThemeFlowCalendarResponse = {
+  success: boolean;
+  month: string;
+  start_date: string;
+  end_date: string;
+  days: MonthlyThemeFlowCalendarDay[];
+};
+
+export type MonthlyThemeFlowTrendPoint = {
+  trade_date: string;
+  value: number;
+  daily_score: number;
+  final_rank: number | null;
+  rank_basis: "auto" | "manual";
+  stock_count: number;
+  event_count: number;
+  avg_change_rate: number | null;
+  max_change_rate: number | null;
+  estimated_trading_value_sum: number;
+};
+
+export type MonthlyThemeFlowTrendTheme = {
+  market_theme_id: number;
+  theme_name: string;
+  series: MonthlyThemeFlowTrendPoint[];
+};
+
+export type MonthlyThemeFlowTrendResponse = {
+  success: boolean;
+  month: string;
+  start_date: string;
+  end_date: string;
+  themes: MonthlyThemeFlowTrendTheme[];
+};
+
+export type UpdateDailyThemeRanksRequest = {
+  trade_date: string;
+  items: Array<{
+    market_theme_id: number;
+    manual_rank: number | null;
+    user_memo?: string | null;
+  }>;
+};
+
+export type UpdateDailyThemeRanksResponse = {
+  success: boolean;
+  trade_date: string;
+  updated_count: number;
+  items: DailyThemeFlowSummary[];
 };

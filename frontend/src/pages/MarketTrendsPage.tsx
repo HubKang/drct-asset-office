@@ -10,9 +10,11 @@ import type {
   KiwoomConditionResultItem,
   KiwoomMarketEventItem,
   MarketEventThemeLink,
+  MonthlyThemeFlowCalendarDay,
+  MonthlyThemeFlowTrendTheme,
 } from "@/types/marketTrend";
 
-type ActiveTab = "kiwoom" | "flow";
+type ActiveTab = "kiwoom" | "flow" | "monthly";
 type SortOrder = "asc" | "desc";
 type ConditionSortKey = "condition_seq" | "condition_name";
 type ResultSortKey = "stock_code" | "stock_name" | "current_price" | "change_rate" | "volume" | "estimated_trading_value";
@@ -21,7 +23,16 @@ const fmtNumber = (value: number | null | undefined) => (value == null ? "-" : v
 const fmtPct = (value: number | null | undefined) => (value == null ? "-" : `${value.toFixed(2)}%`);
 const fmtEokShort = (value: number | null | undefined) => (value == null ? "-" : `${(value / 100000000).toLocaleString("ko-KR", { maximumFractionDigits: 1 })}억`);
 const fmtEok2 = (value: number | null | undefined) => (value == null ? "-" : (value / 100000000).toLocaleString("ko-KR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
-const toErr = (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message : fallback);
+const toErr = (e: unknown, fallback: string) => {
+  if (e instanceof Error) {
+    const msg = e.message || "";
+    if (msg.toLowerCase().includes("failed to fetch")) {
+      return "백엔드 API 서버 연결에 실패했습니다. 백엔드 실행 상태와 VITE_API_BASE_URL 설정을 확인해 주세요.";
+    }
+    return msg || fallback;
+  }
+  return fallback;
+};
 
 const formatDate = (value: string | null | undefined) => {
   if (!value) return "-";
@@ -51,6 +62,25 @@ const estimatedTradingValue = (item: { estimated_trading_value?: number | null; 
 };
 
 const getResultRowKey = (row: KiwoomConditionResultItem) => `${row.stock_code || "NA"}|${row.stock_name || "NA"}|${row.detected_at || "NA"}|${row.source_api || "NA"}`;
+const getMonthInput = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+const toMonthDateLabel = (value: string) => value.slice(5);
+const colorPalette = ["#2563eb", "#dc2626", "#16a34a", "#d97706", "#7c3aed", "#0f766e", "#be123c", "#334155", "#0891b2", "#84cc16"];
+
+const buildCalendarCells = (month: string, days: MonthlyThemeFlowCalendarDay[]) => {
+  const [y, m] = month.split("-").map(Number);
+  const first = new Date(y, m - 1, 1);
+  const last = new Date(y, m, 0);
+  const offset = first.getDay();
+  const cells: Array<{ date: string | null; day: MonthlyThemeFlowCalendarDay | null }> = [];
+  for (let i = 0; i < offset; i += 1) cells.push({ date: null, day: null });
+  const map = Object.fromEntries(days.map((d) => [d.trade_date, d] as const));
+  for (let d = 1; d <= last.getDate(); d += 1) {
+    const key = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    cells.push({ date: key, day: map[key] ?? null });
+  }
+  while (cells.length % 7 !== 0) cells.push({ date: null, day: null });
+  return cells;
+};
 
 function MarketTrendsPage() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("kiwoom");
@@ -69,6 +99,7 @@ function MarketTrendsPage() {
   const [tradeDate, setTradeDate] = useState(new Date().toISOString().slice(0, 10));
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [conditionsRefreshing, setConditionsRefreshing] = useState(false);
 
   const [conditionSort, setConditionSort] = useState<{ key: ConditionSortKey; order: SortOrder }>({ key: "condition_seq", order: "asc" });
   const [resultSort, setResultSort] = useState<{ key: ResultSortKey; order: SortOrder }>({ key: "change_rate", order: "desc" });
@@ -78,9 +109,18 @@ function MarketTrendsPage() {
   const [selectedFlowTheme, setSelectedFlowTheme] = useState<{ id: number; name: string } | null>(null);
   const [flowLoading, setFlowLoading] = useState(false);
   const [flowStocksLoading, setFlowStocksLoading] = useState(false);
+  const [rankEditMode, setRankEditMode] = useState(false);
+  const [rankDraftMap, setRankDraftMap] = useState<Record<number, string>>({});
   const [chartSidcode, setChartSidcode] = useState<number>(Date.now());
   const [brokenCharts, setBrokenCharts] = useState<Record<string, boolean>>({});
   const [zoomedChart, setZoomedChart] = useState<{ url: string; alt: string } | null>(null);
+  const [monthlyBaseMonth, setMonthlyBaseMonth] = useState<string>(getMonthInput());
+  const [monthlyCalendarDays, setMonthlyCalendarDays] = useState<MonthlyThemeFlowCalendarDay[]>([]);
+  const [monthlyTrendThemes, setMonthlyTrendThemes] = useState<MonthlyThemeFlowTrendTheme[]>([]);
+  const [monthlyStartDate, setMonthlyStartDate] = useState<string>("");
+  const [monthlyEndDate, setMonthlyEndDate] = useState<string>("");
+  const [selectedMonthlyDate, setSelectedMonthlyDate] = useState<string>("");
+  const [monthlyLoading, setMonthlyLoading] = useState<boolean>(false);
 
   const toggleSort = <T extends string,>(prev: { key: T; order: SortOrder }, key: T): { key: T; order: SortOrder } => {
     if (prev.key === key) {
@@ -125,9 +165,45 @@ function MarketTrendsPage() {
     setError("");
     try {
       const res = await repositories.marketTrends.getKiwoomConditions();
-      setConditions(res.items);
+      const fresh = Array.isArray(res.items) ? [...res.items] : [];
+      setConditions(fresh);
+      if (fresh.length === 0) {
+        setSelectedConditionSeq("");
+        setSelectedConditionName("");
+        return;
+      }
+      const keep = fresh.find((x) => x.condition_seq === selectedConditionSeq);
+      if (keep) {
+        setSelectedConditionName(keep.condition_name);
+        return;
+      }
+      setSelectedConditionSeq(fresh[0].condition_seq);
+      setSelectedConditionName(fresh[0].condition_name);
     } catch (e) {
       setError(toErr(e, "조건검색 목록을 불러오지 못했습니다."));
+    }
+  };
+
+  const refreshConditions = async () => {
+    setError("");
+    setMessage("");
+    setConditionsRefreshing(true);
+    try {
+      const sync = await repositories.marketTrends.refreshKiwoomConditions();
+      await loadConditions();
+      if (!sync.success || sync.condition_count <= 0) {
+        setError(
+          sync.message || "조건검색 목록 응답은 받았지만 조건식 목록을 파싱하지 못했습니다.",
+        );
+        return;
+      }
+      setMessage(
+        `조건검색 목록 갱신 완료: condition_count ${sync.condition_count}, inserted ${sync.inserted}, updated ${sync.updated}, total ${sync.total}`,
+      );
+    } catch (e) {
+      setError(toErr(e, "조건검색 목록 새로고침에 실패했습니다. Kiwoom REST 토큰/연결 상태를 확인해 주세요."));
+    } finally {
+      setConditionsRefreshing(false);
     }
   };
 
@@ -148,11 +224,14 @@ function MarketTrendsPage() {
       });
       setResults(res.items ?? []);
       setCheckedMap({});
-      if ((res.item_count ?? 0) === 0) setMessage("현재 조건검색 결과가 없습니다.");
+      if (res.parsing_error) {
+        setMessage("");
+        setError("조건검색 응답은 수신했지만 결과 종목을 해석하지 못했습니다.");
+      } else if ((res.item_count ?? 0) === 0) setMessage("현재 조건검색 결과가 없습니다.");
       else setMessage(`조건검색 결과 ${res.item_count}건을 조회했습니다. 저장할 종목을 선택하세요.`);
     } catch (e) {
       setMessage("");
-      setError(toErr(e, "조건검색 결과 조회에 실패했습니다. Agent 실행 상태와 키움 연결을 확인해 주세요."));
+      setError(toErr(e, "조건검색 결과 조회에 실패했습니다. Kiwoom REST 연결 상태를 확인해 주세요."));
     }
   };
 
@@ -291,7 +370,11 @@ function MarketTrendsPage() {
     setFlowStocks([]);
     try {
       const res = await repositories.marketTrends.getExternalDailyThemeFlow(tradeDate);
-      setFlowSummaries(res.items ?? []);
+      const items = res.items ?? [];
+      setFlowSummaries(items);
+      setRankDraftMap(
+        Object.fromEntries(items.map((x) => [x.market_theme_id, x.manual_rank != null ? String(x.manual_rank) : ""])),
+      );
       if ((res.items ?? []).length === 0) setMessage("해당일에 테마가 연결된 수급 이벤트 후보가 없습니다.");
     } catch (e) {
       setError(toErr(e, "일별 테마 수급 흐름 조회에 실패했습니다."));
@@ -319,11 +402,112 @@ function MarketTrendsPage() {
 
   const onChartError = (key: string) => setBrokenCharts((prev) => ({ ...prev, [key]: true }));
 
+  const loadMonthlyFlow = async () => {
+    if (!monthlyBaseMonth) {
+      setError("기준월(YYYY-MM)을 선택해 주세요.");
+      return;
+    }
+    setError("");
+    setMessage("");
+    setMonthlyLoading(true);
+    try {
+      const [calendarRes, trendRes] = await Promise.all([
+        repositories.marketTrends.getExternalMonthlyThemeFlowCalendar(monthlyBaseMonth),
+        repositories.marketTrends.getExternalMonthlyThemeFlowTrend(monthlyBaseMonth),
+      ]);
+      setMonthlyCalendarDays(calendarRes.days ?? []);
+      setMonthlyTrendThemes(trendRes.themes ?? []);
+      setMonthlyStartDate(calendarRes.start_date);
+      setMonthlyEndDate(calendarRes.end_date);
+      setSelectedMonthlyDate(calendarRes.end_date);
+    } catch (e) {
+      setMonthlyCalendarDays([]);
+      setMonthlyTrendThemes([]);
+      setError(toErr(e, "월별 테마 수급 흐름 조회에 실패했습니다."));
+    } finally {
+      setMonthlyLoading(false);
+    }
+  };
+
+  const saveDailyRanks = async () => {
+    if (flowSummaries.length === 0) return;
+    const used = new Set<number>();
+    for (const item of flowSummaries) {
+      const raw = rankDraftMap[item.market_theme_id];
+      if (!raw) continue;
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n <= 0) {
+        setError("순위는 1 이상의 정수만 입력할 수 있습니다.");
+        return;
+      }
+      if (used.has(n)) {
+        setError("수동 순위가 중복되었습니다. 각 테마 순위를 다르게 지정해 주세요.");
+        return;
+      }
+      used.add(n);
+    }
+    setError("");
+    try {
+      const res = await repositories.marketTrends.updateDailyThemeRanks({
+        trade_date: tradeDate,
+        items: flowSummaries.map((x) => ({
+          market_theme_id: x.market_theme_id,
+          manual_rank: rankDraftMap[x.market_theme_id] ? Number(rankDraftMap[x.market_theme_id]) : null,
+        })),
+      });
+      setFlowSummaries(res.items ?? []);
+      setMessage(`일별 테마 순위를 저장했습니다. (${res.updated_count}건)`);
+      setRankEditMode(false);
+    } catch (e) {
+      setError(toErr(e, "일별 테마 순위 저장에 실패했습니다."));
+    }
+  };
+
+  const resetDailyRanks = async () => {
+    if (flowSummaries.length === 0) return;
+    setError("");
+    try {
+      const res = await repositories.marketTrends.updateDailyThemeRanks({
+        trade_date: tradeDate,
+        items: flowSummaries.map((x) => ({ market_theme_id: x.market_theme_id, manual_rank: null })),
+      });
+      setFlowSummaries(res.items ?? []);
+      setRankDraftMap(Object.fromEntries((res.items ?? []).map((x) => [x.market_theme_id, ""])));
+      setMessage("수동 순위를 초기화했습니다. 자동 순위(평균등락률 기준)로 복원되었습니다.");
+      setRankEditMode(false);
+    } catch (e) {
+      setError(toErr(e, "수동 순위 초기화에 실패했습니다."));
+    }
+  };
+
   useEffect(() => {
     void loadConditions();
     void loadMarketThemes();
     void loadEvents();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === "monthly" && monthlyCalendarDays.length === 0 && !monthlyLoading) {
+      void loadMonthlyFlow();
+    }
+  }, [activeTab]);
+
+  const monthlyCells = useMemo(() => buildCalendarCells(monthlyBaseMonth, monthlyCalendarDays), [monthlyBaseMonth, monthlyCalendarDays]);
+  const monthlyTopThemes = useMemo(() => monthlyTrendThemes.slice(0, 5), [monthlyTrendThemes]);
+  const todayDate = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const monthlyLineData = useMemo(() => {
+    if (monthlyTopThemes.length === 0) return [];
+    const labels = monthlyTopThemes[0].series.map((p) => p.trade_date);
+    return labels.map((dateValue, idx) => {
+      const row: Record<string, unknown> = { trade_date: dateValue, label: toMonthDateLabel(dateValue) };
+      for (const theme of monthlyTopThemes) {
+        const point = theme.series[idx];
+        row[`v_${theme.market_theme_id}`] = point?.value ?? 0;
+        row[`meta_${theme.market_theme_id}`] = point ?? null;
+      }
+      return row;
+    });
+  }, [monthlyTopThemes]);
 
   return (
     <div className="space-y-4">
@@ -331,10 +515,43 @@ function MarketTrendsPage() {
       {message ? <div className="inline-result">{message}</div> : null}
       {error ? <div className="inline-result inline-error">{error}</div> : null}
 
-      <SectionCard title="작업 탭">
-        <div className="flex gap-2">
-          <button type="button" className={`btn ${activeTab === "kiwoom" ? "btn-primary" : "btn-secondary"}`} onClick={() => setActiveTab("kiwoom")}>키움 조건검색 수급 이벤트</button>
-          <button type="button" className={`btn ${activeTab === "flow" ? "btn-primary" : "btn-secondary"}`} onClick={() => setActiveTab("flow")}>일별 테마 수급 흐름</button>
+      <SectionCard title="">
+        <div className="border-b border-slate-200">
+          <nav className="flex flex-wrap items-center gap-6">
+            <button
+              type="button"
+              className={`border-b-2 bg-transparent pb-3 text-sm transition-colors duration-150 ${
+                activeTab === "kiwoom"
+                  ? "border-slate-900 font-semibold text-slate-900"
+                  : "border-transparent font-medium text-slate-500 hover:text-slate-900"
+              }`}
+              onClick={() => setActiveTab("kiwoom")}
+            >
+              키움 조건검색 수급 이벤트
+            </button>
+            <button
+              type="button"
+              className={`border-b-2 bg-transparent pb-3 text-sm transition-colors duration-150 ${
+                activeTab === "flow"
+                  ? "border-slate-900 font-semibold text-slate-900"
+                  : "border-transparent font-medium text-slate-500 hover:text-slate-900"
+              }`}
+              onClick={() => setActiveTab("flow")}
+            >
+              일별 테마 수급 흐름
+            </button>
+            <button
+              type="button"
+              className={`border-b-2 bg-transparent pb-3 text-sm transition-colors duration-150 ${
+                activeTab === "monthly"
+                  ? "border-slate-900 font-semibold text-slate-900"
+                  : "border-transparent font-medium text-slate-500 hover:text-slate-900"
+              }`}
+              onClick={() => setActiveTab("monthly")}
+            >
+              월별 테마 수급 흐름
+            </button>
+          </nav>
         </div>
       </SectionCard>
 
@@ -343,9 +560,11 @@ function MarketTrendsPage() {
           <div className="grid grid-cols-1 xl:grid-cols-[380px_1fr] gap-4">
             <SectionCard title="키움 조건검색 목록">
               <div className="flex gap-2 mb-2">
-                <button type="button" className="btn btn-secondary" onClick={() => void loadConditions()}>조건검색 목록 새로고침</button>
+                <button type="button" className="btn btn-secondary" onClick={() => void refreshConditions()} disabled={conditionsRefreshing}>
+                  {conditionsRefreshing ? "새로고침 중..." : "조건검색 목록 새로고침"}
+                </button>
               </div>
-              <p className="text-xs text-muted mb-2">키움 원천 목록 갱신은 kiwoom-rest-agent 실행 후 반영됩니다.</p>
+              <p className="text-xs text-muted mb-2">조건검색 목록은 Kiwoom REST API에서 직접 조회하며, 새로고침 시 최신 조건식 목록을 반영합니다.</p>
               <div className="table-shell max-h-[420px] overflow-auto">
                 <table className="data-table compact-table">
                   <thead>
@@ -465,7 +684,11 @@ function MarketTrendsPage() {
             <div className="flex gap-2 items-end mb-3 flex-wrap">
               <input className="input-control" style={{ width: "160px", minWidth: "160px" }} type="date" value={tradeDate} onChange={(e) => setTradeDate(e.target.value)} />
               <button type="button" className="btn btn-primary" onClick={() => void loadFlow()}>조회</button>
+              <button type="button" className="btn btn-secondary" onClick={() => setRankEditMode((p) => !p)}>{rankEditMode ? "편집 취소" : "순위 편집"}</button>
+              {rankEditMode ? <button type="button" className="btn btn-primary" onClick={() => void saveDailyRanks()}>순위 저장</button> : null}
+              {rankEditMode ? <button type="button" className="btn btn-secondary" onClick={() => void resetDailyRanks()}>수동 순위 초기화</button> : null}
             </div>
+            <p className="text-xs text-muted mb-2">자동 순위는 평균등락률 기준이며, 필요 시 사용자가 해당일의 체감 1위 테마를 직접 지정할 수 있습니다.</p>
 
             {flowLoading ? <p className="text-sm text-muted">테마 요약을 조회 중입니다.</p> : null}
             {!flowLoading && flowSummaries.length === 0 ? <p className="text-sm text-muted">해당일에 테마가 연결된 수급 이벤트 후보가 없습니다.</p> : null}
@@ -481,11 +704,26 @@ function MarketTrendsPage() {
                       className={`text-left rounded-lg border p-3 transition ${selected ? "border-blue-500 bg-blue-50" : "border-slate-200 hover:border-slate-300"}`}
                       onClick={() => void loadFlowStocks(item)}
                     >
-                      <div className="font-semibold text-slate-900">{item.theme_name}</div>
+                      <div className="font-semibold text-slate-900">{item.final_rank ?? "-"}위 · {item.theme_name}</div>
+                      <div className="text-xs text-muted mt-1">순위 기준: {item.rank_basis === "manual" ? "수동" : "자동"} · 점수 {item.rank_score}</div>
                       <div className="text-xs text-muted mt-1">연결 종목 {item.stock_count} · 이벤트 {item.event_count}</div>
                       <div className="text-xs text-muted">평균 등락률 {fmtPct(item.avg_change_rate)} · 최고 {fmtPct(item.max_change_rate)}</div>
                       <div className="text-xs text-muted">거래대금(추정) 합계 {fmtEokShort(item.estimated_trading_value_sum)}</div>
                       <div className="text-xs text-muted truncate mt-1">대표 종목: {item.representative_stocks.length > 0 ? item.representative_stocks.join(", ") : "-"}</div>
+                      {rankEditMode ? (
+                        <div className="mt-2">
+                          <label className="text-xs text-slate-600 mr-1">수동 순위</label>
+                          <select
+                            className="input-control"
+                            value={rankDraftMap[item.market_theme_id] ?? ""}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => setRankDraftMap((prev) => ({ ...prev, [item.market_theme_id]: e.target.value }))}
+                          >
+                            <option value="">자동</option>
+                            {flowSummaries.map((_, i) => <option key={i + 1} value={String(i + 1)}>{i + 1}위</option>)}
+                          </select>
+                        </div>
+                      ) : null}
                     </button>
                   );
                 })}
@@ -543,6 +781,132 @@ function MarketTrendsPage() {
                     })}
                   </tbody>
                 </table>
+              </div>
+            ) : null}
+          </SectionCard>
+        </div>
+      ) : null}
+
+      {activeTab === "monthly" ? (
+        <div className="space-y-4">
+          <SectionCard title="월별 테마 수급 흐름">
+            <p className="text-sm text-muted mb-2">저장된 수급 이벤트 후보와 테마 연결 기록을 기준으로 월간 테마 흐름을 표시합니다.</p>
+            <div className="flex gap-2 items-end mb-3 flex-wrap">
+              <input className="input-control" style={{ width: "140px", minWidth: "140px" }} type="month" value={monthlyBaseMonth} onChange={(e) => setMonthlyBaseMonth(e.target.value)} />
+              <button type="button" className="btn btn-primary" onClick={() => void loadMonthlyFlow()}>조회</button>
+              {monthlyStartDate && monthlyEndDate ? <span className="text-xs text-muted">조회 구간: {monthlyStartDate} ~ {monthlyEndDate}</span> : null}
+            </div>
+
+            {monthlyLoading ? <p className="text-sm text-muted">월별 테마 수급 흐름을 조회 중입니다.</p> : null}
+            {!monthlyLoading && monthlyCalendarDays.length === 0 ? <p className="text-sm text-muted">해당 월에 연결된 테마 수급 이벤트가 없습니다.</p> : null}
+
+            {monthlyCalendarDays.length > 0 ? (
+              <div className="border rounded-lg p-3">
+                <div className="grid grid-cols-7 gap-2 mb-2 text-xs font-medium text-slate-600">
+                  {["일", "월", "화", "수", "목", "금", "토"].map((w) => <div key={w}>{w}</div>)}
+                </div>
+                <div className="grid grid-cols-7 gap-2">
+                  {monthlyCells.map((cell, idx) => {
+                    const isToday = cell.date === todayDate;
+                    const isSelected = cell.date && selectedMonthlyDate === cell.date;
+                    return (
+                      <button
+                        key={`${cell.date ?? "blank"}-${idx}`}
+                        type="button"
+                        disabled={!cell.date}
+                        onClick={() => cell.date && setSelectedMonthlyDate(cell.date)}
+                        className={`min-h-[110px] rounded border p-2 text-left ${!cell.date ? "bg-slate-50 border-slate-100 cursor-default" : isSelected ? "border-blue-500 bg-blue-50" : "border-slate-200"} ${isToday ? "ring-1 ring-blue-300" : ""}`}
+                      >
+                        <div className="text-xs font-semibold mb-1">{cell.date ? Number(cell.date.slice(8, 10)) : ""}</div>
+                        {cell.day?.themes?.slice(0, 3).map((theme) => (
+                          <div key={`${cell.date}-${theme.market_theme_id}`} className="text-[11px] text-slate-700 truncate">
+                            {theme.final_rank ?? theme.rank} {theme.theme_name} · +{theme.rank_score}점 · {theme.stock_count}종목 {theme.rank_basis === "manual" ? "· 수동" : ""}
+                          </div>
+                        ))}
+                        {cell.date && (!cell.day || cell.day.themes.length === 0) ? <div className="text-[11px] text-slate-400">-</div> : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+          </SectionCard>
+
+          <SectionCard title="월간 테마 흐름 라인 그래프 (순위 가중 누적 점수)">
+            <p className="text-xs text-muted mb-3">일별 테마 순위에 가중치를 부여해 월초부터 누적한 값입니다. 반복적으로 상위권에 등장한 테마일수록 상승합니다.</p>
+            {monthlyLineData.length === 0 ? <p className="text-sm text-muted">해당 월에 연결된 테마 수급 이벤트가 없습니다.</p> : null}
+            {monthlyLineData.length > 0 ? (
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-3 text-xs">
+                  {monthlyTopThemes.map((t, idx) => <span key={t.market_theme_id} style={{ color: colorPalette[idx % colorPalette.length] }}>● {t.theme_name}</span>)}
+                </div>
+                <div className="overflow-x-auto border rounded-lg p-2 bg-white">
+                  {(() => {
+                    const width = Math.max(760, monthlyLineData.length * 28);
+                    const height = 280;
+                    const padL = 40;
+                    const padR = 10;
+                    const padT = 10;
+                    const padB = 30;
+                    const plotW = width - padL - padR;
+                    const plotH = height - padT - padB;
+                    const maxY = Math.max(1, ...monthlyTopThemes.flatMap((t) => t.series.map((p) => p.value)));
+                    const xOf = (i: number) => padL + ((monthlyLineData.length <= 1 ? 0 : i / (monthlyLineData.length - 1)) * plotW);
+                    const yOf = (v: number) => padT + ((maxY - v) / maxY) * plotH;
+                    return (
+                      <svg width={width} height={height} role="img" aria-label="월간 테마 흐름 그래프">
+                        <line x1={padL} y1={padT} x2={padL} y2={padT + plotH} stroke="#cbd5e1" />
+                        <line x1={padL} y1={padT + plotH} x2={padL + plotW} y2={padT + plotH} stroke="#cbd5e1" />
+                        {[0, 0.25, 0.5, 0.75, 1].map((r) => {
+                          const y = padT + plotH * r;
+                          const label = Math.round(maxY * (1 - r));
+                          return (
+                            <g key={r}>
+                              <line x1={padL} y1={y} x2={padL + plotW} y2={y} stroke="#f1f5f9" />
+                              <text x={padL - 6} y={y + 4} textAnchor="end" fontSize="10" fill="#64748b">{label}</text>
+                            </g>
+                          );
+                        })}
+                        {monthlyTopThemes.map((theme, idx) => {
+                          const points = theme.series.map((p, i) => `${xOf(i)},${yOf(p.value)}`).join(" ");
+                          return (
+                            <g key={theme.market_theme_id}>
+                              <polyline fill="none" stroke={colorPalette[idx % colorPalette.length]} strokeWidth="2" points={points} />
+                              {theme.series.map((p, i) => (
+                                <circle key={`${theme.market_theme_id}-${p.trade_date}`} cx={xOf(i)} cy={yOf(p.value)} r="2.5" fill={colorPalette[idx % colorPalette.length]}>
+                                  <title>{`${p.trade_date} | ${theme.theme_name} | 누적 ${p.value} | 당일 ${p.daily_score} | 순위 ${p.final_rank ?? "-"} | ${p.rank_basis === "manual" ? "수동" : "자동"} | 평균등락률 ${p.avg_change_rate ?? "-"} | 종목수 ${p.stock_count}`}</title>
+                                </circle>
+                              ))}
+                            </g>
+                          );
+                        })}
+                        {monthlyLineData.map((d, i) => {
+                          if (i % Math.ceil(monthlyLineData.length / 8) !== 0 && i !== monthlyLineData.length - 1) return null;
+                          return (
+                            <text key={String(d.trade_date)} x={xOf(i)} y={height - 8} textAnchor="middle" fontSize="10" fill="#64748b">
+                              {String(d.label)}
+                            </text>
+                          );
+                        })}
+                      </svg>
+                    );
+                  })()}
+                </div>
+                <div className="table-shell overflow-auto">
+                  <table className="data-table compact-table">
+                    <thead>
+                      <tr><th>날짜</th><th>일별 테마 순위 (상위 3)</th></tr>
+                    </thead>
+                    <tbody>
+                      {monthlyCalendarDays.filter((d) => d.themes.length > 0 && (!selectedMonthlyDate || d.trade_date === selectedMonthlyDate)).map((d) => (
+                        <tr key={d.trade_date}>
+                          <td>{d.trade_date}</td>
+                          <td>{d.themes.slice(0, 3).map((t) => `${t.final_rank ?? t.rank}. ${t.theme_name} (+${t.rank_score}점, ${t.stock_count}종목, ${t.rank_basis === "manual" ? "수동" : "자동"})`).join(" / ")}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             ) : null}
           </SectionCard>

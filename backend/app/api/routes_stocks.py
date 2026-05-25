@@ -4,7 +4,13 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from backend.app.core.database import get_db
-from backend.app.schemas.stock_schema import StockCreate, StockResponse, StockUpdate
+from backend.app.schemas.stock_schema import (
+    StockCodeNormalizeRequest,
+    StockCodeNormalizeResponse,
+    StockCreate,
+    StockResponse,
+    StockUpdate,
+)
 from backend.app.schemas.stock_sync_schema import StockSyncRequest, StockSyncResponse
 from backend.app.services.stock_service import StockService
 from backend.app.services.stock_sync_service import StockSyncService
@@ -60,3 +66,8 @@ def sync_stocks(payload: StockSyncRequest, db: Session = Depends(get_db)) -> Sto
         deactivate_missing=payload.deactivate_missing,
         include_security_types=payload.include_security_types,
     )
+
+
+@router.post("/stocks/normalize-codes", response_model=StockCodeNormalizeResponse)
+def normalize_stock_codes(payload: StockCodeNormalizeRequest, db: Session = Depends(get_db)) -> StockCodeNormalizeResponse:
+    return StockService(db).normalize_stock_codes(payload)

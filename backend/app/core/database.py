@@ -452,6 +452,25 @@ def ensure_runtime_schema() -> None:
             """
         )
         conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS daily_theme_flow_ranks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                trade_date TEXT NOT NULL,
+                market_theme_id INTEGER NOT NULL,
+                auto_rank INTEGER,
+                manual_rank INTEGER,
+                final_rank INTEGER,
+                rank_score REAL NOT NULL DEFAULT 0,
+                rank_basis TEXT NOT NULL DEFAULT 'auto',
+                user_memo TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(trade_date, market_theme_id),
+                FOREIGN KEY (market_theme_id) REFERENCES market_themes(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_trend_detection_settings_active_default "
             "ON trend_detection_settings(is_active, is_default, updated_at)"
         )
@@ -518,4 +537,275 @@ def ensure_runtime_schema() -> None:
         conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_kiwoom_condition_result_items_detected_at "
             "ON kiwoom_condition_result_items(detected_at)"
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS briefing_sources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_type TEXT NOT NULL,
+                source_name TEXT NOT NULL,
+                source_url TEXT NOT NULL,
+                channel_id TEXT,
+                playlist_id TEXT,
+                is_default INTEGER NOT NULL DEFAULT 0,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                last_checked_at TEXT,
+                deleted_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        briefing_source_columns = {
+            str(row[1]) for row in conn.exec_driver_sql("PRAGMA table_info(briefing_sources)").fetchall()
+        }
+        if "deleted_at" not in briefing_source_columns:
+            conn.exec_driver_sql("ALTER TABLE briefing_sources ADD COLUMN deleted_at TEXT")
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS briefing_videos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_id INTEGER,
+                video_id TEXT NOT NULL UNIQUE,
+                video_url TEXT NOT NULL,
+                title TEXT NOT NULL,
+                channel_name TEXT,
+                published_at TEXT,
+                duration_seconds INTEGER,
+                thumbnail_url TEXT,
+                description_summary TEXT,
+                transcript_status TEXT NOT NULL DEFAULT 'unknown',
+                transcript_language TEXT,
+                transcript_source TEXT,
+                transcript_checked_at TEXT,
+                transcript_text_length INTEGER,
+                transcript_chunk_count INTEGER,
+                analysis_status TEXT NOT NULL DEFAULT 'pending',
+                last_analyzed_at TEXT,
+                error_message TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (source_id) REFERENCES briefing_sources(id) ON DELETE SET NULL
+            )
+            """
+        )
+        briefing_video_columns = {
+            str(row[1]) for row in conn.exec_driver_sql("PRAGMA table_info(briefing_videos)").fetchall()
+        }
+        if "transcript_checked_at" not in briefing_video_columns:
+            conn.exec_driver_sql("ALTER TABLE briefing_videos ADD COLUMN transcript_checked_at TEXT")
+        if "transcript_text_length" not in briefing_video_columns:
+            conn.exec_driver_sql("ALTER TABLE briefing_videos ADD COLUMN transcript_text_length INTEGER")
+        if "transcript_chunk_count" not in briefing_video_columns:
+            conn.exec_driver_sql("ALTER TABLE briefing_videos ADD COLUMN transcript_chunk_count INTEGER")
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS briefing_summaries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                video_id INTEGER NOT NULL,
+                summary_type TEXT NOT NULL,
+                model_name TEXT,
+                summary_text TEXT,
+                key_points_json TEXT,
+                topic_json TEXT,
+                stock_mentions_json TEXT,
+                theme_mentions_json TEXT,
+                risk_points_json TEXT,
+                elapsed_seconds INTEGER,
+                chunk_count INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (video_id) REFERENCES briefing_videos(id) ON DELETE CASCADE
+            )
+            """
+        )
+        briefing_summary_columns = {
+            str(row[1]) for row in conn.exec_driver_sql("PRAGMA table_info(briefing_summaries)").fetchall()
+        }
+        if "elapsed_seconds" not in briefing_summary_columns:
+            conn.exec_driver_sql("ALTER TABLE briefing_summaries ADD COLUMN elapsed_seconds INTEGER")
+        if "chunk_count" not in briefing_summary_columns:
+            conn.exec_driver_sql("ALTER TABLE briefing_summaries ADD COLUMN chunk_count INTEGER")
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS briefing_topic_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                video_id INTEGER NOT NULL,
+                topic_name TEXT NOT NULL,
+                summary TEXT,
+                importance_score INTEGER,
+                related_themes_json TEXT,
+                related_stocks_json TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (video_id) REFERENCES briefing_videos(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS briefing_theme_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                video_id INTEGER NOT NULL,
+                market_theme_id INTEGER NOT NULL,
+                link_reason TEXT,
+                confidence_level TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(video_id, market_theme_id),
+                FOREIGN KEY (video_id) REFERENCES briefing_videos(id) ON DELETE CASCADE,
+                FOREIGN KEY (market_theme_id) REFERENCES market_themes(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS briefing_summary_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                video_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                progress_percent INTEGER NOT NULL DEFAULT 0,
+                current_step TEXT,
+                current_chunk INTEGER NOT NULL DEFAULT 0,
+                total_chunks INTEGER NOT NULL DEFAULT 0,
+                summary_id INTEGER,
+                error_message TEXT,
+                started_at TEXT,
+                finished_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_briefing_sources_source_type ON briefing_sources(source_type)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_briefing_sources_playlist_id ON briefing_sources(playlist_id)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_briefing_sources_channel_id ON briefing_sources(channel_id)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_briefing_sources_is_active ON briefing_sources(is_active)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_briefing_videos_source_id ON briefing_videos(source_id)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_briefing_videos_video_id ON briefing_videos(video_id)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_briefing_videos_published_at ON briefing_videos(published_at)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_briefing_videos_analysis_status ON briefing_videos(analysis_status)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_briefing_videos_transcript_status ON briefing_videos(transcript_status)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_briefing_summaries_video_id ON briefing_summaries(video_id)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_briefing_summaries_summary_type ON briefing_summaries(summary_type)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_briefing_topic_items_video_id ON briefing_topic_items(video_id)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_briefing_topic_items_topic_name ON briefing_topic_items(topic_name)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_briefing_summary_jobs_video_id ON briefing_summary_jobs(video_id)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_briefing_summary_jobs_status ON briefing_summary_jobs(status)")
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS telegram_sources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_name TEXT NOT NULL,
+                channel_username TEXT NOT NULL,
+                channel_title TEXT,
+                source_type TEXT NOT NULL DEFAULT 'channel',
+                description TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                is_default INTEGER NOT NULL DEFAULT 0,
+                is_deleted INTEGER NOT NULL DEFAULT 0,
+                last_collected_message_id INTEGER,
+                last_collected_at TEXT,
+                memo TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS telegram_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_id INTEGER NOT NULL,
+                telegram_message_id INTEGER NOT NULL,
+                message_date TEXT NOT NULL,
+                message_text TEXT,
+                message_text_length INTEGER,
+                item_title TEXT,
+                item_url TEXT,
+                normalized_url TEXT,
+                publisher TEXT,
+                message_type TEXT NOT NULL DEFAULT 'unknown',
+                item_category TEXT NOT NULL DEFAULT '기타',
+                summary_text TEXT,
+                key_points_json TEXT,
+                summary_error_message TEXT,
+                tag TEXT,
+                score INTEGER NOT NULL DEFAULT 50,
+                sentiment TEXT NOT NULL DEFAULT 'neutral',
+                risk_level TEXT NOT NULL DEFAULT 'unknown',
+                event_type TEXT NOT NULL DEFAULT '기타',
+                related_stock_code TEXT,
+                related_stock_name TEXT,
+                related_theme TEXT,
+                llm_model TEXT,
+                summary_status TEXT NOT NULL DEFAULT 'pending',
+                summary_has_content INTEGER NOT NULL DEFAULT 0,
+                analysis_status TEXT NOT NULL DEFAULT 'pending',
+                collected_at TEXT NOT NULL,
+                summarized_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT,
+                FOREIGN KEY (source_id) REFERENCES telegram_sources(id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS telegram_daily_summaries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                summary_date TEXT NOT NULL,
+                source_id INTEGER NOT NULL DEFAULT 0,
+                item_count INTEGER NOT NULL DEFAULT 0,
+                summary_text TEXT,
+                key_points_json TEXT,
+                theme_mentions_json TEXT,
+                stock_mentions_json TEXT,
+                risk_points_json TEXT,
+                top_tags_json TEXT,
+                top_event_types_json TEXT,
+                message_type_stats_json TEXT,
+                market_view TEXT,
+                summary_has_content INTEGER NOT NULL DEFAULT 0,
+                llm_model TEXT,
+                elapsed_seconds INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT,
+                FOREIGN KEY (source_id) REFERENCES telegram_sources(id)
+            )
+            """
+        )
+        conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS ux_telegram_sources_channel_username ON telegram_sources(channel_username)")
+        conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS ux_telegram_items_source_msg ON telegram_items(source_id, telegram_message_id)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_telegram_items_message_date ON telegram_items(message_date)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_telegram_items_source_date ON telegram_items(source_id, message_date)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_telegram_items_message_type ON telegram_items(message_type)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_telegram_items_tag ON telegram_items(tag)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_telegram_items_normalized_url ON telegram_items(normalized_url)")
+        telegram_item_columns = {
+            str(row[1]) for row in conn.exec_driver_sql("PRAGMA table_info(telegram_items)").fetchall()
+        }
+        if "summary_error_message" not in telegram_item_columns:
+            conn.exec_driver_sql("ALTER TABLE telegram_items ADD COLUMN summary_error_message TEXT")
+        conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS ux_telegram_daily_summaries_date_source ON telegram_daily_summaries(summary_date, source_id)")
+        conn.exec_driver_sql(
+            """
+            INSERT OR IGNORE INTO telegram_sources
+            (source_name, channel_username, channel_title, source_type, description, is_active, is_default, is_deleted, created_at, updated_at)
+            VALUES
+            ('주식급등일보', 'stockdaily_news', '주식급등일보', 'channel', '기본 등록 채널', 1, 1, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+            ('번개맞은 뉴스', 'lightning_news', '번개맞은 뉴스', 'channel', '기본 등록 채널', 1, 1, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_daily_theme_flow_ranks_trade_date "
+            "ON daily_theme_flow_ranks(trade_date)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_daily_theme_flow_ranks_market_theme_id "
+            "ON daily_theme_flow_ranks(market_theme_id)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_daily_theme_flow_ranks_final_rank "
+            "ON daily_theme_flow_ranks(final_rank)"
         )

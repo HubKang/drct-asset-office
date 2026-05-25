@@ -20,12 +20,12 @@ class StockMarketMetricRepository:
             INSERT INTO stock_daily_market_metrics (
                 stock_id, trade_date, market, close_price, market_cap, listed_shares,
                 trading_volume, trading_value, market_cap_rank, trading_value_rank,
-                market_trading_value_rank, trading_value_percentile, market_trading_value_percentile,
+                market_trading_value_rank, trading_value_percentile, market_trading_value_percentile, foreign_ownership_ratio,
                 source, created_at, updated_at
             ) VALUES (
                 :stock_id, :trade_date, :market, :close_price, :market_cap, :listed_shares,
                 :trading_volume, :trading_value, :market_cap_rank, :trading_value_rank,
-                :market_trading_value_rank, :trading_value_percentile, :market_trading_value_percentile,
+                :market_trading_value_rank, :trading_value_percentile, :market_trading_value_percentile, :foreign_ownership_ratio,
                 :source, :created_at, :updated_at
             )
             ON CONFLICT(stock_id, trade_date, source) DO UPDATE SET
@@ -40,6 +40,7 @@ class StockMarketMetricRepository:
                 market_trading_value_rank=excluded.market_trading_value_rank,
                 trading_value_percentile=excluded.trading_value_percentile,
                 market_trading_value_percentile=excluded.market_trading_value_percentile,
+                foreign_ownership_ratio=excluded.foreign_ownership_ratio,
                 updated_at=excluded.updated_at
             """
         )

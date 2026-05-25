@@ -23,3 +23,24 @@ export type CollectionRunListParams = {
   limit?: number;
   offset?: number;
 };
+
+export type CollectionRunListResponse = {
+  items: CollectionRun[];
+  total_count: number;
+  limit: number;
+  offset: number;
+};
+
+export type CollectionRunCleanupPreviewResponse = {
+  success: boolean;
+  cutoff_date: string;
+  target_count: number;
+  message: string;
+};
+
+export type CollectionRunCleanupResponse = {
+  success: boolean;
+  cutoff_date: string;
+  deleted_count: number;
+  message: string;
+};

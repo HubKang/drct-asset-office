@@ -389,3 +389,85 @@ legacy/cache/debug 용도로 유지(삭제하지 않음)
 1. 본 세션은 브라우저 수동 클릭 E2E 자동화 미수행
 2. 따라서 최종 UX 체감(버튼 동선/메시지/차트 로딩)은 실제 브라우저에서 1회 수동 점검 필요
 3. 현재 UI에서는 신규 테마 생성 입력을 제거한 상태이므로 "신규 테마 등록 후 연결"은 제외됨(기존 테마 추가 연결만 제공)
+
+## 29 월별 테마 수급 흐름 탭 구현 (2026-05-23)
+- 29단계 방향 전환:
+1. Kiwoom REST 순위 API 확장 대신 `월별 테마 수급 흐름` 탭 구현으로 변경
+2. 조회 전용 집계 기능이며 주문/자동매매 기능은 추가하지 않음
+
+- 목적:
+1. 저장된 수급 이벤트 후보(`market_trend_events`)와 테마 연결(`market_trend_event_theme_links`)을 월간 관점으로 조회
+2. 상단 달력에 일별 테마 순위, 하단에 월간 흐름 라인 그래프 제공
+
+- 신규 API:
+1. `GET /external/kiwoom/theme-flow/monthly/calendar?month=YYYY-MM`
+2. `GET /external/kiwoom/theme-flow/monthly/trend?month=YYYY-MM`
+
+- 월 기준 기간 규칙:
+1. `start_date`: 기준월 1일
+2. 현재 월 선택 시 `end_date`: 오늘(한국시간)까지
+3. 과거 월 선택 시 `end_date`: 해당 월 말일
+
+- 달력형 일별 테마 순위 집계 기준:
+1. 조인: `market_trend_events` + `market_trend_event_theme_links` + `market_themes`
+2. 필터: 기간, `detection_source in ('kiwoom_condition','kiwoom_rest')`, `is_active=1`, `deleted_at` 미삭제
+3. 산출:
+: `stock_count`, `event_count`, `avg_change_rate`, `max_change_rate`, `estimated_trading_value_sum`
+4. 일별 정렬:
+: `stock_count DESC` -> `event_count DESC` -> `estimated_trading_value_sum DESC` -> `avg_change_rate DESC`
+5. rank는 날짜별 1부터 부여
+
+- 라인 그래프 기준:
+1. y축 기본값: `stock_count`
+2. x축: `start_date ~ end_date` calendar day
+3. tooltip/보조정보용 필드: `event_count`, `avg_change_rate`, `estimated_trading_value_sum`
+
+- 빈 날짜 0값 처리:
+1. backend에서 날짜 구간 전체를 생성
+2. 해당 테마 데이터가 없는 날짜는 `value=0`으로 채워 연속성 유지
+
+- 향후 개선:
+1. 거래일 기준 x축 전환
+2. y축 지표 전환(`event_count`/`estimated_trading_value_sum`/`avg_change_rate`)
+3. 전월 대비 증감 지표
+4. GPT 자문 패키지 연동
+
+## 29-B 일별 순위 확정 + 월별 누적 점수 전환 (2026-05-23)
+- 일별 자동 순위 기준:
+1. `avg_change_rate DESC`
+2. 동률 보조: `stock_count DESC` -> `event_count DESC` -> `estimated_trading_value_sum DESC`
+
+- 수동 순위 수정:
+1. 신규 테이블 `daily_theme_flow_ranks` 도입
+2. `trade_date + market_theme_id` 유니크
+3. `manual_rank` 저장 시 `final_rank=manual_rank`, 미설정 시 `final_rank=auto_rank`
+
+- 최종 순위 산정:
+1. `manual_rank` 우선
+2. 없으면 `auto_rank`
+3. `rank_basis`: `manual|auto`
+
+- 순위 점수(시장 관심도 기록용):
+1. 1위 10점
+2. 2위 8점
+3. 3위 6점
+4. 4위 4점
+5. 5위 2점
+6. 6위 이하 1점
+
+- 월별 그래프 y축 변경:
+1. 기존 `stock_count`
+2. 변경 `순위 가중 누적 점수`
+
+- 누적 점수 예시:
+1. 5/01 1위 -> +10 (누적 10)
+2. 5/02 미등장 -> +0 (누적 10)
+3. 5/03 3위 -> +5 (누적 15)
+
+- 지표 성격:
+1. 투자 신호가 아니라 `테마 관심도 기록` 목적
+
+- 향후 개선:
+1. 가중치 사용자 설정
+2. 평균등락률/거래대금/종목수 혼합 점수
+3. GPT 자문 패키지 연동

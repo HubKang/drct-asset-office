@@ -1,8 +1,10 @@
-import { advisoryPackageApiRepository } from "@/services/api/advisoryPackageApiRepository";
+﻿import { advisoryPackageApiRepository } from "@/services/api/advisoryPackageApiRepository";
 import { classificationRuleApiRepository } from "@/services/api/classificationRuleApiRepository";
 import { collectionRunApiRepository } from "@/services/api/collectionRunApiRepository";
 import { disclosureApiRepository } from "@/services/api/disclosureApiRepository";
+import { economicBriefingApiRepository } from "@/services/api/economicBriefingApiRepository";
 import { newsApiRepository } from "@/services/api/newsApiRepository";
+import { telegramApiRepository } from "@/services/api/telegramApiRepository";
 import { marketThemeApiRepository } from "@/services/api/marketThemeApiRepository";
 import { marketTrendApiRepository } from "@/services/api/marketTrendApiRepository";
 import { gptPromptTemplateApiRepository } from "@/services/api/gptPromptTemplateApiRepository";
@@ -34,6 +36,8 @@ export const repositories = {
   marketThemes: useMock ? marketThemeMockRepository : marketThemeApiRepository,
   marketTrends: marketTrendApiRepository,
   disclosures: useMock ? disclosureMockRepository : disclosureApiRepository,
+  economicBriefing: economicBriefingApiRepository,
+  telegram: telegramApiRepository,
   advisoryPackages: useMock ? advisoryPackageMockRepository : advisoryPackageApiRepository,
   collectionRuns: useMock ? collectionRunMockRepository : collectionRunApiRepository,
   classificationRules: useMock ? classificationRuleMockRepository : classificationRuleApiRepository,
@@ -41,3 +45,5 @@ export const repositories = {
 };
 
 export const dataSourceLabel = useMock ? "mock" : "api";
+
+

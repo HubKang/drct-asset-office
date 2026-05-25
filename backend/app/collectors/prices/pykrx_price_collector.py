@@ -1,20 +1,22 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-import os
 import logging
+import os
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
+from backend.app.core.config import PYKRX_DISABLE_PROXY
+from backend.app.utils.stock_code_utils import is_valid_kr_stock_code, normalize_kr_stock_code
 
 logger = logging.getLogger(__name__)
 
 
 def normalize_stock_code_for_pykrx(stock_code: str) -> str:
-    value = (stock_code or "").strip()
-    if len(value) == 7 and value[0].upper() == "A" and value[1:].isdigit():
-        return value[1:]
-    return value
+    value = normalize_kr_stock_code(stock_code)
+    if is_valid_kr_stock_code(value):
+        return value
+    return ""
 
 
 @dataclass
@@ -75,47 +77,77 @@ class PykrxPriceCollector:
     def collect_daily(self, stock_code: str, start_date: date, end_date: date, adjusted: bool = True) -> tuple[str, list[PykrxDailyPriceRow]]:
         normalized = normalize_stock_code_for_pykrx(stock_code)
         if not normalized:
-            raise ValueError("PyKRX 조회용 종목코드 정규화에 실패했습니다.")
+            raise ValueError(f"INVALID_STOCK_CODE raw={stock_code} normalized={normalize_kr_stock_code(stock_code)}")
 
         mpl_dir = Path.cwd() / ".mpltcache"
         mpl_dir.mkdir(parents=True, exist_ok=True)
         os.environ.setdefault("MPLCONFIGDIR", str(mpl_dir.resolve()))
 
+        disable_proxy = PYKRX_DISABLE_PROXY
         proxy_keys = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"]
-        previous_proxy_values = {k: os.environ.get(k) for k in proxy_keys}
+        previous_proxy_values = {k: os.environ.get(k) for k in proxy_keys} if disable_proxy else {}
+
         try:
             from pykrx import stock
         except Exception as exc:
-            raise ValueError("pykrx 패키지가 설치되어 있지 않습니다. pip install pykrx 후 다시 실행해 주세요.") from exc
+            raise ValueError("pykrx package is not installed. Run 'pip install pykrx' and retry.") from exc
 
         try:
-            for key in proxy_keys:
-                if key in os.environ:
-                    del os.environ[key]
-            os.environ["NO_PROXY"] = "*"
+            if disable_proxy:
+                for key in proxy_keys:
+                    os.environ.pop(key, None)
+                os.environ["NO_PROXY"] = "*"
+
             logger.info(
-                "PyKRX 일봉 조회 시작: stock_code=%s normalized=%s start=%s end=%s adjusted=%s",
+                "PyKRX daily request start: raw_code=%s normalized=%s start=%s end=%s adjusted=%s disable_proxy=%s",
                 stock_code,
                 normalized,
                 start_date.isoformat(),
                 end_date.isoformat(),
                 adjusted,
+                disable_proxy,
             )
-            df = stock.get_market_ohlcv_by_date(
-                fromdate=start_date.strftime("%Y%m%d"),
-                todate=end_date.strftime("%Y%m%d"),
-                ticker=normalized,
-                adjusted=adjusted,
-            )
-            logger.debug("PyKRX 원천 컬럼: normalized=%s columns=%s", normalized, list(df.columns) if df is not None else None)
+
+            try:
+                df = stock.get_market_ohlcv_by_date(
+                    fromdate=start_date.strftime("%Y%m%d"),
+                    todate=end_date.strftime("%Y%m%d"),
+                    ticker=normalized,
+                    adjusted=adjusted,
+                )
+            except Exception as exc:
+                logger.exception(
+                    "PyKRX 일봉 조회 실패: raw_code=%s normalized=%s start=%s end=%s adjusted=%s error=%s",
+                    stock_code,
+                    normalized,
+                    start_date.isoformat(),
+                    end_date.isoformat(),
+                    adjusted,
+                    exc,
+                )
+                raise RuntimeError(
+                    f"PYKRX_REQUEST_FAILED raw={stock_code} normalized={normalized} "
+                    f"start={start_date.isoformat()} end={end_date.isoformat()} "
+                    f"error={type(exc).__name__}: {str(exc)}"
+                ) from exc
+
+            logger.debug("PyKRX raw columns: normalized=%s columns=%s", normalized, list(df.columns) if df is not None else None)
         finally:
-            for key, value in previous_proxy_values.items():
-                if value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = value
+            if disable_proxy:
+                for key, value in previous_proxy_values.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
 
         if df is None or df.empty:
+            logger.warning(
+                "PyKRX 일봉 데이터 없음: raw_code=%s normalized=%s start=%s end=%s",
+                stock_code,
+                normalized,
+                start_date.isoformat(),
+                end_date.isoformat(),
+            )
             return normalized, []
 
         rows: list[PykrxDailyPriceRow] = []
@@ -151,7 +183,8 @@ class PykrxPriceCollector:
             prev_close = close_price
 
         logger.info(
-            "PyKRX 일봉 조회 완료: normalized=%s rows=%s start=%s end=%s",
+            "PyKRX daily request done: raw_code=%s normalized=%s rows=%s start=%s end=%s",
+            stock_code,
             normalized,
             len(rows),
             start_date.isoformat(),

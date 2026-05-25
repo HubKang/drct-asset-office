@@ -1,5 +1,11 @@
 import { apiRequest } from "@/services/api/apiClient";
-import type { Stock, StockCreateInput, StockListParams, StockUpdateInput } from "@/types/stock";
+import type {
+  Stock,
+  StockCodeNormalizeResponse,
+  StockCreateInput,
+  StockListParams,
+  StockUpdateInput,
+} from "@/types/stock";
 import type { StockSyncRequest, StockSyncResponse } from "@/types/stockSync";
 
 export const stockApiRepository = {
@@ -22,6 +28,11 @@ export const stockApiRepository = {
   update: (stockId: number, payload: StockUpdateInput) =>
     apiRequest<Stock>(`/stocks/${stockId}`, { method: "PUT", body: JSON.stringify(payload) }),
   deactivate: (stockId: number) => apiRequest<Stock>(`/stocks/${stockId}`, { method: "DELETE" }),
+  normalizeCodes: (dryRun = false) =>
+    apiRequest<StockCodeNormalizeResponse>("/stocks/normalize-codes", {
+      method: "POST",
+      body: JSON.stringify({ dry_run: dryRun }),
+    }),
   syncStocks: (payload: StockSyncRequest) =>
     apiRequest<StockSyncResponse>("/stocks/sync", { method: "POST", body: JSON.stringify(payload), timeoutMs: 120000 }),
 };

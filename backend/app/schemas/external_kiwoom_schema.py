@@ -22,6 +22,21 @@ class KiwoomConditionSyncResponse(BaseModel):
     total_count: int
 
 
+class KiwoomConditionRefreshResponse(BaseModel):
+    success: bool
+    source: str
+    api_id: str
+    return_code: str | None = None
+    return_msg: str | None = None
+    condition_count: int
+    inserted: int
+    updated: int
+    total: int
+    top_level_keys: list[str] = Field(default_factory=list)
+    sample_conditions: list[dict[str, str]] = Field(default_factory=list)
+    message: str | None = None
+
+
 class KiwoomConditionItemOut(BaseModel):
     id: int
     condition_seq: str
@@ -92,10 +107,16 @@ class KiwoomConditionResultListResponse(BaseModel):
 
 class KiwoomConditionPreviewResponse(BaseModel):
     success: bool
+    source: str | None = None
+    api_id: str | None = None
     condition_seq: str
     condition_name: str | None = None
+    return_code: str | None = None
+    return_msg: str | None = None
     item_count: int
     items: list[KiwoomConditionResultItemOut] = Field(default_factory=list)
+    parsing_error: bool = False
+    debug: dict[str, Any] = Field(default_factory=dict)
     error_message: str | None = None
 
 
@@ -190,6 +211,11 @@ class DailyThemeFlowSummaryItem(BaseModel):
     max_change_rate: float | None = None
     estimated_trading_value_sum: int = 0
     representative_stocks: list[str] = Field(default_factory=list)
+    auto_rank: int | None = None
+    manual_rank: int | None = None
+    final_rank: int | None = None
+    rank_score: float = 0
+    rank_basis: str = "auto"
 
 
 class DailyThemeFlowSummaryResponse(BaseModel):
@@ -218,3 +244,77 @@ class DailyThemeFlowStocksResponse(BaseModel):
     market_theme_id: int
     theme_name: str | None = None
     items: list[DailyThemeFlowStockItem] = Field(default_factory=list)
+
+
+class MonthlyThemeFlowCalendarThemeItem(BaseModel):
+    rank: int
+    market_theme_id: int
+    theme_name: str
+    stock_count: int
+    event_count: int
+    avg_change_rate: float | None = None
+    max_change_rate: float | None = None
+    estimated_trading_value_sum: int = 0
+    auto_rank: int | None = None
+    manual_rank: int | None = None
+    final_rank: int | None = None
+    rank_score: float = 0
+    rank_basis: str = "auto"
+
+
+class MonthlyThemeFlowCalendarDayItem(BaseModel):
+    trade_date: str
+    themes: list[MonthlyThemeFlowCalendarThemeItem] = Field(default_factory=list)
+
+
+class MonthlyThemeFlowCalendarResponse(BaseModel):
+    success: bool
+    month: str
+    start_date: str
+    end_date: str
+    days: list[MonthlyThemeFlowCalendarDayItem] = Field(default_factory=list)
+
+
+class MonthlyThemeFlowTrendPoint(BaseModel):
+    trade_date: str
+    value: int
+    daily_score: int = 0
+    final_rank: int | None = None
+    rank_basis: str = "auto"
+    stock_count: int
+    event_count: int
+    avg_change_rate: float | None = None
+    max_change_rate: float | None = None
+    estimated_trading_value_sum: int = 0
+
+
+class MonthlyThemeFlowTrendTheme(BaseModel):
+    market_theme_id: int
+    theme_name: str
+    series: list[MonthlyThemeFlowTrendPoint] = Field(default_factory=list)
+
+
+class MonthlyThemeFlowTrendResponse(BaseModel):
+    success: bool
+    month: str
+    start_date: str
+    end_date: str
+    themes: list[MonthlyThemeFlowTrendTheme] = Field(default_factory=list)
+
+
+class DailyThemeRankUpdateItem(BaseModel):
+    market_theme_id: int
+    manual_rank: int | None = None
+    user_memo: str | None = None
+
+
+class DailyThemeRanksUpdateRequest(BaseModel):
+    trade_date: str
+    items: list[DailyThemeRankUpdateItem] = Field(default_factory=list)
+
+
+class DailyThemeRanksUpdateResponse(BaseModel):
+    success: bool
+    trade_date: str
+    updated_count: int
+    items: list[DailyThemeFlowSummaryItem] = Field(default_factory=list)

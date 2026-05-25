@@ -10,7 +10,7 @@ class MarketMetricsDailyCollectRequest(BaseModel):
 
 class SelectedMarketMetricsCollectRequest(BaseModel):
     stock_ids: list[int]
-    source: str = "kis_api"
+    source: str = "kiwoom_rest"
 
 
 class MarketMetricsDailyCollectResponse(BaseModel):
@@ -94,5 +94,27 @@ class StockMarketMetricSummaryResponse(BaseModel):
     market_trading_value_rank: int | None = None
     trading_value_percentile: float | None = None
     market_trading_value_percentile: float | None = None
+    foreign_ownership_ratio: float | None = None
+    used_api_ids: list[str] | None = None
+    source_label: str | None = None
     unit_notes: dict[str, str] | None = None
     data_note: str
+
+
+class MarketIndexSnapshotResponse(BaseModel):
+    market: str
+    index_value: float | None = None
+    change_value: float | None = None
+    change_rate: float | None = None
+    volume: int | None = None
+    trading_value: int | None = None
+    base_date: str | None = None
+
+
+class MarketIndicatorsOverviewResponse(BaseModel):
+    source: str
+    base_date: str | None = None
+    fetched_at: str
+    kospi: MarketIndexSnapshotResponse
+    kosdaq: MarketIndexSnapshotResponse
+    message: str | None = None

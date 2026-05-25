@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+﻿import { FormEvent, useEffect, useMemo, useState } from "react";
 import EmptyState from "@/components/common/EmptyState";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
@@ -68,8 +68,8 @@ function fmtHundredMillionWon(value: number | null | undefined): string {
   const amount = Number(value);
   if (!Number.isFinite(amount)) return "-";
   const eok = amount / 100_000_000;
-  const rounded = Math.abs(eok) >= 100 ? Math.round(eok) : Math.round(eok * 10) / 10;
-  return `${rounded.toLocaleString("ko-KR")}억 원`;
+  const rounded = Math.abs(eok) >= 100 ? Math.round(eok) : Math.abs(eok) >= 0.1 ? Math.round(eok * 10) / 10 : Math.round(eok * 10000) / 10000;
+  return `${rounded.toLocaleString("ko-KR", { maximumFractionDigits: 4 })}억 원`;
 }
 
 function fmtShares(value: number | null | undefined): string {
@@ -80,6 +80,23 @@ function fmtShares(value: number | null | undefined): string {
 function fmtPercent(value: number | null | undefined): string {
   if (value === null || value === undefined) return "-";
   return `${value.toFixed(2)}%`;
+}
+
+function fmtPercentOrUnavailable(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "미제공";
+  return `${value.toFixed(2)}%`;
+}
+
+function fmtEokOrUnavailable(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "미제공";
+  return fmtHundredMillionWon(value);
+}
+
+function fmtMarketMetricRawUnit(value: number | null | undefined, unitLabel: string): string {
+  if (value === null || value === undefined) return "미제공";
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "미제공";
+  return `${Intl.NumberFormat("ko-KR").format(amount)}${unitLabel}`;
 }
 
 function fmtDecimal2(value: number | null | undefined): string {
@@ -279,7 +296,7 @@ function StockPricesPage() {
       const response = await repositories.stockPrices.listSummary({
         keyword: activeKeyword.trim() || undefined,
         market: activeMarket === "ALL" ? undefined : activeMarket,
-        source: "pykrx",
+        source: "kiwoom_rest",
         limit: SUMMARY_LIMIT,
         offset: nextOffset,
       });
@@ -303,7 +320,7 @@ function StockPricesPage() {
     setSummaryError("");
     setSelectedSummary(null);
     try {
-      const response = await repositories.stockPrices.getSummary(stockId, { source: "pykrx" });
+      const response = await repositories.stockPrices.getSummary(stockId, { source: "kiwoom_rest" });
       setSelectedSummary(response);
     } catch (nextError) {
       if (nextError instanceof ApiError && nextError.status === 404) {
@@ -321,7 +338,7 @@ function StockPricesPage() {
     setMarketMetricsError("");
     setMarketMetricsSummary(null);
     try {
-      const response = await repositories.stockPrices.getMarketMetricsSummary(stockId, { source: "auto" });
+      const response = await repositories.stockPrices.getMarketMetricsSummary(stockId, { source: "kiwoom_rest" });
       setMarketMetricsSummary(response);
     } catch (nextError) {
       if (nextError instanceof ApiError && nextError.status === 404) {
@@ -340,7 +357,7 @@ function StockPricesPage() {
     setCopyStatusMessage("");
     try {
       const response = await repositories.stockPrices.getAdvisoryEvidencePackage(stockId, {
-        price_source: "pykrx",
+        price_source: "kiwoom_rest",
         market_metrics_source: "auto",
         include_candle_reference: effectiveIncludeCandleReference,
         lookback_days: lookbackDays,
@@ -432,7 +449,7 @@ function StockPricesPage() {
     setDailyError("");
     try {
       const response = await repositories.stockPrices.listDaily(stockId, {
-        source: "pykrx",
+        source: "kiwoom_rest",
         limit: DAILY_LIMIT,
         offset: nextOffset,
       });
@@ -517,7 +534,7 @@ function StockPricesPage() {
     <div className="space-y-4">
       <PageHeader
         title="가격·캔들 관리"
-        description="운영 화면에서는 PyKRX 가격 데이터와 최신 우선 시장지표를 함께 확인합니다."
+        description="운영 화면에서는 Kiwoom REST 가격 데이터와 시장지표를 함께 확인합니다."
       />
 
       <SectionCard title="검색">
@@ -545,7 +562,7 @@ function StockPricesPage() {
       <div className="price-page-content">
         <SectionCard title="캔들 보유 종목" className="price-stock-list-card">
           <p className="price-section-note">
-            운영 화면 기준 가격 source는 `pykrx`이며, 좌측 목록에서는 수집 건수와 수집 기간을 빠르게 확인할 수 있습니다.
+            운영 화면 기준 source는 `kiwoom_rest`이며, 좌측 목록에서는 수집 건수와 수집 기간을 빠르게 확인할 수 있습니다.
           </p>
           {loading ? <p className="text-sm text-muted">로딩 중입니다.</p> : null}
           {error ? <p className="text-sm text-rose-600">{error}</p> : null}
@@ -556,7 +573,6 @@ function StockPricesPage() {
                 <table className="data-table compact-table">
                   <thead>
                     <tr>
-                      <th>선택</th>
                       <th>종목명</th>
                       <th>수집시작일</th>
                       <th>수집종료일</th>
@@ -570,17 +586,16 @@ function StockPricesPage() {
                           key={item.stock_id}
                           className={selected ? "selected-row row-clickable" : "row-clickable"}
                           onClick={() => setSelectedStock(item)}
-                        >
-                          <td>{selected ? "선택" : "-"}</td>
+                        >
                           <td>
                             <div className="stock-cell">
                               <strong>{item.stock_name}</strong>
                               <span>{item.stock_code}</span>
-                              <span>{`건수 ${fmtNumber(item.price_count)} · 원천 ${fmtSource(item.source)}`}</span>
+                              <span>{`건수 ${fmtNumber(item.price_count)}`}</span>
                             </div>
                           </td>
-                          <td>{item.min_trade_date || "-"}</td>
-                          <td>{item.max_trade_date || "-"}</td>
+                          <td className="whitespace-nowrap">{item.min_trade_date || "-"}</td>
+                          <td className="whitespace-nowrap">{item.max_trade_date || "-"}</td>
                         </tr>
                       );
                     })}
@@ -623,11 +638,6 @@ function StockPricesPage() {
 
           {selectedStock ? (
             <>
-              <p className="price-section-note">
-                가격 요약은 `GET /stock-prices/{'{stock_id}'}/summary`, 시장지표 요약은 `GET /market-metrics/{'{stock_id}'}/summary`,
-                GPT 패키지는 `GET /advisory/evidence-package/{'{stock_id}'}` 응답을 기준으로 표시됩니다.
-              </p>
-
               <div className="tab-group">
                 <button type="button" className={summaryTab === "price" ? "btn btn-primary" : "btn btn-secondary"} onClick={() => setSummaryTab("price")}>
                   가격 요약
@@ -640,8 +650,9 @@ function StockPricesPage() {
               <div className="price-detail-stack">
                 {summaryTab === "price" ? <section className="price-detail-section">
                   <div className="price-detail-header">
-                    <h3>가격 요약</h3>
-                    <span className="badge badge-blue">PYKRX</span>
+                    <div className="ml-auto">
+                      <span className="badge badge-blue">KIWOOM_REST (ka10081)</span>
+                    </div>
                   </div>
                   {summaryLoading ? <p className="text-sm text-muted">가격 요약을 불러오는 중입니다.</p> : null}
                   {!summaryLoading && summaryError ? <p className="text-sm text-rose-600">{summaryError}</p> : null}
@@ -654,46 +665,36 @@ function StockPricesPage() {
                       <div className="price-meta-card"><p className="price-meta-label">최근 거래일</p><strong>{selectedSummary.latest_trade_date || "-"}</strong></div>
                       <div className="price-meta-card"><p className="price-meta-label">52주 고점</p><strong>{fmtPrice(selectedSummary.high_52w)}</strong></div>
                       <div className="price-meta-card"><p className="price-meta-label">52주 고점일</p><strong>{selectedSummary.high_52w_date || "-"}</strong></div>
-                      <div className="price-meta-card"><p className="price-meta-label">5일 이동평균</p><strong>{fmtPrice(selectedSummary.latest_ma5)}</strong></div>
-                      <div className="price-meta-card"><p className="price-meta-label">20일 이동평균</p><strong>{fmtPrice(selectedSummary.latest_ma20)}</strong></div>
-                      <div className="price-meta-card"><p className="price-meta-label">60일 이동평균</p><strong>{fmtPrice(selectedSummary.latest_ma60)}</strong></div>
                       <div className="price-meta-card"><p className="price-meta-label">가격 데이터 건수</p><strong>{fmtNumber(selectedSummary.price_count)}건</strong></div>
                       <div className="price-meta-card"><p className="price-meta-label">수집 기간</p><strong>{fmtRange(selectedSummary.min_trade_date, selectedSummary.max_trade_date)}</strong></div>
-                      <div className="price-meta-card"><p className="price-meta-label">데이터 원천</p><strong>{fmtSource(selectedSummary.source)}</strong></div>
                     </div>
                   ) : null}
                 </section> : null}
 
                 {summaryTab === "market" ? <section className="price-detail-section">
                   <div className="price-detail-header">
-                    <h3>시장지표 요약</h3>
-                    <span className="badge badge-slate">{marketMetricSourceLabel(marketMetricsSummary?.source)}</span>
+                    <span className="badge badge-slate ml-auto">{marketMetricsSummary?.source_label || "KIWOOM_REST (ka10001, ka10015, ka10009)"}</span>
                   </div>
-                  {marketMetricsLoading ? <p className="text-sm text-muted">시장지표 요약을 불러오는 중입니다.</p> : null}
+                  {marketMetricsLoading ? <p className="text-sm text-muted">저장된 시장지표 요약을 불러오는 중입니다.</p> : null}
                   {!marketMetricsLoading && marketMetricsError ? <p className="text-sm text-rose-600">{marketMetricsError}</p> : null}
                   {!marketMetricsLoading && !marketMetricsError && marketMetricsSummary ? (
                     <>
                       <div className="price-meta-grid">
-                        <div className="price-meta-card"><p className="price-meta-label">거래대금</p><strong>{fmtHundredMillionWon(marketMetricsSummary.trading_value)}</strong></div>
-                        <div className="price-meta-card"><p className="price-meta-label">전체 거래대금 순위</p><strong>{fmtRank(marketMetricsSummary.trading_value_rank)}</strong></div>
-                        <div className="price-meta-card"><p className="price-meta-label">시가총액</p><strong>{fmtHundredMillionWon(marketMetricsSummary.market_cap)}</strong></div>
+                        <div className="price-meta-card"><p className="price-meta-label">거래대금(백만)</p><strong>{fmtMarketMetricRawUnit(marketMetricsSummary.trading_value, "백만")}</strong></div>
+                        <div className="price-meta-card"><p className="price-meta-label">시가총액(억)</p><strong>{fmtMarketMetricRawUnit(marketMetricsSummary.market_cap, "억")}</strong></div>
                         <div className="price-meta-card"><p className="price-meta-label">최신성 상태</p><strong className="price-status-inline"><span className={staleBadgeClass(marketMetricsSummary.staleness_level)}>{staleLabel(marketMetricsSummary.staleness_level)}</span></strong></div>
-                        <div className="price-meta-card"><p className="price-meta-label">시장지표 기준일</p><strong>{marketMetricsSummary.latest_market_metrics_date}</strong></div>
                         <div className="price-meta-card"><p className="price-meta-label">가격 기준일</p><strong>{marketMetricsSummary.latest_price_trade_date || "-"}</strong></div>
-                        <div className="price-meta-card"><p className="price-meta-label">기준일 차이</p><strong>{marketMetricsSummary.date_gap_label || (marketMetricsSummary.stale_days === null ? "-" : `${fmtNumber(marketMetricsSummary.stale_days)}일`)}</strong></div>
                         <div className="price-meta-card"><p className="price-meta-label">상장주식수</p><strong>{fmtShares(marketMetricsSummary.listed_shares)}</strong></div>
                         <div className="price-meta-card"><p className="price-meta-label">거래량</p><strong>{fmtShares(marketMetricsSummary.trading_volume)}</strong></div>
-                        <div className="price-meta-card"><p className="price-meta-label">시장 내 거래대금 순위</p><strong>{fmtRank(marketMetricsSummary.market_trading_value_rank)}</strong></div>
-                        <div className="price-meta-card"><p className="price-meta-label">전체 거래대금 백분위</p><strong>{fmtPercent(marketMetricsSummary.trading_value_percentile)}</strong></div>
-                        <div className="price-meta-card"><p className="price-meta-label">시장 내 거래대금 백분위</p><strong>{fmtPercent(marketMetricsSummary.market_trading_value_percentile)}</strong></div>
+                        <div className="price-meta-card"><p className="price-meta-label">외국인 비중</p><strong>{fmtPercentOrUnavailable(marketMetricsSummary.foreign_ownership_ratio)}</strong></div>
                         <div className="price-meta-card"><p className="price-meta-label">시장 구분</p><strong>{marketMetricsSummary.market || "-"}</strong></div>
-                        <div className="price-meta-card"><p className="price-meta-label">데이터 원천</p><strong>{marketMetricSourceLabel(marketMetricsSummary.source)}</strong></div>
                       </div>
                       {metricsNotice ? <div className={staleMessageClass(marketMetricsSummary.staleness_level)}>{metricsNotice}</div> : null}
-                      <p className="price-card-note">{marketMetricsSummary.data_note}</p>
                     </>
                   ) : null}
-                  {!marketMetricsLoading && !marketMetricsError && !marketMetricsSummary ? <EmptyState message="시장지표 데이터가 없습니다." /> : null}
+                  {!marketMetricsLoading && !marketMetricsError && !marketMetricsSummary ? (
+                    <EmptyState message="저장된 시장지표 요약이 없습니다. 관심종목 Pool에서 '선택 시장지표 갱신'을 먼저 실행해 주세요." />
+                  ) : null}
                 </section> : null}
 
                 <section className="price-detail-section">

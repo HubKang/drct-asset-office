@@ -1,6 +1,7 @@
 import { apiRequest } from "@/services/api/apiClient";
 import type {
   AdvisoryEvidencePackageResponse,
+  MarketIndicatorsOverviewResponse,
   MarketMetricsSummaryResponse,
   SelectedMarketMetricsCollectRequest,
   SelectedMarketMetricsCollectResult,
@@ -24,7 +25,7 @@ export const stockPriceApiRepository = {
       method: "POST",
       body: JSON.stringify({
         stock_ids: payload.stock_ids,
-        source: payload.source ?? "kis_api",
+        source: payload.source ?? "kiwoom_rest",
       }),
     }),
   calculateTechnicalIndicators: (stockId: number) =>
@@ -38,9 +39,10 @@ export const stockPriceApiRepository = {
     }),
   listSummary: (params?: { keyword?: string; market?: string; source?: string; limit?: number; offset?: number }) => {
     const search = new URLSearchParams();
+    const resolvedSource = params?.source ?? "kiwoom_rest";
     if (params?.keyword) search.set("keyword", params.keyword);
     if (params?.market) search.set("market", params.market);
-    if (params?.source) search.set("source", params.source);
+    if (resolvedSource) search.set("source", resolvedSource);
     if (params?.limit !== undefined) search.set("limit", String(params.limit));
     if (params?.offset !== undefined) search.set("offset", String(params.offset));
     const query = search.toString();
@@ -48,9 +50,10 @@ export const stockPriceApiRepository = {
   },
   listDaily: (stockId: number, params?: { start_date?: string; end_date?: string; source?: string; limit?: number; offset?: number }) => {
     const search = new URLSearchParams();
+    const resolvedSource = params?.source ?? "kiwoom_rest";
     if (params?.start_date) search.set("start_date", params.start_date);
     if (params?.end_date) search.set("end_date", params.end_date);
-    if (params?.source) search.set("source", params.source);
+    if (resolvedSource) search.set("source", resolvedSource);
     if (params?.limit !== undefined) search.set("limit", String(params.limit));
     if (params?.offset !== undefined) search.set("offset", String(params.offset));
     const query = search.toString();
@@ -58,7 +61,8 @@ export const stockPriceApiRepository = {
   },
   getSummary: (stockId: number, params?: { source?: string }) => {
     const search = new URLSearchParams();
-    if (params?.source) search.set("source", params.source);
+    const resolvedSource = params?.source ?? "kiwoom_rest";
+    if (resolvedSource) search.set("source", resolvedSource);
     const query = search.toString();
     return apiRequest<StockPriceFactSummaryResponse>(`/stock-prices/${stockId}/summary${query ? `?${query}` : ""}`);
   },
@@ -67,6 +71,13 @@ export const stockPriceApiRepository = {
     if (params?.source) search.set("source", params.source);
     const query = search.toString();
     return apiRequest<MarketMetricsSummaryResponse>(`/market-metrics/${stockId}/summary${query ? `?${query}` : ""}`);
+  },
+  getMarketIndicatorsOverview: (params?: { source?: string }) => {
+    const search = new URLSearchParams();
+    const resolvedSource = params?.source ?? "kiwoom_rest";
+    if (resolvedSource) search.set("source", resolvedSource);
+    const query = search.toString();
+    return apiRequest<MarketIndicatorsOverviewResponse>(`/market-metrics/overview${query ? `?${query}` : ""}`);
   },
   getAdvisoryEvidencePackage: (
     stockId: number,

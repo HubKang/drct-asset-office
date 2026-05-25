@@ -46,7 +46,7 @@ def main() -> None:
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
     print(f"[DB_HEALTH] integrity_check={cur.execute('PRAGMA integrity_check').fetchone()}")
-    for table in ["stocks", "watchlist", "news_items", "disclosures", "collection_runs", "classification_rules"]:
+    for table in ["stocks", "watchlist", "news_items", "disclosures", "collection_runs", "classification_rules", "telegram_sources", "telegram_items", "telegram_daily_summaries"]:
         try:
             count = cur.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             print(f"[DB_HEALTH] {table}={count}")

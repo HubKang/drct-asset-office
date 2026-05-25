@@ -1,4 +1,10 @@
-﻿import type { CollectionRun, CollectionRunListParams } from "@/types/collectionRun";
+import type {
+  CollectionRun,
+  CollectionRunCleanupPreviewResponse,
+  CollectionRunCleanupResponse,
+  CollectionRunListParams,
+  CollectionRunListResponse,
+} from "@/types/collectionRun";
 
 const sampleRuns: CollectionRun[] = [
   {
@@ -44,18 +50,39 @@ const sampleRuns: CollectionRun[] = [
 ];
 
 export const collectionRunMockRepository = {
-  async listCollectionRuns(params?: CollectionRunListParams): Promise<CollectionRun[]> {
+  async listCollectionRuns(params?: CollectionRunListParams): Promise<CollectionRunListResponse> {
     let result = [...sampleRuns];
     if (params?.collector_name) result = result.filter((r) => r.collector_name.includes(params.collector_name as string));
     if (params?.status) result = result.filter((r) => r.status === params.status);
     if (params?.target) result = result.filter((r) => (r.target || "").includes(params.target as string));
     const offset = params?.offset ?? 0;
-    const limit = params?.limit ?? 50;
-    return result.slice(offset, offset + limit);
+    const limit = params?.limit ?? 20;
+    return {
+      items: result.slice(offset, offset + limit),
+      total_count: result.length,
+      limit,
+      offset,
+    };
   },
   async getCollectionRun(runId: number): Promise<CollectionRun> {
     const found = sampleRuns.find((r) => r.id === runId);
     if (!found) throw new Error("collection run not found");
     return found;
+  },
+  async previewCleanupOlderThanOneMonth(): Promise<CollectionRunCleanupPreviewResponse> {
+    return {
+      success: true,
+      cutoff_date: "2026-04-24 00:00:00",
+      target_count: 0,
+      message: "1달 전 수집 이력 0건이 삭제 대상입니다.",
+    };
+  },
+  async cleanupOlderThanOneMonth(): Promise<CollectionRunCleanupResponse> {
+    return {
+      success: true,
+      cutoff_date: "2026-04-24 00:00:00",
+      deleted_count: 0,
+      message: "삭제할 1달 전 수집 이력이 없습니다.",
+    };
   },
 };

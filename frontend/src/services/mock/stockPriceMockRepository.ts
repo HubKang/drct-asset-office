@@ -1,5 +1,6 @@
 import type {
   AdvisoryEvidencePackageResponse,
+  MarketIndicatorsOverviewResponse,
   MarketMetricsSummaryResponse,
   SelectedMarketMetricsCollectRequest,
   SelectedMarketMetricsCollectResult,
@@ -145,6 +146,33 @@ export const stockPriceMockRepository = {
       trading_value_percentile: 78.45,
       market_trading_value_percentile: 82.13,
       data_note: "Market metrics are based on 2026-02-20 and are older than the latest price data date 2026-05-12.",
+    };
+  },
+
+  async getMarketIndicatorsOverview(): Promise<MarketIndicatorsOverviewResponse> {
+    return {
+      source: "kiwoom_rest",
+      base_date: "2026-05-22",
+      fetched_at: "2026-05-22 15:30:00",
+      kospi: {
+        market: "KOSPI",
+        index_value: 2720.15,
+        change_value: 12.21,
+        change_rate: 0.45,
+        volume: 512345678,
+        trading_value: 11_200_000_000_000,
+        base_date: "2026-05-22",
+      },
+      kosdaq: {
+        market: "KOSDAQ",
+        index_value: 892.44,
+        change_value: 6.18,
+        change_rate: 0.7,
+        volume: 845678901,
+        trading_value: 8_450_000_000_000,
+        base_date: "2026-05-22",
+      },
+      message: null,
     };
   },
 

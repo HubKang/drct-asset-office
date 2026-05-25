@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import json
+from urllib.parse import urlparse
 
 import requests
 
@@ -15,16 +16,22 @@ from backend.app.core.config import (
 
 class LMStudioClient:
     def __init__(self, timeout: int | None = None) -> None:
-        self.base_url = (LMSTUDIO_BASE_URL or "http://127.0.0.1:1234/v1").rstrip("/")
+        raw_base_url = (LMSTUDIO_BASE_URL or "http://127.0.0.1:1234/v1").rstrip("/")
+        parsed = urlparse(raw_base_url)
+        if parsed.path in {"", "/"}:
+            raw_base_url = f"{raw_base_url}/v1"
+        self.base_url = raw_base_url
         self.model = LMSTUDIO_MODEL or "google/gemma-4-e2b"
         self.timeout = timeout or LLM_TIMEOUT_SECONDS
 
-    def _extract_content(self, data: dict) -> tuple[str, str]:
+    def _extract_content(self, data: dict) -> tuple[str, str, int]:
         choices = data.get("choices", [])
         first = choices[0] if choices else {}
         message = first.get("message", {}) if isinstance(first, dict) else {}
         delta = first.get("delta", {}) if isinstance(first, dict) else {}
         finish_reason = str(first.get("finish_reason", "unknown")) if isinstance(first, dict) else "unknown"
+        reasoning_text = message.get("reasoning_content") if isinstance(message, dict) else None
+        reasoning_len = len(reasoning_text) if isinstance(reasoning_text, str) else 0
 
         # reasoning_content is intentionally excluded to avoid storing chain-of-thought.
         candidates = [
@@ -34,14 +41,15 @@ class LMStudioClient:
         ]
         for value in candidates:
             if isinstance(value, str) and value.strip():
-                return value.strip(), finish_reason
-        return "", finish_reason
+                return value.strip(), finish_reason, reasoning_len
+        return "", finish_reason, reasoning_len
 
     def generate_text(
         self,
         prompt: str,
         temperature: float = 0.2,
         max_tokens: int | None = None,
+        model: str | None = None,
         timeout: int | None = None,
         purpose: str | None = None,
         system_prompt: str | None = None,
@@ -55,7 +63,7 @@ class LMStudioClient:
             else "너는 신중한 투자 리서치 보조 AI이다. 내부 추론을 출력하지 말고 최종 답변만 작성한다."
         )
         payload = {
-            "model": self.model,
+            "model": model or self.model,
             "temperature": temperature,
             "max_tokens": resolved_max_tokens,
             "stream": False,
@@ -82,15 +90,14 @@ class LMStudioClient:
 
                 response.raise_for_status()
                 data = response.json()
-                content, finish_reason = self._extract_content(data)
+                content, finish_reason, reasoning_len = self._extract_content(data)
                 last_finish_reason = finish_reason
                 if content:
                     return content
 
-                preview = json.dumps(data, ensure_ascii=False)[:1000]
                 print(
                     f"[LLM DEBUG] empty content attempt={attempt + 1}/{retries + 1}, "
-                    f"purpose={purpose or 'unknown'}, finish_reason={finish_reason}, response_preview={preview}"
+                    f"purpose={purpose or 'unknown'}, finish_reason={finish_reason}, reasoning_len={reasoning_len}"
                 )
 
             raise RuntimeError(

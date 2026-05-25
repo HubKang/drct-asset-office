@@ -1,15 +1,24 @@
 ﻿[
-  { "menuKey": "investment", "title": "대시보드", "routeKey": "dashboard" },
-  { "menuKey": "investment", "title": "GPT 자문 패키지", "routeKey": "advisory-packages" },
-  { "menuKey": "investment", "title": "종목 관리", "routeKey": "stocks" },
-  { "menuKey": "investment", "title": "관심종목 Pool", "routeKey": "watchlist" },
-  { "menuKey": "data", "title": "스키마 코멘트", "routeKey": "schema-comments" },
-  { "menuKey": "data", "title": "뉴스 관리", "routeKey": "news" },
-  { "menuKey": "data", "title": "공시 관리", "routeKey": "disclosures" },
-  { "menuKey": "data", "title": "가격·캔들 관리", "routeKey": "stock-prices" },
-  { "menuKey": "data", "title": "시장 테마 관리", "routeKey": "market-themes" },
-  { "menuKey": "data", "title": "시장 트렌드 분석", "routeKey": "market-trends" },
-  { "menuKey": "data", "title": "수집 이력", "routeKey": "collection-runs" },
-  { "menuKey": "data", "title": "분류 규칙 관리", "routeKey": "classification-rules" },
+  { "menuKey": "home", "title": "대시보드", "routeKey": "dashboard" },
+  { "menuKey": "home", "title": "GPT 자문 패키지", "routeKey": "advisory-packages" },
+
+  { "menuKey": "stocks", "title": "종목 관리", "routeKey": "stocks" },
+  { "menuKey": "stocks", "title": "관심종목 Pool", "routeKey": "watchlist" },
+  { "menuKey": "stocks", "title": "가격·캔들 관리", "routeKey": "stock-prices" },
+
+  { "menuKey": "market", "title": "시장 테마 관리", "routeKey": "market-themes" },
+  { "menuKey": "market", "title": "시장 트렌드 분석", "routeKey": "market-trends" },
+
+  { "menuKey": "collection", "title": "뉴스 관리", "routeKey": "news" },
+  { "menuKey": "collection", "title": "공시 관리", "routeKey": "disclosures" },
+  { "menuKey": "collection", "title": "경제 브리핑", "routeKey": "economic-briefing" },
+  { "menuKey": "collection", "title": "텔레그램 브리핑", "routeKey": "telegram-briefing" },
+  { "menuKey": "collection", "title": "수집 이력", "routeKey": "collection-runs" },
+
+  { "menuKey": "analysis-rules", "title": "분류 규칙 관리", "routeKey": "classification-rules" },
+  { "menuKey": "analysis-rules", "title": "스키마 코멘트", "routeKey": "schema-comments" },
+
   { "menuKey": "system", "title": "설정", "routeKey": "settings" }
 ]
+
+

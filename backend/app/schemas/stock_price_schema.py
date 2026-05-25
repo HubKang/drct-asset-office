@@ -106,7 +106,7 @@ class StockDailyPriceListResponse(BaseModel):
 class SelectedStockPriceCollectRequest(BaseModel):
     stock_ids: list[int] = Field(default_factory=list)
     period_years: int = 2
-    source: str = "pykrx"
+    source: str = "kiwoom_rest"
 
 
 class StockPriceCollectItemResult(BaseModel):

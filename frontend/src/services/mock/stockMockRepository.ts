@@ -1,5 +1,11 @@
 import sampleStocks from "@/data/json/sampleStocks.json";
-import type { Stock, StockCreateInput, StockListParams, StockUpdateInput } from "@/types/stock";
+import type {
+  Stock,
+  StockCodeNormalizeResponse,
+  StockCreateInput,
+  StockListParams,
+  StockUpdateInput,
+} from "@/types/stock";
 import type { StockSyncRequest, StockSyncResponse } from "@/types/stockSync";
 
 let stocks = [...(sampleStocks as Stock[])];
@@ -68,6 +74,26 @@ export const stockMockRepository = {
       started_at: now,
       finished_at: now,
       message: "mock mode: stock sync preview",
+    };
+  },
+  async normalizeCodes(dryRun = false): Promise<StockCodeNormalizeResponse> {
+    const targets = stocks.filter((s) => /^A\d{6}$/i.test(s.stock_code));
+    const items = targets.map((s) => ({
+      stock_id: s.id,
+      stock_name: s.stock_name,
+      old_code: s.stock_code,
+      new_code: s.stock_code.slice(1),
+      status: dryRun ? "will_update" : "updated",
+    }));
+    if (!dryRun) {
+      stocks = stocks.map((s) => (/^A\d{6}$/i.test(s.stock_code) ? { ...s, stock_code: s.stock_code.slice(1) } : s));
+    }
+    return {
+      dry_run: dryRun,
+      target_count: items.length,
+      updated_count: dryRun ? 0 : items.length,
+      duplicate_conflict_count: 0,
+      items,
     };
   },
 };

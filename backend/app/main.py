@@ -9,6 +9,7 @@ from backend.app.api.routes_collectors import router as collectors_router
 from backend.app.api.routes_collection_runs import router as collection_runs_router
 from backend.app.api.routes_classification_rules import router as classification_rules_router
 from backend.app.api.routes_disclosures import router as disclosures_router
+from backend.app.api.routes_economic_briefing import router as economic_briefing_router
 from backend.app.api.routes_external_kiwoom import router as external_kiwoom_router
 from backend.app.api.routes_gpt_prompt_templates import router as gpt_prompt_templates_router
 from backend.app.api.routes_health import router as health_router
@@ -17,10 +18,12 @@ from backend.app.api.routes_market_theme_candidates import router as market_them
 from backend.app.api.routes_market_themes import router as market_themes_router
 from backend.app.api.routes_market_trends import router as market_trends_router
 from backend.app.api.routes_news import router as news_router
+from backend.app.api.routes_kiwoom import router as kiwoom_router
 from backend.app.api.routes_reports import router as reports_router
 from backend.app.api.routes_schema_comments import router as schema_comments_router
 from backend.app.api.routes_stocks import router as stocks_router
 from backend.app.api.routes_stock_prices import router as stock_prices_router
+from backend.app.api.routes_telegram import router as telegram_router
 from backend.app.api.routes_watchlist import router as watchlist_router
 from backend.app.core.database import ensure_runtime_schema
 from backend.app.core.logging import setup_logging
@@ -50,6 +53,7 @@ app.include_router(market_trends_router)
 app.include_router(watchlist_router)
 app.include_router(schema_comments_router)
 app.include_router(news_router)
+app.include_router(kiwoom_router)
 app.include_router(disclosures_router)
 app.include_router(collectors_router)
 app.include_router(collection_runs_router)
@@ -59,3 +63,5 @@ app.include_router(reports_router)
 app.include_router(advisory_packages_router)
 app.include_router(gpt_prompt_templates_router)
 app.include_router(external_kiwoom_router)
+app.include_router(economic_briefing_router)
+app.include_router(telegram_router)

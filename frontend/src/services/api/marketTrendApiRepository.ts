@@ -18,6 +18,8 @@ import type {
   MarketPriceSnapshot,
   MarketTrendEvent,
   MarketScope,
+  MonthlyThemeFlowCalendarResponse,
+  MonthlyThemeFlowTrendResponse,
   SaveKiwoomConditionResultsRequest,
   SaveKiwoomConditionResultsResponse,
   KiwoomMarketEventListResponse,
@@ -25,6 +27,7 @@ import type {
   SaveKiwoomMarketEventsResponse,
   SyncKiwoomConditionsRequest,
   SyncKiwoomConditionsResponse,
+  RefreshKiwoomConditionsResponse,
   ThemeStatus,
   MarketEventThemeLinkListResponse,
   AddMarketEventThemeLinkRequest,
@@ -34,6 +37,8 @@ import type {
   TrendDetectionSetting,
   UpdateKiwoomMarketEventRequest,
   UpdateKiwoomMarketEventResponse,
+  UpdateDailyThemeRanksRequest,
+  UpdateDailyThemeRanksResponse,
   UpdateTrendDetectionSettingRequest,
 } from "@/types/marketTrend";
 
@@ -113,8 +118,12 @@ export const marketTrendApiRepository = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  refreshKiwoomConditions: () =>
+    apiRequest<RefreshKiwoomConditionsResponse>("/external/kiwoom/conditions/refresh", {
+      method: "POST",
+    }),
   getKiwoomConditions: () =>
-    apiRequest<{ items: KiwoomConditionItem[] }>("/external/kiwoom/conditions"),
+    apiRequest<{ items: KiwoomConditionItem[] }>(`/external/kiwoom/conditions?_ts=${Date.now()}`),
   saveKiwoomConditionResults: (conditionSeq: string, payload: SaveKiwoomConditionResultsRequest) =>
     apiRequest<SaveKiwoomConditionResultsResponse>(`/external/kiwoom/conditions/${conditionSeq}/results`, {
       method: "POST",
@@ -156,8 +165,17 @@ export const marketTrendApiRepository = {
     }),
   getExternalDailyThemeFlow: (tradeDate: string) =>
     apiRequest<DailyThemeFlowSummaryResponse>(`/external/kiwoom/theme-flow/daily?trade_date=${tradeDate}`),
+  updateDailyThemeRanks: (payload: UpdateDailyThemeRanksRequest) =>
+    apiRequest<UpdateDailyThemeRanksResponse>("/external/kiwoom/theme-flow/daily/ranks", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
   getExternalDailyThemeFlowStocks: (tradeDate: string, marketThemeId: number) =>
     apiRequest<DailyThemeFlowStocksResponse>(
       `/external/kiwoom/theme-flow/daily/${marketThemeId}/stocks?trade_date=${tradeDate}`,
     ),
+  getExternalMonthlyThemeFlowCalendar: (month: string) =>
+    apiRequest<MonthlyThemeFlowCalendarResponse>(`/external/kiwoom/theme-flow/monthly/calendar?month=${month}`),
+  getExternalMonthlyThemeFlowTrend: (month: string) =>
+    apiRequest<MonthlyThemeFlowTrendResponse>(`/external/kiwoom/theme-flow/monthly/trend?month=${month}`),
 };

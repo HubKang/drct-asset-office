@@ -54,6 +54,12 @@ function formatDate(value?: string | null): string {
   return value.slice(0, 10);
 }
 
+function normalizeKrStockCode(code?: string | null): string {
+  const value = (code || "").trim().toUpperCase();
+  if (/^A\d{6}$/.test(value)) return value.slice(1);
+  return value;
+}
+
 function safeMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message) return error.message;
   if (typeof error === "string") return error;
@@ -299,7 +305,7 @@ function WatchlistPage() {
       const result = await repositories.stockPrices.collectSelected({
         stock_ids: selectedWatchlistStockIds,
         period_years: 2,
-        source: "pykrx",
+        source: "kiwoom_rest",
       });
       setSelectedPriceCollectResult(result);
       setActionMessage(`선택 캔들 수집 완료: 요청 ${result.requested_count}건, 성공 ${result.success_count}건, 실패 ${result.failed_count}건, 저장 ${result.saved_count}건`);
@@ -315,7 +321,7 @@ function WatchlistPage() {
     await runAction("collect-selected-market-metrics", async () => {
       const result = await repositories.stockPrices.collectSelectedMarketMetrics({
         stock_ids: selectedWatchlistStockIds,
-        source: "kis_api",
+        source: "kiwoom_rest",
       });
       setSelectedMarketMetricsCollectResult(result);
       setActionMessage(`선택 시장지표 갱신 완료: 성공 ${result.success_count}건, 실패 ${result.failed_count}건`);
@@ -335,6 +341,22 @@ function WatchlistPage() {
         saved_count: result.saved_count,
       });
       setActionMessage(`기술적 지표 재계산 완료: 성공 ${result.success_count}건, 실패 ${result.failed_count}건, 저장 ${result.saved_count}건`);
+    });
+  };
+
+  const onNormalizeStockCodes = async () => {
+    const confirmed = window.confirm(
+      "A-prefix가 붙은 국내 주식 종목코드를 6자리 표준 코드로 정리합니다.\n예: A097230 → 097230\n관심종목 및 가격·캔들 수집 기준을 맞추기 위한 작업입니다.\n계속하시겠습니까?",
+    );
+    if (!confirmed) return;
+
+    await runAction("normalize-stock-codes", async () => {
+      const result = await repositories.stocks.normalizeCodes(false);
+      setActionMessage(
+        `종목코드 표준화 완료: ${result.updated_count}건 갱신` +
+          (result.duplicate_conflict_count > 0 ? ` / 충돌 ${result.duplicate_conflict_count}건` : ""),
+      );
+      await refreshAll(stockOffset, watchlistOffset);
     });
   };
 
@@ -372,6 +394,14 @@ function WatchlistPage() {
           </button>
           <button className="btn btn-secondary" onClick={() => navigate("/advisory-packages")}>
             GPT 자문 패키지
+          </button>
+          <button
+            className="btn btn-secondary"
+            onClick={() => void onNormalizeStockCodes()}
+            disabled={actionLoading === "normalize-stock-codes"}
+            aria-busy={actionLoading === "normalize-stock-codes"}
+          >
+            {actionLoading === "normalize-stock-codes" ? "표준화 중..." : "종목코드 표준화"}
           </button>
         </div>
 
@@ -501,7 +531,7 @@ function WatchlistPage() {
                             }}
                           />
                         </td>
-                        <td>{stock.stock_code}</td>
+                        <td>{normalizeKrStockCode(stock.stock_code)}</td>
                         <td className="cell-title">{stock.stock_name}</td>
                         <td>{stock.market || "-"}</td>
                         <td>{securityTypeLabel(stock.security_type)}</td>
@@ -635,7 +665,7 @@ function WatchlistPage() {
                           )}
                         </div>
                       </td>
-                      <td>{item.stock_code}</td>
+                      <td>{normalizeKrStockCode(item.stock_code)}</td>
                       <td className="cell-title">{item.stock_name}</td>
                       <td>{item.market || "-"}</td>
                       <td>{securityTypeLabel(item.security_type)}</td>

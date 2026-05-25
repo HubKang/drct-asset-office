@@ -13,6 +13,7 @@ class StockCreate(BaseModel):
 
 
 class StockUpdate(BaseModel):
+    stock_code: str | None = None
     stock_name: str | None = None
     market: str | None = None
     sector: str | None = None
@@ -39,3 +40,23 @@ class StockResponse(BaseModel):
     is_active: int
     created_at: str
     updated_at: str
+
+
+class StockCodeNormalizeRequest(BaseModel):
+    dry_run: bool = True
+
+
+class StockCodeNormalizeItem(BaseModel):
+    stock_id: int
+    stock_name: str
+    old_code: str
+    new_code: str
+    status: str
+
+
+class StockCodeNormalizeResponse(BaseModel):
+    dry_run: bool
+    target_count: int
+    updated_count: int
+    duplicate_conflict_count: int
+    items: list[StockCodeNormalizeItem]

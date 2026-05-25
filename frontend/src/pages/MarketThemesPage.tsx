@@ -400,22 +400,32 @@ function MarketThemesPage() {
       {message ? <div className="inline-result">{message}</div> : null}
       {error ? <div className="inline-result inline-error">{error}</div> : null}
 
-      <SectionCard title="작업 탭">
-        <div className="flex flex-wrap gap-2">
+      <SectionCard title="">
+        <div className="border-b border-slate-200">
+          <nav className="flex flex-wrap items-center gap-6">
           <button
             type="button"
-            className={`btn ${activeTab === "theme" ? "btn-primary" : "btn-secondary"}`}
+              className={`border-b-2 bg-transparent pb-3 text-sm transition-colors duration-150 ${
+                activeTab === "theme"
+                  ? "border-slate-900 font-semibold text-slate-900"
+                  : "border-transparent font-medium text-slate-500 hover:text-slate-900"
+              }`}
             onClick={() => setActiveTab("theme")}
           >
             테마 관리
           </button>
           <button
             type="button"
-            className={`btn ${activeTab === "mapping" ? "btn-primary" : "btn-secondary"}`}
+              className={`border-b-2 bg-transparent pb-3 text-sm transition-colors duration-150 ${
+                activeTab === "mapping"
+                  ? "border-slate-900 font-semibold text-slate-900"
+                  : "border-transparent font-medium text-slate-500 hover:text-slate-900"
+              }`}
             onClick={() => setActiveTab("mapping")}
           >
             종목 연결 관리
           </button>
+          </nav>
         </div>
       </SectionCard>
 

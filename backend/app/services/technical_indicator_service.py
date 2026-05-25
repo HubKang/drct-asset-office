@@ -25,7 +25,7 @@ class TechnicalIndicatorService:
     def _round_or_none(value: float | None, digits: int) -> float | None:
         return None if value is None else round(value, digits)
 
-    def calculate_for_price_rows(self, rows_asc: list[StockDailyPrice]) -> list[dict]:
+    def calculate_for_price_rows(self, rows_asc: list[StockDailyPrice], source_label: str = "calculated_from_pykrx_prices") -> list[dict]:
         if not rows_asc:
             return []
 
@@ -157,15 +157,15 @@ class TechnicalIndicatorService:
                     "volume_ma5": self._round_or_none(volume_ma5, 2),
                     "volume_ma20": self._round_or_none(volume_ma20, 2),
                     "volume_5_20_ratio": self._round_or_none(volume_5_20_ratio, 4),
-                    "source": "calculated_from_pykrx_prices",
+                    "source": source_label,
                     "calculation_version": "v1",
                 }
             )
         return out
 
-    def calculate_and_save_for_stock(self, stock_id: int) -> dict:
+    def calculate_and_save_for_stock(self, stock_id: int, source_label: str = "calculated_from_pykrx_prices") -> dict:
         rows = self.price_repo.list_by_stock_asc(stock_id=stock_id)
-        calculated = self.calculate_for_price_rows(rows)
+        calculated = self.calculate_for_price_rows(rows, source_label=source_label)
         saved_count = self.repo.upsert_daily_rows(stock_id=stock_id, rows=calculated) if calculated else 0
         latest_trade_date = calculated[-1]["trade_date"] if calculated else None
         return {

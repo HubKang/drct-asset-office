@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.core.database import get_db
 from backend.app.schemas.stock_market_metric_schema import (
+    MarketIndicatorsOverviewResponse,
     MarketMetricsDailyCollectRequest,
     MarketMetricsDailyCollectResponse,
     SelectedMarketMetricsCollectRequest,
@@ -45,7 +46,15 @@ def get_latest_market_metrics(
 @router.get("/{stock_id}/summary", response_model=StockMarketMetricSummaryResponse)
 def get_market_metrics_summary(
     stock_id: int,
-    source: str = "auto",
+    source: str = "kiwoom_rest",
     db: Session = Depends(get_db),
 ) -> StockMarketMetricSummaryResponse:
     return StockMarketMetricService(db).get_summary(stock_id=stock_id, source=source)
+
+
+@router.get("/overview", response_model=MarketIndicatorsOverviewResponse)
+def get_market_indicators_overview(
+    source: str = "kiwoom_rest",
+    db: Session = Depends(get_db),
+) -> MarketIndicatorsOverviewResponse:
+    return StockMarketMetricService(db).get_market_overview(source=source)

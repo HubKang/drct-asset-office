@@ -22,6 +22,14 @@ class StockRepository:
     def get_by_code(self, stock_code: str) -> Stock | None:
         return self.db.scalar(select(Stock).where(Stock.stock_code == stock_code))
 
+    def list_a_prefix_codes(self) -> list[Stock]:
+        stmt: Select[tuple[Stock]] = (
+            select(Stock)
+            .where(Stock.stock_code.like("A______"))
+            .order_by(Stock.stock_code.asc(), Stock.id.asc())
+        )
+        return list(self.db.scalars(stmt).all())
+
     def list(
         self,
         keyword: str | None,

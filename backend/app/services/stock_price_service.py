@@ -7,16 +7,15 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from backend.app.collectors.prices.mock_price_collector import MockPriceCollector
-from backend.app.collectors.prices.pykrx_price_collector import (
-    PykrxPriceCollector,
-    normalize_stock_code_for_pykrx,
-)
+from backend.app.collectors.prices.pykrx_price_collector import PykrxPriceCollector
+from backend.app.providers.market_data.kiwoom_rest_provider import KiwoomRestMarketDataProvider
 from backend.app.repositories.collection_run_repository import CollectionRunRepository
 from backend.app.repositories.stock_price_repository import StockPriceRepository
 from backend.app.repositories.stock_repository import StockRepository
 from backend.app.repositories.watchlist_repository import WatchlistRepository
 from backend.app.schemas.stock_price_schema import StockDailyPriceListItem
 from backend.app.services.technical_indicator_service import TechnicalIndicatorService
+from backend.app.utils.stock_code_utils import normalize_kr_stock_code
 
 
 logger = logging.getLogger(__name__)
@@ -31,6 +30,7 @@ class StockPriceService:
         self.run_repo = CollectionRunRepository(db)
         self.mock_collector = MockPriceCollector()
         self.pykrx_collector = PykrxPriceCollector()
+        self.kiwoom_rest_provider = KiwoomRestMarketDataProvider()
         self.technical_indicator_service = TechnicalIndicatorService(db)
 
     @staticmethod
@@ -50,6 +50,13 @@ class StockPriceService:
     @staticmethod
     def _parse_iso_date(raw: str) -> date:
         return datetime.strptime(raw, "%Y-%m-%d").date()
+
+    @staticmethod
+    def _truncate_message(value: str, max_len: int = 900) -> str:
+        text = (value or "").strip()
+        if len(text) <= max_len:
+            return text
+        return text[:max_len] + "...(truncated)"
 
     def recalculate_moving_averages(self, stock_id: int) -> None:
         rows = self.price_repo.list_by_stock_asc(stock_id)
@@ -86,7 +93,7 @@ class StockPriceService:
                 }
                 for r in rows
             ]
-            return normalize_stock_code_for_pykrx(stock.stock_code), payload
+            return normalize_kr_stock_code(stock.stock_code), payload
         if source == "pykrx":
             normalized, rows = self.pykrx_collector.collect_daily(
                 stock.stock_code,
@@ -109,6 +116,29 @@ class StockPriceService:
                 for r in rows
             ]
             return normalized, payload
+        if source == "kiwoom_rest":
+            response = self.kiwoom_rest_provider.get_daily_prices(
+                stock.stock_code,
+                start_date=start_date.isoformat(),
+                end_date=end_date.isoformat(),
+            )
+            payload = [
+                {
+                    "trade_date": r["trade_date"],
+                    "open_price": r.get("open_price"),
+                    "high_price": r.get("high_price"),
+                    "low_price": r.get("low_price"),
+                    "close_price": r.get("close_price"),
+                    "change_price": r.get("change_price"),
+                    "change_rate": r.get("change_rate"),
+                    "volume": r.get("volume"),
+                    "trading_value": r.get("trading_value"),
+                }
+                for r in response.get("items", [])
+                if isinstance(r, dict) and r.get("trade_date")
+            ]
+            normalized = response.get("normalized_stock_code") or normalize_kr_stock_code(stock.stock_code)
+            return normalized, payload
         if source == "broker_kis":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -118,9 +148,12 @@ class StockPriceService:
 
     def _resolve_collect_window(self, stock_id: int, source: str, period_years: int) -> tuple[str, date, date, str]:
         today = date.today()
-        if source != "pykrx":
+        if source in ("kiwoom_rest", "mock"):
             start_date = today - timedelta(days=max(1, period_years) * 365)
             return "initial_backfill", start_date, today, "최근 2년치 수집"
+
+        if source != "pykrx":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"지원하지 않는 source입니다: {source}")
 
         latest_trade_date = self.price_repo.get_latest_trade_date(stock_id=stock_id, source="pykrx")
         if not latest_trade_date:
@@ -195,7 +228,7 @@ class StockPriceService:
                     {
                         "stock_id": stock.id,
                         "stock_code": stock.stock_code,
-                        "normalized_stock_code": normalize_stock_code_for_pykrx(stock.stock_code),
+                        "normalized_stock_code": normalize_kr_stock_code(stock.stock_code),
                         "stock_name": stock.stock_name,
                         "status": "skipped",
                         "mode": None,
@@ -204,21 +237,28 @@ class StockPriceService:
                         "collected_count": 0,
                         "saved_count": 0,
                         "source": source,
-                        "message": "비활성 관심종목이어서 건너뜀",
+                        "message": "inactive watchlist stock",
                     }
                 )
                 continue
 
+            mode = None
+            from_date = None
+            to_date = None
+            mode_message = None
             try:
                 mode, from_date, to_date, mode_message = self._resolve_collect_window(stock.id, source, period_years)
+                latest_trade_date = self.price_repo.get_latest_trade_date(stock_id=stock.id, source=source)
                 logger.info(
-                    "일봉 수집 시작: stock_id=%s stock_code=%s source=%s mode=%s from=%s to=%s",
+                    "[PRICE DEBUG] stock_id=%s stock_name=%s stock_code=%s normalized_code=%s mode=%s from_date=%s to_date=%s latest_trade_date=%s",
                     stock.id,
+                    stock.stock_name,
                     stock.stock_code,
-                    source,
+                    normalize_kr_stock_code(stock.stock_code),
                     mode,
-                    from_date.isoformat(),
-                    to_date.isoformat(),
+                    from_date.isoformat() if from_date else None,
+                    to_date.isoformat() if to_date else None,
+                    latest_trade_date,
                 )
                 normalized_code, collected_count, saved_count = self._collect_and_upsert(
                     stock=stock,
@@ -226,13 +266,24 @@ class StockPriceService:
                     start_date=from_date,
                     end_date=to_date,
                 )
+                logger.info(
+                    "[PRICE DEBUG] stock_id=%s normalized_code=%s collected_count=%s saved_count=%s",
+                    stock.id,
+                    normalized_code,
+                    collected_count,
+                    saved_count,
+                )
                 success_count += 1
                 saved_total += saved_count
                 technical_saved_count = 0
                 technical_latest_trade_date = None
                 technical_error = None
                 try:
-                    technical_result = self.technical_indicator_service.calculate_and_save_for_stock(stock.id)
+                    technical_source_label = "kiwoom_rest" if source == "kiwoom_rest" else "calculated_from_pykrx_prices"
+                    technical_result = self.technical_indicator_service.calculate_and_save_for_stock(
+                        stock.id,
+                        source_label=technical_source_label,
+                    )
                     technical_saved_count = int(technical_result["saved_count"])
                     technical_latest_trade_date = technical_result.get("latest_trade_date")
                     technical_saved_total += technical_saved_count
@@ -245,9 +296,9 @@ class StockPriceService:
                         technical_error,
                     )
 
-                result_message = "조회기간 내 신규 거래일 없음" if collected_count == 0 else mode_message
+                result_message = "no rows in requested window" if collected_count == 0 else str(mode_message or "")
                 if technical_error:
-                    result_message = f"{result_message} / 기술적 지표 저장 경고: {technical_error}"
+                    result_message = f"{result_message} / technical_warning={technical_error}"
                 results.append(
                     {
                         "stock_id": stock.id,
@@ -256,63 +307,60 @@ class StockPriceService:
                         "stock_name": stock.stock_name,
                         "status": "success",
                         "mode": mode,
-                        "from_date": from_date.isoformat(),
-                        "to_date": to_date.isoformat(),
+                        "from_date": from_date.isoformat() if from_date else None,
+                        "to_date": to_date.isoformat() if to_date else None,
                         "collected_count": collected_count,
                         "saved_count": saved_count,
                         "technical_indicator_saved_count": technical_saved_count,
                         "technical_indicator_latest_trade_date": technical_latest_trade_date,
                         "source": source,
-                        "message": result_message,
+                        "message": self._truncate_message(result_message),
                     }
                 )
             except HTTPException as exc:
-                logger.warning(
-                    "일봉 수집 실패(HTTP): stock_id=%s stock_code=%s source=%s detail=%s",
-                    stock.id,
-                    stock.stock_code,
-                    source,
-                    exc.detail,
-                )
+                error_text = self._truncate_message(f"{type(exc).__name__}: {exc.detail}")
+                logger.error("[PRICE DEBUG] error_type=%s error_message=%s", type(exc).__name__, error_text)
                 failed_count += 1
                 results.append(
                     {
                         "stock_id": stock.id,
                         "stock_code": stock.stock_code,
-                        "normalized_stock_code": normalize_stock_code_for_pykrx(stock.stock_code),
+                        "normalized_stock_code": normalize_kr_stock_code(stock.stock_code),
                         "stock_name": stock.stock_name,
                         "status": "failed",
-                        "mode": None,
-                        "from_date": None,
-                        "to_date": None,
+                        "mode": mode,
+                        "from_date": from_date.isoformat() if from_date else None,
+                        "to_date": to_date.isoformat() if to_date else None,
                         "collected_count": 0,
                         "saved_count": 0,
                         "source": source,
-                        "message": str(exc.detail),
+                        "message": error_text,
                     }
                 )
             except Exception as exc:
                 logger.exception(
-                    "일봉 수집 실패: stock_id=%s stock_code=%s source=%s",
+                    "price collection failed: stock_id=%s stock_code=%s source=%s",
                     stock.id,
                     stock.stock_code,
                     source,
                 )
+                error_text = self._truncate_message(f"{type(exc).__name__}: {str(exc)}")
+                logger.error("[PRICE DEBUG] error_type=%s error_message=%s", type(exc).__name__, error_text)
                 failed_count += 1
                 results.append(
                     {
                         "stock_id": stock.id,
                         "stock_code": stock.stock_code,
-                        "normalized_stock_code": normalize_stock_code_for_pykrx(stock.stock_code),
+                        "normalized_stock_code": normalize_kr_stock_code(stock.stock_code),
                         "stock_name": stock.stock_name,
                         "status": "failed",
-                        "mode": None,
-                        "from_date": None,
-                        "to_date": None,
+                        "mode": mode,
+                        "from_date": from_date.isoformat() if from_date else None,
+                        "to_date": to_date.isoformat() if to_date else None,
                         "collected_count": 0,
                         "saved_count": 0,
                         "source": source,
-                        "message": str(exc),
+                        "message": error_text,
                     }
                 )
 
@@ -321,6 +369,20 @@ class StockPriceService:
             f"requested={requested} success={success_count} failed={failed_count} "
             f"skipped={skipped_count} saved={saved_total} technical_saved={technical_saved_total} source={source}"
         )
+        failed_items = [
+            {
+                "stock_id": r.get("stock_id"),
+                "stock_code": r.get("stock_code"),
+                "normalized_stock_code": r.get("normalized_stock_code"),
+                "stock_name": r.get("stock_name"),
+                "message": self._truncate_message(str(r.get("message") or ""), max_len=180),
+            }
+            for r in results
+            if r.get("status") == "failed"
+        ]
+        if failed_items:
+            run_message = self._truncate_message(f"{run_message} failed_items={failed_items[:3]}", max_len=1000)
+
         if failed_count > 0 and success_count == 0:
             self.run_repo.mark_failed(run, run_message)
         elif failed_count > 0:
@@ -328,7 +390,7 @@ class StockPriceService:
         else:
             self.run_repo.mark_success(run, run_message)
 
-        logger.info("선택 종목 일봉 수집 종료: %s", run_message)
+        logger.info("selected stock price collection done: %s", run_message)
 
         return {
             "requested_count": requested,
@@ -338,7 +400,7 @@ class StockPriceService:
             "saved_count": saved_total,
             "technical_indicator_saved_count": technical_saved_total,
             "source": source,
-            "message": "선택 종목 캔들 수집 완료",
+            "message": "selected stock candle collection completed",
             "results": results,
         }
 
@@ -410,7 +472,7 @@ class StockPriceService:
             return None
         return round(sum(volumes) / len(volumes), 4)
 
-    def get_summary(self, stock_id: int, source: str = "pykrx") -> dict:
+    def get_summary(self, stock_id: int, source: str = "kiwoom_rest") -> dict:
         stock = self.stock_repo.get_by_id(stock_id)
         if not stock:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="stock not found")

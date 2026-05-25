@@ -62,7 +62,7 @@ def calculate_technical_indicators_for_selected(
 @router.get("/stock-prices/{stock_id}/summary", response_model=StockPriceFactSummaryResponse)
 def get_stock_price_summary(
     stock_id: int,
-    source: str = Query(default="pykrx"),
+    source: str = Query(default="kiwoom_rest"),
     db: Session = Depends(get_db),
 ) -> StockPriceFactSummaryResponse:
     return StockPriceService(db).get_summary(stock_id=stock_id, source=source)
@@ -73,7 +73,7 @@ def list_stock_daily_prices(
     stock_id: int,
     start_date: str | None = Query(default=None),
     end_date: str | None = Query(default=None),
-    source: str | None = Query(default=None),
+    source: str | None = Query(default="kiwoom_rest"),
     limit: int = Query(default=100, ge=1, le=2000),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),

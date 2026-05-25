@@ -35,10 +35,27 @@ export type StockCreateInput = {
 };
 
 export type StockUpdateInput = {
+  stock_code?: string;
   stock_name?: string;
   market?: string;
   sector?: string;
   industry?: string;
   security_type?: string;
   is_active?: number;
+};
+
+export type StockCodeNormalizeItem = {
+  stock_id: number;
+  stock_name: string;
+  old_code: string;
+  new_code: string;
+  status: string;
+};
+
+export type StockCodeNormalizeResponse = {
+  dry_run: boolean;
+  target_count: number;
+  updated_count: number;
+  duplicate_conflict_count: number;
+  items: StockCodeNormalizeItem[];
 };

@@ -1,20 +1,29 @@
 ﻿from __future__ import annotations
 
 import json
-import subprocess
-from datetime import datetime
-from pathlib import Path
+from calendar import monthrange
+from datetime import date, datetime, timedelta
 
 from fastapi import HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from backend.app.clients.kiwoom import KiwoomApiError
 from backend.app.core.config import now_kst
+from backend.app.providers.market_data.kiwoom_rest_condition_provider import KiwoomRestConditionProvider
 from backend.app.schemas.external_kiwoom_schema import (
     DailyThemeFlowStockItem,
+    DailyThemeRanksUpdateRequest,
+    DailyThemeRanksUpdateResponse,
     DailyThemeFlowStocksResponse,
     DailyThemeFlowSummaryItem,
     DailyThemeFlowSummaryResponse,
+    MonthlyThemeFlowCalendarDayItem,
+    MonthlyThemeFlowCalendarResponse,
+    MonthlyThemeFlowCalendarThemeItem,
+    MonthlyThemeFlowTrendPoint,
+    MonthlyThemeFlowTrendResponse,
+    MonthlyThemeFlowTrendTheme,
     KiwoomConditionListResponse,
     KiwoomConditionResultListResponse,
     KiwoomConditionResultItemOut,
@@ -24,6 +33,7 @@ from backend.app.schemas.external_kiwoom_schema import (
     KiwoomConditionResultSaveResponse,
     KiwoomConditionSyncRequest,
     KiwoomConditionSyncResponse,
+    KiwoomConditionRefreshResponse,
     KiwoomMarketEventDeleteResponse,
     KiwoomMarketEventItemOut,
     KiwoomMarketEventListResponse,
@@ -43,6 +53,68 @@ from backend.app.utils.stock_code import normalize_stock_code
 class ExternalKiwoomService:
     def __init__(self, db: Session) -> None:
         self.db = db
+        self._condition_provider = KiwoomRestConditionProvider()
+
+    def refresh_conditions_from_kiwoom(self, source: str = "kiwoom_rest") -> KiwoomConditionRefreshResponse:
+        try:
+            fetched = self._condition_provider.fetch_condition_list()
+        except KiwoomApiError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Kiwoom 조건검색 목록을 가져오지 못했습니다. api_id=ka10171 return_code={exc.code} message={exc.message}",
+            ) from exc
+        conditions = fetched.get("conditions", [])
+        condition_count = len(conditions) if isinstance(conditions, list) else 0
+        return_code = fetched.get("return_code")
+        return_msg = fetched.get("return_msg")
+        top_level_keys = fetched.get("top_level_keys") if isinstance(fetched.get("top_level_keys"), list) else []
+        if condition_count <= 0:
+            return KiwoomConditionRefreshResponse(
+                success=False,
+                source=source,
+                api_id="ka10171",
+                return_code=str(return_code) if return_code is not None else None,
+                return_msg=str(return_msg) if return_msg is not None else None,
+                condition_count=0,
+                inserted=0,
+                updated=0,
+                total=int(
+                    self.db.execute(
+                        text("SELECT COUNT(*) FROM kiwoom_condition_searches WHERE source=:source AND is_active=1"),
+                        {"source": source},
+                    ).scalar_one()
+                    or 0
+                ),
+                top_level_keys=top_level_keys[:20],
+                sample_conditions=[],
+                message="조건검색 목록 응답은 받았지만 조건식 목록을 파싱하지 못했습니다.",
+            )
+        payload = KiwoomConditionSyncRequest(
+            source=source,
+            items=conditions,
+        )
+        sync = self.sync_conditions(payload)
+        return KiwoomConditionRefreshResponse(
+            success=True,
+            source=source,
+            api_id="ka10171",
+            return_code=str(return_code) if return_code is not None else None,
+            return_msg=str(return_msg) if return_msg is not None else None,
+            condition_count=condition_count,
+            inserted=sync.inserted_count,
+            updated=sync.updated_count,
+            total=sync.total_count,
+            top_level_keys=top_level_keys[:20],
+            sample_conditions=[
+                {
+                    "condition_no": str(x.get("condition_seq") or ""),
+                    "condition_name": str(x.get("condition_name") or ""),
+                }
+                for x in conditions[:3]
+                if isinstance(x, dict)
+            ],
+            message="조건검색 목록을 갱신했습니다.",
+        )
 
     def sync_conditions(self, payload: KiwoomConditionSyncRequest) -> KiwoomConditionSyncResponse:
         now = now_kst()
@@ -117,7 +189,9 @@ class ExternalKiwoomService:
                 SELECT id, condition_seq, condition_name, source, is_active, last_synced_at
                 FROM kiwoom_condition_searches
                 WHERE source=:source
-                ORDER BY is_active DESC, updated_at DESC, id DESC
+                ORDER BY is_active DESC,
+                         CASE WHEN condition_seq GLOB '[0-9]*' THEN CAST(condition_seq AS INTEGER) ELSE 2147483647 END ASC,
+                         condition_seq ASC
                 """
             ),
             {"source": source},
@@ -296,58 +370,20 @@ class ExternalKiwoomService:
         return p * v
 
     def preview_condition_results(self, condition_seq: str, payload: KiwoomConditionPreviewRequest) -> KiwoomConditionPreviewResponse:
-        repo_root = Path(__file__).resolve().parents[3]
-        script_path = repo_root / "kiwoom-rest-agent" / "run_condition_once.py"
-        if not script_path.exists():
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Agent script not found.")
-
-        python_candidates = [
-            repo_root / ".venv" / "Scripts" / "python.exe",
-            repo_root / ".venv" / "bin" / "python",
-        ]
-        python_cmd = None
-        for candidate in python_candidates:
-            if candidate.exists():
-                python_cmd = str(candidate)
-                break
-        if python_cmd is None:
-            python_cmd = "python"
-
-        cmd = [
-            python_cmd,
-            str(script_path),
-            "--condition-seq",
-            str(condition_seq),
-            "--condition-name",
-            payload.condition_name or "",
-            "--header-mode",
-            payload.header_mode,
-            "--login-mode",
-            payload.login_mode,
-            "--search-type",
-            payload.search_type,
-            "--stex-tp",
-            payload.stex_tp,
-            "--json-output",
-        ]
         try:
-            proc = subprocess.run(
-                cmd,
-                cwd=str(repo_root),
-                capture_output=True,
-                text=True,
-                timeout=90,
-                shell=False,
-                check=False,
+            fetched = self._condition_provider.fetch_condition_results(
+                condition_seq=str(condition_seq),
+                condition_name=payload.condition_name,
+                search_type=payload.search_type,
+                stex_tp=payload.stex_tp,
             )
-        except subprocess.TimeoutExpired:
-            raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Condition preview timed out.")
+        except KiwoomApiError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Kiwoom 조건검색 결과를 가져오지 못했습니다. api_id=ka10172 return_code={exc.code} message={exc.message}",
+            ) from exc
 
-        summary = self._extract_summary_json(proc.stdout)
-        if summary is None:
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to parse condition preview output.")
-
-        items_raw = summary.get("items") if isinstance(summary.get("items"), list) else []
+        items_raw = fetched.get("items") if isinstance(fetched.get("items"), list) else []
         items: list[KiwoomConditionResultItemOut] = []
         for row in items_raw:
             if not isinstance(row, dict):
@@ -372,29 +408,27 @@ class ExternalKiwoomService:
                 continue
             items.append(KiwoomConditionResultItemOut(**normalized))
 
-        success = bool(summary.get("success"))
-        error_message = None if success else str(summary.get("error") or "Condition preview failed")
+        return_code = str(fetched.get("return_code") or "")
+        return_msg = str(fetched.get("return_msg") or "") or None
+        parsing_error = bool(fetched.get("parsing_error"))
+        success = return_code in {"", "0", "000000"}
+        error_message = None
+        if parsing_error:
+            error_message = "조건검색 응답은 수신했지만 결과 종목을 해석하지 못했습니다."
         return KiwoomConditionPreviewResponse(
             success=success,
+            source=str(fetched.get("source") or "kiwoom_ws"),
+            api_id=str(fetched.get("api_id") or "CNSRREQ"),
             condition_seq=str(condition_seq),
             condition_name=payload.condition_name,
+            return_code=return_code or None,
+            return_msg=return_msg,
             item_count=len(items),
             items=items,
+            parsing_error=parsing_error,
+            debug=fetched.get("debug") if isinstance(fetched.get("debug"), dict) else {},
             error_message=error_message,
         )
-
-    @staticmethod
-    def _extract_summary_json(stdout_text: str) -> dict | None:
-        for line in reversed([x.strip() for x in stdout_text.splitlines() if x.strip()]):
-            if not (line.startswith("{") and line.endswith("}")):
-                continue
-            try:
-                data = json.loads(line)
-            except Exception:
-                continue
-            if isinstance(data, dict) and "success" in data and "condition_seq" in data:
-                return data
-        return None
 
     def save_market_events(self, payload: KiwoomMarketEventSaveRequest) -> KiwoomMarketEventSaveResponse:
         now = now_kst()
@@ -602,7 +636,179 @@ class ExternalKiwoomService:
                     representative_stocks=rep_map.get(theme_id, []),
                 )
             )
-        return DailyThemeFlowSummaryResponse(success=True, trade_date=trade_date, items=items)
+        ranked_items = self._apply_rank_overrides(trade_date=trade_date, items=items)
+        return DailyThemeFlowSummaryResponse(success=True, trade_date=trade_date, items=ranked_items)
+
+    @staticmethod
+    def _rank_score(rank: int | None) -> int:
+        if rank is None or rank <= 0:
+            return 0
+        if rank == 1:
+            return 10
+        if rank == 2:
+            return 8
+        if rank == 3:
+            return 6
+        if rank == 4:
+            return 4
+        if rank == 5:
+            return 2
+        return 1
+
+    def _apply_rank_overrides(self, trade_date: str, items: list[DailyThemeFlowSummaryItem]) -> list[DailyThemeFlowSummaryItem]:
+        if not items:
+            return []
+        sorted_auto = sorted(
+            items,
+            key=lambda x: (
+                -999999 if x.avg_change_rate is None else -float(x.avg_change_rate),
+                -int(x.stock_count),
+                -int(x.event_count),
+                -int(x.estimated_trading_value_sum),
+                str(x.theme_name),
+            ),
+        )
+        auto_rank_map = {item.market_theme_id: idx + 1 for idx, item in enumerate(sorted_auto)}
+        rank_rows = self.db.execute(
+            text(
+                """
+                SELECT market_theme_id, manual_rank
+                FROM daily_theme_flow_ranks
+                WHERE trade_date=:trade_date
+                """
+            ),
+            {"trade_date": trade_date},
+        ).mappings().all()
+        manual_map: dict[int, int] = {}
+        for row in rank_rows:
+            mr = row.get("manual_rank")
+            if mr is None:
+                continue
+            value = int(mr)
+            if value > 0:
+                manual_map[int(row["market_theme_id"])] = value
+
+        ranked = []
+        for item in items:
+            auto_rank = auto_rank_map.get(item.market_theme_id)
+            manual_rank = manual_map.get(item.market_theme_id)
+            final_rank = manual_rank if manual_rank is not None else auto_rank
+            rank_basis = "manual" if manual_rank is not None else "auto"
+            ranked.append(
+                DailyThemeFlowSummaryItem(
+                    market_theme_id=item.market_theme_id,
+                    theme_name=item.theme_name,
+                    event_count=item.event_count,
+                    stock_count=item.stock_count,
+                    avg_change_rate=item.avg_change_rate,
+                    max_change_rate=item.max_change_rate,
+                    estimated_trading_value_sum=item.estimated_trading_value_sum,
+                    representative_stocks=item.representative_stocks,
+                    auto_rank=auto_rank,
+                    manual_rank=manual_rank,
+                    final_rank=final_rank,
+                    rank_score=float(self._rank_score(final_rank)),
+                    rank_basis=rank_basis,
+                )
+            )
+        ranked.sort(
+            key=lambda x: (
+                999999 if x.final_rank is None else int(x.final_rank),
+                -float(x.rank_score or 0),
+                -999999 if x.avg_change_rate is None else -float(x.avg_change_rate),
+                -int(x.stock_count),
+                str(x.theme_name),
+            )
+        )
+        return ranked
+
+    def update_daily_theme_flow_ranks(self, payload: DailyThemeRanksUpdateRequest) -> DailyThemeRanksUpdateResponse:
+        daily = self.get_daily_theme_flow(payload.trade_date)
+        valid_theme_ids = {item.market_theme_id for item in daily.items}
+        now = now_kst()
+        requested_ranks = [int(x.manual_rank) for x in payload.items if x.manual_rank is not None]
+        if len(requested_ranks) != len(set(requested_ranks)):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="manual_rank 값이 중복되었습니다.")
+
+        updated_count = 0
+        for row in payload.items:
+            if row.market_theme_id not in valid_theme_ids:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"유효하지 않은 market_theme_id: {row.market_theme_id}")
+            existing = self.db.execute(
+                text(
+                    """
+                    SELECT id
+                    FROM daily_theme_flow_ranks
+                    WHERE trade_date=:trade_date AND market_theme_id=:market_theme_id
+                    LIMIT 1
+                    """
+                ),
+                {"trade_date": payload.trade_date, "market_theme_id": row.market_theme_id},
+            ).mappings().first()
+            auto_rank = next((x.auto_rank for x in daily.items if x.market_theme_id == row.market_theme_id), None)
+            manual_rank = int(row.manual_rank) if row.manual_rank is not None else None
+            final_rank = manual_rank if manual_rank is not None else auto_rank
+            rank_basis = "manual" if manual_rank is not None else "auto"
+            rank_score = float(self._rank_score(final_rank))
+
+            if existing:
+                self.db.execute(
+                    text(
+                        """
+                        UPDATE daily_theme_flow_ranks
+                        SET auto_rank=:auto_rank,
+                            manual_rank=:manual_rank,
+                            final_rank=:final_rank,
+                            rank_score=:rank_score,
+                            rank_basis=:rank_basis,
+                            user_memo=:user_memo,
+                            updated_at=:updated_at
+                        WHERE id=:id
+                        """
+                    ),
+                    {
+                        "id": int(existing["id"]),
+                        "auto_rank": auto_rank,
+                        "manual_rank": manual_rank,
+                        "final_rank": final_rank,
+                        "rank_score": rank_score,
+                        "rank_basis": rank_basis,
+                        "user_memo": row.user_memo,
+                        "updated_at": now,
+                    },
+                )
+            else:
+                self.db.execute(
+                    text(
+                        """
+                        INSERT INTO daily_theme_flow_ranks
+                        (trade_date, market_theme_id, auto_rank, manual_rank, final_rank, rank_score, rank_basis, user_memo, created_at, updated_at)
+                        VALUES
+                        (:trade_date, :market_theme_id, :auto_rank, :manual_rank, :final_rank, :rank_score, :rank_basis, :user_memo, :created_at, :updated_at)
+                        """
+                    ),
+                    {
+                        "trade_date": payload.trade_date,
+                        "market_theme_id": row.market_theme_id,
+                        "auto_rank": auto_rank,
+                        "manual_rank": manual_rank,
+                        "final_rank": final_rank,
+                        "rank_score": rank_score,
+                        "rank_basis": rank_basis,
+                        "user_memo": row.user_memo,
+                        "created_at": now,
+                        "updated_at": now,
+                    },
+                )
+            updated_count += 1
+        self.db.commit()
+        latest = self.get_daily_theme_flow(payload.trade_date)
+        return DailyThemeRanksUpdateResponse(
+            success=True,
+            trade_date=payload.trade_date,
+            updated_count=updated_count,
+            items=latest.items,
+        )
 
     def get_daily_theme_flow_stocks(self, trade_date: str, market_theme_id: int) -> DailyThemeFlowStocksResponse:
         rows = self.db.execute(
@@ -664,6 +870,232 @@ class ExternalKiwoomService:
             theme_name=theme_name,
             items=items,
         )
+
+    def get_monthly_theme_flow_calendar(self, month: str) -> MonthlyThemeFlowCalendarResponse:
+        month_start, month_end = self._resolve_month_window(month)
+        rows = self.db.execute(
+            text(
+                """
+                SELECT
+                    mte.trade_date AS trade_date,
+                    mt.id AS market_theme_id,
+                    mt.theme_name AS theme_name,
+                    COUNT(*) AS event_count,
+                    COUNT(DISTINCT mte.stock_code) AS stock_count,
+                    AVG(mte.change_rate) AS avg_change_rate,
+                    MAX(mte.change_rate) AS max_change_rate,
+                    SUM(
+                      COALESCE(
+                        mte.trading_value,
+                        0
+                      )
+                    ) AS estimated_trading_value_sum
+                FROM market_trend_events mte
+                JOIN market_trend_event_theme_links l ON l.event_id = mte.id
+                JOIN market_themes mt ON mt.id = l.market_theme_id
+                WHERE mte.trade_date BETWEEN :start_date AND :end_date
+                  AND mte.detection_source IN ('kiwoom_condition', 'kiwoom_rest')
+                  AND COALESCE(mte.is_active, 1) = 1
+                  AND COALESCE(l.is_active, 1) = 1
+                  AND COALESCE(mt.is_active, 1) = 1
+                  AND COALESCE(mte.deleted_at, '') = ''
+                  AND COALESCE(l.deleted_at, '') = ''
+                GROUP BY mte.trade_date, mt.id, mt.theme_name
+                ORDER BY mte.trade_date ASC, stock_count DESC, event_count DESC, estimated_trading_value_sum DESC, avg_change_rate DESC, mt.theme_name ASC
+                """
+            ),
+            {"start_date": month_start.isoformat(), "end_date": month_end.isoformat()},
+        ).mappings().all()
+
+        grouped: dict[str, list[DailyThemeFlowSummaryItem]] = {}
+        for row in rows:
+            trade_date = str(row["trade_date"])
+            grouped.setdefault(trade_date, []).append(
+                DailyThemeFlowSummaryItem(
+                    market_theme_id=int(row["market_theme_id"]),
+                    theme_name=str(row["theme_name"]),
+                    stock_count=int(row["stock_count"] or 0),
+                    event_count=int(row["event_count"] or 0),
+                    avg_change_rate=float(row["avg_change_rate"]) if row["avg_change_rate"] is not None else None,
+                    max_change_rate=float(row["max_change_rate"]) if row["max_change_rate"] is not None else None,
+                    estimated_trading_value_sum=int(row["estimated_trading_value_sum"] or 0),
+                    representative_stocks=[],
+                )
+            )
+
+        days: list[MonthlyThemeFlowCalendarDayItem] = []
+        cursor = month_start
+        while cursor <= month_end:
+            key = cursor.isoformat()
+            day_themes = grouped.get(key, [])
+            ranked_day = self._apply_rank_overrides(trade_date=key, items=day_themes)
+            ranked = [
+                MonthlyThemeFlowCalendarThemeItem(
+                    rank=int(item.final_rank or (idx + 1)),
+                    market_theme_id=item.market_theme_id,
+                    theme_name=item.theme_name,
+                    stock_count=item.stock_count,
+                    event_count=item.event_count,
+                    avg_change_rate=item.avg_change_rate,
+                    max_change_rate=item.max_change_rate,
+                    estimated_trading_value_sum=item.estimated_trading_value_sum,
+                    auto_rank=item.auto_rank,
+                    manual_rank=item.manual_rank,
+                    final_rank=item.final_rank,
+                    rank_score=float(item.rank_score),
+                    rank_basis=item.rank_basis,
+                )
+                for idx, item in enumerate(ranked_day)
+            ]
+            days.append(MonthlyThemeFlowCalendarDayItem(trade_date=key, themes=ranked))
+            cursor += timedelta(days=1)
+
+        return MonthlyThemeFlowCalendarResponse(
+            success=True,
+            month=month,
+            start_date=month_start.isoformat(),
+            end_date=month_end.isoformat(),
+            days=days,
+        )
+
+    def get_monthly_theme_flow_trend(self, month: str) -> MonthlyThemeFlowTrendResponse:
+        month_start, month_end = self._resolve_month_window(month)
+        rows = self.db.execute(
+            text(
+                """
+                SELECT
+                    mte.trade_date AS trade_date,
+                    mt.id AS market_theme_id,
+                    mt.theme_name AS theme_name,
+                    COUNT(*) AS event_count,
+                    COUNT(DISTINCT mte.stock_code) AS stock_count,
+                    AVG(mte.change_rate) AS avg_change_rate,
+                    MAX(mte.change_rate) AS max_change_rate,
+                    SUM(
+                      COALESCE(
+                        mte.trading_value,
+                        0
+                      )
+                    ) AS estimated_trading_value_sum
+                FROM market_trend_events mte
+                JOIN market_trend_event_theme_links l ON l.event_id = mte.id
+                JOIN market_themes mt ON mt.id = l.market_theme_id
+                WHERE mte.trade_date BETWEEN :start_date AND :end_date
+                  AND mte.detection_source IN ('kiwoom_condition', 'kiwoom_rest')
+                  AND COALESCE(mte.is_active, 1) = 1
+                  AND COALESCE(l.is_active, 1) = 1
+                  AND COALESCE(mt.is_active, 1) = 1
+                  AND COALESCE(mte.deleted_at, '') = ''
+                  AND COALESCE(l.deleted_at, '') = ''
+                GROUP BY mte.trade_date, mt.id, mt.theme_name
+                """
+            ),
+            {"start_date": month_start.isoformat(), "end_date": month_end.isoformat()},
+        ).mappings().all()
+
+        date_keys: list[str] = []
+        cursor = month_start
+        while cursor <= month_end:
+            date_keys.append(cursor.isoformat())
+            cursor += timedelta(days=1)
+
+        by_date: dict[str, list[DailyThemeFlowSummaryItem]] = {}
+        for row in rows:
+            key = str(row["trade_date"])
+            by_date.setdefault(key, []).append(
+                DailyThemeFlowSummaryItem(
+                    market_theme_id=int(row["market_theme_id"]),
+                    theme_name=str(row["theme_name"]),
+                    event_count=int(row["event_count"] or 0),
+                    stock_count=int(row["stock_count"] or 0),
+                    avg_change_rate=float(row["avg_change_rate"]) if row["avg_change_rate"] is not None else None,
+                    max_change_rate=float(row["max_change_rate"]) if row["max_change_rate"] is not None else None,
+                    estimated_trading_value_sum=int(row["estimated_trading_value_sum"] or 0),
+                    representative_stocks=[],
+                )
+            )
+        day_ranked: dict[str, list[DailyThemeFlowSummaryItem]] = {}
+        total_score_map: dict[int, int] = {}
+        theme_name_map: dict[int, str] = {}
+        for key in date_keys:
+            ranked = self._apply_rank_overrides(trade_date=key, items=by_date.get(key, []))
+            day_ranked[key] = ranked
+            for item in ranked:
+                score = int(item.rank_score or 0)
+                total_score_map[item.market_theme_id] = total_score_map.get(item.market_theme_id, 0) + score
+                theme_name_map[item.market_theme_id] = item.theme_name
+
+        sorted_theme_ids = sorted(total_score_map.keys(), key=lambda tid: (total_score_map.get(tid, 0), theme_name_map.get(tid, "")), reverse=True)
+
+        themes: list[MonthlyThemeFlowTrendTheme] = []
+        for theme_id in sorted_theme_ids:
+            cumulative = 0
+            series: list[MonthlyThemeFlowTrendPoint] = []
+            for key in date_keys:
+                ranked_day = day_ranked.get(key, [])
+                day_item = next((x for x in ranked_day if x.market_theme_id == theme_id), None)
+                if day_item is not None:
+                    daily_score = int(day_item.rank_score or 0)
+                    cumulative += daily_score
+                    series.append(
+                        MonthlyThemeFlowTrendPoint(
+                            trade_date=key,
+                            value=cumulative,
+                            daily_score=daily_score,
+                            final_rank=day_item.final_rank,
+                            rank_basis=day_item.rank_basis,
+                            stock_count=day_item.stock_count,
+                            event_count=day_item.event_count,
+                            avg_change_rate=day_item.avg_change_rate,
+                            max_change_rate=day_item.max_change_rate,
+                            estimated_trading_value_sum=day_item.estimated_trading_value_sum,
+                        )
+                    )
+                else:
+                    series.append(
+                        MonthlyThemeFlowTrendPoint(
+                            trade_date=key,
+                            value=cumulative,
+                            daily_score=0,
+                            final_rank=None,
+                            rank_basis="auto",
+                            stock_count=0,
+                            event_count=0,
+                            avg_change_rate=None,
+                            max_change_rate=None,
+                            estimated_trading_value_sum=0,
+                        )
+                    )
+            themes.append(
+                MonthlyThemeFlowTrendTheme(
+                    market_theme_id=theme_id,
+                    theme_name=theme_name_map.get(theme_id, str(theme_id)),
+                    series=series,
+                )
+            )
+
+        return MonthlyThemeFlowTrendResponse(
+            success=True,
+            month=month,
+            start_date=month_start.isoformat(),
+            end_date=month_end.isoformat(),
+            themes=themes,
+        )
+
+    def _resolve_month_window(self, month: str) -> tuple[date, date]:
+        try:
+            parsed = datetime.strptime(month, "%Y-%m")
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="month는 YYYY-MM 형식이어야 합니다.")
+        month_start = date(parsed.year, parsed.month, 1)
+        last_day = monthrange(parsed.year, parsed.month)[1]
+        month_last = date(parsed.year, parsed.month, last_day)
+        today = datetime.strptime(now_kst(), "%Y-%m-%d %H:%M:%S").date()
+        if parsed.year == today.year and parsed.month == today.month:
+            month_end = min(today, month_last)
+        else:
+            month_end = month_last
+        return month_start, month_end
 
     def list_market_events(self, trade_date: str, limit: int = 200) -> KiwoomMarketEventListResponse:
         rows = self.db.execute(

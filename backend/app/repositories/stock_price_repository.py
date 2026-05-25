@@ -305,3 +305,81 @@ class StockPriceRepository:
         stmt = stmt.order_by(summary_subq.c.max_trade_date.desc(), Stock.stock_name.asc()).limit(limit).offset(offset)
         rows = self.db.execute(stmt).mappings().all()
         return [dict(r) for r in rows]
+
+    def get_unique_policy(self) -> dict:
+        table_cols = self.db.execute(text("PRAGMA table_info(stock_daily_prices)")).mappings().all()
+        index_rows = self.db.execute(text("PRAGMA index_list(stock_daily_prices)")).mappings().all()
+
+        unique_indexes: list[dict] = []
+        for idx in index_rows:
+            if int(idx.get("unique") or 0) != 1:
+                continue
+            idx_name = str(idx.get("name") or "")
+            cols = self.db.execute(text(f"PRAGMA index_info('{idx_name}')")).mappings().all()
+            col_names = [str(c.get("name") or "") for c in cols]
+            unique_indexes.append({"name": idx_name, "columns": col_names})
+
+        has_stock_date_source = any(
+            i["columns"] == ["stock_id", "trade_date", "source"] for i in unique_indexes
+        )
+        has_stock_date = any(i["columns"] == ["stock_id", "trade_date"] for i in unique_indexes)
+
+        if has_stock_date_source:
+            policy = "stock_id_trade_date_source"
+        elif has_stock_date:
+            policy = "stock_id_trade_date"
+        else:
+            policy = "unknown"
+
+        return {
+            "policy": policy,
+            "columns": [str(c.get("name") or "") for c in table_cols],
+            "unique_indexes": unique_indexes,
+        }
+
+    def list_source_summary_for_stock(self, stock_id: int) -> list[dict]:
+        sql = text(
+            """
+            SELECT
+                COALESCE(source, 'unknown') AS source,
+                COUNT(*) AS cnt,
+                MIN(trade_date) AS min_date,
+                MAX(trade_date) AS max_date
+            FROM stock_daily_prices
+            WHERE stock_id = :stock_id
+            GROUP BY COALESCE(source, 'unknown')
+            ORDER BY source
+            """
+        )
+        rows = self.db.execute(sql, {"stock_id": stock_id}).mappings().all()
+        return [dict(r) for r in rows]
+
+    def count_existing_rows_in_window_excluding_source(
+        self,
+        stock_id: int,
+        start_date: str,
+        end_date: str,
+        source: str,
+    ) -> int:
+        sql = text(
+            """
+            SELECT COUNT(*) AS cnt
+            FROM stock_daily_prices
+            WHERE stock_id = :stock_id
+              AND trade_date >= :start_date
+              AND trade_date <= :end_date
+              AND COALESCE(source, '') <> :source
+            """
+        )
+        return int(
+            self.db.execute(
+                sql,
+                {
+                    "stock_id": stock_id,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "source": source,
+                },
+            ).scalar()
+            or 0
+        )
