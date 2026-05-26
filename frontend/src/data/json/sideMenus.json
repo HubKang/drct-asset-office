@@ -15,6 +15,10 @@
   { "menuKey": "collection", "title": "텔레그램 브리핑", "routeKey": "telegram-briefing" },
   { "menuKey": "collection", "title": "수집 이력", "routeKey": "collection-runs" },
 
+  { "menuKey": "trade", "title": "매매기법", "routeKey": "trade-methods" },
+  { "menuKey": "trade", "title": "매매일지", "routeKey": "trade-journals" },
+  { "menuKey": "trade", "title": "매매달력", "routeKey": "trade-calendar" },
+
   { "menuKey": "analysis-rules", "title": "분류 규칙 관리", "routeKey": "classification-rules" },
   { "menuKey": "analysis-rules", "title": "스키마 코멘트", "routeKey": "schema-comments" },
 

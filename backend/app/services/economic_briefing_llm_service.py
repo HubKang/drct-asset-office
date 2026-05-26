@@ -37,7 +37,9 @@ class EconomicBriefingLLMService:
             )
             if not raw.strip():
                 raise RuntimeError("empty content")
-            return self._parse_json_or_fallback(raw, fallback_key="summary")
+            parsed = self._parse_json_or_fallback(raw, fallback_key="summary")
+            parsed["_raw_response_length"] = len(raw.strip())
+            return parsed
         except Exception:
             short_text = chunk_text[:2000]
             retry_prompt = self._build_chunk_retry_prompt(short_text=short_text)
@@ -51,7 +53,9 @@ class EconomicBriefingLLMService:
             )
             if not raw_retry.strip():
                 raise RuntimeError("empty content after retry")
-            return self._parse_json_or_fallback(raw_retry, fallback_key="summary")
+            parsed_retry = self._parse_json_or_fallback(raw_retry, fallback_key="summary")
+            parsed_retry["_raw_response_length"] = len(raw_retry.strip())
+            return parsed_retry
 
     def summarize_overall(self, chunk_summaries: list[dict[str, Any]]) -> dict[str, Any]:
         packed = json.dumps(chunk_summaries, ensure_ascii=False)
@@ -74,7 +78,9 @@ class EconomicBriefingLLMService:
             )
             if not raw.strip():
                 raise RuntimeError("empty content")
-            return self._parse_json_or_fallback(raw, fallback_key="overall_summary")
+            parsed = self._parse_json_or_fallback(raw, fallback_key="overall_summary")
+            parsed["_raw_response_length"] = len(raw.strip())
+            return parsed
         except Exception:
             short = packed[:4000]
             retry_prompt = (
@@ -92,7 +98,39 @@ class EconomicBriefingLLMService:
             )
             if not raw_retry.strip():
                 raise RuntimeError("empty content after retry")
-            return self._parse_json_or_fallback(raw_retry, fallback_key="overall_summary")
+            parsed_retry = self._parse_json_or_fallback(raw_retry, fallback_key="overall_summary")
+            parsed_retry["_raw_response_length"] = len(raw_retry.strip())
+            return parsed_retry
+
+    def extract_structured_fields(self, source_text: str, overall_summary: str) -> dict[str, Any]:
+        prompt = (
+            "Extract structured investment-briefing fields from the input.\n"
+            "Return JSON only.\n"
+            "Required keys: key_points, topics, theme_mentions, stock_mentions, risk_points.\n"
+            "Rules:\n"
+            "- key_points: 3~7 concise bullets\n"
+            "- topics: 2~5 items, each with topic_name and summary\n"
+            "- theme_mentions: 3~10 terms\n"
+            "- stock_mentions: 1~10 stock/company names from the input only\n"
+            "- risk_points: 2~5 items\n"
+            "- If uncertain, use '확인 필요' item instead of leaving all fields empty.\n"
+            '{"key_points":[],"topics":[{"topic_name":"","summary":""}],"theme_mentions":[],"stock_mentions":[],"risk_points":[]}\n\n'
+            f"OVERALL_SUMMARY:\n{overall_summary[:3000]}\n\n"
+            f"SOURCE_TEXT:\n{source_text[:8000]}"
+        )
+        raw = self.client.generate_text(
+            prompt=prompt,
+            temperature=ECONOMIC_BRIEFING_TEMPERATURE,
+            max_tokens=max(ECONOMIC_BRIEFING_OVERALL_MAX_TOKENS, 2200),
+            model=self.model_name,
+            purpose="economic_briefing_structured_retry",
+            system_prompt="Output valid JSON only.",
+        )
+        if not raw.strip():
+            raise RuntimeError("empty content on structured retry")
+        parsed = self._parse_json_or_fallback(raw, fallback_key="overall_summary")
+        parsed["_raw_response_length"] = len(raw.strip())
+        return parsed
 
     def _parse_json_or_fallback(self, raw: str, fallback_key: str) -> dict[str, Any]:
         text = (raw or "").strip().replace("```json", "").replace("```", "").strip()

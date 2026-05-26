@@ -45,6 +45,8 @@ export type BriefingVideo = {
   transcript_checked_at: string | null;
   transcript_text_length: number | null;
   transcript_chunk_count: number | null;
+  llm_response_length: number | null;
+  llm_timeout_seconds: number | null;
   analysis_status: string;
   summary_exists?: boolean;
   summary_has_content?: boolean;
@@ -72,6 +74,7 @@ export type BriefingSummary = {
   stock_mentions_json: string | null;
   theme_mentions_json: string | null;
   risk_points_json: string | null;
+  quality_meta_json: string | null;
   created_at: string | null;
   updated_at: string | null;
 };
@@ -148,6 +151,20 @@ export type BriefingSummaryDetail = {
   summary_text: string | null;
   elapsed_seconds?: number | null;
   chunk_count?: number | null;
+  source_text_length?: number | null;
+  source_chunk_count?: number | null;
+  llm_response_length?: number | null;
+  llm_timeout_seconds?: number | null;
+  error_message?: string | null;
+  structured_sections_count?: number;
+  key_points_count?: number;
+  topic_summaries_count?: number;
+  mentioned_themes_count?: number;
+  mentioned_stocks_count?: number;
+  risk_points_count?: number;
+  summary_quality_status?: string;
+  summary_quality_message?: string;
+  retry_count?: number;
   key_points: string[];
   topics: Array<{ topic_name: string; summary: string }>;
   stock_mentions: string[];

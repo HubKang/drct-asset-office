@@ -1,8 +1,9 @@
 [
-  { "menuKey": "home", "title": "투자 홈" },
+  { "menuKey": "home", "title": "투자 전략" },
   { "menuKey": "stocks", "title": "종목 관리" },
-  { "menuKey": "market", "title": "시장·테마 분석" },
+  { "menuKey": "market", "title": "시장 트렌드 분석" },
   { "menuKey": "collection", "title": "정보 수집" },
+  { "menuKey": "trade", "title": "매매 관리" },
   { "menuKey": "analysis-rules", "title": "분석 기준 관리" },
   { "menuKey": "system", "title": "시스템" }
 ]

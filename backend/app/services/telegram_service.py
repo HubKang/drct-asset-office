@@ -3,6 +3,7 @@
 import json
 import re
 from collections import Counter
+from datetime import datetime, timedelta
 from html import unescape
 
 from fastapi import HTTPException
@@ -19,6 +20,7 @@ from backend.app.services.telegram_llm_service import TelegramLLMService
 
 
 class TelegramService:
+    _auth_sessions: dict[str, dict[str, object]] = {}
     URL_PATTERN = re.compile(r"https?://\S+", re.IGNORECASE)
     GENERIC_TITLE_PATTERNS = [
         "telegram",
@@ -46,6 +48,211 @@ class TelegramService:
 
     def list_sources(self, include_deleted: bool = False):
         return self.repo.list_sources(include_deleted=include_deleted)
+
+    async def get_auth_status(self) -> dict[str, object]:
+        status = await self.collector.get_connection_status(channel_username="")
+        diagnostics = status.get("diagnostics") if isinstance(status.get("diagnostics"), dict) else {}
+        source_mode = str(status.get("source_mode") or "not_connected")
+        error_code = str(status.get("error_code") or "")
+        error_message = str(status.get("message") or "")
+        authorized = bool(source_mode == "real" and status.get("telegram_connected"))
+        return {
+            "enabled": bool(self.collector.enabled),
+            "has_api_id": bool(diagnostics.get("has_api_id", False)),
+            "has_api_hash": bool(diagnostics.get("has_api_hash", False)),
+            "has_phone": bool(diagnostics.get("has_phone", False)),
+            "has_session": bool(diagnostics.get("has_session", False)),
+            "authorized": authorized,
+            "auth_required": not authorized,
+            "source_mode": source_mode,
+            "error_code": error_code or ("TELEGRAM_AUTH_REQUIRED" if not authorized else None),
+            "error_message": error_message or ("Telegram 인증이 필요합니다." if not authorized else None),
+        }
+
+    async def start_auth(self) -> dict[str, object]:
+        if not self.collector.enabled:
+            return {
+                "success": False,
+                "auth_stage": "failed",
+                "authorized": False,
+                "error_code": "TELEGRAM_NOT_CONFIGURED",
+                "message": "Telegram 설정이 누락되어 인증을 시작할 수 없습니다.",
+            }
+
+        try:
+            from telethon import TelegramClient  # type: ignore
+        except Exception:
+            return {
+                "success": False,
+                "auth_stage": "failed",
+                "authorized": False,
+                "error_code": "TELETHON_IMPORT_FAILED",
+                "message": "Telethon 라이브러리 로드에 실패했습니다.",
+            }
+
+        from pathlib import Path
+        from backend.app.core.config import TELEGRAM_API_HASH, TELEGRAM_API_ID, TELEGRAM_PHONE, TELEGRAM_SESSION_DIR
+
+        session_dir = Path(TELEGRAM_SESSION_DIR)
+        session_dir.mkdir(parents=True, exist_ok=True)
+        session_path = session_dir / "drct_asset_telegram"
+
+        client = TelegramClient(str(session_path), int(TELEGRAM_API_ID), TELEGRAM_API_HASH)
+        try:
+            await client.connect()
+            if await client.is_user_authorized():
+                return {
+                    "success": True,
+                    "auth_stage": "authorized",
+                    "authorized": True,
+                    "message": "이미 Telegram 인증이 완료된 상태입니다.",
+                }
+
+            sent = await client.send_code_request(TELEGRAM_PHONE)
+            TelegramService._auth_sessions["default"] = {
+                "phone_code_hash": str(getattr(sent, "phone_code_hash", "") or ""),
+                "created_at": datetime.utcnow().isoformat(),
+            }
+            return {
+                "success": True,
+                "auth_stage": "code_required",
+                "authorized": False,
+                "message": "Telegram 앱으로 전송된 인증 코드를 입력해 주세요.",
+            }
+        except Exception as exc:
+            return {
+                "success": False,
+                "auth_stage": "failed",
+                "authorized": False,
+                "error_code": "TELEGRAM_AUTH_START_FAILED",
+                "message": f"인증 코드 요청에 실패했습니다: {exc}",
+            }
+        finally:
+            await client.disconnect()
+
+    async def verify_auth_code(self, code: str) -> dict[str, object]:
+        safe_code = (code or "").strip()
+        if not safe_code:
+            raise HTTPException(status_code=400, detail="인증 코드를 입력해 주세요.")
+
+        auth_session = TelegramService._auth_sessions.get("default") or {}
+        phone_code_hash = str(auth_session.get("phone_code_hash") or "")
+        created_at = str(auth_session.get("created_at") or "")
+        if not phone_code_hash:
+            return {
+                "success": False,
+                "auth_stage": "failed",
+                "authorized": False,
+                "error_code": "TELEGRAM_AUTH_SESSION_MISSING",
+                "message": "인증 세션이 없습니다. 인증 시작을 다시 진행해 주세요.",
+            }
+        if created_at:
+            try:
+                created_dt = datetime.fromisoformat(created_at)
+                if datetime.utcnow() - created_dt > timedelta(minutes=10):
+                    TelegramService._auth_sessions.pop("default", None)
+                    return {
+                        "success": False,
+                        "auth_stage": "failed",
+                        "authorized": False,
+                        "error_code": "TELEGRAM_AUTH_SESSION_EXPIRED",
+                        "message": "인증 세션이 만료되었습니다. 인증 시작을 다시 진행해 주세요.",
+                    }
+            except Exception:
+                pass
+
+        try:
+            from telethon import TelegramClient  # type: ignore
+            from telethon.errors import SessionPasswordNeededError  # type: ignore
+        except Exception:
+            return {
+                "success": False,
+                "auth_stage": "failed",
+                "authorized": False,
+                "error_code": "TELETHON_IMPORT_FAILED",
+                "message": "Telethon 라이브러리 로드에 실패했습니다.",
+            }
+
+        from pathlib import Path
+        from backend.app.core.config import TELEGRAM_API_HASH, TELEGRAM_API_ID, TELEGRAM_PHONE, TELEGRAM_SESSION_DIR
+
+        session_dir = Path(TELEGRAM_SESSION_DIR)
+        session_dir.mkdir(parents=True, exist_ok=True)
+        session_path = session_dir / "drct_asset_telegram"
+        client = TelegramClient(str(session_path), int(TELEGRAM_API_ID), TELEGRAM_API_HASH)
+        try:
+            await client.connect()
+            try:
+                await client.sign_in(phone=TELEGRAM_PHONE, code=safe_code, phone_code_hash=phone_code_hash)
+            except SessionPasswordNeededError:
+                return {
+                    "success": False,
+                    "auth_stage": "password_required",
+                    "authorized": False,
+                    "error_code": "TELEGRAM_2FA_REQUIRED",
+                    "message": "2단계 인증 비밀번호가 필요합니다.",
+                }
+            TelegramService._auth_sessions.pop("default", None)
+            return {
+                "success": True,
+                "auth_stage": "authorized",
+                "authorized": True,
+                "message": "Telegram 인증이 완료되었습니다.",
+            }
+        except Exception as exc:
+            return {
+                "success": False,
+                "auth_stage": "code_required",
+                "authorized": False,
+                "error_code": "TELEGRAM_AUTH_CODE_INVALID",
+                "message": f"인증 코드 확인에 실패했습니다: {exc}",
+            }
+        finally:
+            await client.disconnect()
+
+    async def verify_auth_password(self, password: str) -> dict[str, object]:
+        safe_password = (password or "").strip()
+        if not safe_password:
+            raise HTTPException(status_code=400, detail="2FA 비밀번호를 입력해 주세요.")
+
+        try:
+            from telethon import TelegramClient  # type: ignore
+        except Exception:
+            return {
+                "success": False,
+                "auth_stage": "failed",
+                "authorized": False,
+                "error_code": "TELETHON_IMPORT_FAILED",
+                "message": "Telethon 라이브러리 로드에 실패했습니다.",
+            }
+
+        from pathlib import Path
+        from backend.app.core.config import TELEGRAM_API_HASH, TELEGRAM_API_ID, TELEGRAM_SESSION_DIR
+
+        session_dir = Path(TELEGRAM_SESSION_DIR)
+        session_dir.mkdir(parents=True, exist_ok=True)
+        session_path = session_dir / "drct_asset_telegram"
+        client = TelegramClient(str(session_path), int(TELEGRAM_API_ID), TELEGRAM_API_HASH)
+        try:
+            await client.connect()
+            await client.sign_in(password=safe_password)
+            TelegramService._auth_sessions.pop("default", None)
+            return {
+                "success": True,
+                "auth_stage": "authorized",
+                "authorized": True,
+                "message": "Telegram 인증이 완료되었습니다.",
+            }
+        except Exception as exc:
+            return {
+                "success": False,
+                "auth_stage": "password_required",
+                "authorized": False,
+                "error_code": "TELEGRAM_AUTH_PASSWORD_INVALID",
+                "message": f"2단계 인증 비밀번호 확인에 실패했습니다: {exc}",
+            }
+        finally:
+            await client.disconnect()
 
     def create_source(self, payload) -> TelegramSource:
         now = now_kst()
@@ -121,7 +328,7 @@ class TelegramService:
             "telegram_connected": bool(status.get("telegram_connected", False)),
             "session_exists": bool(status.get("session_exists", False)),
             "channel_accessible": bool(status.get("channel_accessible", False)),
-            "source_mode": str(status.get("source_mode") or "fallback_sample"),
+            "source_mode": str(status.get("source_mode") or "not_connected"),
             "latest_message_id": status.get("latest_message_id"),
             "latest_message_date": status.get("latest_message_date"),
             "message": str(status.get("message") or ""),
@@ -140,11 +347,16 @@ class TelegramService:
         last_message_id: int | None = None
         try:
             collect_result = await self.collector.collect_channel_messages(source.source_name, source.channel_username, target_date)
-            source_mode = str(collect_result.get("source_mode") or "fallback_sample")
+            source_mode = str(collect_result.get("source_mode") or "not_connected")
             telegram_connected = bool(collect_result.get("telegram_connected", False))
             session_exists = bool(collect_result.get("session_exists", False))
             channel_accessible = bool(collect_result.get("channel_accessible", False))
+            diagnostics = collect_result.get("diagnostics") if isinstance(collect_result.get("diagnostics"), dict) else {}
+            error_code = str(collect_result.get("error_code") or "")
+            error_message = str(collect_result.get("message") or "")
             messages = list(collect_result.get("messages") or [])
+            if source_mode != "real":
+                messages = []
             fetched = len(messages)
             rules = self.classification_repo.list_active_by_target("news")
 
@@ -262,7 +474,10 @@ class TelegramService:
                 },
                 ensure_ascii=False,
             )
-            self.collection_repo.mark_success(run, message)
+            if source_mode == "real":
+                self.collection_repo.mark_success(run, message)
+            else:
+                self.collection_repo.mark_failed(run, f"{source_mode}:{error_code}:{error_message}")
         except Exception as exc:
             self.collection_repo.mark_failed(run, str(exc))
             raise
@@ -275,11 +490,15 @@ class TelegramService:
             "telegram_connected": telegram_connected,
             "session_exists": session_exists,
             "channel_accessible": channel_accessible,
+            "success": source_mode == "real",
             "fetched_message_count": fetched,
             "new_item_count": new_count,
             "duplicate_count": duplicate_count,
             "summarized_count": summarized_count,
             "failed_count": failed_count,
+            "error_code": error_code if source_mode != "real" else None,
+            "error_message": error_message if source_mode != "real" else None,
+            "diagnostics": diagnostics if source_mode != "real" else {},
             "collection_run_id": run.id,
         }
 
@@ -288,15 +507,19 @@ class TelegramService:
         result = {
             "target_date": target_date,
             "source_count": len(sources),
-            "source_mode": "telegram_live",
+            "source_mode": "real",
             "telegram_connected": True,
             "session_exists": True,
             "channel_accessible": True,
+            "success": True,
             "fetched_message_count": 0,
             "new_item_count": 0,
             "duplicate_count": 0,
             "summarized_count": 0,
             "failed_count": 0,
+            "error_code": None,
+            "error_message": None,
+            "diagnostics": {},
         }
         for source in sources:
             each = await self.collect_source_by_date(
@@ -311,8 +534,13 @@ class TelegramService:
             result["duplicate_count"] += int(each["duplicate_count"])
             result["summarized_count"] += int(each["summarized_count"])
             result["failed_count"] += int(each["failed_count"])
-            if each.get("source_mode") != "telegram_live":
-                result["source_mode"] = str(each.get("source_mode") or "fallback_sample")
+            if each.get("source_mode") != "real":
+                result["source_mode"] = str(each.get("source_mode") or "not_connected")
+                result["success"] = False
+                result["error_code"] = each.get("error_code")
+                result["error_message"] = each.get("error_message")
+                if each.get("diagnostics"):
+                    result["diagnostics"] = each.get("diagnostics")
             if each.get("telegram_connected") is False:
                 result["telegram_connected"] = False
             if each.get("session_exists") is False:

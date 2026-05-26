@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import { repositories } from "@/services";
@@ -56,6 +56,7 @@ const mapTranscriptStatus = (v: string | null | undefined) => {
 const mapAnalysisStatus = (v: string | null | undefined) => {
   if (!v || v === "unknown" || v === "pending") return "대기";
   if (v === "summarized") return "요약완료";
+  if (v === "partial_failed") return "부분실패";
   if (v === "failed") return "실패";
   return "미확인";
 };
@@ -798,6 +799,19 @@ function EconomicBriefingPage() {
                       <div className="text-xs text-muted mt-2">
                         모델: {summaryDetail.summary.model_name || "-"} · 처리 시간: {formatElapsed(summaryDetail.summary.elapsed_seconds)} · chunk 수: {summaryDetail.summary.chunk_count ?? "-"}
                       </div>
+                      <div className="text-xs text-muted mt-1">
+                        품질 상태: {summaryDetail.summary.summary_quality_status ?? "-"} · 구조화: 핵심 {summaryDetail.summary.key_points_count ?? normalizedSummary.keyPoints.length}개 · 주제 {summaryDetail.summary.topic_summaries_count ?? normalizedSummary.topics.length}개 · 테마 {summaryDetail.summary.mentioned_themes_count ?? normalizedSummary.themeMentions.length}개 · 종목 {summaryDetail.summary.mentioned_stocks_count ?? normalizedSummary.stockMentions.length}개 · 리스크 {summaryDetail.summary.risk_points_count ?? normalizedSummary.riskPoints.length}개 · 재시도 {summaryDetail.summary.retry_count ?? 0}회
+                      </div>
+                      {summaryDetail.summary.summary_quality_status === "partial_failed" ? (
+                        <div className="text-xs text-amber-700 mt-1">
+                          구조화 요약 일부가 생성되지 않았습니다. 재요약을 권장합니다.
+                        </div>
+                      ) : null}
+                      {summaryDetail.summary.summary_quality_message ? (
+                        <div className="text-xs text-amber-700 mt-1">
+                          품질 메시지: {summaryDetail.summary.summary_quality_message}
+                        </div>
+                      ) : null}
                     </div>
                     <div className="border rounded p-3">
                       <div className="font-semibold mb-1">핵심 포인트</div>

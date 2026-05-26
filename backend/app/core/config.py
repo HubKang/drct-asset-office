@@ -93,6 +93,7 @@ TELEGRAM_API_ID = os.getenv("TELEGRAM_API_ID", "").strip()
 TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH", "").strip()
 TELEGRAM_PHONE = os.getenv("TELEGRAM_PHONE", "").strip()
 TELEGRAM_SESSION_DIR = os.getenv("TELEGRAM_SESSION_DIR", "backend/.local/telegram_sessions").strip()
+TELEGRAM_USE_MOCK = os.getenv("TELEGRAM_USE_MOCK", "false").strip().lower() in {"1", "true", "yes", "y", "on"}
 TELEGRAM_COLLECT_MAX_MESSAGES_PER_DAY = int(os.getenv("TELEGRAM_COLLECT_MAX_MESSAGES_PER_DAY", "200"))
 TELEGRAM_LLM_ENABLED = os.getenv("TELEGRAM_LLM_ENABLED", "true").strip().lower() in {"1", "true", "yes", "y", "on"}
 TELEGRAM_LLM_PROVIDER = os.getenv("TELEGRAM_LLM_PROVIDER", "local_lmstudio").strip()

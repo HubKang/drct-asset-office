@@ -6,6 +6,8 @@ import DisclosuresPage from "@/pages/DisclosuresPage";
 import EconomicBriefingPage from "@/pages/EconomicBriefingPage";
 import GptPromptSettingsPage from "@/pages/GptPromptSettingsPage";
 import TelegramBriefingPage from "@/pages/TelegramBriefingPage";
+import TradeMethodsPage from "@/pages/TradeMethodsPage";
+import TradeJournalsPage from "@/pages/TradeJournalsPage";
 import MarketThemesPage from "@/pages/MarketThemesPage";
 import MarketTrendsPage from "@/pages/MarketTrendsPage";
 import NewsPage from "@/pages/NewsPage";
@@ -13,6 +15,15 @@ import SchemaCommentsPage from "@/pages/SchemaCommentsPage";
 import StockPricesPage from "@/pages/StockPricesPage";
 import StocksPage from "@/pages/StocksPage";
 import WatchlistPage from "@/pages/WatchlistPage";
+import PageHeader from "@/components/common/PageHeader";
+
+function ComingSoonPage({ title }: { title: string }) {
+  return (
+    <div className="space-y-4">
+      <PageHeader title={title} description="해당 화면은 준비 중입니다." />
+    </div>
+  );
+}
 
 export type RouteItem = {
   routeKey: string;
@@ -37,6 +48,9 @@ export const routeRegistry: RouteItem[] = [
   { routeKey: "market-trends", path: "/market-trends", title: "시장 트렌드 분석", description: "수급 이벤트 감지/테마 흐름 집계", component: <MarketTrendsPage /> },
   { routeKey: "economic-briefing", path: "/economic-briefing", title: "경제 브리핑", description: "경제 영상 메타데이터/요약 관리", component: <EconomicBriefingPage /> },
   { routeKey: "telegram-briefing", path: "/telegram-briefing", title: "텔레그램 브리핑", description: "텔레그램 채널 수집/요약 관리", component: <TelegramBriefingPage /> },
+  { routeKey: "trade-methods", path: "/trade-methods", title: "매매기법", description: "매매기법 등록/수정/비활성화 관리", component: <TradeMethodsPage /> },
+  { routeKey: "trade-journals", path: "/trade-journals", title: "매매일지", description: "매매일지 등록/조회", component: <TradeJournalsPage /> },
+  { routeKey: "trade-calendar", path: "/trade-calendar", title: "매매달력", description: "월간 매매달력/통계", component: <ComingSoonPage title="매매달력" /> },
   { routeKey: "settings", path: "/settings", title: "설정", description: "GPT 분석 프롬프트 설정 관리", component: <GptPromptSettingsPage /> },
 ];
 

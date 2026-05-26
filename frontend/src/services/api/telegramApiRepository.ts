@@ -1,5 +1,8 @@
 ﻿import { apiRequest } from "@/services/api/apiClient";
 import type {
+  TelegramAuthStartResult,
+  TelegramAuthStatus,
+  TelegramAuthVerifyResult,
   TelegramCollectAllResult,
   TelegramCollectResult,
   TelegramDailySummary,
@@ -10,6 +13,12 @@ import type {
 } from "@/types/telegram";
 
 export const telegramApiRepository = {
+  getAuthStatus: () => apiRequest<TelegramAuthStatus>("/telegram/auth/status"),
+  startAuth: () => apiRequest<TelegramAuthStartResult>("/telegram/auth/start", { method: "POST" }),
+  verifyAuthCode: (code: string) =>
+    apiRequest<TelegramAuthVerifyResult>("/telegram/auth/verify-code", { method: "POST", body: JSON.stringify({ code }) }),
+  verifyAuthPassword: (password: string) =>
+    apiRequest<TelegramAuthVerifyResult>("/telegram/auth/verify-password", { method: "POST", body: JSON.stringify({ password }) }),
   listSources: (includeDeleted = false) => apiRequest<TelegramSource[]>(`/telegram/sources?include_deleted=${includeDeleted ? "true" : "false"}`),
   createSource: (payload: { source_name: string; channel_username: string; channel_title?: string; description?: string; is_active?: boolean; memo?: string }) =>
     apiRequest<TelegramSource>("/telegram/sources", { method: "POST", body: JSON.stringify(payload) }),

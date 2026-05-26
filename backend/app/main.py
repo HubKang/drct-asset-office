@@ -2,6 +2,7 @@
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from backend.app.api.routes_analysis import router as analysis_router
 from backend.app.api.routes_advisory_packages import router as advisory_packages_router
@@ -24,8 +25,10 @@ from backend.app.api.routes_schema_comments import router as schema_comments_rou
 from backend.app.api.routes_stocks import router as stocks_router
 from backend.app.api.routes_stock_prices import router as stock_prices_router
 from backend.app.api.routes_telegram import router as telegram_router
+from backend.app.api.routes_trade_journals import router as trade_journals_router
 from backend.app.api.routes_watchlist import router as watchlist_router
 from backend.app.core.database import ensure_runtime_schema
+from backend.app.core.config import PROJECT_ROOT
 from backend.app.core.logging import setup_logging
 
 setup_logging()
@@ -65,3 +68,5 @@ app.include_router(gpt_prompt_templates_router)
 app.include_router(external_kiwoom_router)
 app.include_router(economic_briefing_router)
 app.include_router(telegram_router)
+app.include_router(trade_journals_router)
+app.mount("/static", StaticFiles(directory=str(PROJECT_ROOT / "data")), name="static")

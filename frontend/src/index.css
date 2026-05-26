@@ -1419,3 +1419,237 @@ a:focus-visible {
     margin-left: 220px;
   }
 }
+
+.trade-journal-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
+.trade-journal-layout.detail-open {
+  grid-template-columns: minmax(0, 1.6fr) minmax(360px, 1fr);
+  align-items: start;
+}
+
+.trade-journal-table-shell {
+  overflow-x: hidden;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-hairline-cloud);
+}
+
+.trade-journal-table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.trade-journal-table th,
+.trade-journal-table td {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
+.trade-journal-row {
+  cursor: pointer;
+}
+
+.trade-journal-row.selected {
+  background: #eef6ff !important;
+  outline: 1px solid #93c5fd;
+}
+
+.trade-journal-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.trade-journal-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.trade-journal-stock-select {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.trade-journal-image-list {
+  display: grid;
+  gap: 8px;
+}
+
+.trade-journal-image-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 16px;
+}
+
+.modal-card {
+  width: min(760px, 100%);
+  max-height: 80vh;
+  overflow: auto;
+  border-radius: 12px;
+  border: 1px solid var(--color-hairline-cloud);
+  background: #fff;
+  padding: 16px;
+}
+
+.trade-journal-stock-results {
+  margin-top: 10px;
+  max-height: 320px;
+  overflow: auto;
+  display: grid;
+  gap: 6px;
+}
+
+.trade-journal-stock-item {
+  text-align: left;
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px;
+  cursor: pointer;
+}
+
+.trade-journal-stock-item:hover {
+  background: #f8fafc;
+}
+
+@media (max-width: 1200px) {
+  .trade-journal-layout.detail-open {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .trade-journal-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.trade-journal-detail-dim {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.38);
+  z-index: 80;
+}
+
+.trade-journal-detail-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: min(50vw, 860px);
+  min-width: 520px;
+  height: 100vh;
+  background: #ffffff;
+  border-left: 1px solid var(--color-hairline-cloud);
+  z-index: 90;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+}
+
+.trade-journal-detail-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--color-hairline-cloud);
+}
+
+.trade-journal-detail-drawer-header h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 18px;
+}
+
+.trade-journal-detail-drawer-body {
+  overflow: auto;
+  padding: 16px 20px;
+}
+
+.trade-journal-detail-drawer-footer {
+  border-top: 1px solid var(--color-hairline-cloud);
+  padding: 12px 20px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.trade-journal-image-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.trade-journal-image-card {
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 10px;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.trade-journal-image-preview {
+  width: 100%;
+  height: 180px;
+  border-radius: 8px;
+  border: 1px solid var(--color-hairline-cloud);
+  object-fit: contain;
+  background: #f8fafc;
+}
+
+.trade-journal-image-meta {
+  display: grid;
+  gap: 4px;
+}
+
+.trade-journal-image-meta p,
+.trade-journal-image-meta small {
+  margin: 0;
+  color: #475569;
+}
+
+@media (max-width: 1300px) {
+  .trade-journal-detail-drawer {
+    width: min(56vw, 860px);
+  }
+}
+
+@media (max-width: 1100px) {
+  .trade-journal-detail-drawer {
+    width: min(64vw, 860px);
+    min-width: 420px;
+  }
+}
+
+@media (max-width: 900px) {
+  .trade-journal-detail-drawer {
+    width: 100vw;
+    min-width: 0;
+  }
+
+  .trade-journal-image-grid {
+    grid-template-columns: 1fr;
+  }
+}

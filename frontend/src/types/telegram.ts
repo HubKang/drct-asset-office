@@ -54,6 +54,7 @@ export type TelegramCollectResult = {
   source_name: string;
   target_date: string;
   source_mode: string;
+  success: boolean;
   telegram_connected: boolean;
   session_exists: boolean;
   channel_accessible: boolean;
@@ -62,6 +63,9 @@ export type TelegramCollectResult = {
   duplicate_count: number;
   summarized_count: number;
   failed_count: number;
+  error_code?: string | null;
+  error_message?: string | null;
+  diagnostics?: Record<string, boolean>;
   collection_run_id: number;
 };
 
@@ -69,6 +73,7 @@ export type TelegramCollectAllResult = {
   target_date: string;
   source_count: number;
   source_mode: string;
+  success: boolean;
   telegram_connected: boolean;
   session_exists: boolean;
   channel_accessible: boolean;
@@ -77,6 +82,9 @@ export type TelegramCollectAllResult = {
   duplicate_count: number;
   summarized_count: number;
   failed_count: number;
+  error_code?: string | null;
+  error_message?: string | null;
+  diagnostics?: Record<string, boolean>;
 };
 
 export type TelegramSourceConnectionTest = {
@@ -90,6 +98,35 @@ export type TelegramSourceConnectionTest = {
   source_mode: string;
   latest_message_id: number | null;
   latest_message_date: string | null;
+  message: string;
+};
+
+export type TelegramAuthStatus = {
+  enabled: boolean;
+  has_api_id: boolean;
+  has_api_hash: boolean;
+  has_phone: boolean;
+  has_session: boolean;
+  authorized: boolean;
+  auth_required: boolean;
+  source_mode: string;
+  error_code?: string | null;
+  error_message?: string | null;
+};
+
+export type TelegramAuthStartResult = {
+  success: boolean;
+  auth_stage: string;
+  authorized: boolean;
+  error_code?: string | null;
+  message: string;
+};
+
+export type TelegramAuthVerifyResult = {
+  success: boolean;
+  auth_stage: string;
+  authorized: boolean;
+  error_code?: string | null;
   message: string;
 };
 

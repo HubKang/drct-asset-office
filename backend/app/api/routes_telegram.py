@@ -5,6 +5,11 @@ from sqlalchemy.orm import Session
 
 from backend.app.core.database import get_db
 from backend.app.schemas.telegram_schema import (
+    TelegramAuthStartResponse,
+    TelegramAuthStatusResponse,
+    TelegramAuthVerifyCodeRequest,
+    TelegramAuthVerifyPasswordRequest,
+    TelegramAuthVerifyResponse,
     TelegramCollectDateAllRequest,
     TelegramCollectDateRequest,
     TelegramCollectAllResult,
@@ -23,6 +28,25 @@ from backend.app.schemas.telegram_schema import (
 from backend.app.services.telegram_service import TelegramService
 
 router = APIRouter(prefix="/telegram", tags=["telegram"])
+
+@router.get("/auth/status", response_model=TelegramAuthStatusResponse)
+async def get_telegram_auth_status(db: Session = Depends(get_db)):
+    return await TelegramService(db).get_auth_status()
+
+
+@router.post("/auth/start", response_model=TelegramAuthStartResponse)
+async def start_telegram_auth(db: Session = Depends(get_db)):
+    return await TelegramService(db).start_auth()
+
+
+@router.post("/auth/verify-code", response_model=TelegramAuthVerifyResponse)
+async def verify_telegram_auth_code(payload: TelegramAuthVerifyCodeRequest, db: Session = Depends(get_db)):
+    return await TelegramService(db).verify_auth_code(payload.code)
+
+
+@router.post("/auth/verify-password", response_model=TelegramAuthVerifyResponse)
+async def verify_telegram_auth_password(payload: TelegramAuthVerifyPasswordRequest, db: Session = Depends(get_db)):
+    return await TelegramService(db).verify_auth_password(payload.password)
 
 
 @router.get("/sources", response_model=list[TelegramSourceResponse])

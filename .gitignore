@@ -49,3 +49,6 @@ backend/.local/telegram_sessions/
 # Kiwoom legacy agent runtime outputs
 kiwoom-rest-agent/data/**
 
+# Trade journal image files
+data/trade_journal_images/**
+

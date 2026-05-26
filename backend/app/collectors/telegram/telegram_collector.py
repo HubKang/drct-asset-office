@@ -12,6 +12,7 @@ from backend.app.core.config import (
     TELEGRAM_ENABLED,
     TELEGRAM_PHONE,
     TELEGRAM_SESSION_DIR,
+    TELEGRAM_USE_MOCK,
 )
 
 
@@ -51,26 +52,41 @@ class TelegramCollector:
 
     async def get_connection_status(self, channel_username: str) -> dict[str, object]:
         normalized_channel = self.normalize_channel_username(channel_username)
+        has_api_id = bool(str(TELEGRAM_API_ID or "").strip())
+        has_api_hash = bool(str(TELEGRAM_API_HASH or "").strip())
+        has_phone = bool(str(TELEGRAM_PHONE or "").strip())
+        session_exists = self._session_exists()
         status: dict[str, object] = {
-            "source_mode": "fallback_sample",
+            "source_mode": "not_connected",
             "telegram_connected": False,
-            "session_exists": self._session_exists(),
+            "session_exists": session_exists,
             "channel_accessible": False,
             "normalized_channel_username": normalized_channel,
             "latest_message_id": None,
             "latest_message_date": None,
             "message": "",
+            "error_code": None,
+            "diagnostics": {
+                "has_api_id": has_api_id,
+                "has_api_hash": has_api_hash,
+                "has_phone": has_phone,
+                "has_session": session_exists,
+                "channel_resolved": False,
+                "telethon_import_ok": False,
+            },
         }
 
         if not self.enabled:
-            status["source_mode"] = "not_connected"
             status["message"] = "Telegram 환경변수 미설정 또는 TELEGRAM_ENABLED=false"
+            status["error_code"] = "TELEGRAM_NOT_CONFIGURED"
             return status
 
         try:
             from telethon import TelegramClient  # type: ignore
+            status["diagnostics"]["telethon_import_ok"] = True  # type: ignore[index]
         except Exception as exc:
             status["message"] = f"telethon import 실패: {exc}"
+            status["error_code"] = "TELETHON_IMPORT_FAILED"
             return status
 
         session_dir = Path(TELEGRAM_SESSION_DIR)
@@ -81,20 +97,22 @@ class TelegramCollector:
         try:
             await client.connect()
             if not await client.is_user_authorized():
-                status["source_mode"] = "not_connected"
                 status["message"] = "Telegram 세션 파일은 존재하지만 사용자 인증이 완료되지 않았습니다."
+                status["error_code"] = "TELEGRAM_AUTH_REQUIRED"
                 return status
 
             status["telegram_connected"] = True
-            status["source_mode"] = "telegram_live"
+            status["source_mode"] = "real"
 
             try:
                 entity = await client.get_entity(normalized_channel or channel_username)
                 if getattr(entity, "broadcast", None) is not True:
                     status["message"] = "채널 접근 실패: channel 타입만 허용됩니다."
+                    status["error_code"] = "TELEGRAM_CHANNEL_TYPE_INVALID"
                     return status
 
                 status["channel_accessible"] = True
+                status["diagnostics"]["channel_resolved"] = True  # type: ignore[index]
                 latest = await client.get_messages(entity, limit=1)
                 if latest and len(latest) > 0:
                     msg = latest[0]
@@ -105,9 +123,11 @@ class TelegramCollector:
                 status["message"] = "채널 접근 테스트에 성공했습니다."
             except Exception as exc:
                 status["message"] = f"채널 접근 테스트 실패: {exc}"
+                status["error_code"] = "TELEGRAM_CHANNEL_RESOLVE_FAILED"
         except Exception as exc:
             status["source_mode"] = "not_connected"
             status["message"] = f"텔레그램 연결 실패: {exc}"
+            status["error_code"] = "TELEGRAM_CONNECT_FAILED"
         finally:
             await client.disconnect()
 
@@ -117,14 +137,21 @@ class TelegramCollector:
         normalized_channel = self.normalize_channel_username(channel_username)
         base_status = await self.get_connection_status(channel_username=normalized_channel)
 
-        if base_status.get("source_mode") != "telegram_live":
+        if base_status.get("source_mode") != "real":
+            if TELEGRAM_USE_MOCK:
+                return {
+                    **base_status,
+                    "source_mode": "mock",
+                    "message": "Telegram 연결 실패로 mock 모드 데이터(비저장)만 반환합니다.",
+                    "messages": self._collect_mock_messages(
+                        source_name=source_name,
+                        channel_username=normalized_channel or channel_username,
+                        target_date=target_date,
+                    ),
+                }
             return {
                 **base_status,
-                "messages": self._collect_mock_messages(
-                    source_name=source_name,
-                    channel_username=normalized_channel or channel_username,
-                    target_date=target_date,
-                ),
+                "messages": [],
             }
 
         try:
@@ -132,13 +159,10 @@ class TelegramCollector:
         except Exception as exc:
             return {
                 **base_status,
-                "source_mode": "fallback_sample",
-                "message": f"telethon import 실패로 샘플 모드 전환: {exc}",
-                "messages": self._collect_mock_messages(
-                    source_name=source_name,
-                    channel_username=normalized_channel or channel_username,
-                    target_date=target_date,
-                ),
+                "source_mode": "error",
+                "message": f"telethon import 실패: {exc}",
+                "error_code": "TELETHON_IMPORT_FAILED",
+                "messages": [],
             }
 
         session_dir = Path(TELEGRAM_SESSION_DIR)
@@ -153,14 +177,11 @@ class TelegramCollector:
             if getattr(entity, "broadcast", None) is not True:
                 return {
                     **base_status,
-                    "source_mode": "not_connected",
+                    "source_mode": "error",
                     "channel_accessible": False,
                     "message": "채널 접근 실패: channel 타입만 허용됩니다.",
-                    "messages": self._collect_mock_messages(
-                        source_name=source_name,
-                        channel_username=normalized_channel or channel_username,
-                        target_date=target_date,
-                    ),
+                    "error_code": "TELEGRAM_CHANNEL_TYPE_INVALID",
+                    "messages": [],
                 }
 
             messages: list[dict] = []
@@ -185,7 +206,7 @@ class TelegramCollector:
 
             return {
                 **base_status,
-                "source_mode": "telegram_live",
+                "source_mode": "real",
                 "telegram_connected": True,
                 "channel_accessible": True,
                 "normalized_channel_username": normalized_channel or channel_username,
@@ -194,14 +215,11 @@ class TelegramCollector:
         except Exception as exc:
             return {
                 **base_status,
-                "source_mode": "not_connected",
+                "source_mode": "error",
                 "channel_accessible": False,
                 "message": f"텔레그램 수집 실패: {exc}",
-                "messages": self._collect_mock_messages(
-                    source_name=source_name,
-                    channel_username=normalized_channel or channel_username,
-                    target_date=target_date,
-                ),
+                "error_code": "TELEGRAM_COLLECT_FAILED",
+                "messages": [],
             }
         finally:
             await client.disconnect()

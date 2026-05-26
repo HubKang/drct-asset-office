@@ -580,6 +580,8 @@ def ensure_runtime_schema() -> None:
                 transcript_checked_at TEXT,
                 transcript_text_length INTEGER,
                 transcript_chunk_count INTEGER,
+                llm_response_length INTEGER,
+                llm_timeout_seconds INTEGER,
                 analysis_status TEXT NOT NULL DEFAULT 'pending',
                 last_analyzed_at TEXT,
                 error_message TEXT,
@@ -598,6 +600,10 @@ def ensure_runtime_schema() -> None:
             conn.exec_driver_sql("ALTER TABLE briefing_videos ADD COLUMN transcript_text_length INTEGER")
         if "transcript_chunk_count" not in briefing_video_columns:
             conn.exec_driver_sql("ALTER TABLE briefing_videos ADD COLUMN transcript_chunk_count INTEGER")
+        if "llm_response_length" not in briefing_video_columns:
+            conn.exec_driver_sql("ALTER TABLE briefing_videos ADD COLUMN llm_response_length INTEGER")
+        if "llm_timeout_seconds" not in briefing_video_columns:
+            conn.exec_driver_sql("ALTER TABLE briefing_videos ADD COLUMN llm_timeout_seconds INTEGER")
         conn.exec_driver_sql(
             """
             CREATE TABLE IF NOT EXISTS briefing_summaries (
@@ -611,6 +617,7 @@ def ensure_runtime_schema() -> None:
                 stock_mentions_json TEXT,
                 theme_mentions_json TEXT,
                 risk_points_json TEXT,
+                quality_meta_json TEXT,
                 elapsed_seconds INTEGER,
                 chunk_count INTEGER,
                 created_at TEXT NOT NULL,
@@ -626,6 +633,8 @@ def ensure_runtime_schema() -> None:
             conn.exec_driver_sql("ALTER TABLE briefing_summaries ADD COLUMN elapsed_seconds INTEGER")
         if "chunk_count" not in briefing_summary_columns:
             conn.exec_driver_sql("ALTER TABLE briefing_summaries ADD COLUMN chunk_count INTEGER")
+        if "quality_meta_json" not in briefing_summary_columns:
+            conn.exec_driver_sql("ALTER TABLE briefing_summaries ADD COLUMN quality_meta_json TEXT")
         conn.exec_driver_sql(
             """
             CREATE TABLE IF NOT EXISTS briefing_topic_items (
@@ -788,6 +797,73 @@ def ensure_runtime_schema() -> None:
         if "summary_error_message" not in telegram_item_columns:
             conn.exec_driver_sql("ALTER TABLE telegram_items ADD COLUMN summary_error_message TEXT")
         conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS ux_telegram_daily_summaries_date_source ON telegram_daily_summaries(summary_date, source_id)")
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS trade_methods (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                method_name TEXT NOT NULL,
+                description TEXT,
+                entry_rule TEXT,
+                exit_rule TEXT,
+                stop_loss_rule TEXT,
+                take_profit_rule TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS trade_journals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                buy_date TEXT NOT NULL,
+                sell_date TEXT,
+                stock_code TEXT,
+                stock_name TEXT NOT NULL,
+                stock_theme TEXT,
+                trade_method_id INTEGER,
+                trade_method_name TEXT,
+                result_type TEXT,
+                profit_rate REAL,
+                realized_profit INTEGER,
+                buy_price REAL,
+                buy_quantity INTEGER,
+                buy_amount INTEGER,
+                sell_price REAL,
+                sell_quantity INTEGER,
+                sell_amount INTEGER,
+                trade_reason TEXT,
+                success_reason TEXT,
+                failure_reason TEXT,
+                review_memo TEXT,
+                remark TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT,
+                FOREIGN KEY (trade_method_id) REFERENCES trade_methods(id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS trade_journal_images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                trade_journal_id INTEGER NOT NULL,
+                image_type TEXT NOT NULL,
+                image_path TEXT NOT NULL,
+                image_memo TEXT,
+                original_filename TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (trade_journal_id) REFERENCES trade_journals(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_trade_methods_active_sort ON trade_methods(is_active, sort_order)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_trade_journals_buy_date ON trade_journals(buy_date)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_trade_journals_method_id ON trade_journals(trade_method_id)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_trade_journals_result_type ON trade_journals(result_type)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_trade_journal_images_journal_id ON trade_journal_images(trade_journal_id)")
         conn.exec_driver_sql(
             """
             INSERT OR IGNORE INTO telegram_sources

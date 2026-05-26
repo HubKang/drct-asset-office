@@ -75,6 +75,8 @@ class BriefingVideoItem(BaseModel):
     transcript_checked_at: str | None = None
     transcript_text_length: int | None = None
     transcript_chunk_count: int | None = None
+    llm_response_length: int | None = None
+    llm_timeout_seconds: int | None = None
     analysis_status: str
     summary_exists: bool = False
     summary_has_content: bool = False
@@ -97,6 +99,7 @@ class BriefingSummaryItem(BaseModel):
     stock_mentions_json: str | None = None
     theme_mentions_json: str | None = None
     risk_points_json: str | None = None
+    quality_meta_json: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
 

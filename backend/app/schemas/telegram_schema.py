@@ -60,6 +60,7 @@ class TelegramCollectResult(BaseModel):
     source_name: str
     target_date: str
     source_mode: str
+    success: bool
     telegram_connected: bool
     session_exists: bool
     channel_accessible: bool
@@ -68,6 +69,9 @@ class TelegramCollectResult(BaseModel):
     duplicate_count: int
     summarized_count: int
     failed_count: int
+    error_code: str | None = None
+    error_message: str | None = None
+    diagnostics: dict[str, bool] = Field(default_factory=dict)
     collection_run_id: int
 
 
@@ -75,6 +79,7 @@ class TelegramCollectAllResult(BaseModel):
     target_date: str
     source_count: int
     source_mode: str
+    success: bool
     telegram_connected: bool
     session_exists: bool
     channel_accessible: bool
@@ -83,6 +88,9 @@ class TelegramCollectAllResult(BaseModel):
     duplicate_count: int
     summarized_count: int
     failed_count: int
+    error_code: str | None = None
+    error_message: str | None = None
+    diagnostics: dict[str, bool] = Field(default_factory=dict)
 
 
 class TelegramSourceConnectionTestResponse(BaseModel):
@@ -96,6 +104,43 @@ class TelegramSourceConnectionTestResponse(BaseModel):
     source_mode: str
     latest_message_id: int | None
     latest_message_date: str | None
+    message: str
+
+
+class TelegramAuthStatusResponse(BaseModel):
+    enabled: bool
+    has_api_id: bool
+    has_api_hash: bool
+    has_phone: bool
+    has_session: bool
+    authorized: bool
+    auth_required: bool
+    source_mode: str
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+class TelegramAuthStartResponse(BaseModel):
+    success: bool
+    auth_stage: str
+    authorized: bool
+    error_code: str | None = None
+    message: str
+
+
+class TelegramAuthVerifyCodeRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=20)
+
+
+class TelegramAuthVerifyPasswordRequest(BaseModel):
+    password: str = Field(min_length=1, max_length=128)
+
+
+class TelegramAuthVerifyResponse(BaseModel):
+    success: bool
+    auth_stage: str
+    authorized: bool
+    error_code: str | None = None
     message: str
 
 

@@ -2,7 +2,7 @@
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import { repositories } from "@/services";
-import type { TelegramItem, TelegramSource, TelegramSourceConnectionTest } from "@/types/telegram";
+import type { TelegramAuthStatus, TelegramItem, TelegramSource, TelegramSourceConnectionTest } from "@/types/telegram";
 
 const tabs = ["채널 관리", "수집/메시지 목록"] as const;
 const PAGE_SIZE = 20;
@@ -164,6 +164,17 @@ function TelegramBriefingPage() {
   const [sourceActionLoading, setSourceActionLoading] = useState<Record<string, boolean>>({});
   const [message, setMessage] = useState("");
   const [collectionMode, setCollectionMode] = useState("");
+  const [collectionError, setCollectionError] = useState("");
+  const [collectionDiagnostics, setCollectionDiagnostics] = useState<Record<string, boolean>>({});
+  const [telegramAuthStatus, setTelegramAuthStatus] = useState<TelegramAuthStatus | null>(null);
+  const [isAuthChecking, setIsAuthChecking] = useState(false);
+  const [isAuthStarting, setIsAuthStarting] = useState(false);
+  const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authStage, setAuthStage] = useState<"code_required" | "password_required" | "success" | "failed">("code_required");
+  const [authCode, setAuthCode] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authMessage, setAuthMessage] = useState("");
   const [connectionTests, setConnectionTests] = useState<Record<number, TelegramSourceConnectionTest>>({});
   const [channelInputs, setChannelInputs] = useState<Record<number, string>>({});
   const [targetDate, setTargetDate] = useState(new Date().toISOString().slice(0, 10));
@@ -192,6 +203,16 @@ function TelegramBriefingPage() {
     });
   };
 
+  const loadAuthStatus = async () => {
+    setIsAuthChecking(true);
+    try {
+      const status = await repositories.telegram.getAuthStatus();
+      setTelegramAuthStatus(status);
+    } finally {
+      setIsAuthChecking(false);
+    }
+  };
+
   const loadItems = async (opts?: { page?: number; source?: string; date?: string }) => {
     const page = opts?.page ?? currentPage;
     const selectedSource = opts?.source ?? sourceId;
@@ -210,6 +231,7 @@ function TelegramBriefingPage() {
   useEffect(() => {
     const initialize = async () => {
       await loadSources();
+      await loadAuthStatus();
       await loadItems({ page: 1, source: "0", date: targetDate });
     };
     void initialize();
@@ -252,10 +274,17 @@ function TelegramBriefingPage() {
         include_advertisement: false,
       });
       setCollectionMode(result.source_mode);
+      setCollectionError(result.error_message || "");
+      setCollectionDiagnostics(result.diagnostics || {});
+      await loadAuthStatus();
       setCurrentPage(1);
       setSelectedDetailItemId(null);
       setSelectedItemIds([]);
-      setMessage(`수집완료: mode=${result.source_mode} / 조회 ${result.fetched_message_count} / 신규 ${result.new_item_count} / 중복 ${result.duplicate_count} / 요약성공 ${result.summarized_count}`);
+      setMessage(
+        result.success
+          ? `수집완료(실수집): mode=${result.source_mode} / 조회 ${result.fetched_message_count} / 신규 ${result.new_item_count} / 중복 ${result.duplicate_count} / 요약성공 ${result.summarized_count}`
+          : `수집실패: mode=${result.source_mode} / 조회 ${result.fetched_message_count} / 신규 ${result.new_item_count} / 중복 ${result.duplicate_count}`
+      );
       await loadItems({ page: 1, source: sourceId, date: targetDate });
       await loadSources();
     } finally {
@@ -273,11 +302,18 @@ function TelegramBriefingPage() {
         include_advertisement: false,
       });
       setCollectionMode(result.source_mode);
+      setCollectionError(result.error_message || "");
+      setCollectionDiagnostics(result.diagnostics || {});
+      await loadAuthStatus();
       setSourceId("0");
       setCurrentPage(1);
       setSelectedDetailItemId(null);
       setSelectedItemIds([]);
-      setMessage(`전체수집: mode=${result.source_mode} / 채널 ${result.source_count} / 조회 ${result.fetched_message_count} / 신규 ${result.new_item_count} / 중복 ${result.duplicate_count}`);
+      setMessage(
+        result.success
+          ? `전체수집(실수집): mode=${result.source_mode} / 채널 ${result.source_count} / 조회 ${result.fetched_message_count} / 신규 ${result.new_item_count} / 중복 ${result.duplicate_count}`
+          : `전체수집 실패: mode=${result.source_mode} / 채널 ${result.source_count} / 조회 ${result.fetched_message_count} / 신규 ${result.new_item_count} / 중복 ${result.duplicate_count}`
+      );
       await loadItems({ page: 1, source: "0", date: targetDate });
       await loadSources();
     } finally {
@@ -448,6 +484,94 @@ function TelegramBriefingPage() {
     }
   };
 
+  const canOpenAuthFlow = !telegramAuthStatus?.authorized || collectionMode === "not_connected" || collectionError.includes("AUTH_REQUIRED");
+
+  const onStartTelegramAuth = async () => {
+    setIsAuthStarting(true);
+    try {
+      const result = await repositories.telegram.startAuth();
+      setAuthMessage(result.message || "");
+      if (result.authorized) {
+        setAuthStage("success");
+        setAuthModalOpen(true);
+        await loadAuthStatus();
+        setMessage("Telegram 인증이 완료되었습니다. 이제 실제 채널 메시지를 수집할 수 있습니다.");
+        return;
+      }
+      setAuthStage(result.auth_stage === "password_required" ? "password_required" : "code_required");
+      setAuthModalOpen(true);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Telegram 인증 시작에 실패했습니다.";
+      setAuthStage("failed");
+      setAuthMessage(errorMessage);
+      setAuthModalOpen(true);
+    } finally {
+      setIsAuthStarting(false);
+    }
+  };
+
+  const resetAuthInputs = () => {
+    setAuthCode("");
+    setAuthPassword("");
+  };
+
+  const closeAuthModal = () => {
+    setAuthModalOpen(false);
+    setAuthStage("code_required");
+    setAuthMessage("");
+    resetAuthInputs();
+  };
+
+  const onVerifyAuthCode = async () => {
+    if (!authCode.trim()) return;
+    setIsAuthSubmitting(true);
+    try {
+      const result = await repositories.telegram.verifyAuthCode(authCode.trim());
+      setAuthMessage(result.message || "");
+      if (result.success && result.authorized) {
+        setAuthStage("success");
+        resetAuthInputs();
+        await loadAuthStatus();
+        setMessage("Telegram 인증이 완료되었습니다. 이제 실제 채널 메시지를 수집할 수 있습니다.");
+        return;
+      }
+      if (result.auth_stage === "password_required") {
+        setAuthStage("password_required");
+        return;
+      }
+      setAuthStage("failed");
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "인증 코드 검증에 실패했습니다.";
+      setAuthStage("failed");
+      setAuthMessage(errorMessage);
+    } finally {
+      setIsAuthSubmitting(false);
+    }
+  };
+
+  const onVerifyAuthPassword = async () => {
+    if (!authPassword.trim()) return;
+    setIsAuthSubmitting(true);
+    try {
+      const result = await repositories.telegram.verifyAuthPassword(authPassword.trim());
+      setAuthMessage(result.message || "");
+      if (result.success && result.authorized) {
+        setAuthStage("success");
+        resetAuthInputs();
+        await loadAuthStatus();
+        setMessage("Telegram 인증이 완료되었습니다. 이제 실제 채널 메시지를 수집할 수 있습니다.");
+        return;
+      }
+      setAuthStage("failed");
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "2FA 비밀번호 검증에 실패했습니다.";
+      setAuthStage("failed");
+      setAuthMessage(errorMessage);
+    } finally {
+      setIsAuthSubmitting(false);
+    }
+  };
+
   const aiActionLabel = (summaryStatus?: string | null) => {
     const key = (summaryStatus || "").toLowerCase();
     if (key === "summarized") return "재요약";
@@ -503,11 +627,17 @@ function TelegramBriefingPage() {
       {collectionMode ? (
         <p className="text-sm text-slate-700">
           source_mode: <b>{collectionMode}</b>{" "}
-          {collectionMode === "telegram_live"
+          {collectionMode === "real"
             ? "실제 텔레그램 채널에서 수집된 결과입니다."
-            : collectionMode === "fallback_sample"
-              ? "현재 결과는 실제 텔레그램 수집이 아니라 샘플 데이터입니다."
+            : collectionMode === "mock"
+              ? "개발용 mock 데이터 모드입니다. 실제 텔레그램 수집 결과가 아닙니다."
               : "Telegram 연결 실패로 실제 수집이 수행되지 않았습니다."}
+        </p>
+      ) : null}
+      {collectionError ? <p className="text-sm text-rose-700">오류: {collectionError}</p> : null}
+      {Object.keys(collectionDiagnostics).length > 0 ? (
+        <p className="text-xs text-slate-600">
+          diagnostics: api_id={String(!!collectionDiagnostics.has_api_id)} / api_hash={String(!!collectionDiagnostics.has_api_hash)} / session={String(!!collectionDiagnostics.has_session)} / channel_resolved={String(!!collectionDiagnostics.channel_resolved)}
         </p>
       ) : null}
 
@@ -640,9 +770,22 @@ function TelegramBriefingPage() {
                 >
                   {isCollectingSelected ? "수집 중..." : "선택 채널 수집"}
                 </button>
+                <button
+                  type="button"
+                  className={`btn w-auto shrink-0 whitespace-nowrap px-4 transition-all duration-150 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60 ${isAuthStarting ? "bg-slate-800 text-white" : "btn-secondary"}`}
+                  onClick={() => void onStartTelegramAuth()}
+                  disabled={isAuthStarting || isAuthChecking || isAuthSubmitting || !canOpenAuthFlow}
+                >
+                  {isAuthStarting ? "인증 시작 중..." : "Telegram 인증"}
+                </button>
               </div>
             </div>
             <p className="mt-2 text-xs text-slate-600">수집이 완료되었습니다. 아래 수집 메시지 목록에서 상세 내용을 확인하세요.</p>
+            {telegramAuthStatus ? (
+              <p className="mt-1 text-xs text-slate-600">
+                인증상태: authorized={String(telegramAuthStatus.authorized)} / session={String(telegramAuthStatus.has_session)} / mode={telegramAuthStatus.source_mode}
+              </p>
+            ) : null}
           </SectionCard>
 
           <SectionCard title="수집 메시지 목록">
@@ -786,6 +929,61 @@ function TelegramBriefingPage() {
               <button type="button" className="btn btn-secondary" onClick={() => void onMovePage(currentPage + 1)} disabled={currentPage >= totalPages}>다음</button>
             </div>
           </SectionCard>
+        </div>
+      ) : null}
+
+      {authModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white p-4 shadow-xl">
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-base font-semibold text-slate-900">Telegram 인증</p>
+              <button type="button" className="btn btn-secondary px-2 py-1 text-xs" onClick={closeAuthModal}>닫기</button>
+            </div>
+            <p className="mb-3 text-sm text-slate-700">{authMessage || "Telegram 인증을 진행해 주세요."}</p>
+
+            {authStage === "code_required" ? (
+              <div className="space-y-2">
+                <input
+                  className="input-control"
+                  placeholder="인증 코드"
+                  value={authCode}
+                  onChange={(e) => setAuthCode(e.target.value)}
+                />
+                <button type="button" className="btn btn-primary w-full" disabled={isAuthSubmitting || !authCode.trim()} onClick={() => void onVerifyAuthCode()}>
+                  {isAuthSubmitting ? "검증 중..." : "인증 완료"}
+                </button>
+              </div>
+            ) : null}
+
+            {authStage === "password_required" ? (
+              <div className="space-y-2">
+                <input
+                  type="password"
+                  className="input-control"
+                  placeholder="2단계 인증 비밀번호"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                />
+                <button type="button" className="btn btn-primary w-full" disabled={isAuthSubmitting || !authPassword.trim()} onClick={() => void onVerifyAuthPassword()}>
+                  {isAuthSubmitting ? "검증 중..." : "비밀번호 인증"}
+                </button>
+              </div>
+            ) : null}
+
+            {authStage === "success" ? (
+              <div className="space-y-2">
+                <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">Telegram 인증이 완료되었습니다.</p>
+                <button type="button" className="btn btn-primary w-full" onClick={closeAuthModal}>확인</button>
+              </div>
+            ) : null}
+
+            {authStage === "failed" ? (
+              <div className="space-y-2">
+                <p className="rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">인증에 실패했습니다. 다시 시도해 주세요.</p>
+                <button type="button" className="btn btn-secondary w-full" onClick={() => setAuthStage("code_required")}>코드 입력으로 돌아가기</button>
+              </div>
+            ) : null}
+          </div>
         </div>
       ) : null}
     </div>
