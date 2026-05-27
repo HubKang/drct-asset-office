@@ -1814,6 +1814,61 @@ a:focus-visible {
   gap: 10px;
 }
 
+.trade-method-recent-wrap {
+  width: 100%;
+}
+
+.trade-method-recent-table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.trade-method-recent-table .col-buy-date {
+  width: 20%;
+}
+
+.trade-method-recent-table .col-stock-name {
+  width: 28%;
+}
+
+.trade-method-recent-table .col-status {
+  width: 16%;
+}
+
+.trade-method-recent-table .col-profit-rate {
+  width: 14%;
+}
+
+.trade-method-recent-table .col-realized-profit {
+  width: 22%;
+}
+
+.trade-method-recent-table th,
+.trade-method-recent-table td {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
+.trade-method-recent-table .tm-col-buy,
+.trade-method-recent-table .tm-col-stock {
+  text-align: left;
+}
+
+.trade-method-recent-table .tm-col-status {
+  text-align: center;
+}
+
+.trade-method-recent-table .tm-col-rate,
+.trade-method-recent-table .tm-col-profit {
+  text-align: right;
+}
+
+.trade-method-recent-table .tm-col-status .badge {
+  margin: 0 auto;
+}
+
 @media (max-width: 1300px) {
   .trade-journal-detail-drawer {
     width: min(56vw, 860px);

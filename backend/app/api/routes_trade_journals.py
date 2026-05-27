@@ -12,6 +12,9 @@ from backend.app.schemas.trade_journal_schema import (
     TradeJournalImageUpdate,
     TradeJournalImageResponse,
     TradeJournalGptReviewPackageResponse,
+    TradeJournalFailurePatternGptReviewPackageResponse,
+    TradeJournalMonthlyGptReviewPackageResponse,
+    TradeMethodGptGuidePackageResponse,
     TradeJournalListResponse,
     TradeJournalMonthlyCalendarItem,
     TradeJournalMonthlyStatisticResponse,
@@ -151,3 +154,35 @@ def get_trade_journal_statistics_monthly(
 @router.get("/trade-journals/{journal_id}/gpt-review-package", response_model=TradeJournalGptReviewPackageResponse)
 def get_trade_journal_gpt_review_package(journal_id: int, db: Session = Depends(get_db)):
     return TradeJournalService(db).build_gpt_review_package(journal_id)
+
+
+@router.get("/trade-journals/gpt-review-package/monthly", response_model=TradeJournalMonthlyGptReviewPackageResponse)
+def get_trade_journal_monthly_gpt_review_package(
+    year: int = Query(..., ge=2000, le=2100),
+    month: int = Query(..., ge=1, le=12),
+    db: Session = Depends(get_db),
+):
+    return TradeJournalService(db).build_monthly_gpt_review_package(year=year, month=month)
+
+
+@router.get("/trade-journals/gpt-review-package/failure-patterns", response_model=TradeJournalFailurePatternGptReviewPackageResponse)
+def get_trade_journal_failure_patterns_gpt_review_package(
+    from_date: str | None = Query(default=None),
+    to_date: str | None = Query(default=None),
+    method_id: int | None = Query(default=None),
+    theme_id: int | None = Query(default=None),
+    limit: int = Query(default=300, ge=10, le=1000),
+    db: Session = Depends(get_db),
+):
+    return TradeJournalService(db).build_failure_pattern_gpt_review_package(
+        from_date=from_date,
+        to_date=to_date,
+        method_id=method_id,
+        theme_id=theme_id,
+        limit=limit,
+    )
+
+
+@router.get("/trade-methods/{method_id}/gpt-guide-package", response_model=TradeMethodGptGuidePackageResponse)
+def get_trade_method_gpt_guide_package(method_id: int, db: Session = Depends(get_db)):
+    return TradeJournalService(db).build_trade_method_gpt_guide_package(method_id=method_id)

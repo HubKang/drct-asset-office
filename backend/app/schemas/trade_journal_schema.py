@@ -193,3 +193,33 @@ class TradeJournalGptReviewPackageResponse(BaseModel):
     prompt_text: str
     markdown: str
     json_data: dict
+
+
+class TradeJournalMonthlyGptReviewPackageResponse(BaseModel):
+    package_type: str
+    year: int
+    month: int
+    period_label: str
+    prompt_key: str
+    prompt_text: str
+    markdown: str
+    json_data: dict
+
+
+class TradeMethodGptGuidePackageResponse(BaseModel):
+    package_type: str
+    method_id: int
+    prompt_key: str
+    prompt_text: str
+    markdown: str
+    json_data: dict
+
+
+class TradeJournalFailurePatternGptReviewPackageResponse(BaseModel):
+    package_type: str
+    prompt_key: str
+    prompt_text: str
+    from_date: str
+    to_date: str
+    markdown: str
+    json_data: dict

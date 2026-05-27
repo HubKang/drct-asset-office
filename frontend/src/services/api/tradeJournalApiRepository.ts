@@ -9,6 +9,9 @@ import type {
   TradeMethod,
   TradeMethodSaveRequest,
   TradeJournalGptReviewPackage,
+  TradeJournalMonthlyGptReviewPackage,
+  TradeMethodGptGuidePackage,
+  FailurePatternReviewPackage,
 } from "@/types/tradeJournal";
 
 export const tradeJournalApiRepository = {
@@ -81,4 +84,23 @@ export const tradeJournalApiRepository = {
     return apiRequest<TradeMonthlyStatisticsResponse>(`/trade-journals/statistics/monthly?${search.toString()}`);
   },
   fetchGptReviewPackage: (journalId: number) => apiRequest<TradeJournalGptReviewPackage>(`/trade-journals/${journalId}/gpt-review-package`),
+  fetchMonthlyGptReviewPackage: (year: number, month: number) =>
+    apiRequest<TradeJournalMonthlyGptReviewPackage>(
+      `/trade-journals/gpt-review-package/monthly?year=${encodeURIComponent(String(year))}&month=${encodeURIComponent(String(month))}`
+    ),
+  fetchTradeMethodGuidePackage: (methodId: number) =>
+    apiRequest<TradeMethodGptGuidePackage>(`/trade-methods/${methodId}/gpt-guide-package`),
+  fetchFailurePatternReviewPackage: (params: {
+    from_date?: string;
+    to_date?: string;
+    method_id?: number;
+    limit?: number;
+  }) => {
+    const search = new URLSearchParams();
+    if (params.from_date) search.set("from_date", params.from_date);
+    if (params.to_date) search.set("to_date", params.to_date);
+    if (typeof params.method_id === "number") search.set("method_id", String(params.method_id));
+    if (typeof params.limit === "number") search.set("limit", String(params.limit));
+    return apiRequest<FailurePatternReviewPackage>(`/trade-journals/gpt-review-package/failure-patterns?${search.toString()}`);
+  },
 };

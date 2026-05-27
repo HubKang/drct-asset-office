@@ -1,27 +1,40 @@
-import { useEffect, useState } from "react";
+ï»¿import { useEffect, useMemo, useState } from "react";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import { repositories } from "@/services";
 import { appConfig } from "@/services/config/appConfig";
-import type { TradeJournal, TradeJournalGptReviewPackage, TradeJournalImage, TradeJournalSaveRequest, TradeMethod } from "@/types/tradeJournal";
+import type {
+  FailurePatternReviewPackage,
+  TradeJournal,
+  TradeJournalGptReviewPackage,
+  TradeJournalImage,
+  TradeJournalSaveRequest,
+  TradeMethod,
+} from "@/types/tradeJournal";
 
 type DetailMode = "create" | "edit";
 
 const RESULT_TYPE_OPTIONS = [
-  { value: "", label: "ÀüÃ¼" },
-  { value: "holding", label: "º¸À¯Áß" },
-  { value: "profit", label: "¼öÀÍ" },
-  { value: "loss", label: "¼Õ½Ç" },
-  { value: "break_even", label: "º»Àü" },
+  { value: "", label: "ì „ì²´" },
+  { value: "holding", label: "ë³´ìœ ì¤‘" },
+  { value: "profit", label: "ìµì ˆ" },
+  { value: "loss", label: "ì†ì ˆ" },
+  { value: "break_even", label: "ë³¸ì „" },
 ];
 
 const IMAGE_TYPE_OPTIONS = [
-  { value: "trade_time_chart", label: "¸Å¸Å ´ç½Ã Â÷Æ®" },
-  { value: "after_trade_chart", label: "¸Å¸Å ÀÌÈÄ Â÷Æ®" },
+  { value: "trade_time_chart", label: "ë§¤ë§¤ ë‹¹ì‹œ ì°¨íŠ¸" },
+  { value: "after_trade_chart", label: "ë§¤ë§¤ ì´í›„ ì°¨íŠ¸" },
 ];
 
 const today = () => new Date().toISOString().slice(0, 10);
-const formatWon = (value?: number | null) => `${Number(value ?? 0).toLocaleString("ko-KR")}¿ø`;
+const threeMonthsAgo = () => {
+  const d = new Date();
+  d.setMonth(d.getMonth() - 3);
+  return d.toISOString().slice(0, 10);
+};
+const formatWon = (value?: number | null) => `${Number(value ?? 0).toLocaleString("ko-KR")}ì›`;
+const formatRate = (value?: number | null) => `${Number(value ?? 0).toFixed(1)}%`;
 
 function TradeJournalsPage() {
   const [items, setItems] = useState<TradeJournal[]>([]);
@@ -31,12 +44,19 @@ function TradeJournalsPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  const [filters, setFilters] = useState({ start_date: today(), end_date: today(), stock_name: "", result_type: "" });
+  const [filters, setFilters] = useState({
+    start_date: today(),
+    end_date: today(),
+    stock_name: "",
+    result_type: "",
+  });
   const [selectedJournalId, setSelectedJournalId] = useState<number | null>(null);
   const [detailMode, setDetailMode] = useState<DetailMode>("create");
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [detailImages, setDetailImages] = useState<TradeJournalImage[]>([]);
   const [gptPackage, setGptPackage] = useState<TradeJournalGptReviewPackage | null>(null);
+  const [failurePatternPackage, setFailurePatternPackage] = useState<FailurePatternReviewPackage | null>(null);
+  const [failureLoading, setFailureLoading] = useState(false);
 
   const [form, setForm] = useState<TradeJournalSaveRequest>({
     buy_date: today(),
@@ -49,6 +69,11 @@ function TradeJournalsPage() {
   const [imageType, setImageType] = useState("trade_time_chart");
   const [imageMemo, setImageMemo] = useState("");
   const [imageFile, setImageFile] = useState<File | null>(null);
+
+  const totalRealized = useMemo(
+    () => items.reduce((acc, row) => acc + Number(row.realized_profit ?? 0), 0),
+    [items]
+  );
 
   const loadTradeMethods = async () => {
     const rows = await repositories.tradeJournals.listTradeMethods({ is_active: 1 });
@@ -67,7 +92,7 @@ function TradeJournalsPage() {
       });
       setItems(response.items ?? []);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "¸ñ·Ï Á¶È¸ ½ÇÆĞ");
+      setError(e instanceof Error ? e.message : "ëª©ë¡ ì¡°íšŒì— ì‹¤íŒ¨í–ˆìŠµë‹ˆë‹¤.");
     } finally {
       setLoading(false);
     }
@@ -107,7 +132,14 @@ function TradeJournalsPage() {
     setDetailMode("create");
     setIsDetailOpen(true);
     setGptPackage(null);
-    setForm({ buy_date: today(), sell_date: today(), stock_name: "", result_type: "holding", profit_rate: 0, realized_profit: 0 });
+    setForm({
+      buy_date: today(),
+      sell_date: today(),
+      stock_name: "",
+      result_type: "holding",
+      profit_rate: 0,
+      realized_profit: 0,
+    });
     setDetailImages([]);
   };
 
@@ -121,7 +153,7 @@ function TradeJournalsPage() {
 
   const save = async () => {
     if (!form.stock_name?.trim()) {
-      setError("Á¾¸ñ¸íÀº ÇÊ¼öÀÔ´Ï´Ù.");
+      setError("ì¢…ëª©ëª…ì€ í•„ìˆ˜ì…ë‹ˆë‹¤.");
       return;
     }
     setSaving(true);
@@ -136,9 +168,9 @@ function TradeJournalsPage() {
       }
       await loadList();
       if (selectedJournalId) await loadDetail(selectedJournalId);
-      setMessage("ÀúÀåµÇ¾ú½À´Ï´Ù.");
+      setMessage("ì €ì¥ë˜ì—ˆìŠµë‹ˆë‹¤.");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "ÀúÀå ½ÇÆĞ");
+      setError(e instanceof Error ? e.message : "ì €ì¥ì— ì‹¤íŒ¨í–ˆìŠµë‹ˆë‹¤.");
     } finally {
       setSaving(false);
     }
@@ -146,7 +178,11 @@ function TradeJournalsPage() {
 
   const uploadImage = async () => {
     if (!selectedJournalId || !imageFile) return;
-    await repositories.tradeJournals.uploadTradeJournalImage(selectedJournalId, { image_type: imageType, image_memo: imageMemo, file: imageFile });
+    await repositories.tradeJournals.uploadTradeJournalImage(selectedJournalId, {
+      image_type: imageType,
+      image_memo: imageMemo,
+      file: imageFile,
+    });
     setImageFile(null);
     setImageMemo("");
     await loadDetail(selectedJournalId);
@@ -162,41 +198,154 @@ function TradeJournalsPage() {
   const copyPackage = async () => {
     if (!gptPackage?.markdown) return;
     await navigator.clipboard.writeText(gptPackage.markdown);
-    setMessage("GPT º¹±â ÆĞÅ°Áö°¡ º¹»çµÇ¾ú½À´Ï´Ù.");
+    setMessage("GPT ë³µê¸° íŒ¨í‚¤ì§€ê°€ ë³µì‚¬ë˜ì—ˆìŠµë‹ˆë‹¤.");
   };
 
-  const totalRealized = items.reduce((acc, row) => acc + Number(row.realized_profit ?? 0), 0);
+  const generateFailurePatternPackage = async () => {
+    setFailureLoading(true);
+    setError("");
+    try {
+      const fromDate = filters.start_date || threeMonthsAgo();
+      const toDate = filters.end_date || today();
+      const pkg = await repositories.tradeJournals.fetchFailurePatternReviewPackage({
+        from_date: fromDate,
+        to_date: toDate,
+      });
+      setFailurePatternPackage(pkg);
+      setMessage("GPT ì‹¤íŒ¨ íŒ¨í„´ ë¶„ì„ íŒ¨í‚¤ì§€ë¥¼ ìƒì„±í–ˆìŠµë‹ˆë‹¤.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "ì‹¤íŒ¨ íŒ¨í„´ íŒ¨í‚¤ì§€ ìƒì„±ì— ì‹¤íŒ¨í–ˆìŠµë‹ˆë‹¤.");
+    } finally {
+      setFailureLoading(false);
+    }
+  };
+
+  const copyFailurePatternPackage = async () => {
+    if (!failurePatternPackage?.markdown) return;
+    await navigator.clipboard.writeText(failurePatternPackage.markdown);
+    setMessage("GPT ì‹¤íŒ¨ íŒ¨í„´ ë¶„ì„ íŒ¨í‚¤ì§€ê°€ ë³µì‚¬ë˜ì—ˆìŠµë‹ˆë‹¤.");
+  };
 
   return (
     <div className="space-y-4">
-      <PageHeader title="¸Å¸ÅÀÏÁö" description="¸ñ·Ï/»ó¼¼ °ü¸® ¹× GPT º¹±â ÆĞÅ°Áö »ı¼º" />
-      <SectionCard title="°Ë»ö">
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-5">
-          <input className="input-control" type="date" value={filters.start_date} onChange={(e) => setFilters((p) => ({ ...p, start_date: e.target.value }))} />
-          <input className="input-control" type="date" value={filters.end_date} onChange={(e) => setFilters((p) => ({ ...p, end_date: e.target.value }))} />
-          <input className="input-control" value={filters.stock_name} onChange={(e) => setFilters((p) => ({ ...p, stock_name: e.target.value }))} placeholder="Á¾¸ñ¸í" />
-          <select className="select-control" value={filters.result_type} onChange={(e) => setFilters((p) => ({ ...p, result_type: e.target.value }))}>
-            {RESULT_TYPE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      <PageHeader title="ë§¤ë§¤ì¼ì§€" description="ë§¤ë§¤ì¼ì§€ ê´€ë¦¬ Â· GPT ë§¤ë§¤ë³µê¸°" />
+
+      <SectionCard title="ì¡°íšŒ ê¸°ê°„">
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-6">
+          <input
+            className="input-control"
+            type="date"
+            value={filters.start_date}
+            onChange={(e) => setFilters((p) => ({ ...p, start_date: e.target.value }))}
+            aria-label="ì‹œì‘ì¼"
+          />
+          <input
+            className="input-control"
+            type="date"
+            value={filters.end_date}
+            onChange={(e) => setFilters((p) => ({ ...p, end_date: e.target.value }))}
+            aria-label="ì¢…ë£Œì¼"
+          />
+          <input
+            className="input-control"
+            value={filters.stock_name}
+            onChange={(e) => setFilters((p) => ({ ...p, stock_name: e.target.value }))}
+            placeholder="ì¢…ëª©ëª…"
+          />
+          <select
+            className="select-control"
+            value={filters.result_type}
+            onChange={(e) => setFilters((p) => ({ ...p, result_type: e.target.value }))}
+          >
+            {RESULT_TYPE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
           </select>
-          <button type="button" className="btn btn-primary" onClick={() => void loadList()}>{loading ? "Á¶È¸Áß" : "Á¶È¸"}</button>
+          <button type="button" className="btn btn-primary" onClick={() => void loadList()}>
+            {loading ? "ì¡°íšŒ ì¤‘" : "ì¡°íšŒ"}
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() =>
+              setFilters({
+                start_date: today(),
+                end_date: today(),
+                stock_name: "",
+                result_type: "",
+              })
+            }
+          >
+            ì´ˆê¸°í™”
+          </button>
+        </div>
+      </SectionCard>
+
+      <SectionCard title="GPT ì‹¤íŒ¨ íŒ¨í„´ ë¶„ì„ íŒ¨í‚¤ì§€">
+        <p className="mb-2 text-sm text-slate-600">
+          ê¸°ê°„/ëª©ë¡ ë‹¨ìœ„ë¡œ ì†ì‹¤ ê±°ë˜, ì†ì ˆ ê±°ë˜, ì‹¤íŒ¨ ì‚¬ìœ  ê¸°ë¡ ê±°ë˜ë¥¼ ëª¨ì•„ ì‹¤íŒ¨ íŒ¨í„´ì„ ë¶„ì„í•©ë‹ˆë‹¤.
+        </p>
+        <div className="mb-2 flex flex-wrap gap-2">
+          <button type="button" className="btn btn-secondary" onClick={() => void generateFailurePatternPackage()} disabled={failureLoading}>
+            {failureLoading ? "ìƒì„± ì¤‘..." : "GPT ì‹¤íŒ¨ íŒ¨í„´ ë¶„ì„ íŒ¨í‚¤ì§€ ìƒì„±"}
+          </button>
+          <button type="button" className="btn btn-secondary" onClick={() => void copyFailurePatternPackage()} disabled={!failurePatternPackage?.markdown}>
+            ì „ì²´ ë³µì‚¬
+          </button>
+        </div>
+        <div className="rounded border border-slate-200 bg-slate-50 p-3">
+          <p className="mb-2 text-sm font-medium text-slate-700">GPT ì‹¤íŒ¨ íŒ¨í„´ ë¶„ì„ íŒ¨í‚¤ì§€ ë¯¸ë¦¬ë³´ê¸°</p>
+          {failurePatternPackage?.markdown ? (
+            <pre className="max-h-64 overflow-auto whitespace-pre-wrap text-xs text-slate-700">{failurePatternPackage.markdown}</pre>
+          ) : (
+            <p className="text-sm text-slate-500">íŒ¨í‚¤ì§€ë¥¼ ìƒì„±í•˜ë©´ ì´ ì˜ì—­ì— Markdown ë¯¸ë¦¬ë³´ê¸°ê°€ í‘œì‹œë©ë‹ˆë‹¤.</p>
+          )}
         </div>
       </SectionCard>
 
       {message ? <p className="inline-result inline-success">{message}</p> : null}
       {error ? <p className="inline-result inline-error">{error}</p> : null}
 
-      <SectionCard title="¸ñ·Ï">
-        <div className="mb-2 flex justify-end"><button type="button" className="btn btn-primary" onClick={openCreate}>Ãß°¡</button></div>
+      <SectionCard title="ë§¤ë§¤ì¼ì§€ ëª©ë¡">
+        <div className="mb-2 flex justify-end">
+          <button type="button" className="btn btn-primary" onClick={openCreate}>
+            ìƒˆ ë§¤ë§¤ì¼ì§€
+          </button>
+        </div>
         <div className="trade-journal-table-shell">
           <table className="data-table trade-journal-table">
-            <thead><tr><th>¸Å¼öÀÏ</th><th>Á¾¸ñ¸í</th><th>»óÅÂ</th><th>¼öÀÍ·ü</th><th>½ÇÇö¼ÕÀÍ</th><th>ÀÌ¹ÌÁö</th></tr></thead>
+            <thead>
+              <tr>
+                <th>ë§¤ìˆ˜ì¼</th>
+                <th>ë§¤ë„ì¼</th>
+                <th>ì¢…ëª©ëª…</th>
+                <th>ìƒíƒœ</th>
+                <th>ìˆ˜ìµë¥ </th>
+                <th>ì‹¤í˜„ì†ìµ</th>
+                <th>ì´ë¯¸ì§€</th>
+                <th>ê´€ë¦¬</th>
+              </tr>
+            </thead>
             <tbody>
               {items.map((item) => (
                 <tr key={item.id} className="trade-journal-row" onClick={() => void openEdit(item.id)}>
-                  <td>{item.buy_date?.slice(0, 10)}</td><td>{item.stock_name}</td><td>{item.result_type || "-"}</td><td>{item.profit_rate ?? 0}%</td><td>{formatWon(item.realized_profit)}</td><td>{item.image_count ?? 0}</td>
+                  <td>{item.buy_date?.slice(0, 10)}</td>
+                  <td>{item.sell_date?.slice(0, 10) || "-"}</td>
+                  <td>{item.stock_name}</td>
+                  <td>{RESULT_TYPE_OPTIONS.find((x) => x.value === (item.result_type || "holding"))?.label || "ë³´ìœ ì¤‘"}</td>
+                  <td>{formatRate(item.profit_rate)}</td>
+                  <td>{formatWon(item.realized_profit)}</td>
+                  <td>{item.image_count ?? 0}</td>
+                  <td>ìƒì„¸</td>
                 </tr>
               ))}
-              <tr className="trade-journal-summary-row"><td colSpan={4}>½ÇÇö¼ÕÀÍ ÇÕ°è</td><td>{formatWon(totalRealized)}</td><td /></tr>
+              <tr className="trade-journal-summary-row">
+                <td colSpan={5}>ì‹¤í˜„ì†ìµ í•©ê³„</td>
+                <td>{formatWon(totalRealized)}</td>
+                <td colSpan={2} />
+              </tr>
             </tbody>
           </table>
         </div>
@@ -207,57 +356,142 @@ function TradeJournalsPage() {
           <div className="trade-journal-detail-dim" onClick={() => setIsDetailOpen(false)} />
           <aside className="trade-journal-detail-drawer">
             <div className="trade-journal-detail-drawer-header">
-              <h3>¸Å¸ÅÀÏÁö »ó¼¼</h3>
+              <h3>ë§¤ë§¤ì¼ì§€ ìƒì„¸</h3>
               <div className="trade-detail-header-actions">
-                <button className="btn btn-secondary" onClick={() => void generatePackage()} type="button">GPT º¹±â ÆĞÅ°Áö »ı¼º</button>
-                <button className="btn btn-secondary" onClick={() => void copyPackage()} type="button" disabled={!gptPackage}>GPT ºĞ¼® ¿äÃ»¹®+JSON º¹»ç</button>
-                <button className="btn btn-secondary" onClick={() => setIsDetailOpen(false)} type="button">´İ±â</button>
+                <button className="btn btn-secondary" onClick={() => void generatePackage()} type="button">
+                  GPT ë³µê¸° íŒ¨í‚¤ì§€ ìƒì„±
+                </button>
+                <button className="btn btn-secondary" onClick={() => void copyPackage()} type="button" disabled={!gptPackage}>
+                  GPT ë¶„ì„ ìš”ì²­ë¬¸+JSON ë³µì‚¬
+                </button>
+                <button className="btn btn-secondary" onClick={() => setIsDetailOpen(false)} type="button">
+                  ë‹«ê¸°
+                </button>
               </div>
             </div>
             <div className="trade-journal-detail-drawer-body">
               <div className="trade-detail-form-grid">
-                <div className="trade-detail-field"><label>¸Å¼öÀÏ</label><input className="input-control" type="date" value={(form.buy_date || "").slice(0,10)} onChange={(e) => setForm((p) => ({ ...p, buy_date: e.target.value }))} /></div>
-                <div className="trade-detail-field"><label>¸ÅµµÀÏ</label><input className="input-control" type="date" value={(form.sell_date || "").slice(0,10)} onChange={(e) => setForm((p) => ({ ...p, sell_date: e.target.value }))} /></div>
-                <div className="trade-detail-field"><label>Á¾¸ñ¸í</label><input className="input-control" value={form.stock_name || ""} onChange={(e) => setForm((p) => ({ ...p, stock_name: e.target.value }))} /></div>
-                <div className="trade-detail-field"><label>Å×¸¶</label><input className="input-control" value={form.stock_theme || ""} onChange={(e) => setForm((p) => ({ ...p, stock_theme: e.target.value }))} /></div>
-                <div className="trade-detail-field"><label>¸Å¸Å±â¹ı</label><select className="select-control" value={String(form.trade_method_id ?? "")} onChange={(e) => setForm((p) => ({ ...p, trade_method_id: e.target.value ? Number(e.target.value) : null }))}><option value="">¼±ÅÃ</option>{tradeMethods.map((m) => <option key={m.id} value={m.id}>{m.method_name}</option>)}</select></div>
-                <div className="trade-detail-field"><label>»óÅÂ</label><select className="select-control" value={form.result_type || "holding"} onChange={(e) => setForm((p) => ({ ...p, result_type: e.target.value }))}>{RESULT_TYPE_OPTIONS.filter((x) => x.value).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></div>
+                <div className="trade-detail-field">
+                  <label>ë§¤ìˆ˜ì¼</label>
+                  <input
+                    className="input-control"
+                    type="date"
+                    value={(form.buy_date || "").slice(0, 10)}
+                    onChange={(e) => setForm((p) => ({ ...p, buy_date: e.target.value }))}
+                  />
+                </div>
+                <div className="trade-detail-field">
+                  <label>ë§¤ë„ì¼</label>
+                  <input
+                    className="input-control"
+                    type="date"
+                    value={(form.sell_date || "").slice(0, 10)}
+                    onChange={(e) => setForm((p) => ({ ...p, sell_date: e.target.value }))}
+                  />
+                </div>
+                <div className="trade-detail-field">
+                  <label>ì¢…ëª©ëª…</label>
+                  <input className="input-control" value={form.stock_name || ""} onChange={(e) => setForm((p) => ({ ...p, stock_name: e.target.value }))} />
+                </div>
+                <div className="trade-detail-field">
+                  <label>í…Œë§ˆ</label>
+                  <input className="input-control" value={form.stock_theme || ""} onChange={(e) => setForm((p) => ({ ...p, stock_theme: e.target.value }))} />
+                </div>
+                <div className="trade-detail-field">
+                  <label>ë§¤ë§¤ê¸°ë²•</label>
+                  <select
+                    className="select-control"
+                    value={String(form.trade_method_id ?? "")}
+                    onChange={(e) => setForm((p) => ({ ...p, trade_method_id: e.target.value ? Number(e.target.value) : null }))}
+                  >
+                    <option value="">ì„ íƒ</option>
+                    {tradeMethods.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.method_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="trade-detail-field">
+                  <label>ìƒíƒœ</label>
+                  <select className="select-control" value={form.result_type || "holding"} onChange={(e) => setForm((p) => ({ ...p, result_type: e.target.value }))}>
+                    {RESULT_TYPE_OPTIONS.filter((x) => x.value).map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               <div className="detail-section">
-                <textarea className="textarea-control" placeholder="¸Å¸Å±â·Ï" value={form.remark || ""} onChange={(e) => setForm((p) => ({ ...p, remark: e.target.value }))} />
+                <label className="detail-label">ë§¤ë§¤ ê¸°ë¡</label>
+                <textarea className="textarea-control" placeholder="ë§¤ë§¤ ê¸°ë¡" value={form.remark || ""} onChange={(e) => setForm((p) => ({ ...p, remark: e.target.value }))} />
+              </div>
+
+              <div className="trade-journal-detail-grid detail-section">
+                <textarea className="textarea-control" placeholder="ë§¤ë§¤ ì´ìœ " value={form.trade_reason || ""} onChange={(e) => setForm((p) => ({ ...p, trade_reason: e.target.value }))} />
+                <textarea className="textarea-control" placeholder="ì„±ê³µ ì‚¬ìœ " value={form.success_reason || ""} onChange={(e) => setForm((p) => ({ ...p, success_reason: e.target.value }))} />
+                <textarea className="textarea-control" placeholder="ì‹¤íŒ¨ ì‚¬ìœ " value={form.failure_reason || ""} onChange={(e) => setForm((p) => ({ ...p, failure_reason: e.target.value }))} />
+                <textarea className="textarea-control" placeholder="ë³µê¸° ë©”ëª¨" value={form.review_memo || ""} onChange={(e) => setForm((p) => ({ ...p, review_memo: e.target.value }))} />
               </div>
 
               {gptPackage ? (
                 <div className="detail-section">
-                  <div className="gpt-package-preview">
-                    <div className="gpt-package-preview-header"><strong>GPT º¹±â ÆĞÅ°Áö ¹Ì¸®º¸±â</strong><button type="button" className="btn btn-secondary btn-table-sm" onClick={() => void copyPackage()}>ÀüÃ¼ º¹»ç</button></div>
-                    <pre>{gptPackage.markdown}</pre>
+                  <div className="rounded border border-slate-200 bg-slate-50 p-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <strong>GPT ë³µê¸° íŒ¨í‚¤ì§€ ë¯¸ë¦¬ë³´ê¸°</strong>
+                      <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => void copyPackage()}>
+                        ì „ì²´ ë³µì‚¬
+                      </button>
+                    </div>
+                    <pre className="max-h-64 overflow-auto whitespace-pre-wrap text-xs text-slate-700">{gptPackage.markdown}</pre>
                   </div>
                 </div>
               ) : null}
 
               <div className="detail-section">
-                <div className="mb-2 flex items-center justify-between"><strong>Â÷Æ® ÀÌ¹ÌÁö</strong></div>
-                <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
-                  <select className="select-control" value={imageType} onChange={(e) => setImageType(e.target.value)}>{IMAGE_TYPE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
-                  <input className="input-control" type="file" accept="image/*" onChange={(e) => setImageFile(e.target.files?.[0] ?? null)} />
-                  <input className="input-control" value={imageMemo} onChange={(e) => setImageMemo(e.target.value)} placeholder="ÀÌ¹ÌÁö ¸Ş¸ğ" />
+                <div className="mb-2 flex items-center justify-between">
+                  <strong>ì°¨íŠ¸ ì´ë¯¸ì§€</strong>
                 </div>
-                <div className="mt-2"><button type="button" className="btn btn-secondary" onClick={() => void uploadImage()} disabled={!selectedJournalId || !imageFile}>ÀÌ¹ÌÁö ¾÷·Îµå</button></div>
+                <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+                  <select className="select-control" value={imageType} onChange={(e) => setImageType(e.target.value)}>
+                    {IMAGE_TYPE_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                  <input className="input-control" type="file" accept="image/*" onChange={(e) => setImageFile(e.target.files?.[0] ?? null)} />
+                  <input className="input-control" value={imageMemo} onChange={(e) => setImageMemo(e.target.value)} placeholder="ì´ë¯¸ì§€ ë©”ëª¨" />
+                </div>
+                <div className="mt-2">
+                  <button type="button" className="btn btn-secondary" onClick={() => void uploadImage()} disabled={!selectedJournalId || !imageFile}>
+                    ì´ë¯¸ì§€ ì—…ë¡œë“œ
+                  </button>
+                </div>
                 <div className="trade-image-list mt-2">
                   {detailImages.map((img) => (
                     <article key={img.id} className="trade-journal-image-card">
-                      <div><span className="badge badge-blue">{img.image_type}</span> <small>{img.original_filename || img.image_path}</small></div>
+                      <div>
+                        <span className="badge badge-blue">{img.image_type}</span> <small>{img.original_filename || img.image_path}</small>
+                      </div>
                       {img.image_url ? <img src={`${appConfig.apiBaseUrl}${img.image_url}`} className="trade-journal-image-preview" alt="trade" /> : null}
-                      <p className="trade-image-memo">{img.image_memo || "¸Ş¸ğ ¾øÀ½"}</p>
+                      <p className="trade-image-memo">{img.image_memo || "ë©”ëª¨ ì—†ìŒ"}</p>
                     </article>
                   ))}
                 </div>
               </div>
             </div>
             <div className="trade-journal-detail-drawer-footer">
-              <button className="btn btn-primary" type="button" onClick={() => void save()} disabled={saving}>{saving ? "ÀúÀåÁß" : "ÀúÀå"}</button>
+              <button className="btn btn-primary" type="button" onClick={() => void save()} disabled={saving}>
+                {saving ? "ì €ì¥ì¤‘" : detailMode === "create" ? "ì €ì¥" : "ìˆ˜ì •"}
+              </button>
+              {detailMode === "edit" ? (
+                <button className="btn btn-danger" type="button">
+                  ì‚­ì œ
+                </button>
+              ) : null}
             </div>
           </aside>
         </>

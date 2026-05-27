@@ -5,6 +5,7 @@ import { repositories } from "@/services";
 import type {
   TradeCalendarDaySummary,
   TradeJournal,
+  TradeJournalMonthlyGptReviewPackage,
   TradeMonthlyStatistics,
 } from "@/types/tradeJournal";
 
@@ -15,7 +16,6 @@ type CalendarCell = {
 };
 
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
-
 const pad2 = (value: number): string => String(value).padStart(2, "0");
 const toDateKey = (date: Date): string => `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
 const toMonthKey = (date: Date): string => `${date.getFullYear()}-${pad2(date.getMonth() + 1)}`;
@@ -62,6 +62,8 @@ export default function TradeCalendarPage() {
   const [statsPage, setStatsPage] = useState<number>(1);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
+  const [message, setMessage] = useState<string>("");
+  const [monthlyPackage, setMonthlyPackage] = useState<TradeJournalMonthlyGptReviewPackage | null>(null);
   const [statsRange, setStatsRange] = useState<{ start_month: string; end_month: string }>({
     start_month: currentMonthKey,
     end_month: currentMonthKey,
@@ -139,14 +141,14 @@ export default function TradeCalendarPage() {
   };
 
   const handleToday = async () => {
-    const now = new Date();
-    const dateKey = toDateKey(now);
-    setSelectedMonth(now);
+    const nowDate = new Date();
+    const dateKey = toDateKey(nowDate);
+    setSelectedMonth(nowDate);
     setSelectedDate(dateKey);
     setLoading(true);
     setError("");
     try {
-      await Promise.all([loadMonthlySummary(toMonthKey(now)), loadDailyItems(dateKey)]);
+      await Promise.all([loadMonthlySummary(toMonthKey(nowDate)), loadDailyItems(dateKey)]);
     } catch (e) {
       setError(e instanceof Error ? e.message : "오늘 날짜 데이터를 불러오지 못했습니다.");
     } finally {
@@ -186,41 +188,56 @@ export default function TradeCalendarPage() {
     try {
       await loadMonthlyStats(nextPage, statsRange.start_month, statsRange.end_month);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "월별 집계 페이지 이동 중 오류가 발생했습니다.");
+      setError(e instanceof Error ? e.message : "집계 페이지 이동 중 오류가 발생했습니다.");
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleGenerateMonthlyPackage = async () => {
+    setError("");
+    setMessage("");
+    try {
+      const year = selectedMonth.getFullYear();
+      const month = selectedMonth.getMonth() + 1;
+      const pkg = await repositories.tradeJournals.fetchMonthlyGptReviewPackage(year, month);
+      setMonthlyPackage(pkg);
+      if ((pkg.json_data as any)?.summary?.total_trades === 0) {
+        setMessage("매매일지가 없는 월입니다.");
+      } else {
+        setMessage("월간 GPT 복기 패키지를 생성했습니다.");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "월간 GPT 복기 패키지 생성에 실패했습니다.");
+    }
+  };
+
+  const handleCopyMonthlyPackage = async () => {
+    if (!monthlyPackage?.markdown) return;
+    await navigator.clipboard.writeText(monthlyPackage.markdown);
+    setMessage("월간 GPT 복기 패키지가 복사되었습니다.");
   };
 
   return (
     <div className="space-y-4">
       <PageHeader
         title="매매달력"
-        description="월간 달력, 월별 집계, 선택 날짜 매매일지를 한 화면에서 확인합니다."
+        description="월간 매매 현황"
       />
       {error ? <p className="inline-result inline-error">{error}</p> : null}
+      {message ? <p className="inline-result inline-success">{message}</p> : null}
 
       <div className="trade-calendar-top">
         <SectionCard title="월간 매매달력">
           <div className="trade-calendar-toolbar">
-            <button type="button" className="btn btn-secondary" onClick={() => void handleMoveMonth(-1)}>
-              이전 달
-            </button>
-            <strong>
-              {selectedMonth.getFullYear()}년 {selectedMonth.getMonth() + 1}월
-            </strong>
-            <button type="button" className="btn btn-secondary" onClick={() => void handleMoveMonth(1)}>
-              다음 달
-            </button>
-            <button type="button" className="btn btn-primary" onClick={() => void handleToday()}>
-              오늘
-            </button>
+            <button type="button" className="btn btn-secondary" onClick={() => void handleMoveMonth(-1)}>이전</button>
+            <strong>{selectedMonth.getFullYear()}년 {selectedMonth.getMonth() + 1}월</strong>
+            <button type="button" className="btn btn-secondary" onClick={() => void handleMoveMonth(1)}>다음</button>
+            <button type="button" className="btn btn-primary" onClick={() => void handleToday()}>오늘</button>
           </div>
           <div className="trade-calendar-weekdays">
             {WEEKDAYS.map((day) => (
-              <div key={day} className="trade-calendar-weekday">
-                {day}
-              </div>
+              <div key={day} className="trade-calendar-weekday">{day}</div>
             ))}
           </div>
           <div className="trade-calendar-grid">
@@ -255,7 +272,7 @@ export default function TradeCalendarPage() {
                   <div className="date">{cell.date.getDate()}</div>
                   {summary ? (
                     <>
-                      <div className="count">{summary.trade_count}종목</div>
+                      <div className="count">{summary.trade_count}건</div>
                       <div className={`profit ${signClass}`}>
                         {summary.realized_profit_sum > 0 ? "+" : ""}
                         {formatWon(summary.realized_profit_sum)}
@@ -268,35 +285,27 @@ export default function TradeCalendarPage() {
           </div>
         </SectionCard>
 
-        <SectionCard title="월별 집계 목록">
+        <SectionCard title="월간 요약">
           <div className="trade-calendar-stats-filter">
-            <input
-              className="input-control"
-              type="month"
-              value={statsRange.start_month}
-              onChange={(event) => setStatsRange((prev) => ({ ...prev, start_month: event.target.value }))}
-            />
-            <input
-              className="input-control"
-              type="month"
-              value={statsRange.end_month}
-              onChange={(event) => setStatsRange((prev) => ({ ...prev, end_month: event.target.value }))}
-            />
-            <button type="button" className="btn btn-primary" onClick={() => void handleSearchStats()}>
-              조회
-            </button>
+            <input className="input-control" type="month" value={statsRange.start_month} onChange={(event) => setStatsRange((prev) => ({ ...prev, start_month: event.target.value }))} aria-label="시작일" />
+            <input className="input-control" type="month" value={statsRange.end_month} onChange={(event) => setStatsRange((prev) => ({ ...prev, end_month: event.target.value }))} aria-label="종료일" />
+            <button type="button" className="btn btn-primary" onClick={() => void handleSearchStats()}>조회</button>
+          </div>
+          <div className="mb-2 flex gap-2">
+            <button type="button" className="btn btn-secondary" onClick={() => void handleGenerateMonthlyPackage()}>월간 GPT 복기 패키지 생성</button>
+            <button type="button" className="btn btn-secondary" onClick={() => void handleCopyMonthlyPackage()} disabled={!monthlyPackage}>월간 GPT 복기 패키지 복사</button>
           </div>
           <div className="table-shell">
             <table className="data-table compact-table">
               <thead>
                 <tr>
-                  <th>매매월</th>
-                  <th>매매건수</th>
-                  <th>익절건수</th>
-                  <th>손절건수</th>
+                  <th>연월</th>
+                  <th>총 거래</th>
+                  <th>익절</th>
+                  <th>손절</th>
                   <th>승률</th>
                   <th>실현손익</th>
-                  <th>평균수익률</th>
+                  <th>평균 수익률</th>
                 </tr>
               </thead>
               <tbody>
@@ -313,60 +322,48 @@ export default function TradeCalendarPage() {
                 ))}
                 {monthlyStats.length > 0 ? (
                   <tr className="trade-journal-summary-row">
-                    <td colSpan={5}>실현손익 합계</td>
+                    <td colSpan={5}>합계</td>
                     <td>{formatWon(monthlyStatsProfitSum)}</td>
                     <td>-</td>
                   </tr>
                 ) : null}
                 {monthlyStats.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="text-muted">
-                      집계 데이터가 없습니다.
-                    </td>
-                  </tr>
+                  <tr><td colSpan={7} className="text-muted">집계 데이터가 없습니다.</td></tr>
                 ) : null}
               </tbody>
             </table>
           </div>
           <div className="trade-calendar-pager">
-            <button
-              type="button"
-              className="btn btn-secondary"
-              disabled={statsPage <= 1}
-              onClick={() => void handlePageChange(statsPage - 1)}
-            >
-              이전
-            </button>
-            <span>
-              {statsPage} / {totalPages}
-            </span>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              disabled={statsPage >= totalPages}
-              onClick={() => void handlePageChange(statsPage + 1)}
-            >
-              다음
-            </button>
+            <button type="button" className="btn btn-secondary" disabled={statsPage <= 1} onClick={() => void handlePageChange(statsPage - 1)}>이전</button>
+            <span>{statsPage} / {totalPages}</span>
+            <button type="button" className="btn btn-secondary" disabled={statsPage >= totalPages} onClick={() => void handlePageChange(statsPage + 1)}>다음</button>
           </div>
+          {monthlyPackage ? (
+            <div className="gpt-package-preview mt-3">
+              <div className="gpt-package-preview-header">
+                <strong>월간 GPT 복기 패키지 미리보기 ({monthlyPackage.period_label})</strong>
+                <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => void handleCopyMonthlyPackage()}>전체 복사</button>
+              </div>
+              <pre>{monthlyPackage.markdown}</pre>
+            </div>
+          ) : null}
         </SectionCard>
       </div>
 
-      <SectionCard title={`선택 날짜 매매일지 목록 (${selectedDate})`}>
+      <SectionCard title={`선택 날짜 매매일지 (${selectedDate})`}>
         {loading ? <p className="text-muted">조회 중...</p> : null}
         <div className="table-shell">
           <table className="data-table compact-table">
             <thead>
               <tr>
-                <th>매수일자</th>
-                <th>매도일자</th>
-                <th>종목테마</th>
-                <th>매매기법명</th>
+                <th>매수일</th>
+                <th>매도일</th>
                 <th>종목명</th>
-                <th>익절/손절</th>
+                <th>상태</th>
                 <th>수익률</th>
                 <th>실현손익</th>
-                <th>이미지수</th>
+                <th>매매기법</th>
+                <th>테마</th>
               </tr>
             </thead>
             <tbody>
@@ -374,28 +371,23 @@ export default function TradeCalendarPage() {
                 <tr key={item.id}>
                   <td>{item.buy_date}</td>
                   <td>{item.sell_date || "-"}</td>
-                  <td title={item.stock_theme || "-"}>{item.stock_theme || "-"}</td>
-                  <td title={item.trade_method_name || "-"}>{item.trade_method_name || "-"}</td>
                   <td title={item.stock_name}>{item.stock_name}</td>
                   <td>{resultTypeLabel(item.result_type)}</td>
                   <td>{formatRate(item.profit_rate)}</td>
                   <td>{formatWon(Number(item.realized_profit ?? 0))}</td>
-                  <td>{item.image_count ?? 0}개</td>
+                  <td title={item.trade_method_name || "-"}>{item.trade_method_name || "-"}</td>
+                  <td title={item.stock_theme || "-"}>{item.stock_theme || "-"}</td>
                 </tr>
               ))}
               {dailyItems.length > 0 ? (
                 <tr className="trade-journal-summary-row">
-                  <td colSpan={7}>실현손익 합계</td>
+                  <td colSpan={5}>합계</td>
                   <td>{formatWon(dailyProfitSum)}</td>
-                  <td>-</td>
+                  <td colSpan={2}>-</td>
                 </tr>
               ) : null}
               {dailyItems.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="text-muted">
-                    선택한 날짜에 매매일지가 없습니다.
-                  </td>
-                </tr>
+                <tr><td colSpan={8} className="text-muted">선택한 날짜의 매매일지가 없습니다.</td></tr>
               ) : null}
             </tbody>
           </table>

@@ -1,8 +1,8 @@
-import { type KeyboardEvent, useEffect, useMemo, useState } from "react";
+﻿import { type KeyboardEvent, useEffect, useMemo, useState } from "react";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import { repositories } from "@/services";
-import type { TradeJournal, TradeMethod } from "@/types/tradeJournal";
+import type { TradeJournal, TradeMethod, TradeMethodGptGuidePackage } from "@/types/tradeJournal";
 
 type ActiveFilter = "all" | "active" | "inactive";
 type DetailMode = "create" | "edit";
@@ -29,7 +29,7 @@ type MethodStats = {
   recent_trades: TradeJournal[];
 };
 
-const MARKET_TAG_OPTIONS = ["상승장", "횡보장", "하락장", "테마장", "반도체장", "AI장"];
+const MARKET_TAG_OPTIONS = ["급등주", "눌림목", "하락반등", "테마주", "반도체", "장시작"];
 
 const defaultForm = (): MethodDetailForm => ({
   method_name: "",
@@ -76,8 +76,24 @@ const checklistToEntryRule = (items: string[]): string | undefined => {
   return normalized.map((item) => `- ${item}`).join("\n");
 };
 
+const normalizeTags = (tags: string[]): string[] => {
+  const merged = tags.join(" ");
+  return merged
+    .split(/[\s,\n]+/)
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+};
+
 const formatRate = (value?: number | null): string => `${Number(value ?? 0).toFixed(1)}%`;
 const formatWon = (value?: number | null): string => `${Number(value ?? 0).toLocaleString("ko-KR")}원`;
+const formatRateCell = (value?: number | null): string => {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "-";
+  return `${Number(value).toFixed(1)}%`;
+};
+const formatWonCell = (value?: number | null): string => {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "-";
+  return `${Number(value).toLocaleString("ko-KR")}원`;
+};
 const formatResult = (value?: string | null): string => {
   if (value === "profit") return "익절";
   if (value === "loss") return "손절";
@@ -99,11 +115,16 @@ function TradeMethodsPage() {
   const [detailMode, setDetailMode] = useState<DetailMode>("create");
   const [detailForm, setDetailForm] = useState<MethodDetailForm>(defaultForm());
   const [statsByMethod, setStatsByMethod] = useState<Record<number, MethodStats>>({});
+  const [guidePackage, setGuidePackage] = useState<TradeMethodGptGuidePackage | null>(null);
+  const [guideLoading, setGuideLoading] = useState(false);
 
   const selectedMethod = useMemo(
     () => items.find((item) => item.id === selectedMethodId) ?? null,
     [items, selectedMethodId]
   );
+
+  const checklistText = detailForm.checklist.join("\n");
+  const marketTags = normalizeTags(detailForm.market_conditions);
 
   const setFormField = <K extends keyof MethodDetailForm>(key: K, value: MethodDetailForm[K]) => {
     setDetailForm((prev) => ({ ...prev, [key]: value }));
@@ -164,6 +185,7 @@ function TradeMethodsPage() {
     setSelectedMethodId(null);
     setDetailMode("create");
     setDetailForm(defaultForm());
+    setGuidePackage(null);
     setIsDetailOpen(true);
     setMessage("");
     setError("");
@@ -172,6 +194,7 @@ function TradeMethodsPage() {
   const openEdit = (item: TradeMethod) => {
     if (selectedMethodId === item.id && isDetailOpen) {
       setSelectedMethodId(null);
+      setGuidePackage(null);
       setIsDetailOpen(false);
       return;
     }
@@ -190,6 +213,7 @@ function TradeMethodsPage() {
       sort_order: item.sort_order || 0,
       is_active: item.is_active === 1,
     });
+    setGuidePackage(null);
     setIsDetailOpen(true);
     setMessage("");
     setError("");
@@ -198,6 +222,7 @@ function TradeMethodsPage() {
   const closeDetail = () => {
     setIsDetailOpen(false);
     setSelectedMethodId(null);
+    setGuidePackage(null);
   };
 
   const onSubmit = async () => {
@@ -220,14 +245,12 @@ function TradeMethodsPage() {
         is_active: detailForm.is_active,
       };
       if (detailMode === "create") {
-        const created = await repositories.tradeJournals.createTradeMethod(payload);
-        setMessage("매매기법이 등록되었습니다.");
+        await repositories.tradeJournals.createTradeMethod(payload);
+        setMessage("매매기법을 등록했습니다.");
         await load();
-        const createdRow = items.find((row) => row.id === created.id);
-        if (createdRow) openEdit(createdRow);
       } else if (selectedMethodId) {
         await repositories.tradeJournals.updateTradeMethod(selectedMethodId, payload);
-        setMessage("매매기법이 수정되었습니다.");
+        setMessage("매매기법을 수정했습니다.");
         await load();
       }
     } catch (e) {
@@ -249,48 +272,49 @@ function TradeMethodsPage() {
     }
   };
 
+  const createGuidePackage = async () => {
+    if (!selectedMethodId || detailMode !== "edit") return;
+    setGuideLoading(true);
+    setError("");
+    try {
+      const pkg = await repositories.tradeJournals.fetchTradeMethodGuidePackage(selectedMethodId);
+      setGuidePackage(pkg);
+      setMessage("GPT 기법 개선 가이드를 생성했습니다.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "가이드 패키지 생성에 실패했습니다.");
+    } finally {
+      setGuideLoading(false);
+    }
+  };
+
+  const copyGuidePackage = async () => {
+    if (!guidePackage?.markdown) {
+      setError("복사할 가이드 내용이 없습니다.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(guidePackage.markdown);
+      setMessage("GPT 기법 개선 가이드가 복사되었습니다.");
+    } catch {
+      setError("클립보드 복사에 실패했습니다.");
+    }
+  };
+
   const handleSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key !== "Enter") return;
     event.preventDefault();
     void load();
   };
 
-  const updateChecklistItem = (index: number, value: string) => {
-    setDetailForm((prev) => ({
-      ...prev,
-      checklist: prev.checklist.map((item, i) => (i === index ? value : item)),
-    }));
-  };
-
-  const addChecklistItem = () => {
-    setDetailForm((prev) => ({ ...prev, checklist: [...prev.checklist, ""] }));
-  };
-
-  const removeChecklistItem = (index: number) => {
-    setDetailForm((prev) => {
-      const next = prev.checklist.filter((_, i) => i !== index);
-      return { ...prev, checklist: next.length > 0 ? next : [""] };
-    });
-  };
-
-  const toggleMarketTag = (tag: string) => {
-    setDetailForm((prev) => ({
-      ...prev,
-      market_conditions: prev.market_conditions.includes(tag)
-        ? prev.market_conditions.filter((item) => item !== tag)
-        : [...prev.market_conditions, tag],
-    }));
-  };
-
   return (
     <div className="space-y-4">
-      <PageHeader title="매매기법" description="실전 매매 프레임을 카드 기반으로 관리하고 성과를 함께 확인합니다." />
+      <PageHeader title="매매기법" description="주력 매매기법을 정리하고 반복 훈련을 위한 가이드를 준비합니다." />
 
       <SectionCard title="검색">
         <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
           <input
             className="input-control"
-            placeholder="매매기법명 / 핵심개념 검색"
+            placeholder="매매기법명/핵심개념 검색"
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
             onKeyDown={handleSearchKeyDown}
@@ -322,227 +346,263 @@ function TradeMethodsPage() {
                 <button
                   key={item.id}
                   type="button"
-                  className={`trade-method-card ${selected ? "selected" : ""}`}
+                  className={`trade-method-card ${selected ? "active" : ""}`}
                   onClick={() => openEdit(item)}
                 >
-                  <div className="trade-method-card-header">
-                    <strong>{item.method_name}</strong>
-                    <span className={`badge ${item.is_active === 1 ? "badge-emerald" : "badge-slate"}`}>
-                      {item.is_active === 1 ? "활성" : "비활성"}
+                  <div className="trade-method-card-top">
+                    <h3>{item.method_name}</h3>
+                    <span className={`badge ${item.is_active ? "badge-emerald" : "badge-slate"}`}>
+                      {item.is_active ? "활성" : "비활성"}
                     </span>
                   </div>
-                  <p className="trade-method-card-concept">{parsed.coreConcept || "핵심 개념 미입력"}</p>
+                  <p>{parsed.coreConcept || "핵심 개념이 없습니다."}</p>
                   <div className="trade-method-card-stats">
                     <span>승률 {formatRate(stats?.win_rate)}</span>
                     <span>평균 {formatRate(stats?.avg_profit_rate)}</span>
-                    <span>거래 {stats?.trade_count ?? 0}건</span>
                     <span>누적 {formatWon(stats?.realized_profit_sum)}</span>
                   </div>
                 </button>
               );
             })}
+            {items.length === 0 ? <p className="text-sm text-slate-500">등록된 매매기법이 없습니다.</p> : null}
           </div>
         </SectionCard>
-      </div>
 
-      {isDetailOpen ? (
-        <>
-          <div className="trade-journal-detail-dim" onClick={closeDetail} />
-          <aside className="trade-journal-detail-drawer">
-            <div className="trade-journal-detail-drawer-header">
-              <h3>{detailMode === "create" ? "새 매매기법" : detailForm.method_name || "매매기법 상세"}</h3>
-              <button type="button" className="btn btn-secondary" onClick={closeDetail}>
-                닫기
-              </button>
-            </div>
-            <div className="trade-journal-detail-drawer-body">
-              <div className="trade-detail-form-grid">
-                <div className="trade-detail-field">
-                  <label>매매기법명</label>
-                  <input
-                    className="input-control"
-                    value={detailForm.method_name}
-                    onChange={(e) => setFormField("method_name", e.target.value)}
-                  />
+        {isDetailOpen ? (
+          <>
+            <div className="trade-journal-detail-dim" onClick={closeDetail} />
+            <aside className="trade-journal-detail-drawer">
+              <div className="trade-journal-detail-drawer-header">
+                <div>
+                  <h3>{detailMode === "create" ? "새 매매기법" : detailForm.method_name || "매매기법 상세"}</h3>
+                  <span className={`badge mt-1 inline-flex ${detailForm.is_active ? "badge-emerald" : "badge-slate"}`}>
+                    {detailForm.is_active ? "활성" : "비활성"}
+                  </span>
                 </div>
-                <div className="trade-detail-field">
-                  <label>정렬순서</label>
-                  <input
-                    className="input-control"
-                    type="number"
-                    value={detailForm.sort_order}
-                    onChange={(e) => setFormField("sort_order", Number(e.target.value) || 0)}
-                  />
-                </div>
-                <div className="trade-detail-field">
-                  <label>핵심 개념</label>
-                  <input
-                    className="input-control"
-                    value={detailForm.core_concept}
-                    onChange={(e) => setFormField("core_concept", e.target.value)}
-                  />
-                </div>
-                <div className="trade-detail-field">
-                  <label>활성 여부</label>
-                  <select
-                    className="select-control"
-                    value={detailForm.is_active ? "1" : "0"}
-                    onChange={(e) => setFormField("is_active", e.target.value === "1")}
-                  >
-                    <option value="1">활성</option>
-                    <option value="0">비활성</option>
-                  </select>
-                </div>
-                <div className="trade-detail-field">
-                  <label>익절 기준</label>
-                  <input
-                    className="input-control"
-                    value={detailForm.take_profit_rule}
-                    onChange={(e) => setFormField("take_profit_rule", e.target.value)}
-                  />
-                </div>
-                <div className="trade-detail-field">
-                  <label>손절 기준</label>
-                  <input
-                    className="input-control"
-                    value={detailForm.stop_loss_rule}
-                    onChange={(e) => setFormField("stop_loss_rule", e.target.value)}
-                  />
-                </div>
+                <button type="button" className="btn btn-secondary" onClick={closeDetail}>
+                  닫기
+                </button>
               </div>
 
-              <div className="detail-section">
-                <div className="mb-2 flex items-center justify-between">
-                  <strong>진입 체크리스트</strong>
-                  <button type="button" className="btn btn-secondary btn-table-sm" onClick={addChecklistItem}>
-                    + 항목
-                  </button>
-                </div>
-                <div className="trade-method-checklist">
-                  {detailForm.checklist.map((item, index) => (
-                    <div key={`check-${index}`} className="trade-method-checklist-item">
-                      <span>□</span>
+              <div className="trade-journal-detail-drawer-body space-y-4">
+                <div className="detail-section">
+                  <h4 className="detail-label mb-2">매매기법 정의</h4>
+                  <div className="trade-detail-form-grid">
+                    <div className="trade-detail-field">
+                      <label className="detail-label">기법명</label>
+                      <input className="input-control" value={detailForm.method_name} onChange={(e) => setFormField("method_name", e.target.value)} />
+                    </div>
+                    <div className="trade-detail-field">
+                      <label className="detail-label">정렬순서</label>
                       <input
                         className="input-control"
-                        value={item}
-                        onChange={(e) => updateChecklistItem(index, e.target.value)}
-                        placeholder="체크리스트 항목 입력"
+                        type="number"
+                        value={detailForm.sort_order}
+                        onChange={(e) => setFormField("sort_order", Number(e.target.value) || 0)}
                       />
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-table-sm"
-                        onClick={() => removeChecklistItem(index)}
-                      >
-                        삭제
-                      </button>
                     </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="detail-section">
-                <label className="detail-label">실패 패턴</label>
-                <textarea
-                  className="textarea-control"
-                  value={detailForm.failure_patterns}
-                  onChange={(e) => setFormField("failure_patterns", e.target.value)}
-                  placeholder="예: 시가 갭 과열 추격, 거래량 감소 구간 진입"
-                />
-              </div>
-
-              <div className="detail-section">
-                <label className="detail-label">시장 환경 태그</label>
-                <div className="trade-method-tag-list">
-                  {MARKET_TAG_OPTIONS.map((tag) => {
-                    const active = detailForm.market_conditions.includes(tag);
-                    return (
-                      <button
-                        key={tag}
-                        type="button"
-                        className={`trade-method-tag ${active ? "active" : ""}`}
-                        onClick={() => toggleMarketTag(tag)}
-                      >
-                        {tag}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {detailMode === "edit" && selectedMethodId ? (
-                <div className="detail-section">
-                  <h4 className="section-title">성과 통계</h4>
-                  <div className="trade-method-stats-grid">
-                    <div className="price-meta-card">
-                      <p className="price-meta-label">총 거래 수</p>
-                      <strong>{statsByMethod[selectedMethodId]?.trade_count ?? 0}건</strong>
+                    <div className="trade-detail-field md:col-span-2">
+                      <label className="detail-label">핵심 개념</label>
+                      <input className="input-control" value={detailForm.core_concept} onChange={(e) => setFormField("core_concept", e.target.value)} />
                     </div>
-                    <div className="price-meta-card">
-                      <p className="price-meta-label">승률</p>
-                      <strong>{formatRate(statsByMethod[selectedMethodId]?.win_rate)}</strong>
-                    </div>
-                    <div className="price-meta-card">
-                      <p className="price-meta-label">평균 수익률</p>
-                      <strong>{formatRate(statsByMethod[selectedMethodId]?.avg_profit_rate)}</strong>
-                    </div>
-                    <div className="price-meta-card">
-                      <p className="price-meta-label">누적 손익</p>
-                      <strong>{formatWon(statsByMethod[selectedMethodId]?.realized_profit_sum)}</strong>
+                    <div className="trade-detail-field md:col-span-2">
+                      <label className="detail-label">설명</label>
+                      <textarea
+                        className="textarea-control"
+                        rows={2}
+                        value={buildDescription(detailForm.core_concept, detailForm.market_conditions) ?? ""}
+                        readOnly
+                      />
                     </div>
                   </div>
                 </div>
-              ) : null}
 
-              {detailMode === "edit" && selectedMethodId ? (
                 <div className="detail-section">
-                  <h4 className="section-title">최근 매매일지</h4>
-                  <div className="table-shell">
-                    <table className="data-table compact-table">
-                      <thead>
-                        <tr>
-                          <th>날짜</th>
-                          <th>종목명</th>
-                          <th>수익률</th>
-                          <th>실현손익</th>
-                          <th>결과</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(statsByMethod[selectedMethodId]?.recent_trades ?? []).map((trade) => (
-                          <tr key={`recent-${trade.id}`}>
-                            <td>{trade.buy_date}</td>
-                            <td>{trade.stock_name}</td>
-                            <td>{formatRate(trade.profit_rate)}</td>
-                            <td>{formatWon(trade.realized_profit)}</td>
-                            <td>{formatResult(trade.result_type)}</td>
-                          </tr>
-                        ))}
-                        {(statsByMethod[selectedMethodId]?.recent_trades ?? []).length === 0 ? (
+                  <h4 className="detail-label mb-2">조건 관리</h4>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="detail-label">진입 조건</label>
+                      <textarea
+                        className="textarea-control"
+                        rows={4}
+                        value={checklistText}
+                        onChange={(e) => setFormField("checklist", e.target.value.split("\n"))}
+                        placeholder="예: 거래대금 500억 이상, 주도 테마, 눌림목, 이평선 지지, 전고점 돌파"
+                      />
+                    </div>
+                    <div>
+                      <label className="detail-label">실패 패턴</label>
+                      <textarea
+                        className="textarea-control"
+                        rows={3}
+                        value={detailForm.failure_patterns}
+                        onChange={(e) => setFormField("failure_patterns", e.target.value)}
+                        placeholder="예: 추격매수, 거래대금 감소, 주도주 이탈, 손절 지연"
+                      />
+                    </div>
+                    <div>
+                      <label className="detail-label">시장 환경 태그</label>
+                      <div className="mb-2 flex flex-wrap gap-2">
+                        {MARKET_TAG_OPTIONS.map((tag) => {
+                          const active = marketTags.includes(tag);
+                          return (
+                            <button
+                              key={tag}
+                              type="button"
+                              className={`chip ${active ? "chip-active" : ""}`}
+                              onClick={() => {
+                                const next = active ? marketTags.filter((x) => x !== tag) : [...marketTags, tag];
+                                setFormField("market_conditions", next);
+                              }}
+                            >
+                              {tag}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {marketTags.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                          {marketTags.map((tag) => (
+                            <span key={`badge-${tag}`} className="badge badge-slate">
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-500">선택된 시장 환경 태그가 없습니다.</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {detailMode === "edit" && selectedMethodId ? (
+                  <div className="detail-section">
+                    <h4 className="detail-label mb-2">성과 요약</h4>
+                    <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+                      <div className="rounded border border-slate-200 bg-white p-3">
+                        <p className="text-xs text-slate-500">거래 수</p>
+                        <strong>{statsByMethod[selectedMethodId]?.trade_count ?? 0}건</strong>
+                      </div>
+                      <div className="rounded border border-slate-200 bg-white p-3">
+                        <p className="text-xs text-slate-500">승률</p>
+                        <strong>{formatRate(statsByMethod[selectedMethodId]?.win_rate)}</strong>
+                      </div>
+                      <div className="rounded border border-slate-200 bg-white p-3">
+                        <p className="text-xs text-slate-500">평균 수익률</p>
+                        <strong>{formatRate(statsByMethod[selectedMethodId]?.avg_profit_rate)}</strong>
+                      </div>
+                      <div className="rounded border border-slate-200 bg-white p-3">
+                        <p className="text-xs text-slate-500">누적 손익</p>
+                        <strong>{formatWon(statsByMethod[selectedMethodId]?.realized_profit_sum)}</strong>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+
+                {detailMode === "edit" && selectedMethodId ? (
+                  <div className="detail-section">
+                    <h4 className="detail-label mb-1">최근 매매일지 · 최신순 최대 10건</h4>
+                    <p className="mb-2 text-xs text-slate-500">
+                      현재 매매기법으로 기록된 매매일지를 최신순으로 최대 10건 표시합니다.
+                    </p>
+                    <div className="table-wrap trade-method-recent-wrap">
+                      <table className="table-base trade-method-recent-table">
+                        <colgroup>
+                          <col className="col-buy-date" />
+                          <col className="col-stock-name" />
+                          <col className="col-status" />
+                          <col className="col-profit-rate" />
+                          <col className="col-realized-profit" />
+                        </colgroup>
+                        <thead>
                           <tr>
-                            <td colSpan={5} className="text-muted">
-                              최근 매매일지가 없습니다.
-                            </td>
+                            <th className="tm-col-buy text-left">매수일</th>
+                            <th className="tm-col-stock text-left">종목명</th>
+                            <th className="tm-col-status text-center">상태</th>
+                            <th className="tm-col-rate text-right">수익률</th>
+                            <th className="tm-col-profit text-right">실현손익</th>
                           </tr>
-                        ) : null}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {(statsByMethod[selectedMethodId]?.recent_trades ?? []).map((trade) => (
+                            <tr key={trade.id}>
+                              <td className="tm-col-buy">{trade.buy_date}</td>
+                              <td className="tm-col-stock">{trade.stock_name}</td>
+                              <td className="tm-col-status text-center">
+                                <span className={`badge ${trade.result_type === "profit" ? "badge-rose" : trade.result_type === "loss" ? "badge-blue" : "badge-slate"}`}>
+                                  {formatResult(trade.result_type)}
+                                </span>
+                              </td>
+                              <td className="tm-col-rate text-right">{formatRateCell(trade.profit_rate)}</td>
+                              <td className="tm-col-profit text-right">{formatWonCell(trade.realized_profit)}</td>
+                            </tr>
+                          ))}
+                          {(statsByMethod[selectedMethodId]?.recent_trades ?? []).length === 0 ? (
+                            <tr>
+                              <td colSpan={5} className="text-center text-slate-500">
+                                이 매매기법으로 기록된 매매일지가 없습니다.
+                              </td>
+                            </tr>
+                          ) : null}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-                </div>
-              ) : null}
-            </div>
-            <div className="trade-journal-detail-drawer-footer">
-              {detailMode === "edit" ? (
-                <button type="button" className="btn btn-secondary" onClick={() => void toggleActive()}>
-                  {detailForm.is_active ? "비활성화" : "활성화"}
+                ) : null}
+
+                {detailMode === "edit" ? (
+                  <div className="detail-section">
+                    <h4 className="detail-label mb-2">GPT 기법 개선 가이드</h4>
+                    <p className="mb-2 text-sm text-slate-600">
+                      이 매매기법으로 기록된 매매일지를 바탕으로 성공 조건, 실패 조건, 진입/청산 기준 개선안을 생성합니다.
+                    </p>
+                    <div className="mb-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => void createGuidePackage()}
+                        disabled={guideLoading}
+                      >
+                        {guideLoading ? "생성 중..." : "GPT 기법 개선 가이드 생성"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => void copyGuidePackage()}
+                        disabled={!guidePackage?.markdown}
+                      >
+                        전체 복사
+                      </button>
+                    </div>
+                    <div className="rounded border border-slate-200 bg-slate-50 p-3">
+                      <p className="mb-2 text-sm font-medium text-slate-700">GPT 기법 개선 가이드 미리보기</p>
+                      {guidePackage?.markdown ? (
+                        <pre className="max-h-64 overflow-auto whitespace-pre-wrap text-xs text-slate-700">{guidePackage.markdown}</pre>
+                      ) : (
+                        <p className="text-sm text-slate-500">가이드를 생성하면 이 영역에 Markdown 미리보기가 표시됩니다.</p>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="trade-journal-detail-drawer-footer">
+                <button type="button" className="btn btn-primary" onClick={() => void onSubmit()} disabled={saving}>
+                  {saving ? "저장 중..." : "저장"}
                 </button>
-              ) : null}
-              <button type="button" className="btn btn-primary" onClick={() => void onSubmit()} disabled={saving}>
-                {saving ? "저장 중..." : "저장"}
-              </button>
-            </div>
-          </aside>
-        </>
-      ) : null}
+                {detailMode === "edit" ? (
+                  <button type="button" className="btn btn-secondary" onClick={() => void toggleActive()}>
+                    {detailForm.is_active ? "비활성화" : "활성화"}
+                  </button>
+                ) : null}
+                <button type="button" className="btn btn-secondary" onClick={closeDetail}>
+                  닫기
+                </button>
+              </div>
+            </aside>
+          </>
+        ) : null}
+      </div>
     </div>
   );
 }

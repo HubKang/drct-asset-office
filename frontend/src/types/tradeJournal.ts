@@ -122,3 +122,33 @@ export type TradeJournalGptReviewPackage = {
   markdown: string;
   json_data: Record<string, unknown>;
 };
+
+export type TradeJournalMonthlyGptReviewPackage = {
+  package_type: "monthly_trade_review";
+  year: number;
+  month: number;
+  period_label: string;
+  prompt_key: "trade_monthly_review";
+  prompt_text: string;
+  markdown: string;
+  json_data: Record<string, unknown>;
+};
+
+export type TradeMethodGptGuidePackage = {
+  package_type: "strategy_improvement_guide";
+  method_id: number;
+  prompt_key: "strategy_performance_review";
+  prompt_text: string;
+  markdown: string;
+  json_data: Record<string, unknown>;
+};
+
+export type FailurePatternReviewPackage = {
+  package_type: "failure_pattern_review";
+  prompt_key: "failure_pattern_review";
+  prompt_text: string;
+  from_date: string;
+  to_date: string;
+  markdown: string;
+  json_data: Record<string, unknown>;
+};
