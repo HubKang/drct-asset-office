@@ -10,6 +10,7 @@ from backend.app.schemas.market_theme_schema import (
     MarketThemeUpdateRequest,
 )
 from backend.app.schemas.market_theme_stock_schema import (
+    MarketThemeByStockResponse,
     MarketThemeStockCreateRequest,
     MarketThemeStockResponse,
     MarketThemeStockUpdateRequest,
@@ -85,3 +86,7 @@ def update_market_theme_stock(
 def deactivate_market_theme_stock(mapping_id: int, db: Session = Depends(get_db)) -> MarketThemeStockResponse:
     return MarketThemeStockService(db).deactivate_theme_stock(mapping_id)
 
+
+@router.get("/market-themes/by-stock/{stock_code}", response_model=MarketThemeByStockResponse)
+def list_market_themes_by_stock(stock_code: str, db: Session = Depends(get_db)) -> MarketThemeByStockResponse:
+    return MarketThemeStockService(db).list_themes_by_stock_code(stock_code)

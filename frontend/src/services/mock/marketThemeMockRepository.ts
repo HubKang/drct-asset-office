@@ -4,6 +4,7 @@ import type {
   MarketThemeCandidateGenerateInput,
   MarketThemeCandidateGenerateResult,
   MarketThemeCandidateReviewInput,
+  MarketThemeByStockResponse,
   MarketTheme,
   MarketThemeCreateInput,
   MarketThemeListParams,
@@ -46,6 +47,13 @@ export const marketThemeMockRepository = {
   },
   async deactivateThemeStock(_mappingId: number): Promise<MarketThemeStock> {
     throw new Error("mock mode: deactivateThemeStock not implemented");
+  },
+  async listThemesByStockCode(stockCode: string): Promise<MarketThemeByStockResponse> {
+    return {
+      stock_code: stockCode,
+      stock_name: null,
+      themes: [],
+    };
   },
   async listCandidates(): Promise<MarketThemeCandidate[]> {
     return candidates;

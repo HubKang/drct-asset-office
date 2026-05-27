@@ -126,6 +126,14 @@ class TradeJournalRepository:
     def get_trade_journal_image(self, image_id: int) -> TradeJournalImage | None:
         return self.db.get(TradeJournalImage, image_id)
 
+    def update_trade_journal_image(self, image: TradeJournalImage, payload: dict) -> TradeJournalImage:
+        for key, value in payload.items():
+            setattr(image, key, value)
+        self.db.add(image)
+        self.db.commit()
+        self.db.refresh(image)
+        return image
+
     def delete_trade_journal_image(self, image: TradeJournalImage) -> None:
         self.db.delete(image)
         self.db.commit()
@@ -143,9 +151,15 @@ class TradeJournalRepository:
         )
         return [(str(r[0]), int(r[1] or 0), int(r[2] or 0)) for r in self.db.execute(stmt).all()]
 
-    def list_statistics_monthly(self, page: int, page_size: int) -> tuple[list[tuple], int]:
+    def list_statistics_monthly(
+        self,
+        page: int,
+        page_size: int,
+        start_month: str | None = None,
+        end_month: str | None = None,
+    ) -> tuple[list[tuple], int]:
         month_col = func.substr(TradeJournal.buy_date, 1, 7)
-        grouped = (
+        grouped_base = (
             select(
                 month_col.label("trade_month"),
                 func.count(TradeJournal.id).label("trade_count"),
@@ -154,9 +168,12 @@ class TradeJournalRepository:
                 func.coalesce(func.sum(TradeJournal.realized_profit), 0).label("realized_profit_sum"),
                 func.coalesce(func.avg(TradeJournal.profit_rate), 0.0).label("avg_profit_rate"),
             )
-            .group_by(month_col)
-            .order_by(month_col.desc())
-        ).subquery()
+        )
+        if start_month:
+            grouped_base = grouped_base.where(month_col >= start_month.strip())
+        if end_month:
+            grouped_base = grouped_base.where(month_col <= end_month.strip())
+        grouped = grouped_base.group_by(month_col).order_by(month_col.desc()).subquery()
         total = int(self.db.scalar(select(func.count()).select_from(grouped)) or 0)
         offset = max(0, (page - 1) * page_size)
         stmt = select(grouped).order_by(grouped.c.trade_month.desc()).offset(offset).limit(page_size)

@@ -6,13 +6,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from backend.app.core.config import DATABASE_URL, SQLITE_BUSY_TIMEOUT_MS, SQLITE_JOURNAL_MODE, SQLITE_SYNCHRONOUS
-from backend.app.services.gpt_prompt_template_defaults import (
-    DEFAULT_GPT_PROMPT_DESCRIPTION,
-    DEFAULT_GPT_PROMPT_KEY,
-    DEFAULT_GPT_PROMPT_NAME,
-    DEFAULT_GPT_PROMPT_TEMPLATE_TEXT,
-    DEFAULT_GPT_PROMPT_TYPE,
-)
+from backend.app.services.gpt_prompt_template_defaults import DEFAULT_GPT_PROMPTS
 from backend.app.services.market_theme_defaults import DEFAULT_MARKET_THEMES, keywords_json
 
 
@@ -121,33 +115,51 @@ def ensure_runtime_schema() -> None:
             """
             CREATE TABLE IF NOT EXISTS gpt_prompt_templates (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                domain TEXT NOT NULL DEFAULT 'common',
                 prompt_key TEXT NOT NULL UNIQUE,
                 prompt_name TEXT NOT NULL,
-                prompt_type TEXT NOT NULL,
                 description TEXT,
-                template_text TEXT NOT NULL,
+                prompt_text TEXT NOT NULL,
+                default_prompt_text TEXT NOT NULL,
                 is_active INTEGER NOT NULL DEFAULT 1,
-                is_default INTEGER NOT NULL DEFAULT 0,
-                version INTEGER NOT NULL DEFAULT 1,
+                sort_order INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
             """
         )
-        conn.exec_driver_sql(
-            """
-            INSERT OR IGNORE INTO gpt_prompt_templates
-            (prompt_key, prompt_name, prompt_type, description, template_text, is_active, is_default, version, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, 1, 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            """,
-            (
-                DEFAULT_GPT_PROMPT_KEY,
-                DEFAULT_GPT_PROMPT_NAME,
-                DEFAULT_GPT_PROMPT_TYPE,
-                DEFAULT_GPT_PROMPT_DESCRIPTION,
-                DEFAULT_GPT_PROMPT_TEMPLATE_TEXT,
-            ),
-        )
+        gpt_prompt_columns = {
+            str(row[1]) for row in conn.exec_driver_sql("PRAGMA table_info(gpt_prompt_templates)").fetchall()
+        }
+        if "domain" not in gpt_prompt_columns:
+            conn.exec_driver_sql("ALTER TABLE gpt_prompt_templates ADD COLUMN domain TEXT NOT NULL DEFAULT 'common'")
+        if "prompt_text" not in gpt_prompt_columns:
+            conn.exec_driver_sql("ALTER TABLE gpt_prompt_templates ADD COLUMN prompt_text TEXT")
+            conn.exec_driver_sql("UPDATE gpt_prompt_templates SET prompt_text = COALESCE(template_text, '')")
+        if "default_prompt_text" not in gpt_prompt_columns:
+            conn.exec_driver_sql("ALTER TABLE gpt_prompt_templates ADD COLUMN default_prompt_text TEXT")
+            conn.exec_driver_sql("UPDATE gpt_prompt_templates SET default_prompt_text = COALESCE(prompt_text, '')")
+        if "sort_order" not in gpt_prompt_columns:
+            conn.exec_driver_sql("ALTER TABLE gpt_prompt_templates ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+
+        for row in DEFAULT_GPT_PROMPTS:
+            conn.exec_driver_sql(
+                """
+                INSERT OR IGNORE INTO gpt_prompt_templates
+                (domain, prompt_key, prompt_name, prompt_type, description, prompt_text, default_prompt_text, is_active, sort_order, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                (
+                    str(row["domain"]),
+                    str(row["prompt_key"]),
+                    str(row["prompt_name"]),
+                    str(row["domain"]),
+                    str(row["description"]),
+                    str(row["default_prompt_text"]),
+                    str(row["default_prompt_text"]),
+                    int(row["sort_order"]),
+                ),
+            )
         conn.exec_driver_sql(
             """
             CREATE TABLE IF NOT EXISTS market_themes (

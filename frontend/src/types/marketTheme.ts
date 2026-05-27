@@ -73,6 +73,18 @@ export type MarketThemeStockUpdateInput = {
   confidence_score?: number | null;
 };
 
+export type MarketThemeByStockItem = {
+  theme_id: number;
+  theme_name: string;
+  is_primary: boolean;
+};
+
+export type MarketThemeByStockResponse = {
+  stock_code: string;
+  stock_name: string | null;
+  themes: MarketThemeByStockItem[];
+};
+
 export type MarketThemeCandidateStatus = "pending" | "approved" | "rejected" | "ignored";
 export type MarketThemeCandidateSource = "news" | "disclosure" | "keyword" | "telegram" | "system";
 

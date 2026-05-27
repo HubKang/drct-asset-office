@@ -30,3 +30,14 @@ class MarketThemeStockResponse(BaseModel):
     created_at: str
     updated_at: str
 
+
+class MarketThemeByStockItem(BaseModel):
+    theme_id: int
+    theme_name: str
+    is_primary: bool
+
+
+class MarketThemeByStockResponse(BaseModel):
+    stock_code: str
+    stock_name: str | None
+    themes: list[MarketThemeByStockItem]

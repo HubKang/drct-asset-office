@@ -1459,6 +1459,11 @@ a:focus-visible {
   outline: 1px solid #93c5fd;
 }
 
+.trade-journal-summary-row td {
+  background: #f8fafc !important;
+  font-weight: 700;
+}
+
 .trade-journal-detail-header {
   display: flex;
   align-items: center;
@@ -1585,6 +1590,8 @@ a:focus-visible {
 
 .trade-journal-detail-drawer-body {
   overflow: auto;
+  overflow-x: hidden;
+  min-width: 0;
   padding: 16px 20px;
 }
 
@@ -1596,27 +1603,95 @@ a:focus-visible {
   gap: 8px;
 }
 
-.trade-journal-image-grid {
+.trade-detail-form-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 24px;
+}
+
+.trade-detail-field {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  align-items: center;
   gap: 10px;
 }
 
-.trade-journal-image-card {
-  border: 1px solid var(--color-hairline-cloud);
-  border-radius: 10px;
-  padding: 10px;
+.trade-detail-field label {
+  margin: 0;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.trade-detail-stock-search {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) 76px;
   gap: 8px;
 }
 
-.trade-journal-image-preview {
+.trade-image-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
   width: 100%;
-  height: 180px;
-  border-radius: 8px;
+  min-width: 0;
+}
+
+.trade-journal-image-card {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow: hidden;
   border: 1px solid var(--color-hairline-cloud);
-  object-fit: contain;
+  border-radius: 12px;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.trade-image-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.trade-image-card-title-wrap {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.trade-image-card-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trade-image-card-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.trade-image-preview {
+  width: 100%;
+  max-height: 360px;
+  overflow: hidden;
+  border-radius: 12px;
   background: #f8fafc;
+  border: 1px solid var(--color-hairline-cloud);
+}
+
+.trade-journal-image-preview {
+  max-width: 100%;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+  display: block;
 }
 
 .trade-journal-image-meta {
@@ -1628,6 +1703,115 @@ a:focus-visible {
 .trade-journal-image-meta small {
   margin: 0;
   color: #475569;
+}
+
+.trade-image-memo {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.trade-image-memo-edit {
+  display: grid;
+  gap: 8px;
+}
+
+.trade-image-memo-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.trade-method-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
+.trade-method-card-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.trade-method-card {
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 12px;
+  background: #fff;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  text-align: left;
+}
+
+.trade-method-card.selected {
+  border-color: #111827;
+  box-shadow: inset 0 0 0 1px #111827;
+}
+
+.trade-method-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.trade-method-card-concept {
+  margin: 0;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.5;
+  min-height: 38px;
+}
+
+.trade-method-card-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px;
+  color: #334155;
+  font-size: 12px;
+}
+
+.trade-method-checklist {
+  display: grid;
+  gap: 8px;
+}
+
+.trade-method-checklist-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.trade-method-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.trade-method-tag {
+  min-height: 28px;
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 999px;
+  padding: 0 10px;
+  background: #fff;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.trade-method-tag.active {
+  border-color: #111827;
+  background: #111827;
+  color: #fff;
+}
+
+.trade-method-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
 @media (max-width: 1300px) {
@@ -1649,7 +1833,232 @@ a:focus-visible {
     min-width: 0;
   }
 
-  .trade-journal-image-grid {
+  .trade-detail-form-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .trade-image-card-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+.trade-calendar-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.trade-calendar-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.trade-calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.trade-calendar-weekday {
+  text-align: center;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.trade-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.trade-calendar-cell {
+  min-height: 98px;
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 10px;
+  background: #fff;
+  padding: 8px;
+  text-align: left;
+  display: grid;
+  align-content: start;
+  gap: 4px;
+}
+
+.trade-calendar-cell.profit-positive {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.trade-calendar-cell.profit-negative {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+.trade-calendar-cell .date {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.trade-calendar-cell .count {
+  color: #475569;
+  font-size: 12px;
+}
+
+.trade-calendar-cell .profit {
+  font-size: 12px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.trade-calendar-cell .profit.plus {
+  color: #166534;
+}
+
+.trade-calendar-cell .profit.minus {
+  color: #b91c1c;
+}
+
+.trade-calendar-cell.selected {
+  border: 2px solid #111827;
+}
+
+.trade-calendar-cell.today {
+  box-shadow: inset 0 0 0 1px #1d4ed8;
+}
+
+.trade-calendar-cell.out-month {
+  opacity: 0.45;
+}
+
+.trade-calendar-stats-filter {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.trade-calendar-pager {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (max-width: 1200px) {
+  .trade-calendar-top {
     grid-template-columns: 1fr;
   }
+}
+
+@media (max-width: 900px) {
+  .trade-calendar-stats-filter {
+    grid-template-columns: 1fr;
+  }
+}
+
+.gpt-domain-tabs {
+  display: flex;
+  gap: 20px;
+  border-bottom: 1px solid var(--color-hairline-cloud);
+}
+
+.gpt-domain-tab {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: #64748b;
+  padding: 10px 0;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.gpt-domain-tab:hover {
+  color: #0f172a;
+}
+
+.gpt-domain-tab.active {
+  color: #0f172a;
+  border-bottom-color: #0f172a;
+}
+
+.gpt-prompt-layout {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 14px;
+}
+
+.gpt-prompt-list {
+  display: grid;
+  gap: 8px;
+}
+
+.gpt-prompt-item {
+  border: 1px solid var(--color-hairline-cloud);
+  background: #fff;
+  border-radius: 10px;
+  text-align: left;
+  padding: 10px;
+}
+
+.gpt-prompt-item.active {
+  border-color: #111827;
+  box-shadow: inset 0 0 0 1px #111827;
+}
+
+.gpt-prompt-item small {
+  display: block;
+  color: #64748b;
+  margin-top: 4px;
+}
+
+.gpt-prompt-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.gpt-prompt-textarea {
+  min-height: 340px;
+}
+
+.gpt-prompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.trade-detail-header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.gpt-package-preview {
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.gpt-package-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.gpt-package-preview pre {
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
 }

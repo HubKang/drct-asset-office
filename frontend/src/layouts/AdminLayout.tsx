@@ -1,4 +1,4 @@
-﻿import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import clsx from "clsx";
 import topMenus from "@/data/json/topMenus.json";
@@ -7,19 +7,18 @@ import { routeRegistryMap } from "@/router/routeRegistry";
 
 function AdminLayout() {
   const location = useLocation();
-  const [hoveredGroupKey, setHoveredGroupKey] = useState<string | null>(null);
-  const [pinnedGroupKey, setPinnedGroupKey] = useState<string | null>(null);
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
 
   const grouped = useMemo(() => {
     return topMenus.map((top) => ({
       ...top,
-      items: sideMenus.filter((s) => s.menuKey === top.menuKey),
+      items: sideMenus.filter((menu) => menu.menuKey === top.menuKey),
     }));
   }, []);
 
   const currentRoute = useMemo(() => {
-    const found = sideMenus.find((m) => {
-      const route = routeRegistryMap[m.routeKey];
+    const found = sideMenus.find((menu) => {
+      const route = routeRegistryMap[menu.routeKey];
       return route && location.pathname === route.path;
     });
     return found ?? null;
@@ -27,8 +26,21 @@ function AdminLayout() {
 
   const activeGroupKey = currentRoute?.menuKey ?? null;
 
-  const handleTogglePinnedGroup = (groupKey: string) => {
-    setPinnedGroupKey((prev) => (prev === groupKey ? null : groupKey));
+  useEffect(() => {
+    if (!activeGroupKey) return;
+    setOpenGroups((prev) => {
+      if (Object.prototype.hasOwnProperty.call(prev, activeGroupKey)) {
+        return prev;
+      }
+      return { ...prev, [activeGroupKey]: true };
+    });
+  }, [activeGroupKey]);
+
+  const toggleGroup = (groupKey: string) => {
+    setOpenGroups((prev) => ({
+      ...prev,
+      [groupKey]: !prev[groupKey],
+    }));
   };
 
   return (
@@ -40,22 +52,17 @@ function AdminLayout() {
         </div>
 
         {grouped.map((group) => {
-          const isExpanded = pinnedGroupKey
-            ? pinnedGroupKey === group.menuKey || hoveredGroupKey === group.menuKey
-            : activeGroupKey === group.menuKey || hoveredGroupKey === group.menuKey;
+          const isExpanded = Object.prototype.hasOwnProperty.call(openGroups, group.menuKey)
+            ? !!openGroups[group.menuKey]
+            : activeGroupKey === group.menuKey;
           const groupMenuId = `side-group-${group.menuKey}`;
 
           return (
-            <div
-              className="side-menu-group"
-              key={group.menuKey}
-              onMouseEnter={() => setHoveredGroupKey(group.menuKey)}
-              onMouseLeave={() => setHoveredGroupKey(null)}
-            >
+            <div className="side-menu-group" key={group.menuKey}>
               <button
                 type="button"
                 className={clsx("side-menu-title-button", isExpanded && "side-menu-title-button-expanded")}
-                onClick={() => handleTogglePinnedGroup(group.menuKey)}
+                onClick={() => toggleGroup(group.menuKey)}
                 aria-expanded={isExpanded}
                 aria-controls={groupMenuId}
                 title={`${group.title} 메뉴 펼치기`}
@@ -65,16 +72,15 @@ function AdminLayout() {
                   {isExpanded ? "▾" : "▸"}
                 </span>
               </button>
+
               <ul id={groupMenuId} className={clsx("side-menu-list", !isExpanded && "side-menu-list-collapsed")}>
                 {group.items.map((menu) => {
                   const route = routeRegistryMap[menu.routeKey];
                   if (!route) return null;
+
                   return (
                     <li key={menu.routeKey}>
-                      <NavLink
-                        to={route.path}
-                        className={({ isActive }) => clsx("side-menu-link", isActive && "side-menu-link-active")}
-                      >
+                      <NavLink to={route.path} className={({ isActive }) => clsx("side-menu-link", isActive && "side-menu-link-active")}>
                         <span>{menu.title}</span>
                       </NavLink>
                     </li>

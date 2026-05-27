@@ -143,6 +143,11 @@ class TradeJournalImageCreate(BaseModel):
     original_filename: str | None = None
 
 
+class TradeJournalImageUpdate(BaseModel):
+    image_memo: str | None = None
+    image_type: str | None = Field(default=None, min_length=1, max_length=40)
+
+
 class TradeJournalImageResponse(BaseModel):
     id: int
     trade_journal_id: int
@@ -179,3 +184,12 @@ class TradeJournalMonthlyStatisticResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class TradeJournalGptReviewPackageResponse(BaseModel):
+    package_type: str
+    trade_journal_id: int
+    prompt_key: str
+    prompt_text: str
+    markdown: str
+    json_data: dict

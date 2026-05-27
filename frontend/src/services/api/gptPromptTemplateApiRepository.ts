@@ -6,15 +6,15 @@ import type {
 } from "@/types/gptPromptTemplate";
 
 export const gptPromptTemplateApiRepository = {
-  list: () => apiRequest<GptPromptTemplate[]>("/settings/gpt-prompts"),
-  get: (promptKey: string) => apiRequest<GptPromptTemplate>(`/settings/gpt-prompts/${promptKey}`),
+  list: (domain?: string) => apiRequest<GptPromptTemplate[]>(`/gpt-prompt-templates${domain ? `?domain=${encodeURIComponent(domain)}` : ""}`),
+  get: (promptKey: string) => apiRequest<GptPromptTemplate>(`/gpt-prompt-templates/${promptKey}`),
   update: (promptKey: string, payload: GptPromptTemplateUpdateInput) =>
-    apiRequest<GptPromptTemplate>(`/settings/gpt-prompts/${promptKey}`, {
-      method: "PUT",
+    apiRequest<GptPromptTemplate>(`/gpt-prompt-templates/${promptKey}`, {
+      method: "PATCH",
       body: JSON.stringify(payload),
     }),
   restoreDefault: (promptKey: string) =>
-    apiRequest<GptPromptTemplateRestoreResponse>(`/settings/gpt-prompts/${promptKey}/restore-default`, {
+    apiRequest<GptPromptTemplateRestoreResponse>(`/gpt-prompt-templates/${promptKey}/reset-default`, {
       method: "POST",
     }),
 };

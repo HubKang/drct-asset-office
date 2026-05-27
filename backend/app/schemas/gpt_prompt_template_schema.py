@@ -7,29 +7,32 @@ class GptPromptTemplateResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    domain: str
     prompt_key: str
     prompt_name: str
-    prompt_type: str
     description: str | None
-    template_text: str
+    prompt_text: str
+    default_prompt_text: str
     is_active: int
-    is_default: int
-    version: int
+    sort_order: int
     created_at: str
     updated_at: str
 
 
 class GptPromptTemplateUpdateRequest(BaseModel):
-    prompt_name: str
+    prompt_name: str | None = None
     description: str | None = None
-    template_text: str
-    is_active: int
+    prompt_text: str | None = None
+    is_active: int | None = None
+    sort_order: int | None = None
 
-    @field_validator("template_text")
+    @field_validator("prompt_text")
     @classmethod
-    def validate_template_text(cls, value: str) -> str:
+    def validate_prompt_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
         if not value.strip():
-            raise ValueError("template_text cannot be empty")
+            raise ValueError("prompt_text cannot be empty")
         return value
 
 

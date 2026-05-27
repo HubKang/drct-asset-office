@@ -90,3 +90,35 @@ export type TradeJournalImage = {
   original_filename?: string | null;
   created_at?: string;
 };
+
+export type TradeCalendarDaySummary = {
+  trade_date: string;
+  trade_count: number;
+  realized_profit_sum: number;
+};
+
+export type TradeMonthlyStatistics = {
+  trade_month: string;
+  trade_count: number;
+  profit_count: number;
+  loss_count: number;
+  win_rate: number;
+  realized_profit_sum: number;
+  avg_profit_rate: number;
+};
+
+export type TradeMonthlyStatisticsResponse = {
+  items: TradeMonthlyStatistics[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
+export type TradeJournalGptReviewPackage = {
+  package_type: "single_trade_review";
+  trade_journal_id: number;
+  prompt_key: string;
+  prompt_text: string;
+  markdown: string;
+  json_data: Record<string, unknown>;
+};

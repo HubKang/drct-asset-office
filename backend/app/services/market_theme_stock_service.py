@@ -9,6 +9,8 @@ from backend.app.repositories.market_theme_repository import MarketThemeReposito
 from backend.app.repositories.market_theme_stock_repository import MarketThemeStockRepository
 from backend.app.repositories.stock_repository import StockRepository
 from backend.app.schemas.market_theme_stock_schema import (
+    MarketThemeByStockItem,
+    MarketThemeByStockResponse,
     MarketThemeStockCreateRequest,
     MarketThemeStockResponse,
     MarketThemeStockUpdateRequest,
@@ -113,3 +115,21 @@ class MarketThemeStockService:
         updated = self.repo.update(row)
         return self._to_response(updated, stock.stock_code, stock.stock_name, stock.market)
 
+    def list_themes_by_stock_code(self, stock_code: str) -> MarketThemeByStockResponse:
+        rows = self.repo.list_themes_by_stock_code(stock_code)
+        stock_name = None
+        themes: list[MarketThemeByStockItem] = []
+        for mapping, theme, stock in rows:
+            stock_name = stock.stock_name
+            themes.append(
+                MarketThemeByStockItem(
+                    theme_id=theme.id,
+                    theme_name=theme.theme_name,
+                    is_primary=bool(mapping.is_primary),
+                )
+            )
+        return MarketThemeByStockResponse(
+            stock_code=(stock_code or "").strip(),
+            stock_name=stock_name,
+            themes=themes,
+        )

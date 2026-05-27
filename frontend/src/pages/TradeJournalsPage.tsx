@@ -3,60 +3,25 @@ import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import { repositories } from "@/services";
 import { appConfig } from "@/services/config/appConfig";
-import type { Stock } from "@/types/stock";
-import type { TradeJournal, TradeJournalImage, TradeJournalSaveRequest, TradeMethod } from "@/types/tradeJournal";
+import type { TradeJournal, TradeJournalGptReviewPackage, TradeJournalImage, TradeJournalSaveRequest, TradeMethod } from "@/types/tradeJournal";
 
 type DetailMode = "create" | "edit";
 
-type ImageFormState = {
-  imageType: string;
-  imageMemo: string;
-  file: File | null;
-};
-
 const RESULT_TYPE_OPTIONS = [
-  { value: "", label: "ì „ì²´" },
-  { value: "holding", label: "ë³´ìœ ì¤‘" },
-  { value: "profit", label: "ìµì ˆ" },
-  { value: "loss", label: "ì†ì ˆ" },
-  { value: "break_even", label: "ë³¸ì „" },
+  { value: "", label: "ÀüÃ¼" },
+  { value: "holding", label: "º¸À¯Áß" },
+  { value: "profit", label: "¼öÀÍ" },
+  { value: "loss", label: "¼Õ½Ç" },
+  { value: "break_even", label: "º»Àü" },
 ];
 
 const IMAGE_TYPE_OPTIONS = [
-  { value: "buy_chart", label: "ë§¤ìˆ˜ ë‹¹ì‹œ ì°¨íŠ¸" },
-  { value: "sell_chart", label: "ë§¤ë„ ë‹¹ì‹œ ì°¨íŠ¸" },
-  { value: "one_week_after_chart", label: "1ì£¼ í›„ ì°¨íŠ¸" },
-  { value: "review_chart", label: "ë³µê¸° ì°¨íŠ¸" },
+  { value: "trade_time_chart", label: "¸Å¸Å ´ç½Ã Â÷Æ®" },
+  { value: "after_trade_chart", label: "¸Å¸Å ÀÌÈÄ Â÷Æ®" },
 ];
 
 const today = () => new Date().toISOString().slice(0, 10);
-const toInputDate = (value?: string | null) => (value ? value.slice(0, 10) : "");
-const toNumber = (value?: number | null) => Number(value ?? 0);
-const formatRate = (value?: number | null) => `${Number(value ?? 0).toFixed(2)}%`;
-const formatWon = (value?: number | null) => `${Number(value ?? 0).toLocaleString("ko-KR")}ì›`;
-const formatResult = (value?: string | null) => RESULT_TYPE_OPTIONS.find((option) => option.value === value)?.label ?? "ë³´ìœ ì¤‘";
-const resolveImageUrl = (url?: string | null) => {
-  if (!url) return "";
-  if (url.startsWith("http://") || url.startsWith("https://")) return url;
-  return `${appConfig.apiBaseUrl}${url.startsWith("/") ? url : `/${url}`}`;
-};
-
-const createDefaultForm = (): TradeJournalSaveRequest => ({
-  buy_date: today(),
-  sell_date: today(),
-  stock_code: "",
-  stock_name: "",
-  stock_theme: "",
-  trade_method_id: null,
-  result_type: "holding",
-  profit_rate: 0,
-  realized_profit: 0,
-  trade_reason: "",
-  success_reason: "",
-  failure_reason: "",
-  review_memo: "",
-  remark: "",
-});
+const formatWon = (value?: number | null) => `${Number(value ?? 0).toLocaleString("ko-KR")}¿ø`;
 
 function TradeJournalsPage() {
   const [items, setItems] = useState<TradeJournal[]>([]);
@@ -66,44 +31,28 @@ function TradeJournalsPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  const [filters, setFilters] = useState({
-    start_date: today(),
-    end_date: today(),
-    stock_name: "",
-    stock_theme: "",
-    trade_method_id: "",
-    result_type: "",
-  });
-
+  const [filters, setFilters] = useState({ start_date: today(), end_date: today(), stock_name: "", result_type: "" });
   const [selectedJournalId, setSelectedJournalId] = useState<number | null>(null);
-  const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [detailMode, setDetailMode] = useState<DetailMode>("create");
-  const [detailForm, setDetailForm] = useState<TradeJournalSaveRequest>(createDefaultForm());
+  const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [detailImages, setDetailImages] = useState<TradeJournalImage[]>([]);
+  const [gptPackage, setGptPackage] = useState<TradeJournalGptReviewPackage | null>(null);
 
-  const [stockModalOpen, setStockModalOpen] = useState(false);
-  const [stockKeyword, setStockKeyword] = useState("");
-  const [stockCandidates, setStockCandidates] = useState<Stock[]>([]);
-  const [stockSearchLoading, setStockSearchLoading] = useState(false);
-
-  const [imageModalOpen, setImageModalOpen] = useState(false);
-  const [imageForm, setImageForm] = useState<ImageFormState>({
-    imageType: "buy_chart",
-    imageMemo: "",
-    file: null,
+  const [form, setForm] = useState<TradeJournalSaveRequest>({
+    buy_date: today(),
+    sell_date: today(),
+    stock_name: "",
+    result_type: "holding",
+    profit_rate: 0,
+    realized_profit: 0,
   });
-
-  const setField = <K extends keyof TradeJournalSaveRequest>(key: K, value: TradeJournalSaveRequest[K]) => {
-    setDetailForm((prev) => ({ ...prev, [key]: value }));
-  };
+  const [imageType, setImageType] = useState("trade_time_chart");
+  const [imageMemo, setImageMemo] = useState("");
+  const [imageFile, setImageFile] = useState<File | null>(null);
 
   const loadTradeMethods = async () => {
-    try {
-      const rows = await repositories.tradeJournals.listTradeMethods({ is_active: 1 });
-      setTradeMethods(rows);
-    } catch {
-      // ignore
-    }
+    const rows = await repositories.tradeJournals.listTradeMethods({ is_active: 1 });
+    setTradeMethods(rows);
   };
 
   const loadList = async () => {
@@ -113,42 +62,15 @@ function TradeJournalsPage() {
       const response = await repositories.tradeJournals.fetchTradeJournals({
         start_date: filters.start_date,
         end_date: filters.end_date,
-        stock_name: filters.stock_name.trim() || undefined,
-        stock_theme: filters.stock_theme.trim() || undefined,
-        trade_method_id: filters.trade_method_id ? Number(filters.trade_method_id) : undefined,
+        stock_name: filters.stock_name || undefined,
         result_type: filters.result_type || undefined,
       });
       setItems(response.items ?? []);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "ë§¤ë§¤ì¼ì§€ ëª©ë¡ ì¡°íšŒì— ì‹¤íŒ¨í–ˆìŠµë‹ˆë‹¤.");
+      setError(e instanceof Error ? e.message : "¸ñ·Ï Á¶È¸ ½ÇÆĞ");
     } finally {
       setLoading(false);
     }
-  };
-
-  const loadDetail = async (journalId: number) => {
-    const [detail, images] = await Promise.all([
-      repositories.tradeJournals.fetchTradeJournalDetail(journalId),
-      repositories.tradeJournals.fetchTradeJournalImages(journalId),
-    ]);
-    setDetailForm({
-      buy_date: toInputDate(detail.buy_date),
-      sell_date: toInputDate(detail.sell_date),
-      stock_code: detail.stock_code ?? "",
-      stock_name: detail.stock_name ?? "",
-      stock_theme: detail.stock_theme ?? "",
-      trade_method_id: detail.trade_method_id ?? null,
-      trade_method_name: detail.trade_method_name ?? "",
-      result_type: detail.result_type ?? "holding",
-      profit_rate: toNumber(detail.profit_rate),
-      realized_profit: toNumber(detail.realized_profit),
-      trade_reason: detail.trade_reason ?? "",
-      success_reason: detail.success_reason ?? "",
-      failure_reason: detail.failure_reason ?? "",
-      review_memo: detail.review_memo ?? "",
-      remark: detail.remark ?? "",
-    });
-    setDetailImages(images ?? []);
   };
 
   useEffect(() => {
@@ -156,234 +78,125 @@ function TradeJournalsPage() {
     void loadList();
   }, []);
 
-  const openCreatePanel = () => {
+  const loadDetail = async (id: number) => {
+    const [detail, images] = await Promise.all([
+      repositories.tradeJournals.fetchTradeJournalDetail(id),
+      repositories.tradeJournals.fetchTradeJournalImages(id),
+    ]);
+    setForm({
+      buy_date: detail.buy_date?.slice(0, 10) || today(),
+      sell_date: detail.sell_date?.slice(0, 10) || null,
+      stock_code: detail.stock_code || "",
+      stock_name: detail.stock_name || "",
+      stock_theme: detail.stock_theme || "",
+      trade_method_id: detail.trade_method_id ?? null,
+      result_type: detail.result_type || "holding",
+      profit_rate: detail.profit_rate ?? 0,
+      realized_profit: detail.realized_profit ?? 0,
+      trade_reason: detail.trade_reason || "",
+      success_reason: detail.success_reason || "",
+      failure_reason: detail.failure_reason || "",
+      review_memo: detail.review_memo || "",
+      remark: detail.remark || "",
+    });
+    setDetailImages(images ?? []);
+  };
+
+  const openCreate = () => {
     setSelectedJournalId(null);
     setDetailMode("create");
-    setDetailForm(createDefaultForm());
-    setDetailImages([]);
     setIsDetailOpen(true);
-    setMessage("");
-    setError("");
+    setGptPackage(null);
+    setForm({ buy_date: today(), sell_date: today(), stock_name: "", result_type: "holding", profit_rate: 0, realized_profit: 0 });
+    setDetailImages([]);
   };
 
-  const handleRowClick = async (journalId: number) => {
-    if (selectedJournalId === journalId && isDetailOpen) {
-      setSelectedJournalId(null);
-      setIsDetailOpen(false);
-      return;
-    }
-    setSelectedJournalId(journalId);
+  const openEdit = async (id: number) => {
+    setSelectedJournalId(id);
     setDetailMode("edit");
     setIsDetailOpen(true);
-    setError("");
-    try {
-      await loadDetail(journalId);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "ìƒì„¸ ì¡°íšŒì— ì‹¤íŒ¨í–ˆìŠµë‹ˆë‹¤.");
-    }
+    setGptPackage(null);
+    await loadDetail(id);
   };
 
-  const closeDetailPanel = () => {
-    setIsDetailOpen(false);
-    setSelectedJournalId(null);
-  };
-
-  const handleSave = async () => {
-    setError("");
-    setMessage("");
-    if (!detailForm.buy_date || !detailForm.stock_name?.trim()) {
-      setError("ë§¤ìˆ˜ì¼ìì™€ ì¢…ëª©ëª…ì€ í•„ìˆ˜ì…ë‹ˆë‹¤.");
+  const save = async () => {
+    if (!form.stock_name?.trim()) {
+      setError("Á¾¸ñ¸íÀº ÇÊ¼öÀÔ´Ï´Ù.");
       return;
     }
     setSaving(true);
+    setError("");
     try {
-      const payload: TradeJournalSaveRequest = {
-        buy_date: detailForm.buy_date,
-        sell_date: detailForm.sell_date || null,
-        stock_code: detailForm.stock_code || undefined,
-        stock_name: detailForm.stock_name.trim(),
-        stock_theme: detailForm.stock_theme?.trim() || undefined,
-        trade_method_id: detailForm.trade_method_id ?? null,
-        result_type: detailForm.result_type || "holding",
-        profit_rate: toNumber(detailForm.profit_rate),
-        realized_profit: Math.trunc(toNumber(detailForm.realized_profit)),
-        trade_reason: detailForm.trade_reason?.trim() || undefined,
-        success_reason: detailForm.success_reason?.trim() || undefined,
-        failure_reason: detailForm.failure_reason?.trim() || undefined,
-        review_memo: detailForm.review_memo?.trim() || undefined,
-        remark: detailForm.remark?.trim() || undefined,
-      };
-
       if (detailMode === "create") {
-        const created = await repositories.tradeJournals.createTradeJournal(payload);
-        setMessage("ë§¤ë§¤ì¼ì§€ê°€ ë“±ë¡ë˜ì—ˆìŠµë‹ˆë‹¤.");
-        await loadList();
-        if (created?.id) {
-          setSelectedJournalId(created.id);
-          setDetailMode("edit");
-          await loadDetail(created.id);
-        }
+        const created = await repositories.tradeJournals.createTradeJournal(form);
+        setSelectedJournalId(created.id);
+        setDetailMode("edit");
       } else if (selectedJournalId) {
-        await repositories.tradeJournals.updateTradeJournal(selectedJournalId, payload);
-        setMessage("ë§¤ë§¤ì¼ì§€ê°€ ìˆ˜ì •ë˜ì—ˆìŠµë‹ˆë‹¤.");
-        await loadList();
-        await loadDetail(selectedJournalId);
+        await repositories.tradeJournals.updateTradeJournal(selectedJournalId, form);
       }
+      await loadList();
+      if (selectedJournalId) await loadDetail(selectedJournalId);
+      setMessage("ÀúÀåµÇ¾ú½À´Ï´Ù.");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "ì €ì¥ì— ì‹¤íŒ¨í–ˆìŠµë‹ˆë‹¤.");
+      setError(e instanceof Error ? e.message : "ÀúÀå ½ÇÆĞ");
     } finally {
       setSaving(false);
     }
   };
 
-  const handleDelete = async () => {
-    if (!selectedJournalId || detailMode !== "edit") return;
-    if (!window.confirm("ì´ ë§¤ë§¤ì¼ì§€ë¥¼ ì‚­ì œí•˜ì‹œê² ìŠµë‹ˆê¹Œ?")) return;
-    setMessage("");
-    setError("");
-    try {
-      await repositories.tradeJournals.deleteTradeJournal(selectedJournalId);
-      closeDetailPanel();
-      await loadList();
-      setMessage("ë§¤ë§¤ì¼ì§€ê°€ ì‚­ì œë˜ì—ˆìŠµë‹ˆë‹¤.");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "ì‚­ì œì— ì‹¤íŒ¨í–ˆìŠµë‹ˆë‹¤.");
-    }
+  const uploadImage = async () => {
+    if (!selectedJournalId || !imageFile) return;
+    await repositories.tradeJournals.uploadTradeJournalImage(selectedJournalId, { image_type: imageType, image_memo: imageMemo, file: imageFile });
+    setImageFile(null);
+    setImageMemo("");
+    await loadDetail(selectedJournalId);
+    await loadList();
   };
 
-  const searchStocks = async () => {
-    if (!stockKeyword.trim()) return;
-    setStockSearchLoading(true);
-    try {
-      const rows = await repositories.stocks.list({
-        keyword: stockKeyword.trim(),
-        is_active: 1,
-        limit: 30,
-      });
-      setStockCandidates(rows ?? []);
-    } catch {
-      setStockCandidates([]);
-    } finally {
-      setStockSearchLoading(false);
-    }
+  const generatePackage = async () => {
+    if (!selectedJournalId) return;
+    const pkg = await repositories.tradeJournals.fetchGptReviewPackage(selectedJournalId);
+    setGptPackage(pkg);
   };
 
-  const handlePickStock = (stock: Stock) => {
-    setField("stock_code", stock.stock_code);
-    setField("stock_name", stock.stock_name);
-    setField("stock_theme", [stock.sector, stock.industry].filter(Boolean).join(", "));
-    setStockModalOpen(false);
+  const copyPackage = async () => {
+    if (!gptPackage?.markdown) return;
+    await navigator.clipboard.writeText(gptPackage.markdown);
+    setMessage("GPT º¹±â ÆĞÅ°Áö°¡ º¹»çµÇ¾ú½À´Ï´Ù.");
   };
 
-  const handleImageUpload = async () => {
-    if (!selectedJournalId || detailMode !== "edit") {
-      setError("ì´ë¯¸ì§€ëŠ” ì €ì¥ëœ ë§¤ë§¤ì¼ì§€ì—ì„œë§Œ ì¶”ê°€í•  ìˆ˜ ìˆìŠµë‹ˆë‹¤.");
-      return;
-    }
-    if (!imageForm.file) {
-      setError("ì´ë¯¸ì§€ íŒŒì¼ì„ ì„ íƒí•´ ì£¼ì„¸ìš”.");
-      return;
-    }
-    try {
-      await repositories.tradeJournals.uploadTradeJournalImage(selectedJournalId, {
-        image_type: imageForm.imageType,
-        image_memo: imageForm.imageMemo.trim() || undefined,
-        file: imageForm.file,
-      });
-      setImageModalOpen(false);
-      setImageForm({ imageType: "buy_chart", imageMemo: "", file: null });
-      await loadDetail(selectedJournalId);
-      await loadList();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "ì´ë¯¸ì§€ ë“±ë¡ì— ì‹¤íŒ¨í–ˆìŠµë‹ˆë‹¤.");
-    }
-  };
-
-  const selectedRowForHighlight = (journalId: number) =>
-    selectedJournalId === journalId && isDetailOpen && detailMode === "edit";
+  const totalRealized = items.reduce((acc, row) => acc + Number(row.realized_profit ?? 0), 0);
 
   return (
     <div className="space-y-4">
-      <PageHeader title="ë§¤ë§¤ì¼ì§€" description="ëª©ë¡ì—ì„œ ì„ íƒí•œ ë§¤ë§¤ì¼ì§€ë¥¼ ìš°ì¸¡ ëŒ€í˜• ìƒì„¸ íŒ¨ë„ì—ì„œ ê´€ë¦¬í•©ë‹ˆë‹¤." />
-
-      <SectionCard title="ê²€ìƒ‰ ì¡°ê±´">
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-6">
-          <input className="input-control" type="date" value={filters.start_date} onChange={(e) => setFilters((prev) => ({ ...prev, start_date: e.target.value }))} />
-          <input className="input-control" type="date" value={filters.end_date} onChange={(e) => setFilters((prev) => ({ ...prev, end_date: e.target.value }))} />
-          <input className="input-control" placeholder="ì¢…ëª©ëª…" value={filters.stock_name} onChange={(e) => setFilters((prev) => ({ ...prev, stock_name: e.target.value }))} />
-          <input className="input-control" placeholder="ì¢…ëª©í…Œë§ˆ" value={filters.stock_theme} onChange={(e) => setFilters((prev) => ({ ...prev, stock_theme: e.target.value }))} />
-          <select className="select-control" value={filters.trade_method_id} onChange={(e) => setFilters((prev) => ({ ...prev, trade_method_id: e.target.value }))}>
-            <option value="">ë§¤ë§¤ê¸°ë²• ì „ì²´</option>
-            {tradeMethods.map((item) => (
-              <option key={item.id} value={String(item.id)}>
-                {item.method_name}
-              </option>
-            ))}
+      <PageHeader title="¸Å¸ÅÀÏÁö" description="¸ñ·Ï/»ó¼¼ °ü¸® ¹× GPT º¹±â ÆĞÅ°Áö »ı¼º" />
+      <SectionCard title="°Ë»ö">
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-5">
+          <input className="input-control" type="date" value={filters.start_date} onChange={(e) => setFilters((p) => ({ ...p, start_date: e.target.value }))} />
+          <input className="input-control" type="date" value={filters.end_date} onChange={(e) => setFilters((p) => ({ ...p, end_date: e.target.value }))} />
+          <input className="input-control" value={filters.stock_name} onChange={(e) => setFilters((p) => ({ ...p, stock_name: e.target.value }))} placeholder="Á¾¸ñ¸í" />
+          <select className="select-control" value={filters.result_type} onChange={(e) => setFilters((p) => ({ ...p, result_type: e.target.value }))}>
+            {RESULT_TYPE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
-          <select className="select-control" value={filters.result_type} onChange={(e) => setFilters((prev) => ({ ...prev, result_type: e.target.value }))}>
-            {RESULT_TYPE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="mt-2">
-          <button type="button" className="btn btn-primary" onClick={() => void loadList()} disabled={loading}>
-            {loading ? "ì¡°íšŒ ì¤‘..." : "ì¡°íšŒ"}
-          </button>
+          <button type="button" className="btn btn-primary" onClick={() => void loadList()}>{loading ? "Á¶È¸Áß" : "Á¶È¸"}</button>
         </div>
       </SectionCard>
 
       {message ? <p className="inline-result inline-success">{message}</p> : null}
       {error ? <p className="inline-result inline-error">{error}</p> : null}
 
-      <SectionCard title="ë§¤ë§¤ì¼ì§€ ëª©ë¡">
-        <div className="mb-3 flex justify-end">
-          <button type="button" className="btn btn-primary" onClick={openCreatePanel}>
-            ì¶”ê°€
-          </button>
-        </div>
+      <SectionCard title="¸ñ·Ï">
+        <div className="mb-2 flex justify-end"><button type="button" className="btn btn-primary" onClick={openCreate}>Ãß°¡</button></div>
         <div className="trade-journal-table-shell">
           <table className="data-table trade-journal-table">
-            <colgroup>
-              <col style={{ width: "11%" }} />
-              <col style={{ width: "11%" }} />
-              <col style={{ width: "12%" }} />
-              <col style={{ width: "14%" }} />
-              <col style={{ width: "14%" }} />
-              <col style={{ width: "9%" }} />
-              <col style={{ width: "8%" }} />
-              <col style={{ width: "12%" }} />
-              <col style={{ width: "9%" }} />
-            </colgroup>
-            <thead>
-              <tr>
-                <th>ë§¤ìˆ˜ì¼ì</th>
-                <th>ë§¤ë„ì¼ì</th>
-                <th>ì¢…ëª©í…Œë§ˆ</th>
-                <th>ë§¤ë§¤ê¸°ë²•ëª…</th>
-                <th>ì¢…ëª©ëª…</th>
-                <th>ìµì ˆ/ì†ì ˆ</th>
-                <th>ìˆ˜ìµë¥ </th>
-                <th>ì‹¤í˜„ì†ìµ</th>
-                <th>ì´ë¯¸ì§€ìˆ˜</th>
-              </tr>
-            </thead>
+            <thead><tr><th>¸Å¼öÀÏ</th><th>Á¾¸ñ¸í</th><th>»óÅÂ</th><th>¼öÀÍ·ü</th><th>½ÇÇö¼ÕÀÍ</th><th>ÀÌ¹ÌÁö</th></tr></thead>
             <tbody>
               {items.map((item) => (
-                <tr key={item.id} className={`trade-journal-row ${selectedRowForHighlight(item.id) ? "selected" : ""}`} onClick={() => void handleRowClick(item.id)}>
-                  <td>{toInputDate(item.buy_date)}</td>
-                  <td>{toInputDate(item.sell_date) || "-"}</td>
-                  <td title={item.stock_theme || "-"}>{item.stock_theme || "-"}</td>
-                  <td title={item.trade_method_name || "-"}>{item.trade_method_name || "-"}</td>
-                  <td title={item.stock_name || "-"}>{item.stock_name || "-"}</td>
-                  <td>{formatResult(item.result_type)}</td>
-                  <td>{formatRate(item.profit_rate)}</td>
-                  <td>{formatWon(item.realized_profit)}</td>
-                  <td>{item.image_count ?? 0}ê°œ</td>
+                <tr key={item.id} className="trade-journal-row" onClick={() => void openEdit(item.id)}>
+                  <td>{item.buy_date?.slice(0, 10)}</td><td>{item.stock_name}</td><td>{item.result_type || "-"}</td><td>{item.profit_rate ?? 0}%</td><td>{formatWon(item.realized_profit)}</td><td>{item.image_count ?? 0}</td>
                 </tr>
               ))}
+              <tr className="trade-journal-summary-row"><td colSpan={4}>½ÇÇö¼ÕÀÍ ÇÕ°è</td><td>{formatWon(totalRealized)}</td><td /></tr>
             </tbody>
           </table>
         </div>
@@ -391,201 +204,63 @@ function TradeJournalsPage() {
 
       {isDetailOpen ? (
         <>
-          <div className="trade-journal-detail-dim" onClick={closeDetailPanel} />
+          <div className="trade-journal-detail-dim" onClick={() => setIsDetailOpen(false)} />
           <aside className="trade-journal-detail-drawer">
             <div className="trade-journal-detail-drawer-header">
-              <h3>ë§¤ë§¤ì¼ì§€ ìƒì„¸</h3>
-              <button type="button" className="btn btn-secondary" onClick={closeDetailPanel}>
-                ë‹«ê¸°
-              </button>
+              <h3>¸Å¸ÅÀÏÁö »ó¼¼</h3>
+              <div className="trade-detail-header-actions">
+                <button className="btn btn-secondary" onClick={() => void generatePackage()} type="button">GPT º¹±â ÆĞÅ°Áö »ı¼º</button>
+                <button className="btn btn-secondary" onClick={() => void copyPackage()} type="button" disabled={!gptPackage}>GPT ºĞ¼® ¿äÃ»¹®+JSON º¹»ç</button>
+                <button className="btn btn-secondary" onClick={() => setIsDetailOpen(false)} type="button">´İ±â</button>
+              </div>
             </div>
-
             <div className="trade-journal-detail-drawer-body">
-              <div className="trade-journal-detail-grid">
-                <input className="input-control" type="date" value={detailForm.buy_date} onChange={(e) => setField("buy_date", e.target.value)} />
-                <input className="input-control" type="date" value={detailForm.sell_date || ""} onChange={(e) => setField("sell_date", e.target.value)} />
-                <div className="trade-journal-stock-select">
-                  <input className="input-control" placeholder="ì¢…ëª©ëª…(í•„ìˆ˜)" value={detailForm.stock_name} onChange={(e) => setField("stock_name", e.target.value)} />
-                  <button type="button" className="btn btn-secondary" onClick={() => setStockModalOpen(true)}>
-                    ê²€ìƒ‰
-                  </button>
-                </div>
-                <input className="input-control" placeholder="ì¢…ëª©í…Œë§ˆ" value={detailForm.stock_theme || ""} onChange={(e) => setField("stock_theme", e.target.value)} />
-                <select
-                  className="select-control"
-                  value={detailForm.trade_method_id ? String(detailForm.trade_method_id) : ""}
-                  onChange={(e) => setField("trade_method_id", e.target.value ? Number(e.target.value) : null)}
-                >
-                  <option value="">ë§¤ë§¤ê¸°ë²• ì„ íƒ</option>
-                  {tradeMethods.map((method) => (
-                    <option key={method.id} value={String(method.id)}>
-                      {method.method_name}
-                    </option>
-                  ))}
-                </select>
-                <select className="select-control" value={detailForm.result_type || "holding"} onChange={(e) => setField("result_type", e.target.value)}>
-                  {RESULT_TYPE_OPTIONS.filter((option) => option.value).map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  className="input-control"
-                  type="number"
-                  step="0.01"
-                  placeholder="ìˆ˜ìµë¥ "
-                  value={detailForm.profit_rate ?? 0}
-                  onChange={(e) => setField("profit_rate", Number(e.target.value))}
-                />
-                <input
-                  className="input-control"
-                  type="number"
-                  step="1"
-                  placeholder="ì‹¤í˜„ì†ìµ"
-                  value={detailForm.realized_profit ?? 0}
-                  onChange={(e) => setField("realized_profit", Number(e.target.value))}
-                />
+              <div className="trade-detail-form-grid">
+                <div className="trade-detail-field"><label>¸Å¼öÀÏ</label><input className="input-control" type="date" value={(form.buy_date || "").slice(0,10)} onChange={(e) => setForm((p) => ({ ...p, buy_date: e.target.value }))} /></div>
+                <div className="trade-detail-field"><label>¸ÅµµÀÏ</label><input className="input-control" type="date" value={(form.sell_date || "").slice(0,10)} onChange={(e) => setForm((p) => ({ ...p, sell_date: e.target.value }))} /></div>
+                <div className="trade-detail-field"><label>Á¾¸ñ¸í</label><input className="input-control" value={form.stock_name || ""} onChange={(e) => setForm((p) => ({ ...p, stock_name: e.target.value }))} /></div>
+                <div className="trade-detail-field"><label>Å×¸¶</label><input className="input-control" value={form.stock_theme || ""} onChange={(e) => setForm((p) => ({ ...p, stock_theme: e.target.value }))} /></div>
+                <div className="trade-detail-field"><label>¸Å¸Å±â¹ı</label><select className="select-control" value={String(form.trade_method_id ?? "")} onChange={(e) => setForm((p) => ({ ...p, trade_method_id: e.target.value ? Number(e.target.value) : null }))}><option value="">¼±ÅÃ</option>{tradeMethods.map((m) => <option key={m.id} value={m.id}>{m.method_name}</option>)}</select></div>
+                <div className="trade-detail-field"><label>»óÅÂ</label><select className="select-control" value={form.result_type || "holding"} onChange={(e) => setForm((p) => ({ ...p, result_type: e.target.value }))}>{RESULT_TYPE_OPTIONS.filter((x) => x.value).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></div>
               </div>
 
               <div className="detail-section">
-                <label className="detail-label">ë§¤ë§¤ê¸°ë¡</label>
-                <textarea
-                  className="textarea-control"
-                  placeholder="ì˜ˆ: 09:10 ì „ì¼ ê³„íš ì¢…ëª© ê´€ì°° -> 09:15 ëŒíŒŒ í›„ ë§¤ìˆ˜ -> 10:20 ì¼ë¶€ ìµì ˆ -> ì¢…ê°€ ì „ ì •ë¦¬"
-                  value={detailForm.remark || ""}
-                  onChange={(e) => setField("remark", e.target.value)}
-                />
+                <textarea className="textarea-control" placeholder="¸Å¸Å±â·Ï" value={form.remark || ""} onChange={(e) => setForm((p) => ({ ...p, remark: e.target.value }))} />
               </div>
 
-              <div className="trade-journal-detail-grid detail-section">
-                <textarea className="textarea-control" placeholder="ë§¤ë§¤ ì´ìœ " value={detailForm.trade_reason || ""} onChange={(e) => setField("trade_reason", e.target.value)} />
-                <textarea className="textarea-control" placeholder="ì„±ê³µ ì‚¬ìœ " value={detailForm.success_reason || ""} onChange={(e) => setField("success_reason", e.target.value)} />
-                <textarea className="textarea-control" placeholder="ì‹¤íŒ¨ ì‚¬ìœ " value={detailForm.failure_reason || ""} onChange={(e) => setField("failure_reason", e.target.value)} />
-                <textarea className="textarea-control" placeholder="ë³µê¸° ë©”ëª¨" value={detailForm.review_memo || ""} onChange={(e) => setField("review_memo", e.target.value)} />
-              </div>
+              {gptPackage ? (
+                <div className="detail-section">
+                  <div className="gpt-package-preview">
+                    <div className="gpt-package-preview-header"><strong>GPT º¹±â ÆĞÅ°Áö ¹Ì¸®º¸±â</strong><button type="button" className="btn btn-secondary btn-table-sm" onClick={() => void copyPackage()}>ÀüÃ¼ º¹»ç</button></div>
+                    <pre>{gptPackage.markdown}</pre>
+                  </div>
+                </div>
+              ) : null}
 
               <div className="detail-section">
-                <div className="mb-2 flex items-center justify-between">
-                  <strong>ì°¨íŠ¸ ì´ë¯¸ì§€</strong>
-                  <button type="button" className="btn btn-secondary" onClick={() => setImageModalOpen(true)}>
-                    ì´ë¯¸ì§€ ì¶”ê°€
-                  </button>
+                <div className="mb-2 flex items-center justify-between"><strong>Â÷Æ® ÀÌ¹ÌÁö</strong></div>
+                <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+                  <select className="select-control" value={imageType} onChange={(e) => setImageType(e.target.value)}>{IMAGE_TYPE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
+                  <input className="input-control" type="file" accept="image/*" onChange={(e) => setImageFile(e.target.files?.[0] ?? null)} />
+                  <input className="input-control" value={imageMemo} onChange={(e) => setImageMemo(e.target.value)} placeholder="ÀÌ¹ÌÁö ¸Ş¸ğ" />
                 </div>
-                {detailImages.length === 0 ? <p className="text-muted">ë“±ë¡ëœ ì´ë¯¸ì§€ê°€ ì—†ìŠµë‹ˆë‹¤.</p> : null}
-                <div className="trade-journal-image-grid">
-                  {detailImages.map((image) => (
-                    <article key={image.id} className="trade-journal-image-card">
-                      {image.image_url ? (
-                        <img
-                          src={resolveImageUrl(image.image_url)}
-                          alt={image.original_filename || "trade image"}
-                          className="trade-journal-image-preview"
-                        />
-                      ) : null}
-                      <div className="trade-journal-image-meta">
-                        <strong>{IMAGE_TYPE_OPTIONS.find((option) => option.value === image.image_type)?.label ?? image.image_type}</strong>
-                        {image.image_memo ? <p>{image.image_memo}</p> : null}
-                        <small>{image.original_filename || image.image_path}</small>
-                      </div>
-                      <button
-                        type="button"
-                        className="btn btn-danger"
-                        onClick={async () => {
-                          await repositories.tradeJournals.deleteTradeJournalImage(image.id);
-                          if (selectedJournalId) {
-                            await loadDetail(selectedJournalId);
-                            await loadList();
-                          }
-                        }}
-                      >
-                        ì‚­ì œ
-                      </button>
+                <div className="mt-2"><button type="button" className="btn btn-secondary" onClick={() => void uploadImage()} disabled={!selectedJournalId || !imageFile}>ÀÌ¹ÌÁö ¾÷·Îµå</button></div>
+                <div className="trade-image-list mt-2">
+                  {detailImages.map((img) => (
+                    <article key={img.id} className="trade-journal-image-card">
+                      <div><span className="badge badge-blue">{img.image_type}</span> <small>{img.original_filename || img.image_path}</small></div>
+                      {img.image_url ? <img src={`${appConfig.apiBaseUrl}${img.image_url}`} className="trade-journal-image-preview" alt="trade" /> : null}
+                      <p className="trade-image-memo">{img.image_memo || "¸Ş¸ğ ¾øÀ½"}</p>
                     </article>
                   ))}
                 </div>
               </div>
             </div>
-
             <div className="trade-journal-detail-drawer-footer">
-              {detailMode === "edit" ? (
-                <button type="button" className="btn btn-danger" onClick={() => void handleDelete()}>
-                  ì‚­ì œ
-                </button>
-              ) : null}
-              <button type="button" className="btn btn-primary" onClick={() => void handleSave()} disabled={saving}>
-                {saving ? "ì €ì¥ ì¤‘..." : "ì €ì¥"}
-              </button>
+              <button className="btn btn-primary" type="button" onClick={() => void save()} disabled={saving}>{saving ? "ÀúÀåÁß" : "ÀúÀå"}</button>
             </div>
           </aside>
         </>
-      ) : null}
-
-      {stockModalOpen ? (
-        <div className="modal-backdrop">
-          <div className="modal-card">
-            <h3 className="section-title">ì¢…ëª© ê²€ìƒ‰</h3>
-            <div className="flex gap-2">
-              <input className="input-control" placeholder="ì¢…ëª©ëª…/ì½”ë“œ ê²€ìƒ‰ì–´" value={stockKeyword} onChange={(e) => setStockKeyword(e.target.value)} />
-              <button type="button" className="btn btn-primary" onClick={() => void searchStocks()} disabled={stockSearchLoading}>
-                {stockSearchLoading ? "ê²€ìƒ‰ ì¤‘..." : "ê²€ìƒ‰"}
-              </button>
-            </div>
-            <div className="trade-journal-stock-results">
-              {stockCandidates.map((stock) => (
-                <button key={stock.id} type="button" className="trade-journal-stock-item" onClick={() => handlePickStock(stock)}>
-                  <strong>{stock.stock_name}</strong>
-                  <span>{stock.stock_code}</span>
-                </button>
-              ))}
-            </div>
-            <div className="mt-3 flex justify-end">
-              <button type="button" className="btn btn-secondary" onClick={() => setStockModalOpen(false)}>
-                ë‹«ê¸°
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {imageModalOpen ? (
-        <div className="modal-backdrop">
-          <div className="modal-card">
-            <h3 className="section-title">ì´ë¯¸ì§€ ì¶”ê°€</h3>
-            <div className="grid grid-cols-1 gap-2">
-              <select className="select-control" value={imageForm.imageType} onChange={(e) => setImageForm((prev) => ({ ...prev, imageType: e.target.value }))}>
-                {IMAGE_TYPE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <input
-                className="input-control"
-                type="file"
-                accept="image/*"
-                onChange={(e) => {
-                  const selected = e.target.files?.[0] || null;
-                  setImageForm((prev) => ({ ...prev, file: selected }));
-                }}
-              />
-              <textarea
-                className="textarea-control"
-                placeholder="ì´ë¯¸ì§€ ë©”ëª¨"
-                value={imageForm.imageMemo}
-                onChange={(e) => setImageForm((prev) => ({ ...prev, imageMemo: e.target.value }))}
-              />
-            </div>
-            <div className="mt-3 flex justify-end gap-2">
-              <button type="button" className="btn btn-secondary" onClick={() => setImageModalOpen(false)}>
-                ë‹«ê¸°
-              </button>
-              <button type="button" className="btn btn-primary" onClick={() => void handleImageUpload()}>
-                ì €ì¥
-              </button>
-            </div>
-          </div>
-        </div>
       ) : null}
     </div>
   );

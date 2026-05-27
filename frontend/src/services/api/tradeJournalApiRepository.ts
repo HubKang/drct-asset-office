@@ -1,11 +1,14 @@
 import { apiRequest } from "@/services/api/apiClient";
 import type {
   TradeJournal,
+  TradeCalendarDaySummary,
   TradeJournalImage,
   TradeJournalListResponse,
+  TradeMonthlyStatisticsResponse,
   TradeJournalSaveRequest,
   TradeMethod,
   TradeMethodSaveRequest,
+  TradeJournalGptReviewPackage,
 } from "@/types/tradeJournal";
 
 export const tradeJournalApiRepository = {
@@ -41,10 +44,6 @@ export const tradeJournalApiRepository = {
     apiRequest<TradeJournal>(`/trade-journals/${journalId}`, { method: "PATCH", body: JSON.stringify(payload) }),
   deleteTradeJournal: (journalId: number) => apiRequest<{ success: boolean }>(`/trade-journals/${journalId}`, { method: "DELETE" }),
   fetchTradeJournalImages: (journalId: number) => apiRequest<TradeJournalImage[]>(`/trade-journals/${journalId}/images`),
-  createTradeJournalImage: (
-    journalId: number,
-    payload: { image_type: string; image_path: string; image_memo?: string; original_filename?: string }
-  ) => apiRequest<TradeJournalImage>(`/trade-journals/${journalId}/images`, { method: "POST", body: JSON.stringify(payload) }),
   uploadTradeJournalImage: (
     journalId: number,
     payload: { image_type: string; image_memo?: string; file: File }
@@ -58,6 +57,28 @@ export const tradeJournalApiRepository = {
       body: formData,
     });
   },
+  updateTradeJournalImage: (
+    imageId: number,
+    payload: { image_memo?: string; image_type?: string }
+  ) => apiRequest<TradeJournalImage>(`/trade-journal-images/${imageId}`, { method: "PATCH", body: JSON.stringify(payload) }),
   deleteTradeJournalImage: (imageId: number) =>
     apiRequest<{ success: boolean }>(`/trade-journal-images/${imageId}`, { method: "DELETE" }),
+  fetchTradeCalendarMonthly: (month: string) =>
+    apiRequest<TradeCalendarDaySummary[]>(`/trade-journals/calendar/monthly?month=${encodeURIComponent(month)}`),
+  fetchTradeCalendarDaily: (date: string) =>
+    apiRequest<TradeJournalListResponse>(`/trade-journals/calendar/daily?date=${encodeURIComponent(date)}`),
+  fetchTradeMonthlyStatistics: (params: {
+    page?: number;
+    page_size?: number;
+    start_month?: string;
+    end_month?: string;
+  }) => {
+    const search = new URLSearchParams();
+    if (params.page) search.set("page", String(params.page));
+    if (params.page_size) search.set("page_size", String(params.page_size));
+    if (params.start_month) search.set("start_month", params.start_month);
+    if (params.end_month) search.set("end_month", params.end_month);
+    return apiRequest<TradeMonthlyStatisticsResponse>(`/trade-journals/statistics/monthly?${search.toString()}`);
+  },
+  fetchGptReviewPackage: (journalId: number) => apiRequest<TradeJournalGptReviewPackage>(`/trade-journals/${journalId}/gpt-review-package`),
 };

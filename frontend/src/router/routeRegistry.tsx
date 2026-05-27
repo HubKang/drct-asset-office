@@ -6,6 +6,7 @@ import DisclosuresPage from "@/pages/DisclosuresPage";
 import EconomicBriefingPage from "@/pages/EconomicBriefingPage";
 import GptPromptSettingsPage from "@/pages/GptPromptSettingsPage";
 import TelegramBriefingPage from "@/pages/TelegramBriefingPage";
+import TradeCalendarPage from "@/pages/TradeCalendarPage";
 import TradeMethodsPage from "@/pages/TradeMethodsPage";
 import TradeJournalsPage from "@/pages/TradeJournalsPage";
 import MarketThemesPage from "@/pages/MarketThemesPage";
@@ -50,7 +51,7 @@ export const routeRegistry: RouteItem[] = [
   { routeKey: "telegram-briefing", path: "/telegram-briefing", title: "텔레그램 브리핑", description: "텔레그램 채널 수집/요약 관리", component: <TelegramBriefingPage /> },
   { routeKey: "trade-methods", path: "/trade-methods", title: "매매기법", description: "매매기법 등록/수정/비활성화 관리", component: <TradeMethodsPage /> },
   { routeKey: "trade-journals", path: "/trade-journals", title: "매매일지", description: "매매일지 등록/조회", component: <TradeJournalsPage /> },
-  { routeKey: "trade-calendar", path: "/trade-calendar", title: "매매달력", description: "월간 매매달력/통계", component: <ComingSoonPage title="매매달력" /> },
+  { routeKey: "trade-calendar", path: "/trade-calendar", title: "매매달력", description: "월간 매매달력/통계", component: <TradeCalendarPage /> },
   { routeKey: "settings", path: "/settings", title: "설정", description: "GPT 분석 프롬프트 설정 관리", component: <GptPromptSettingsPage /> },
 ];
 

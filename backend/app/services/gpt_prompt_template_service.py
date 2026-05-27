@@ -8,37 +8,36 @@ from backend.app.schemas.gpt_prompt_template_schema import (
     GptPromptTemplateRestoreResponse,
     GptPromptTemplateUpdateRequest,
 )
-from backend.app.services.gpt_prompt_template_defaults import (
-    DEFAULT_GPT_PROMPT_DESCRIPTION,
-    DEFAULT_GPT_PROMPT_KEY,
-    DEFAULT_GPT_PROMPT_NAME,
-    DEFAULT_GPT_PROMPT_TEMPLATE_TEXT,
-    DEFAULT_GPT_PROMPT_TYPE,
-)
+from backend.app.services.gpt_prompt_template_defaults import DEFAULT_GPT_PROMPTS
 
 
 class GptPromptTemplateService:
     def __init__(self, db: Session) -> None:
         self.repo = GptPromptTemplateRepository(db)
 
-    def ensure_default_template_exists(self) -> None:
-        found = self.repo.get_by_key(DEFAULT_GPT_PROMPT_KEY)
-        if found:
-            return
-        self.repo.create_default(
-            prompt_key=DEFAULT_GPT_PROMPT_KEY,
-            prompt_name=DEFAULT_GPT_PROMPT_NAME,
-            prompt_type=DEFAULT_GPT_PROMPT_TYPE,
-            description=DEFAULT_GPT_PROMPT_DESCRIPTION,
-            template_text=DEFAULT_GPT_PROMPT_TEMPLATE_TEXT,
-        )
+    def ensure_default_templates_exist(self) -> None:
+        for row in DEFAULT_GPT_PROMPTS:
+            prompt_key = str(row["prompt_key"])
+            found = self.repo.get_by_key(prompt_key)
+            if found:
+                continue
+            default_prompt_text = str(row["default_prompt_text"])
+            self.repo.create_default(
+                domain=str(row["domain"]),
+                prompt_key=prompt_key,
+                prompt_name=str(row["prompt_name"]),
+                description=str(row["description"]),
+                prompt_text=default_prompt_text,
+                default_prompt_text=default_prompt_text,
+                sort_order=int(row["sort_order"]),
+            )
 
-    def list_templates(self):
-        self.ensure_default_template_exists()
-        return self.repo.list()
+    def list_templates(self, domain: str | None = None):
+        self.ensure_default_templates_exist()
+        return self.repo.list(domain=domain)
 
     def get_template(self, prompt_key: str):
-        self.ensure_default_template_exists()
+        self.ensure_default_templates_exist()
         row = self.repo.get_by_key(prompt_key)
         if not row:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="gpt prompt template not found")
@@ -46,25 +45,36 @@ class GptPromptTemplateService:
 
     def update_template(self, prompt_key: str, payload: GptPromptTemplateUpdateRequest):
         row = self.get_template(prompt_key)
-        if payload.is_active not in {0, 1}:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="is_active must be 0 or 1")
-        return self.repo.update(
-            row,
-            prompt_name=payload.prompt_name.strip(),
-            description=payload.description.strip() if payload.description else None,
-            template_text=payload.template_text,
-            is_active=payload.is_active,
-        )
+        updates: dict[str, object] = {}
+        if payload.prompt_name is not None:
+            updates["prompt_name"] = payload.prompt_name.strip() or row.prompt_name
+        if payload.description is not None:
+            updates["description"] = payload.description.strip() or None
+        if payload.prompt_text is not None:
+            updates["prompt_text"] = payload.prompt_text
+        if payload.is_active is not None:
+            if payload.is_active not in {0, 1}:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="is_active must be 0 or 1")
+            updates["is_active"] = payload.is_active
+        if payload.sort_order is not None:
+            updates["sort_order"] = int(payload.sort_order)
+        if not updates:
+            return row
+        return self.repo.update(row, updates)
 
     def restore_default(self, prompt_key: str) -> GptPromptTemplateRestoreResponse:
         row = self.get_template(prompt_key)
-        if prompt_key != DEFAULT_GPT_PROMPT_KEY:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="default template is not registered")
         updated = self.repo.update(
             row,
-            prompt_name=DEFAULT_GPT_PROMPT_NAME,
-            description=DEFAULT_GPT_PROMPT_DESCRIPTION,
-            template_text=DEFAULT_GPT_PROMPT_TEMPLATE_TEXT,
-            is_active=1,
+            {
+                "prompt_text": row.default_prompt_text,
+            },
         )
         return GptPromptTemplateRestoreResponse(message="기본 프롬프트로 복원되었습니다.", template=updated)
+
+    def resolve_active_prompt_text(self, prompt_key: str, fallback_text: str) -> str:
+        self.ensure_default_templates_exist()
+        row = self.repo.get_by_key(prompt_key)
+        if row and row.is_active == 1 and row.prompt_text.strip():
+            return row.prompt_text
+        return fallback_text

@@ -9,7 +9,9 @@ from backend.app.schemas.trade_journal_schema import (
     TradeJournalDeleteResponse,
     TradeJournalDetailResponse,
     TradeJournalImageCreate,
+    TradeJournalImageUpdate,
     TradeJournalImageResponse,
+    TradeJournalGptReviewPackageResponse,
     TradeJournalListResponse,
     TradeJournalMonthlyCalendarItem,
     TradeJournalMonthlyStatisticResponse,
@@ -115,6 +117,11 @@ def delete_trade_journal_image(image_id: int, db: Session = Depends(get_db)):
     return TradeJournalService(db).delete_trade_journal_image(image_id)
 
 
+@router.patch("/trade-journal-images/{image_id}", response_model=TradeJournalImageResponse)
+def update_trade_journal_image(image_id: int, payload: TradeJournalImageUpdate, db: Session = Depends(get_db)):
+    return TradeJournalService(db).update_trade_journal_image(image_id, payload)
+
+
 @router.get("/trade-journals/calendar/monthly", response_model=list[TradeJournalMonthlyCalendarItem])
 def get_trade_journal_calendar_monthly(month: str = Query(...), db: Session = Depends(get_db)):
     return TradeJournalService(db).list_calendar_monthly(month=month)
@@ -129,6 +136,18 @@ def get_trade_journal_calendar_daily(date: str = Query(...), db: Session = Depen
 def get_trade_journal_statistics_monthly(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=10, ge=1, le=100),
+    start_month: str | None = Query(default=None),
+    end_month: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    return TradeJournalService(db).list_statistics_monthly(page=page, page_size=page_size)
+    return TradeJournalService(db).list_statistics_monthly(
+        page=page,
+        page_size=page_size,
+        start_month=start_month,
+        end_month=end_month,
+    )
+
+
+@router.get("/trade-journals/{journal_id}/gpt-review-package", response_model=TradeJournalGptReviewPackageResponse)
+def get_trade_journal_gpt_review_package(journal_id: int, db: Session = Depends(get_db)):
+    return TradeJournalService(db).build_gpt_review_package(journal_id)

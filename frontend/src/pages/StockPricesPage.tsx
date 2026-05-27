@@ -1,4 +1,4 @@
-﻿import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import EmptyState from "@/components/common/EmptyState";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
@@ -429,8 +429,8 @@ function StockPricesPage() {
     let templateText = FALLBACK_GPT_PROMPT;
     try {
       const row = await repositories.gptPromptTemplates.get("stock_advisory_analysis");
-      if (row.template_text.trim()) {
-        templateText = row.template_text;
+      if (row.prompt_text.trim()) {
+        templateText = row.prompt_text;
       }
     } catch {
       // fallback prompt 사용
