@@ -28,6 +28,11 @@ const IMAGE_TYPE_OPTIONS = [
 ];
 
 const today = () => new Date().toISOString().slice(0, 10);
+const threeDaysAgo = () => {
+  const d = new Date();
+  d.setDate(d.getDate() - 3);
+  return d.toISOString().slice(0, 10);
+};
 const threeMonthsAgo = () => {
   const d = new Date();
   d.setMonth(d.getMonth() - 3);
@@ -45,7 +50,7 @@ function TradeJournalsPage() {
   const [error, setError] = useState("");
 
   const [filters, setFilters] = useState({
-    start_date: today(),
+    start_date: threeDaysAgo(),
     end_date: today(),
     stock_name: "",
     result_type: "",
@@ -57,6 +62,14 @@ function TradeJournalsPage() {
   const [gptPackage, setGptPackage] = useState<TradeJournalGptReviewPackage | null>(null);
   const [failurePatternPackage, setFailurePatternPackage] = useState<FailurePatternReviewPackage | null>(null);
   const [failureLoading, setFailureLoading] = useState(false);
+  const [deletingJournal, setDeletingJournal] = useState(false);
+  const [imageEditingId, setImageEditingId] = useState<number | null>(null);
+  const [imageEditDraft, setImageEditDraft] = useState<{ image_type: string; image_memo: string }>({
+    image_type: "trade_time_chart",
+    image_memo: "",
+  });
+  const [savingImageEdit, setSavingImageEdit] = useState(false);
+  const [deletingImageId, setDeletingImageId] = useState<number | null>(null);
 
   const [form, setForm] = useState<TradeJournalSaveRequest>({
     buy_date: today(),
@@ -132,6 +145,7 @@ function TradeJournalsPage() {
     setDetailMode("create");
     setIsDetailOpen(true);
     setGptPackage(null);
+    setImageEditingId(null);
     setForm({
       buy_date: today(),
       sell_date: today(),
@@ -148,6 +162,7 @@ function TradeJournalsPage() {
     setDetailMode("edit");
     setIsDetailOpen(true);
     setGptPackage(null);
+    setImageEditingId(null);
     await loadDetail(id);
   };
 
@@ -163,12 +178,14 @@ function TradeJournalsPage() {
         const created = await repositories.tradeJournals.createTradeJournal(form);
         setSelectedJournalId(created.id);
         setDetailMode("edit");
+        setMessage("매매일지가 저장되었습니다.");
+        await loadDetail(created.id);
       } else if (selectedJournalId) {
         await repositories.tradeJournals.updateTradeJournal(selectedJournalId, form);
+        setMessage("매매일지가 수정되었습니다.");
+        await loadDetail(selectedJournalId);
       }
       await loadList();
-      if (selectedJournalId) await loadDetail(selectedJournalId);
-      setMessage("저장되었습니다.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "저장에 실패했습니다.");
     } finally {
@@ -185,8 +202,81 @@ function TradeJournalsPage() {
     });
     setImageFile(null);
     setImageMemo("");
+    setImageEditingId(null);
     await loadDetail(selectedJournalId);
     await loadList();
+  };
+
+  const startEditImage = (image: TradeJournalImage) => {
+    setImageEditingId(image.id);
+    setImageEditDraft({
+      image_type: image.image_type,
+      image_memo: image.image_memo || "",
+    });
+  };
+
+  const cancelEditImage = () => {
+    setImageEditingId(null);
+  };
+
+  const saveImageEdit = async (imageId: number) => {
+    setSavingImageEdit(true);
+    setError("");
+    try {
+      await repositories.tradeJournals.updateTradeJournalImage(imageId, {
+        image_type: imageEditDraft.image_type,
+        image_memo: imageEditDraft.image_memo,
+      });
+      setMessage("차트 이미지가 수정되었습니다.");
+      setImageEditingId(null);
+      if (selectedJournalId) await loadDetail(selectedJournalId);
+      await loadList();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "차트 이미지 수정에 실패했습니다.");
+    } finally {
+      setSavingImageEdit(false);
+    }
+  };
+
+  const deleteImage = async (imageId: number) => {
+    const ok = window.confirm("이 차트 이미지를 삭제하시겠습니까?");
+    if (!ok) return;
+    setDeletingImageId(imageId);
+    setError("");
+    try {
+      await repositories.tradeJournals.deleteTradeJournalImage(imageId);
+      setMessage("차트 이미지가 삭제되었습니다.");
+      setImageEditingId((prev) => (prev === imageId ? null : prev));
+      if (selectedJournalId) await loadDetail(selectedJournalId);
+      await loadList();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "차트 이미지 삭제에 실패했습니다.");
+    } finally {
+      setDeletingImageId(null);
+    }
+  };
+
+  const deleteJournal = async () => {
+    if (!selectedJournalId || detailMode !== "edit") return;
+    const ok = window.confirm("이 매매일지를 삭제하시겠습니까? 등록된 차트 이미지도 함께 삭제될 수 있습니다.");
+    if (!ok) return;
+    setDeletingJournal(true);
+    setError("");
+    try {
+      await repositories.tradeJournals.deleteTradeJournal(selectedJournalId);
+      setMessage("매매일지가 삭제되었습니다.");
+      setSelectedJournalId(null);
+      setIsDetailOpen(false);
+      setDetailMode("create");
+      setImageEditingId(null);
+      setDetailImages([]);
+      setGptPackage(null);
+      await loadList();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "매매일지 삭제에 실패했습니다.");
+    } finally {
+      setDeletingJournal(false);
+    }
   };
 
   const generatePackage = async () => {
@@ -271,7 +361,7 @@ function TradeJournalsPage() {
             className="btn btn-secondary"
             onClick={() =>
               setFilters({
-                start_date: today(),
+                start_date: threeDaysAgo(),
                 end_date: today(),
                 stock_name: "",
                 result_type: "",
@@ -463,21 +553,74 @@ function TradeJournalsPage() {
                     ))}
                   </select>
                   <input className="input-control" type="file" accept="image/*" onChange={(e) => setImageFile(e.target.files?.[0] ?? null)} />
-                  <input className="input-control" value={imageMemo} onChange={(e) => setImageMemo(e.target.value)} placeholder="이미지 메모" />
-                </div>
-                <div className="mt-2">
                   <button type="button" className="btn btn-secondary" onClick={() => void uploadImage()} disabled={!selectedJournalId || !imageFile}>
                     이미지 업로드
                   </button>
                 </div>
+                <div className="mt-2">
+                  <textarea
+                    className="textarea-control"
+                    rows={6}
+                    value={imageMemo}
+                    onChange={(e) => setImageMemo(e.target.value)}
+                    placeholder="이미지 메모"
+                  />
+                </div>
                 <div className="trade-image-list mt-2">
                   {detailImages.map((img) => (
                     <article key={img.id} className="trade-journal-image-card">
-                      <div>
-                        <span className="badge badge-blue">{img.image_type}</span> <small>{img.original_filename || img.image_path}</small>
+                      <div className="trade-image-card-header">
+                        <div className="trade-image-card-title-wrap">
+                          <span className="badge badge-blue">{img.image_type}</span>
+                          <small className="trade-image-card-title">{img.original_filename || img.image_path}</small>
+                        </div>
+                        <div className="trade-image-card-actions">
+                          <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => startEditImage(img)}>
+                            수정
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-danger btn-table-sm"
+                            onClick={() => void deleteImage(img.id)}
+                            disabled={deletingImageId === img.id}
+                          >
+                            {deletingImageId === img.id ? "삭제중" : "삭제"}
+                          </button>
+                        </div>
                       </div>
                       {img.image_url ? <img src={`${appConfig.apiBaseUrl}${img.image_url}`} className="trade-journal-image-preview" alt="trade" /> : null}
-                      <p className="trade-image-memo">{img.image_memo || "메모 없음"}</p>
+                      {imageEditingId === img.id ? (
+                        <div className="trade-image-memo-edit">
+                          <select
+                            className="select-control"
+                            value={imageEditDraft.image_type}
+                            onChange={(e) => setImageEditDraft((prev) => ({ ...prev, image_type: e.target.value }))}
+                          >
+                            {IMAGE_TYPE_OPTIONS.map((o) => (
+                              <option key={o.value} value={o.value}>
+                                {o.label}
+                              </option>
+                            ))}
+                          </select>
+                          <textarea
+                            className="textarea-control"
+                            rows={4}
+                            value={imageEditDraft.image_memo}
+                            onChange={(e) => setImageEditDraft((prev) => ({ ...prev, image_memo: e.target.value }))}
+                            placeholder="이미지 메모"
+                          />
+                          <div className="trade-image-memo-actions">
+                            <button type="button" className="btn btn-primary btn-table-sm" onClick={() => void saveImageEdit(img.id)} disabled={savingImageEdit}>
+                              {savingImageEdit ? "저장중" : "저장"}
+                            </button>
+                            <button type="button" className="btn btn-secondary btn-table-sm" onClick={cancelEditImage}>
+                              취소
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="trade-image-memo">{img.image_memo || "메모 없음"}</p>
+                      )}
                     </article>
                   ))}
                 </div>
@@ -488,8 +631,8 @@ function TradeJournalsPage() {
                 {saving ? "저장중" : detailMode === "create" ? "저장" : "수정"}
               </button>
               {detailMode === "edit" ? (
-                <button className="btn btn-danger" type="button">
-                  삭제
+                <button className="btn btn-danger" type="button" onClick={() => void deleteJournal()} disabled={deletingJournal}>
+                  {deletingJournal ? "삭제중" : "삭제"}
                 </button>
               ) : null}
             </div>

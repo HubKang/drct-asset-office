@@ -1,4 +1,5 @@
 ﻿import { advisoryPackageApiRepository } from "@/services/api/advisoryPackageApiRepository";
+import { architectureApiRepository } from "@/services/api/architectureApiRepository";
 import { classificationRuleApiRepository } from "@/services/api/classificationRuleApiRepository";
 import { collectionRunApiRepository } from "@/services/api/collectionRunApiRepository";
 import { disclosureApiRepository } from "@/services/api/disclosureApiRepository";
@@ -29,6 +30,7 @@ import { appConfig } from "@/services/config/appConfig";
 const useMock = appConfig.dataSource !== "api";
 
 export const repositories = {
+  architecture: architectureApiRepository,
   stocks: useMock ? stockMockRepository : stockApiRepository,
   stockPrices: useMock ? stockPriceMockRepository : stockPriceApiRepository,
   watchlist: useMock ? watchlistMockRepository : watchlistApiRepository,
@@ -47,5 +49,3 @@ export const repositories = {
 };
 
 export const dataSourceLabel = useMock ? "mock" : "api";
-
-

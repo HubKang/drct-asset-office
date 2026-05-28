@@ -1869,6 +1869,67 @@ a:focus-visible {
   margin: 0 auto;
 }
 
+.method-journal-grid-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.method-journal-grid {
+  width: 100%;
+  min-width: 700px;
+}
+
+.method-journal-grid-header,
+.method-journal-grid-row {
+  display: grid;
+  grid-template-columns: 140px minmax(180px, 1fr) 100px 120px 160px;
+  gap: 0;
+  align-items: center;
+}
+
+.method-journal-grid-header {
+  border: 1px solid var(--color-hairline-cloud);
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.method-journal-grid-row {
+  border-left: 1px solid var(--color-hairline-cloud);
+  border-right: 1px solid var(--color-hairline-cloud);
+  border-bottom: 1px solid var(--color-hairline-cloud);
+  background: #fff;
+  font-size: 15px;
+  color: #0f172a;
+}
+
+.method-journal-grid-row:last-child {
+  border-radius: 0 0 10px 10px;
+}
+
+.method-journal-grid-cell {
+  padding: 10px 12px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.method-journal-grid-cell--center {
+  text-align: center;
+}
+
+.method-journal-grid-cell--right {
+  text-align: right;
+}
+
+.method-journal-grid-cell--center .badge {
+  margin: 0 auto;
+}
+
 @media (max-width: 1300px) {
   .trade-journal-detail-drawer {
     width: min(56vw, 860px);
@@ -2116,4 +2177,21 @@ a:focus-visible {
   white-space: pre-wrap;
   word-break: break-word;
   font-size: 12px;
+}
+
+.architecture-delete-grid-shell {
+  overflow-x: auto;
+}
+
+.architecture-delete-grid-table {
+  min-width: 1440px;
+  table-layout: fixed;
+}
+
+.architecture-delete-grid-table th,
+.architecture-delete-grid-table td {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
 }

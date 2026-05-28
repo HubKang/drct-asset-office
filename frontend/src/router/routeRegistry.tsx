@@ -2,6 +2,7 @@
 import ClassificationRulesPage from "@/pages/ClassificationRulesPage";
 import CollectionRunsPage from "@/pages/CollectionRunsPage";
 import DashboardPage from "@/pages/DashboardPage";
+import DrctArchitecturePage from "@/pages/DrctArchitecturePage";
 import DisclosuresPage from "@/pages/DisclosuresPage";
 import EconomicBriefingPage from "@/pages/EconomicBriefingPage";
 import GptPromptSettingsPage from "@/pages/GptPromptSettingsPage";
@@ -53,6 +54,7 @@ export const routeRegistry: RouteItem[] = [
   { routeKey: "trade-journals", path: "/trade-journals", title: "매매일지", description: "매매일지 등록/조회", component: <TradeJournalsPage /> },
   { routeKey: "trade-calendar", path: "/trade-calendar", title: "매매달력", description: "월간 매매달력/통계", component: <TradeCalendarPage /> },
   { routeKey: "settings", path: "/settings", title: "설정", description: "GPT 분석 프롬프트 설정 관리", component: <GptPromptSettingsPage /> },
+  { routeKey: "drct-architecture", path: "/drct-architecture", title: "DrCT아키텍처", description: "폴더 구조/정리 정책 점검", component: <DrctArchitecturePage /> },
 ];
 
 export const routeRegistryMap = Object.fromEntries(routeRegistry.map((route) => [route.routeKey, route]));

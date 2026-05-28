@@ -21,6 +21,7 @@ node_modules/
 frontend/node_modules/
 dist/
 frontend/dist/
+frontend/.vite/
 
 
 # Frontend build cache
@@ -34,11 +35,13 @@ __pycache__/
 *.pyc
 .cache/
 .mpltcache/
+data_cache/
 
 data/raw/
 reports/
 
 logs/
+archive/cleanup/
 *.log
 *.session
 *.session-journal

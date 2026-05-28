@@ -22,7 +22,8 @@
   { "menuKey": "analysis-rules", "title": "분류 규칙 관리", "routeKey": "classification-rules" },
   { "menuKey": "analysis-rules", "title": "스키마 코멘트", "routeKey": "schema-comments" },
 
-  { "menuKey": "system", "title": "설정", "routeKey": "settings" }
+  { "menuKey": "system", "title": "설정", "routeKey": "settings" },
+  { "menuKey": "system", "title": "DrCT아키텍처", "routeKey": "drct-architecture" }
 ]
 
 

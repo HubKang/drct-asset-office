@@ -505,47 +505,35 @@ function TradeMethodsPage() {
                     <p className="mb-2 text-xs text-slate-500">
                       현재 매매기법으로 기록된 매매일지를 최신순으로 최대 10건 표시합니다.
                     </p>
-                    <div className="table-wrap trade-method-recent-wrap">
-                      <table className="table-base trade-method-recent-table">
-                        <colgroup>
-                          <col className="col-buy-date" />
-                          <col className="col-stock-name" />
-                          <col className="col-status" />
-                          <col className="col-profit-rate" />
-                          <col className="col-realized-profit" />
-                        </colgroup>
-                        <thead>
-                          <tr>
-                            <th className="tm-col-buy text-left">매수일</th>
-                            <th className="tm-col-stock text-left">종목명</th>
-                            <th className="tm-col-status text-center">상태</th>
-                            <th className="tm-col-rate text-right">수익률</th>
-                            <th className="tm-col-profit text-right">실현손익</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(statsByMethod[selectedMethodId]?.recent_trades ?? []).map((trade) => (
-                            <tr key={trade.id}>
-                              <td className="tm-col-buy">{trade.buy_date}</td>
-                              <td className="tm-col-stock">{trade.stock_name}</td>
-                              <td className="tm-col-status text-center">
-                                <span className={`badge ${trade.result_type === "profit" ? "badge-rose" : trade.result_type === "loss" ? "badge-blue" : "badge-slate"}`}>
-                                  {formatResult(trade.result_type)}
-                                </span>
-                              </td>
-                              <td className="tm-col-rate text-right">{formatRateCell(trade.profit_rate)}</td>
-                              <td className="tm-col-profit text-right">{formatWonCell(trade.realized_profit)}</td>
-                            </tr>
-                          ))}
-                          {(statsByMethod[selectedMethodId]?.recent_trades ?? []).length === 0 ? (
-                            <tr>
-                              <td colSpan={5} className="text-center text-slate-500">
-                                이 매매기법으로 기록된 매매일지가 없습니다.
-                              </td>
-                            </tr>
-                          ) : null}
-                        </tbody>
-                      </table>
+                    <div className="method-journal-grid-wrap">
+                      <div className="method-journal-grid">
+                        <div className="method-journal-grid-header">
+                          <div className="method-journal-grid-cell">매수일</div>
+                          <div className="method-journal-grid-cell">종목명</div>
+                          <div className="method-journal-grid-cell method-journal-grid-cell--center">상태</div>
+                          <div className="method-journal-grid-cell method-journal-grid-cell--right">수익률</div>
+                          <div className="method-journal-grid-cell method-journal-grid-cell--right">실현손익</div>
+                        </div>
+
+                        {(statsByMethod[selectedMethodId]?.recent_trades ?? []).map((trade) => (
+                          <div key={trade.id} className="method-journal-grid-row">
+                            <div className="method-journal-grid-cell">{trade.buy_date || "-"}</div>
+                            <div className="method-journal-grid-cell">{trade.stock_name || "-"}</div>
+                            <div className="method-journal-grid-cell method-journal-grid-cell--center">
+                              <span className={`badge ${trade.result_type === "profit" ? "badge-rose" : trade.result_type === "loss" ? "badge-blue" : "badge-slate"}`}>
+                                {formatResult(trade.result_type)}
+                              </span>
+                            </div>
+                            <div className="method-journal-grid-cell method-journal-grid-cell--right">{formatRateCell(trade.profit_rate)}</div>
+                            <div className="method-journal-grid-cell method-journal-grid-cell--right">{formatWonCell(trade.realized_profit)}</div>
+                          </div>
+                        ))}
+                      </div>
+                      {(statsByMethod[selectedMethodId]?.recent_trades ?? []).length === 0 ? (
+                        <div className="rounded border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+                          이 매매기법으로 기록된 매매일지가 없습니다.
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 ) : null}
