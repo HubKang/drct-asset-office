@@ -4,7 +4,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from backend.app.repositories.news_repository import NewsRepository
-from backend.app.schemas.news_schema import NewsCollectionTargetResponse, NewsResponse
+from backend.app.schemas.news_schema import NewsCollectionTargetResponse, NewsListPageResponse, NewsResponse
 
 
 class NewsService:
@@ -26,6 +26,11 @@ class NewsService:
             )
         return result
 
+    def list_news_page(self, stock_id: int | None, stock_ids: list[int] | None, keyword: str | None, source: str | None, limit: int, offset: int) -> NewsListPageResponse:
+        items = self.list_news(stock_id=stock_id, stock_ids=stock_ids, keyword=keyword, source=source, limit=limit, offset=offset)
+        total_count = self.repo.count(stock_id=stock_id, stock_ids=stock_ids, keyword=keyword, source=source)
+        return NewsListPageResponse(items=items, total_count=total_count, limit=limit, offset=offset)
+
     def list_collection_targets(self) -> list[NewsCollectionTargetResponse]:
         rows = self.repo.list_collection_targets()
         return [
@@ -45,3 +50,11 @@ class NewsService:
         if not item:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="news not found")
         return item
+
+    def delete_news_bulk(self, news_ids: list[int]) -> tuple[int, int]:
+        selected = sorted(set(int(news_id) for news_id in news_ids if isinstance(news_id, int) and int(news_id) > 0))
+        if not selected:
+            return 0, 0
+        deleted = self.repo.delete_by_ids(selected)
+        failed = max(0, len(selected) - deleted)
+        return deleted, failed

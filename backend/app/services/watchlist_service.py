@@ -91,10 +91,13 @@ class WatchlistService:
                 exit_condition=item.exit_condition,
                 risk_note=item.risk_note,
                 is_active=item.is_active,
+                price_start_date=price_start_date,
+                price_end_date=price_end_date,
+                price_data_count=int(price_data_count) if price_data_count is not None else None,
                 registered_at=item.registered_at,
                 updated_at=item.updated_at,
             )
-            for item, stock in rows
+            for item, stock, price_start_date, price_end_date, price_data_count in rows
         ]
 
     def get_watchlist_stock_ids(self) -> WatchlistStockIdsResponse:

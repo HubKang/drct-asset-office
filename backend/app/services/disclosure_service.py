@@ -44,3 +44,11 @@ class DisclosureService:
         if not item:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="disclosure not found")
         return item
+
+    def delete_disclosures_bulk(self, disclosure_ids: list[int]) -> tuple[int, int]:
+        selected = sorted(set(int(disclosure_id) for disclosure_id in disclosure_ids if isinstance(disclosure_id, int) and int(disclosure_id) > 0))
+        if not selected:
+            return 0, 0
+        deleted = self.repo.delete_by_ids(selected)
+        failed = max(0, len(selected) - deleted)
+        return deleted, failed

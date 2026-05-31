@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from backend.app.core.database import get_db
-from backend.app.schemas.disclosure_schema import DisclosureResponse
+from backend.app.schemas.disclosure_schema import DisclosureBulkDeleteRequest, DisclosureBulkDeleteResponse, DisclosureResponse
 from backend.app.services.disclosure_service import DisclosureService
 
 router = APIRouter()
@@ -31,3 +31,9 @@ def list_disclosures(
 @router.get("/disclosures/{disclosure_id}", response_model=DisclosureResponse)
 def get_disclosure(disclosure_id: int, db: Session = Depends(get_db)) -> DisclosureResponse:
     return DisclosureService(db).get_disclosure(disclosure_id)
+
+
+@router.post("/disclosures/bulk-delete", response_model=DisclosureBulkDeleteResponse)
+def delete_disclosures_bulk(payload: DisclosureBulkDeleteRequest, db: Session = Depends(get_db)) -> DisclosureBulkDeleteResponse:
+    deleted, failed = DisclosureService(db).delete_disclosures_bulk(payload.disclosure_ids)
+    return DisclosureBulkDeleteResponse(deleted=deleted, failed=failed)

@@ -26,3 +26,12 @@ class DisclosureResponse(BaseModel):
     ai_processed_at: str | None
     ai_summary_error: str | None
     created_at: str
+
+
+class DisclosureBulkDeleteRequest(BaseModel):
+    disclosure_ids: list[int]
+
+
+class DisclosureBulkDeleteResponse(BaseModel):
+    deleted: int
+    failed: int

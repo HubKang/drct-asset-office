@@ -4,7 +4,13 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from backend.app.core.database import get_db
-from backend.app.schemas.news_schema import NewsCollectionTargetResponse, NewsResponse
+from backend.app.schemas.news_schema import (
+    NewsBulkDeleteRequest,
+    NewsBulkDeleteResponse,
+    NewsCollectionTargetResponse,
+    NewsListPageResponse,
+    NewsResponse,
+)
 from backend.app.services.news_service import NewsService
 
 router = APIRouter()
@@ -35,6 +41,31 @@ def list_news(
     )
 
 
+@router.get("/news/page", response_model=NewsListPageResponse)
+def list_news_page(
+    stock_id: int | None = None,
+    stock_ids: str | None = None,
+    keyword: str | None = None,
+    source: str | None = None,
+    limit: int = Query(default=20, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+) -> NewsListPageResponse:
+    parsed_stock_ids: list[int] | None = None
+    if stock_ids:
+        parsed_stock_ids = [int(value.strip()) for value in stock_ids.split(",") if value.strip().isdigit()]
+        if not parsed_stock_ids:
+            parsed_stock_ids = None
+    return NewsService(db).list_news_page(
+        stock_id=stock_id,
+        stock_ids=parsed_stock_ids,
+        keyword=keyword,
+        source=source,
+        limit=limit,
+        offset=offset,
+    )
+
+
 @router.get("/news/collection-targets", response_model=list[NewsCollectionTargetResponse])
 def list_news_collection_targets(db: Session = Depends(get_db)) -> list[NewsCollectionTargetResponse]:
     return NewsService(db).list_collection_targets()
@@ -43,3 +74,9 @@ def list_news_collection_targets(db: Session = Depends(get_db)) -> list[NewsColl
 @router.get("/news/{news_id}", response_model=NewsResponse)
 def get_news(news_id: int, db: Session = Depends(get_db)) -> NewsResponse:
     return NewsService(db).get_news(news_id)
+
+
+@router.post("/news/bulk-delete", response_model=NewsBulkDeleteResponse)
+def delete_news_bulk(payload: NewsBulkDeleteRequest, db: Session = Depends(get_db)) -> NewsBulkDeleteResponse:
+    deleted, failed = NewsService(db).delete_news_bulk(payload.news_ids)
+    return NewsBulkDeleteResponse(deleted=deleted, failed=failed)

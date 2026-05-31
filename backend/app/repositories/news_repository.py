@@ -52,6 +52,19 @@ class NewsRepository:
         stmt = stmt.order_by(NewsItem.created_at.desc(), NewsItem.id.desc()).limit(limit).offset(offset)
         return list(self.db.execute(stmt).all())
 
+    def count(self, stock_id: int | None, stock_ids: list[int] | None, keyword: str | None, source: str | None) -> int:
+        stmt = select(func.count(NewsItem.id))
+        if stock_id is not None:
+            stmt = stmt.where(NewsItem.stock_id == stock_id)
+        elif stock_ids:
+            stmt = stmt.where(NewsItem.stock_id.in_(stock_ids))
+        if keyword:
+            keyword_like = f"%{keyword}%"
+            stmt = stmt.where((NewsItem.title.like(keyword_like)) | (NewsItem.summary.like(keyword_like)))
+        if source:
+            stmt = stmt.where(NewsItem.source == source)
+        return int(self.db.scalar(stmt) or 0)
+
     def list_collection_targets(self) -> list[tuple[int, str, str, int, int, str | None]]:
         ai_processed_count = func.sum(case((NewsItem.ai_processed_at.is_not(None), 1), else_=0))
         stmt = (
@@ -170,3 +183,13 @@ class NewsRepository:
             saved += 1
         self.db.commit()
         return saved, skipped
+
+    def delete_by_ids(self, ids: list[int]) -> int:
+        if not ids:
+            return 0
+        stmt = select(NewsItem).where(NewsItem.id.in_(ids))
+        items = list(self.db.scalars(stmt).all())
+        for item in items:
+            self.db.delete(item)
+        self.db.commit()
+        return len(items)

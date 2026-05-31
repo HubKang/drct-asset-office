@@ -6,7 +6,9 @@ import type {
   NewsCollectSelectedResponse,
   NewsCollectSelectedWatchlistRequest,
   NewsCollectWatchlistRequest,
+  NewsBulkDeleteResponse,
   NewsItem,
+  NewsListPageResponse,
   NewsListParams,
 } from "@/types/news";
 
@@ -52,6 +54,19 @@ export const newsMockRepository = {
         latest_collected_at: "2026-05-09T09:10:00+09:00",
       },
     ];
+  },
+  async listNewsPage(params?: NewsListParams): Promise<NewsListPageResponse> {
+    const items = await this.listNews(params);
+    const all = await this.listNews({ ...params, limit: 99999, offset: 0 });
+    return {
+      items,
+      total_count: all.length,
+      limit: params?.limit ?? 20,
+      offset: params?.offset ?? 0,
+    };
+  },
+  async deleteNewsBulk(newsIds: number[]): Promise<NewsBulkDeleteResponse> {
+    return { deleted: newsIds.length, failed: 0 };
   },
   async getNews(newsId: number): Promise<NewsItem> {
     const found = sample.find((n) => n.id === newsId);

@@ -4,6 +4,7 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
 from backend.app.entities.stock import Stock
+from backend.app.entities.stock_daily_price import StockDailyPrice
 from backend.app.entities.watchlist import Watchlist
 
 
@@ -32,10 +33,28 @@ class WatchlistRepository:
         is_active: int | None,
         limit: int,
         offset: int,
-    ) -> list[tuple[Watchlist, Stock]]:
-        stmt: Select[tuple[Watchlist, Stock]] = (
-            select(Watchlist, Stock)
+    ) -> list[tuple[Watchlist, Stock, str | None, str | None, int | None]]:
+        price_range_subq = (
+            select(
+                StockDailyPrice.stock_id.label("stock_id"),
+                func.min(StockDailyPrice.trade_date).label("price_start_date"),
+                func.max(StockDailyPrice.trade_date).label("price_end_date"),
+                func.count(StockDailyPrice.id).label("price_data_count"),
+            )
+            .group_by(StockDailyPrice.stock_id)
+            .subquery()
+        )
+
+        stmt: Select[tuple[Watchlist, Stock, str | None, str | None, int | None]] = (
+            select(
+                Watchlist,
+                Stock,
+                price_range_subq.c.price_start_date,
+                price_range_subq.c.price_end_date,
+                price_range_subq.c.price_data_count,
+            )
             .join(Stock, Watchlist.stock_id == Stock.id)
+            .outerjoin(price_range_subq, price_range_subq.c.stock_id == Stock.id)
             .order_by(Watchlist.is_active.desc(), Watchlist.registered_at.desc(), Watchlist.id.desc())
         )
         if status:

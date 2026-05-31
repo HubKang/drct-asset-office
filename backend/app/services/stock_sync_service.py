@@ -20,6 +20,7 @@ class StockSyncCounts:
     eligible_count: int = 0
     type_counts: dict[str, int] | None = None
     type_samples: dict[str, list[dict[str, str | None]]] | None = None
+    deleted_existing_count: int = 0
     fetched_count: int = 0
     inserted_count: int = 0
     updated_count: int = 0
@@ -42,6 +43,7 @@ class StockSyncService:
         dry_run: bool = False,
         deactivate_missing: bool = True,
         include_security_types: list[str] | None = None,
+        mode: str = "upsert",
     ) -> StockSyncResponse:
         if not self.collector.service_key:
             raise HTTPException(
@@ -54,6 +56,7 @@ class StockSyncService:
 
         normalized_markets = self._normalize_markets(markets)
         included_types = self._normalize_security_types(include_security_types)
+        normalized_mode = self._normalize_mode(mode)
         started_at = now_kst()
         target = ",".join(normalized_markets)
         run = self.run_repo.create_running("krx_stock_master_sync", target) if not dry_run else None
@@ -89,6 +92,24 @@ class StockSyncService:
             }
 
             sync_time = now_kst()
+            rebuild_strategy: str | None = None
+            if normalized_mode == "rebuild":
+                counts.deleted_existing_count = self.stock_repo.count_all()
+            if normalized_mode == "rebuild" and not dry_run:
+                rebuild_strategy = "soft_rebuild"
+                all_stocks = self.stock_repo.list(
+                    keyword=None,
+                    is_active=None,
+                    market=None,
+                    security_type=None,
+                    limit=20000,
+                    offset=0,
+                )
+                for stock in all_stocks:
+                    stock.is_active = 0
+                    stock.last_synced_at = sync_time
+                    stock.updated_at = sync_time
+
             for item in eligible_items:
                 code = normalize_kr_stock_code(item.get("stock_code"))
                 if not code:
@@ -151,7 +172,7 @@ class StockSyncService:
                 else:
                     counts.skipped_count += 1
 
-            if deactivate_missing:
+            if normalized_mode == "upsert" and deactivate_missing:
                 for market in normalized_markets:
                     valid_codes = {
                         normalize_kr_stock_code(item["stock_code"])
@@ -174,17 +195,20 @@ class StockSyncService:
                 self.db.commit()
 
             finished_at = now_kst()
-            message = self._build_message(counts, normalized_markets, dry_run, deactivate_missing)
+            message = self._build_message(counts, normalized_markets, dry_run, deactivate_missing, normalized_mode)
             if run:
                 self.run_repo.mark_success(run, message)
 
             return StockSyncResponse(
                 markets=normalized_markets,
                 dry_run=dry_run,
+                mode=normalized_mode,
+                rebuild_strategy=rebuild_strategy,
                 raw_fetched_count=counts.raw_fetched_count,
                 eligible_count=counts.eligible_count,
                 type_counts=counts.type_counts or {},
                 type_samples=counts.type_samples or {},
+                deleted_existing_count=counts.deleted_existing_count,
                 fetched_count=counts.fetched_count,
                 inserted_count=counts.inserted_count,
                 updated_count=counts.updated_count,
@@ -219,16 +243,23 @@ class StockSyncService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="markets must include KOSPI/KOSDAQ/ALL")
         return normalized
 
-    def _build_message(self, counts: StockSyncCounts, markets: list[str], dry_run: bool, deactivate_missing: bool) -> str:
+    def _build_message(self, counts: StockSyncCounts, markets: list[str], dry_run: bool, deactivate_missing: bool, mode: str) -> str:
         prefix = "dry_run preview completed" if dry_run else "stock sync completed"
         return (
-            f"{prefix} markets={','.join(markets)} deactivate_missing={deactivate_missing} "
+            f"{prefix} mode={mode} markets={','.join(markets)} deactivate_missing={deactivate_missing} "
             f"raw_fetched={counts.raw_fetched_count} eligible={counts.eligible_count} "
             f"types={counts.type_counts or {}} "
+            f"deleted_existing={counts.deleted_existing_count} "
             f"fetched={counts.fetched_count} inserted={counts.inserted_count} "
             f"updated={counts.updated_count} reactivated={counts.reactivated_count} "
             f"deactivated={counts.deactivated_count} skipped={counts.skipped_count} errors={counts.error_count}"
         )
+
+    def _normalize_mode(self, mode: str | None) -> str:
+        value = (mode or "upsert").strip().lower()
+        if value not in {"upsert", "rebuild"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="mode must be upsert or rebuild")
+        return value
 
     def _normalize_security_types(self, include_security_types: list[str] | None) -> list[str]:
         allowed = {"common_stock", "preferred_stock", "etf", "etn", "spac", "reit", "other"}

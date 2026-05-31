@@ -7,7 +7,9 @@ import type {
   NewsCollectSelectedResponse,
   NewsCollectSelectedWatchlistRequest,
   NewsCollectWatchlistRequest,
+  NewsBulkDeleteResponse,
   NewsItem,
+  NewsListPageResponse,
   NewsListParams,
 } from "@/types/news";
 
@@ -23,6 +25,21 @@ export const newsApiRepository = {
     return apiRequest<NewsItem[]>(`/news?${search.toString()}`);
   },
   listCollectionTargets: () => apiRequest<NewsCollectionTarget[]>("/news/collection-targets"),
+  listNewsPage: (params?: NewsListParams) => {
+    const search = new URLSearchParams();
+    if (params?.stock_id !== undefined) search.set("stock_id", String(params.stock_id));
+    if (params?.stock_ids?.length) search.set("stock_ids", params.stock_ids.join(","));
+    if (params?.keyword) search.set("keyword", params.keyword);
+    if (params?.source) search.set("source", params.source);
+    search.set("limit", String(params?.limit ?? 20));
+    search.set("offset", String(params?.offset ?? 0));
+    return apiRequest<NewsListPageResponse>(`/news/page?${search.toString()}`);
+  },
+  deleteNewsBulk: (newsIds: number[]) =>
+    apiRequest<NewsBulkDeleteResponse>("/news/bulk-delete", {
+      method: "POST",
+      body: JSON.stringify({ news_ids: newsIds }),
+    }),
   getNews: (newsId: number) => apiRequest<NewsItem>(`/news/${newsId}`),
   collectNewsForStock: (payload: NewsCollectRequest) =>
     apiRequest<NewsCollectResponse>("/collectors/news", { method: "POST", body: JSON.stringify(payload) }),

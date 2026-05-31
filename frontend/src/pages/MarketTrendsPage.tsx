@@ -16,7 +16,7 @@ import type {
 
 type ActiveTab = "kiwoom" | "flow" | "monthly";
 type SortOrder = "asc" | "desc";
-type ConditionSortKey = "condition_seq" | "condition_name";
+type ConditionOrderMode = "number" | "name";
 type ResultSortKey = "stock_code" | "stock_name" | "current_price" | "change_rate" | "volume" | "estimated_trading_value";
 
 const fmtNumber = (value: number | null | undefined) => (value == null ? "-" : value.toLocaleString("ko-KR"));
@@ -65,6 +65,12 @@ const getResultRowKey = (row: KiwoomConditionResultItem) => `${row.stock_code ||
 const getMonthInput = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 const toMonthDateLabel = (value: string) => value.slice(5);
 const colorPalette = ["#2563eb", "#dc2626", "#16a34a", "#d97706", "#7c3aed", "#0f766e", "#be123c", "#334155", "#0891b2", "#84cc16"];
+const shiftDate = (dateText: string, diffDays: number) => {
+  const d = new Date(dateText);
+  if (Number.isNaN(d.getTime())) return dateText;
+  d.setDate(d.getDate() + diffDays);
+  return d.toISOString().slice(0, 10);
+};
 
 const buildCalendarCells = (month: string, days: MonthlyThemeFlowCalendarDay[]) => {
   const [y, m] = month.split("-").map(Number);
@@ -99,9 +105,10 @@ function MarketTrendsPage() {
   const [tradeDate, setTradeDate] = useState(new Date().toISOString().slice(0, 10));
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [resultPanelStatus, setResultPanelStatus] = useState("");
   const [conditionsRefreshing, setConditionsRefreshing] = useState(false);
 
-  const [conditionSort, setConditionSort] = useState<{ key: ConditionSortKey; order: SortOrder }>({ key: "condition_seq", order: "asc" });
+  const [conditionOrderMode, setConditionOrderMode] = useState<ConditionOrderMode>("number");
   const [resultSort, setResultSort] = useState<{ key: ResultSortKey; order: SortOrder }>({ key: "change_rate", order: "desc" });
 
   const [flowSummaries, setFlowSummaries] = useState<DailyThemeFlowSummary[]>([]);
@@ -133,13 +140,18 @@ function MarketTrendsPage() {
   const sortedConditions = useMemo(() => {
     const arr = [...conditions];
     arr.sort((a, b) => {
-      let cmp = 0;
-      if (conditionSort.key === "condition_seq") cmp = a.condition_seq.localeCompare(b.condition_seq, "ko");
-      else cmp = a.condition_name.localeCompare(b.condition_name, "ko");
-      return conditionSort.order === "asc" ? cmp : -cmp;
+      if (conditionOrderMode === "name") {
+        return a.condition_name.localeCompare(b.condition_name, "ko");
+      }
+      const aNum = Number(a.condition_seq);
+      const bNum = Number(b.condition_seq);
+      const aNumOk = Number.isFinite(aNum);
+      const bNumOk = Number.isFinite(bNum);
+      if (aNumOk && bNumOk) return aNum - bNum;
+      return a.condition_seq.localeCompare(b.condition_seq, "ko");
     });
     return arr;
-  }, [conditions, conditionSort]);
+  }, [conditions, conditionOrderMode]);
 
   const sortedResults = useMemo(() => {
     const arr = [...results];
@@ -172,6 +184,27 @@ function MarketTrendsPage() {
     });
     return arr;
   }, [events, eventNameSortOrder]);
+  const flowSummaryStats = useMemo(() => {
+    const top = flowSummaries[0];
+    const maxChange = flowSummaries.reduce((max, item) => {
+      const value = item.max_change_rate ?? Number.NEGATIVE_INFINITY;
+      return value > max ? value : max;
+    }, Number.NEGATIVE_INFINITY);
+    return {
+      savedCandidates: flowSummaries.reduce((sum, item) => sum + (item.event_count ?? 0), 0),
+      themeCount: flowSummaries.length,
+      topTheme: top?.theme_name ?? "없음",
+      maxChangeRate: Number.isFinite(maxChange) ? maxChange : null,
+      unclassified: "-",
+    };
+  }, [flowSummaries]);
+  const selectedThemeMeta = useMemo(() => {
+    if (!selectedFlowTheme) return null;
+    const summary = flowSummaries.find((x) => x.market_theme_id === selectedFlowTheme.id);
+    const stockCount = flowStocks.length;
+    const rep = summary?.representative_stocks?.[0] ?? "-";
+    return { stockCount, representative: rep };
+  }, [selectedFlowTheme, flowSummaries, flowStocks]);
   const sortMark = (active: boolean, order: SortOrder) => (active ? (order === "asc" ? " ▲" : " ▼") : "");
 
   const loadConditions = async () => {
@@ -226,7 +259,7 @@ function MarketTrendsPage() {
       return;
     }
     setError("");
-    setMessage("키움 조건검색 결과를 조회 중입니다.");
+    setResultPanelStatus("조건검색 결과 조회 중...");
     try {
       const res = await repositories.marketTrends.previewKiwoomConditionResults(selectedConditionSeq, {
         condition_name: selectedConditionName || null,
@@ -238,12 +271,12 @@ function MarketTrendsPage() {
       setResults(res.items ?? []);
       setCheckedMap({});
       if (res.parsing_error) {
-        setMessage("");
+        setResultPanelStatus("");
         setError("조건검색 응답은 수신했지만 결과 종목을 해석하지 못했습니다.");
-      } else if ((res.item_count ?? 0) === 0) setMessage("현재 조건검색 결과가 없습니다.");
-      else setMessage(`조건검색 결과 ${res.item_count}건을 조회했습니다. 저장할 종목을 선택하세요.`);
+      } else if ((res.item_count ?? 0) === 0) setResultPanelStatus("조회 결과 0건 · 선택 0건");
+      else setResultPanelStatus(`조회 결과 ${res.item_count}건 · 선택 0건`);
     } catch (e) {
-      setMessage("");
+      setResultPanelStatus("");
       setError(toErr(e, "조건검색 결과 조회에 실패했습니다. Kiwoom REST 연결 상태를 확인해 주세요."));
     }
   };
@@ -267,7 +300,7 @@ function MarketTrendsPage() {
         source: "kiwoom_rest",
         items: selectedItems,
       });
-      setMessage(`수급 이벤트 후보 저장 완료: saved ${res.saved_count}, updated ${res.updated_count}, unmatched ${res.unmatched_count}`);
+      setMessage("수급 이벤트 후보로 저장되었습니다.");
       await loadEvents();
     } catch (e) {
       setError(toErr(e, "수급 이벤트 후보 저장에 실패했습니다."));
@@ -378,14 +411,15 @@ function MarketTrendsPage() {
     }
   };
 
-  const loadFlow = async () => {
+  const loadFlow = async (targetDate?: string) => {
     setError("");
     setMessage("");
     setFlowLoading(true);
     setSelectedFlowTheme(null);
     setFlowStocks([]);
     try {
-      const res = await repositories.marketTrends.getExternalDailyThemeFlow(tradeDate);
+      const baseDate = targetDate || tradeDate;
+      const res = await repositories.marketTrends.getExternalDailyThemeFlow(baseDate);
       const items = res.items ?? [];
       setFlowSummaries(items);
       setRankDraftMap(
@@ -417,6 +451,13 @@ function MarketTrendsPage() {
   };
 
   const onChartError = (key: string) => setBrokenCharts((prev) => ({ ...prev, [key]: true }));
+  const applyFlowDate = async (nextDate: string) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) return;
+    const parsed = new Date(nextDate);
+    if (Number.isNaN(parsed.getTime())) return;
+    setTradeDate(nextDate);
+    await Promise.all([loadEvents(nextDate), loadFlow(nextDate)]);
+  };
 
   const loadMonthlyFlow = async () => {
     if (!monthlyBaseMonth) {
@@ -516,6 +557,39 @@ function MarketTrendsPage() {
 
   const monthlyCells = useMemo(() => buildCalendarCells(monthlyBaseMonth, monthlyCalendarDays), [monthlyBaseMonth, monthlyCalendarDays]);
   const monthlyTopThemes = useMemo(() => monthlyTrendThemes.slice(0, 5), [monthlyTrendThemes]);
+  const monthlyMaxDayScore = useMemo(
+    () => Math.max(1, ...monthlyCalendarDays.map((d) => d.themes.reduce((sum, t) => sum + (t.rank_score ?? 0), 0))),
+    [monthlyCalendarDays],
+  );
+  const selectedMonthlyDay = useMemo(
+    () => monthlyCalendarDays.find((d) => d.trade_date === selectedMonthlyDate) ?? null,
+    [monthlyCalendarDays, selectedMonthlyDate],
+  );
+  const monthlySummary = useMemo(() => {
+    const uniqueThemes = new Set<number>();
+    let totalEvents = 0;
+    let maxScore = -1;
+    let bestDate = "-";
+    for (const day of monthlyCalendarDays) {
+      let dayScore = 0;
+      for (const theme of day.themes) {
+        uniqueThemes.add(theme.market_theme_id);
+        totalEvents += theme.stock_count ?? 0;
+        dayScore += theme.rank_score ?? 0;
+      }
+      if (dayScore > maxScore) {
+        maxScore = dayScore;
+        bestDate = day.trade_date.slice(5);
+      }
+    }
+    return {
+      totalEvents,
+      themeCount: uniqueThemes.size,
+      topTheme: monthlyTopThemes[0]?.theme_name ?? "없음",
+      bestDate,
+      unclassified: "-",
+    };
+  }, [monthlyCalendarDays, monthlyTopThemes]);
   const todayDate = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const monthlyLineData = useMemo(() => {
     if (monthlyTopThemes.length === 0) return [];
@@ -580,44 +654,61 @@ function MarketTrendsPage() {
       {activeTab === "kiwoom" ? (
         <div className="space-y-4">
           <div className="grid grid-cols-1 xl:grid-cols-[380px_1fr] gap-4">
-            <SectionCard title="키움 조건검색 목록">
+            <SectionCard title="">
+              <div className="watchlist-card-title-wrap">
+                <h3 className="section-title m-0">키움 조건식 목록</h3>
+                <span className="hint-icon" title="키움 REST API에서 조건검색식을 조회합니다. 새로고침 시 최신 조건식 목록을 다시 불러옵니다.">i</span>
+              </div>
               <div className="flex gap-2 mb-2">
                 <button type="button" className="btn btn-secondary" onClick={() => void refreshConditions()} disabled={conditionsRefreshing}>
-                  {conditionsRefreshing ? "새로고침 중..." : "조건검색 목록 새로고침"}
+                  {conditionsRefreshing ? "새로고침 중..." : "조건식 새로고침"}
                 </button>
+                <select
+                  className="select-control market-trend-condition-order"
+                  aria-label="조건식 정렬"
+                  title="조건식 정렬"
+                  value={conditionOrderMode}
+                  onChange={(e) => setConditionOrderMode(e.target.value as ConditionOrderMode)}
+                >
+                  <option value="number">번호순</option>
+                  <option value="name">조건식명순</option>
+                </select>
               </div>
-              <p className="text-xs text-muted mb-2">조건검색 목록은 Kiwoom REST API에서 직접 조회하며, 새로고침 시 최신 조건식 목록을 반영합니다.</p>
-              <div className="table-shell max-h-[420px] overflow-y-auto overflow-x-hidden">
-                <table className="data-table compact-table table-fixed w-full">
-                  <thead>
-                    <tr>
-                      <th className="cursor-pointer w-[92px]" onClick={() => setConditionSort((p) => toggleSort(p, "condition_seq"))}>조건식 번호{sortMark(conditionSort.key === "condition_seq", conditionSort.order)}</th>
-                      <th className="cursor-pointer" onClick={() => setConditionSort((p) => toggleSort(p, "condition_name"))}>조건식명{sortMark(conditionSort.key === "condition_name", conditionSort.order)}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sortedConditions.map((c) => {
-                      const selected = selectedConditionSeq === c.condition_seq;
-                      return (
-                        <tr key={c.id} className={`cursor-pointer ${selected ? "bg-blue-50" : ""}`} onClick={() => { setSelectedConditionSeq(c.condition_seq); setSelectedConditionName(c.condition_name); }}>
-                          <td>{c.condition_seq}</td>
-                          <td className="whitespace-normal break-words leading-5" title={c.condition_name}>{c.condition_name}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+              <div className="market-trend-condition-list">
+                {sortedConditions.map((c) => {
+                  const selected = selectedConditionSeq === c.condition_seq;
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      className={`market-trend-condition-item ${selected ? "selected" : ""}`}
+                      onClick={() => { setSelectedConditionSeq(c.condition_seq); setSelectedConditionName(c.condition_name); }}
+                      title={c.condition_name}
+                    >
+                      <strong>{c.condition_seq.padStart(2, "0")}.</strong>
+                      <span>{c.condition_name}</span>
+                    </button>
+                  );
+                })}
               </div>
             </SectionCard>
 
-            <SectionCard title="조건검색 결과 / 수급 이벤트 후보">
+            <SectionCard title="">
+              <div className="watchlist-card-title-wrap">
+                <h3 className="section-title m-0">조건검색 결과</h3>
+                <span className="hint-icon" title="선택한 조건식의 현재 검색 결과입니다. 체크한 종목만 수급 이벤트 후보로 저장됩니다.">i</span>
+              </div>
               <div className="space-y-2 mb-3">
-                <div className="text-sm text-muted">선택 조건식: {selectedConditionSeq ? `${selectedConditionSeq} · ${selectedConditionName}` : "미선택"}</div>
-                <div className="flex gap-2 flex-wrap">
-                  <button type="button" className="btn btn-secondary" onClick={() => void loadConditionResults()}>조건검색 결과 조회</button>
-                  <button type="button" className="btn btn-primary" onClick={() => void saveSelectedAsEvents()}>선택 종목 수급 이벤트 후보 저장</button>
+                <div className="text-sm text-muted">
+                  {selectedConditionSeq
+                    ? `${selectedConditionSeq} · ${selectedConditionName} · 조회 결과 ${sortedResults.length}건 · 선택 ${selectedItems.length}건`
+                    : "조건식을 선택해 주세요."}
                 </div>
-                <p className="text-xs text-muted">조건검색 결과는 조회 전용이며, 선택 저장 시에만 수급 이벤트 후보로 저장됩니다.</p>
+                {resultPanelStatus ? <div className="text-xs text-muted">{resultPanelStatus}</div> : null}
+                <div className="flex gap-2 flex-wrap">
+                  <button type="button" className="btn btn-secondary" onClick={() => void loadConditionResults()} disabled={!selectedConditionSeq}>결과 조회</button>
+                  <button type="button" className="btn btn-primary" onClick={() => void saveSelectedAsEvents()} disabled={selectedItems.length === 0}>선택 후보 저장</button>
+                </div>
               </div>
               <div className="table-shell max-h-[420px] overflow-auto">
                 <table className="data-table compact-table">
@@ -637,22 +728,28 @@ function MarketTrendsPage() {
                           <span>체크</span>
                         </label>
                       </th>
-                      <th className="cursor-pointer" onClick={() => setResultSort((p) => toggleSort(p, "stock_code"))}>종목코드{sortMark(resultSort.key === "stock_code", resultSort.order)}</th>
-                      <th className="cursor-pointer" onClick={() => setResultSort((p) => toggleSort(p, "stock_name"))}>종목명{sortMark(resultSort.key === "stock_name", resultSort.order)}</th>
+                      <th className="cursor-pointer" onClick={() => setResultSort((p) => toggleSort(p, "stock_name"))}>종목{sortMark(resultSort.key === "stock_name", resultSort.order)}</th>
                       <th className="cursor-pointer" style={{ textAlign: "right" }} onClick={() => setResultSort((p) => toggleSort(p, "current_price"))}>현재가{sortMark(resultSort.key === "current_price", resultSort.order)}</th>
                       <th className="cursor-pointer text-right" onClick={() => setResultSort((p) => toggleSort(p, "change_rate"))}>등락률{sortMark(resultSort.key === "change_rate", resultSort.order)}</th>
                       <th className="cursor-pointer" style={{ textAlign: "right" }} onClick={() => setResultSort((p) => toggleSort(p, "volume"))}>거래량{sortMark(resultSort.key === "volume", resultSort.order)}</th>
-                      <th className="cursor-pointer" style={{ textAlign: "right" }} onClick={() => setResultSort((p) => toggleSort(p, "estimated_trading_value"))}>거래대금(추정, 억){sortMark(resultSort.key === "estimated_trading_value", resultSort.order)}</th>
+                      <th className="cursor-pointer" style={{ textAlign: "right" }} onClick={() => setResultSort((p) => toggleSort(p, "estimated_trading_value"))}>거래대금(억){sortMark(resultSort.key === "estimated_trading_value", resultSort.order)}</th>
                     </tr>
                   </thead>
                   <tbody>
+                    {sortedResults.length === 0 ? (
+                      <tr><td colSpan={6} className="text-center text-muted">조회 결과가 없습니다.</td></tr>
+                    ) : null}
                     {sortedResults.map((r) => {
                       const key = getResultRowKey(r);
                       return (
                         <tr key={key}>
                           <td><input type="checkbox" checked={Boolean(checkedMap[key])} onChange={(e) => setCheckedMap((prev) => ({ ...prev, [key]: e.target.checked }))} /></td>
-                          <td>{r.stock_code || "-"}</td>
-                          <td>{r.stock_name || "-"}</td>
+                          <td>
+                            <div className="stock-cell">
+                              <strong>{r.stock_name || "-"}</strong>
+                              <span>{r.stock_code || "-"}</span>
+                            </div>
+                          </td>
                           <td style={{ textAlign: "right" }}>{fmtNumber(r.current_price)}</td>
                           <td className="text-right">{fmtPct(r.change_rate)}</td>
                           <td style={{ textAlign: "right" }}>{fmtNumber(r.volume)}</td>
@@ -666,7 +763,11 @@ function MarketTrendsPage() {
             </SectionCard>
           </div>
 
-          <SectionCard title="저장된 수급 이벤트 후보">
+          <SectionCard title="">
+            <div className="watchlist-card-title-wrap">
+              <h3 className="section-title m-0">저장된 수급 이벤트 후보</h3>
+              <span className="hint-icon" title="저장된 후보는 일별·월별 테마 수급 흐름 분석의 기초 데이터로 활용됩니다.">i</span>
+            </div>
             <div className="flex gap-2 items-end mb-2 flex-wrap">
               <input className="input-control" style={{ width: "160px", minWidth: "160px" }} type="date" value={tradeDate} onChange={(e) => setTradeDate(e.target.value)} />
               <button type="button" className="btn btn-secondary" onClick={() => void loadEvents()}>조회</button>
@@ -675,16 +776,26 @@ function MarketTrendsPage() {
               <table className="data-table compact-table">
                 <thead>
                   <tr>
-                    <th>감지일</th><th>종목코드</th><th className="cursor-pointer" onClick={() => setEventNameSortOrder((p) => (p === "asc" ? "desc" : "asc"))}>종목명{sortMark(true, eventNameSortOrder)}</th><th>시장</th><th className="text-right">등락률</th><th>연결 테마</th><th>메모</th><th>관리</th>
+                    <th>감지일</th><th className="cursor-pointer" onClick={() => setEventNameSortOrder((p) => (p === "asc" ? "desc" : "asc"))}>종목{sortMark(true, eventNameSortOrder)}</th><th>시장</th><th className="text-right">등락률</th><th>연결 테마</th><th>메모</th><th>관리</th>
                   </tr>
                 </thead>
                 <tbody>
+                  {sortedEvents.length === 0 ? (
+                    <tr><td colSpan={7} className="text-center text-muted">저장된 후보가 없습니다.</td></tr>
+                  ) : null}
                   {sortedEvents.map((e) => {
                     const draft = eventDrafts[e.event_id] ?? { theme_status: "unassigned", user_memo: "", selected_theme_id: "" };
                     const links = eventThemeLinksMap[e.event_id] ?? [];
                     return (
                       <tr key={e.event_id}>
-                        <td>{formatDate(e.detected_at)}</td><td>{e.stock_code || "-"}</td><td>{e.stock_name || "-"}</td><td>{e.market_type || "-"}</td><td className="text-right">{fmtPct(e.change_rate)}</td>
+                        <td>{formatDate(e.detected_at)}</td>
+                        <td>
+                          <div className="stock-cell">
+                            <strong>{e.stock_name || "-"}</strong>
+                            <span>{e.stock_code || "-"}</span>
+                          </div>
+                        </td>
+                        <td>{e.market_type || "-"}</td><td className="text-right">{fmtPct(e.change_rate)}</td>
                         <td className="align-top">
                           <div className="min-w-[260px]">
                             <div className="flex gap-1 items-center">
@@ -715,46 +826,60 @@ function MarketTrendsPage() {
 
       {activeTab === "flow" ? (
         <div className="space-y-4">
-          <SectionCard title="일별 테마 수급 흐름">
+          <SectionCard title="">
+            <div className="watchlist-card-title-wrap">
+              <h3 className="section-title m-0">일별 테마 수급 흐름</h3>
+              <span className="hint-icon" title="선택한 날짜의 저장된 수급 이벤트 후보를 테마별로 집계합니다. 날짜를 선택하면 즉시 조회됩니다.">i</span>
+            </div>
             <div className="flex gap-2 items-end mb-3 flex-wrap">
+              <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => void applyFlowDate(shiftDate(tradeDate, -1))}>◀</button>
               <input
                 className="input-control"
                 style={{ width: "160px", minWidth: "160px" }}
                 type="date"
                 value={tradeDate}
-                onChange={(e) => {
-                  const nextDate = e.target.value;
-                  setTradeDate(nextDate);
-                  void loadEvents(nextDate);
+                onChange={(e) => void applyFlowDate(e.target.value)}
+                onBlur={(e) => void applyFlowDate(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void applyFlowDate((e.target as HTMLInputElement).value);
+                  }
                 }}
               />
-              <button type="button" className="btn btn-primary" onClick={() => void loadFlow()}>조회</button>
-              <button type="button" className="btn btn-secondary" onClick={() => setRankEditMode((p) => !p)}>{rankEditMode ? "편집 취소" : "순위 편집"}</button>
+              <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => void applyFlowDate(shiftDate(tradeDate, 1))}>▶</button>
+              <button type="button" className="btn btn-secondary" onClick={() => void applyFlowDate(new Date().toISOString().slice(0, 10))}>오늘</button>
+              <button type="button" className="btn btn-secondary" title="자동 순위와 다르게 체감 주도 테마를 직접 조정할 수 있습니다." onClick={() => setRankEditMode((p) => !p)}>{rankEditMode ? "편집 취소" : "순위 편집"}</button>
               {rankEditMode ? <button type="button" className="btn btn-primary" onClick={() => void saveDailyRanks()}>순위 저장</button> : null}
               {rankEditMode ? <button type="button" className="btn btn-secondary" onClick={() => void resetDailyRanks()}>수동 순위 초기화</button> : null}
             </div>
-            <p className="text-xs text-muted mb-2">자동 순위는 평균등락률 기준이며, 필요 시 사용자가 해당일의 체감 1위 테마를 직접 지정할 수 있습니다.</p>
+
+            <div className="watchlist-top-stats mb-3">
+              <div className="watchlist-top-stat-card"><p className="watchlist-top-stat-label">저장 후보</p><strong className="watchlist-top-stat-value">{flowSummaryStats.savedCandidates}건</strong></div>
+              <div className="watchlist-top-stat-card"><p className="watchlist-top-stat-label">등장 테마</p><strong className="watchlist-top-stat-value">{flowSummaryStats.themeCount}개</strong></div>
+              <div className="watchlist-top-stat-card"><p className="watchlist-top-stat-label">1위 테마</p><strong className="watchlist-top-stat-value">{flowSummaryStats.topTheme}</strong></div>
+              <div className="watchlist-top-stat-card"><p className="watchlist-top-stat-label">최고 등락률</p><strong className="watchlist-top-stat-value">{fmtPct(flowSummaryStats.maxChangeRate)}</strong></div>
+              <div className="watchlist-top-stat-card"><p className="watchlist-top-stat-label">미분류</p><strong className="watchlist-top-stat-value">{flowSummaryStats.unclassified}</strong></div>
+            </div>
 
             {flowLoading ? <p className="text-sm text-muted">테마 요약을 조회 중입니다.</p> : null}
-            {!flowLoading && flowSummaries.length === 0 ? <p className="text-sm text-muted">해당일에 테마가 연결된 수급 이벤트 후보가 없습니다.</p> : null}
+            {!flowLoading && flowSummaries.length === 0 ? <p className="text-sm text-muted">이 날짜에 저장된 수급 이벤트 후보가 없습니다.</p> : null}
 
             {flowSummaries.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              <div className="daily-theme-rank-grid">
                 {flowSummaries.map((item) => {
                   const selected = selectedFlowTheme?.id === item.market_theme_id;
                   return (
                     <button
                       key={item.market_theme_id}
                       type="button"
-                      className={`text-left rounded-lg border p-3 transition ${selected ? "border-blue-500 bg-blue-50" : "border-slate-200 hover:border-slate-300"}`}
+                      className={`daily-theme-rank-card ${selected ? "selected" : ""}`}
                       onClick={() => void loadFlowStocks(item)}
                     >
-                      <div className="font-semibold text-slate-900">{item.final_rank ?? "-"}위 · {item.theme_name}</div>
-                      <div className="text-xs text-muted mt-1">순위 기준: {item.rank_basis === "manual" ? "수동" : "자동"} · 점수 {item.rank_score}</div>
-                      <div className="text-xs text-muted mt-1">연결 종목 {item.stock_count} · 이벤트 {item.event_count}</div>
-                      <div className="text-xs text-muted">평균 등락률 {fmtPct(item.avg_change_rate)} · 최고 {fmtPct(item.max_change_rate)}</div>
-                      <div className="text-xs text-muted">거래대금(추정) 합계 {fmtEokShort(item.estimated_trading_value_sum)}</div>
-                      <div className="text-xs text-muted truncate mt-1">대표 종목: {item.representative_stocks.length > 0 ? item.representative_stocks.join(", ") : "-"}</div>
+                      <div className="daily-theme-rank-title">{item.final_rank ?? "-"}위 {item.theme_name}</div>
+                      <div className="daily-theme-rank-meta">점수 {item.rank_score} · {item.stock_count}종목 · 이벤트 {item.event_count}</div>
+                      <div className="daily-theme-rank-meta">평균 {fmtPct(item.avg_change_rate)} · 최고 {fmtPct(item.max_change_rate)}</div>
+                      <div className="daily-theme-rank-meta truncate">대표 {item.representative_stocks.length > 0 ? item.representative_stocks[0] : "-"} · 거래대금 {fmtEokShort(item.estimated_trading_value_sum)}</div>
                       {rankEditMode ? (
                         <div className="mt-2">
                           <label className="text-xs text-slate-600 mr-1">수동 순위</label>
@@ -776,8 +901,11 @@ function MarketTrendsPage() {
             ) : null}
           </SectionCard>
 
-          <SectionCard title="선택 테마 상세 종목">
-            {selectedFlowTheme ? <p className="text-sm text-muted mb-2">선택 테마: {selectedFlowTheme.name}</p> : null}
+          <SectionCard title="">
+            <div className="watchlist-card-title-wrap">
+              <h3 className="section-title m-0">선택 테마 상세 종목{selectedFlowTheme ? ` - ${selectedFlowTheme.name}` : ""}</h3>
+            </div>
+            {selectedFlowTheme && selectedThemeMeta ? <p className="text-sm text-muted mb-2">{selectedThemeMeta.stockCount}종목 · 대표 {selectedThemeMeta.representative}</p> : null}
             {flowStocksLoading ? <p className="text-sm text-muted">상세 종목을 조회 중입니다.</p> : null}
             {!flowStocksLoading && selectedFlowTheme && flowStocks.length === 0 ? <p className="text-sm text-muted">선택한 테마에 연결된 종목이 없습니다.</p> : null}
 
@@ -839,52 +967,102 @@ function MarketTrendsPage() {
 
       {activeTab === "monthly" ? (
         <div className="space-y-4">
-          <SectionCard title="월별 테마 수급 흐름">
-            <p className="text-sm text-muted mb-2">저장된 수급 이벤트 후보와 테마 연결 기록을 기준으로 월간 테마 흐름을 표시합니다.</p>
+          <SectionCard title="">
+            <div className="watchlist-card-title-wrap">
+              <h3 className="section-title m-0">월별 테마 수급 흐름</h3>
+              <span className="hint-icon" title="저장된 수급 이벤트 후보를 월 단위로 집계하여 날짜별·테마별 수급 흐름을 보여줍니다.">i</span>
+            </div>
             <div className="flex gap-2 items-end mb-3 flex-wrap">
               <input className="input-control" style={{ width: "140px", minWidth: "140px" }} type="month" value={monthlyBaseMonth} onChange={(e) => setMonthlyBaseMonth(e.target.value)} />
               <button type="button" className="btn btn-primary" onClick={() => void loadMonthlyFlow()}>조회</button>
+              <button type="button" className="btn btn-secondary" onClick={() => { const currentMonth = getMonthInput(); setMonthlyBaseMonth(currentMonth); void loadMonthlyFlow(); }}>이번 달</button>
               {monthlyStartDate && monthlyEndDate ? <span className="text-xs text-muted">조회 구간: {monthlyStartDate} ~ {monthlyEndDate}</span> : null}
             </div>
 
+            <div className="watchlist-top-stats mb-3">
+              <div className="watchlist-top-stat-card"><p className="watchlist-top-stat-label">전체 이벤트</p><strong className="watchlist-top-stat-value">{monthlySummary.totalEvents}건</strong></div>
+              <div className="watchlist-top-stat-card"><p className="watchlist-top-stat-label">등장 테마</p><strong className="watchlist-top-stat-value">{monthlySummary.themeCount}개</strong></div>
+              <div className="watchlist-top-stat-card"><p className="watchlist-top-stat-label">TOP 테마</p><strong className="watchlist-top-stat-value">{monthlySummary.topTheme}</strong></div>
+              <div className="watchlist-top-stat-card"><p className="watchlist-top-stat-label">최고 수급일</p><strong className="watchlist-top-stat-value">{monthlySummary.bestDate}</strong></div>
+              <div className="watchlist-top-stat-card"><p className="watchlist-top-stat-label">미분류 <span className="hint-icon" title="테마가 연결되지 않은 수급 이벤트 후보 수입니다.">i</span></p><strong className="watchlist-top-stat-value">{monthlySummary.unclassified}</strong></div>
+            </div>
+
             {monthlyLoading ? <p className="text-sm text-muted">월별 테마 수급 흐름을 조회 중입니다.</p> : null}
-            {!monthlyLoading && monthlyCalendarDays.length === 0 ? <p className="text-sm text-muted">해당 월에 연결된 테마 수급 이벤트가 없습니다.</p> : null}
+            {!monthlyLoading && monthlyCalendarDays.length === 0 ? <p className="text-sm text-muted">저장된 수급 이벤트 후보가 없습니다.</p> : null}
 
             {monthlyCalendarDays.length > 0 ? (
-              <div className="border rounded-lg p-3">
-                <div className="grid grid-cols-7 gap-2 mb-2 text-xs font-medium text-slate-600">
-                  {["일", "월", "화", "수", "목", "금", "토"].map((w) => <div key={w}>{w}</div>)}
+              <div className="market-trend-monthly-grid">
+                <div className="border rounded-lg p-3">
+                  <div className="watchlist-card-title-wrap">
+                    <h4 className="section-title m-0">월간 수급 달력</h4>
+                    <span className="hint-icon" title="날짜별로 저장된 수급 이벤트 후보의 테마 점수를 표시합니다. 강한 수급일은 더 강조되어 표시됩니다.">i</span>
+                  </div>
+                  <div className="grid grid-cols-7 gap-2 mb-2 text-xs font-medium text-slate-600">
+                    {["일", "월", "화", "수", "목", "금", "토"].map((w) => <div key={w}>{w}</div>)}
+                  </div>
+                  <div className="grid grid-cols-7 gap-2">
+                    {monthlyCells.map((cell, idx) => {
+                      const isToday = cell.date === todayDate;
+                      const isSelected = cell.date && selectedMonthlyDate === cell.date;
+                      const score = cell.day?.themes?.reduce((sum, t) => sum + (t.rank_score ?? 0), 0) ?? 0;
+                      const intensity = score / monthlyMaxDayScore;
+                      const heatClass = intensity >= 0.75 ? "heat-strong" : intensity >= 0.4 ? "heat-mid" : intensity > 0 ? "heat-light" : "";
+                      return (
+                        <button
+                          key={`${cell.date ?? "blank"}-${idx}`}
+                          type="button"
+                          disabled={!cell.date}
+                          onClick={() => cell.date && setSelectedMonthlyDate(cell.date)}
+                          className={`market-trend-calendar-cell ${!cell.date ? "blank" : ""} ${isSelected ? "selected" : ""} ${isToday ? "today" : ""} ${heatClass}`}
+                        >
+                          <div className="text-xs font-semibold mb-1">{cell.date ? Number(cell.date.slice(8, 10)) : ""}</div>
+                          {cell.day?.themes?.slice(0, 3).map((theme) => (
+                            <div key={`${cell.date}-${theme.market_theme_id}`} className="text-[11px] text-slate-700 truncate">
+                              {theme.theme_name} +{theme.rank_score}
+                            </div>
+                          ))}
+                          {cell.day && cell.day.themes.length > 3 ? <div className="text-[11px] text-slate-500">+{cell.day.themes.length - 3}개</div> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-                <div className="grid grid-cols-7 gap-2">
-                  {monthlyCells.map((cell, idx) => {
-                    const isToday = cell.date === todayDate;
-                    const isSelected = cell.date && selectedMonthlyDate === cell.date;
-                    return (
-                      <button
-                        key={`${cell.date ?? "blank"}-${idx}`}
-                        type="button"
-                        disabled={!cell.date}
-                        onClick={() => cell.date && setSelectedMonthlyDate(cell.date)}
-                        className={`min-h-[110px] rounded border p-2 text-left ${!cell.date ? "bg-slate-50 border-slate-100 cursor-default" : isSelected ? "border-blue-500 bg-blue-50" : "border-slate-200"} ${isToday ? "ring-1 ring-blue-300" : ""}`}
-                      >
-                        <div className="text-xs font-semibold mb-1">{cell.date ? Number(cell.date.slice(8, 10)) : ""}</div>
-                        {cell.day?.themes?.slice(0, 3).map((theme) => (
-                          <div key={`${cell.date}-${theme.market_theme_id}`} className="text-[11px] text-slate-700 truncate">
-                            {theme.final_rank ?? theme.rank} {theme.theme_name} · +{theme.rank_score}점 · {theme.stock_count}종목 {theme.rank_basis === "manual" ? "· 수동" : ""}
-                          </div>
-                        ))}
-                        {cell.date && (!cell.day || cell.day.themes.length === 0) ? <div className="text-[11px] text-slate-400">-</div> : null}
-                      </button>
-                    );
-                  })}
+
+                <div className="border rounded-lg p-3">
+                  <h4 className="section-title m-0">선택일 상세</h4>
+                  {selectedMonthlyDay ? (
+                    <div className="space-y-2">
+                      <p className="text-sm text-muted">{selectedMonthlyDay.trade_date}</p>
+                      {selectedMonthlyDay.themes.length === 0 ? <p className="text-sm text-muted">선택일 데이터가 없습니다.</p> : null}
+                      {selectedMonthlyDay.themes.slice(0, 5).map((theme) => (
+                        <div key={`selected-${theme.market_theme_id}`} className="flex items-center justify-between text-sm gap-2">
+                          <span className="font-semibold text-slate-800">{theme.theme_name}</span>
+                          <span className="text-slate-600">+{theme.rank_score} · {theme.stock_count}종목</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-sm text-muted">월간 TOP 테마</p>
+                      {monthlyTopThemes.slice(0, 3).map((theme) => (
+                        <div key={`month-top-${theme.market_theme_id}`} className="flex items-center justify-between text-sm gap-2">
+                          <span className="font-semibold text-slate-800">{theme.theme_name}</span>
+                          <span className="text-slate-600">+{theme.series[theme.series.length - 1]?.value ?? 0}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             ) : null}
           </SectionCard>
 
-          <SectionCard title="월간 테마 흐름 라인 그래프 (순위 가중 누적 점수)">
-            <p className="text-xs text-muted mb-3">일별 테마 순위에 가중치를 부여해 월초부터 누적한 값입니다. 반복적으로 상위권에 등장한 테마일수록 상승합니다.</p>
-            {monthlyLineData.length === 0 ? <p className="text-sm text-muted">해당 월에 연결된 테마 수급 이벤트가 없습니다.</p> : null}
+          <SectionCard title="">
+            <div className="watchlist-card-title-wrap">
+              <h3 className="section-title m-0">월간 테마 누적 흐름 그래프</h3>
+              <span className="hint-icon" title="일별 테마 점수를 누적해 월간 흐름을 보여줍니다. 반복적으로 수급 이벤트가 발생한 테마일수록 상승합니다.">i</span>
+            </div>
+            {monthlyLineData.length === 0 ? <p className="text-sm text-muted">그래프 데이터가 없습니다.</p> : null}
             {monthlyLineData.length > 0 ? (
               <div className="space-y-2">
                 <div className="flex flex-wrap gap-3 text-xs">
@@ -945,15 +1123,23 @@ function MarketTrendsPage() {
                 <div className="table-shell overflow-auto">
                   <table className="data-table compact-table">
                     <thead>
-                      <tr><th>날짜</th><th>일별 테마 순위 (상위 3)</th></tr>
+                      <tr><th>날짜</th><th>1위 테마</th><th>2위 테마</th><th>3위 테마</th><th>이벤트 수</th><th>주요 종목</th><th>상세</th></tr>
                     </thead>
                     <tbody>
-                      {monthlyCalendarDays.filter((d) => d.themes.length > 0 && (!selectedMonthlyDate || d.trade_date === selectedMonthlyDate)).map((d) => (
+                      {monthlyCalendarDays.filter((d) => d.themes.length > 0).map((d) => (
                         <tr key={d.trade_date}>
                           <td>{d.trade_date}</td>
-                          <td>{d.themes.slice(0, 3).map((t) => `${t.final_rank ?? t.rank}. ${t.theme_name} (+${t.rank_score}점, ${t.stock_count}종목, ${t.rank_basis === "manual" ? "수동" : "자동"})`).join(" / ")}</td>
+                          <td>{d.themes[0] ? `${d.themes[0].theme_name} +${d.themes[0].rank_score}` : "-"}</td>
+                          <td>{d.themes[1] ? `${d.themes[1].theme_name} +${d.themes[1].rank_score}` : "-"}</td>
+                          <td>{d.themes[2] ? `${d.themes[2].theme_name} +${d.themes[2].rank_score}` : "-"}</td>
+                          <td>{d.themes.reduce((sum, t) => sum + (t.stock_count ?? 0), 0)}건</td>
+                          <td>{d.themes[0] ? `${d.themes[0].theme_name} 외 ${Math.max(0, d.themes.reduce((sum, t) => sum + (t.stock_count ?? 0), 0) - 1)}` : "-"}</td>
+                          <td><button type="button" className="btn btn-secondary btn-table-sm" onClick={() => setSelectedMonthlyDate(d.trade_date)}>보기</button></td>
                         </tr>
                       ))}
+                      {monthlyCalendarDays.filter((d) => d.themes.length > 0).length === 0 ? (
+                        <tr><td colSpan={7} className="text-center text-muted">월간 상세 데이터가 없습니다.</td></tr>
+                      ) : null}
                     </tbody>
                   </table>
                 </div>

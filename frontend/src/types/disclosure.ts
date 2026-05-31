@@ -75,3 +75,8 @@ export type DisclosureCollectSelectedResponse = {
   message: string;
   results: DisclosureCollectSelectedItemResult[];
 };
+
+export type DisclosureBulkDeleteResponse = {
+  deleted: number;
+  failed: number;
+};

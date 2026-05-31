@@ -11,6 +11,9 @@ export type Watchlist = {
   exit_condition: string | null;
   risk_note: string | null;
   is_active: number;
+  price_start_date?: string | null;
+  price_end_date?: string | null;
+  price_data_count?: number | null;
   registered_at: string;
   updated_at: string;
 };

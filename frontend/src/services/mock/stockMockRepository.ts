@@ -61,9 +61,12 @@ export const stockMockRepository = {
     return {
       markets: payload.markets,
       dry_run: payload.dry_run,
+      mode: payload.mode || "upsert",
+      rebuild_strategy: payload.mode === "rebuild" ? "soft_rebuild" : null,
       raw_fetched_count: 0,
       eligible_count: 0,
       type_counts: {},
+      deleted_existing_count: 0,
       fetched_count: 0,
       inserted_count: 0,
       updated_count: 0,

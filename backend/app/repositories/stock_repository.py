@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
 from backend.app.entities.stock import Stock
@@ -84,3 +84,7 @@ class StockRepository:
 
     def commit(self) -> None:
         self.db.commit()
+
+    def count_all(self) -> int:
+        stmt = select(func.count()).select_from(Stock)
+        return int(self.db.scalar(stmt) or 0)

@@ -78,5 +78,8 @@ class WatchlistListItem(BaseModel):
     exit_condition: str | None
     risk_note: str | None
     is_active: int
+    price_start_date: str | None = None
+    price_end_date: str | None = None
+    price_data_count: int | None = None
     registered_at: str
     updated_at: str

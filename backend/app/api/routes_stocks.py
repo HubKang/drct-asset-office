@@ -65,6 +65,7 @@ def sync_stocks(payload: StockSyncRequest, db: Session = Depends(get_db)) -> Sto
         dry_run=payload.dry_run,
         deactivate_missing=payload.deactivate_missing,
         include_security_types=payload.include_security_types,
+        mode=payload.mode,
     )
 
 

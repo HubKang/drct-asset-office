@@ -1,6 +1,7 @@
 import type { AiSummarizeResponse } from "@/types/analysis";
 import type {
   Disclosure,
+  DisclosureBulkDeleteResponse,
   DisclosureCollectRequest,
   DisclosureCollectResponse,
   DisclosureCollectSelectedResponse,
@@ -93,6 +94,12 @@ export const disclosureMockRepository = {
       failed_count: 0,
       skipped_count: 0,
       message: "mock mode: selected disclosures summarize completed",
+    };
+  },
+  async deleteDisclosuresBulk(disclosureIds: number[]): Promise<DisclosureBulkDeleteResponse> {
+    return {
+      deleted: disclosureIds.length,
+      failed: 0,
     };
   },
 };

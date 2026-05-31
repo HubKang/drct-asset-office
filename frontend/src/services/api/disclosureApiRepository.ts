@@ -2,6 +2,7 @@ import { apiRequest } from "@/services/api/apiClient";
 import type { AiSummarizeResponse } from "@/types/analysis";
 import type {
   Disclosure,
+  DisclosureBulkDeleteResponse,
   DisclosureCollectRequest,
   DisclosureCollectResponse,
   DisclosureCollectSelectedResponse,
@@ -36,5 +37,10 @@ export const disclosureApiRepository = {
         overwrite: true,
         limit: disclosureIds.length || 1,
       }),
+    }),
+  deleteDisclosuresBulk: (disclosureIds: number[]) =>
+    apiRequest<DisclosureBulkDeleteResponse>("/disclosures/bulk-delete", {
+      method: "POST",
+      body: JSON.stringify({ disclosure_ids: disclosureIds }),
     }),
 };

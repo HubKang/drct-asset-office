@@ -30,6 +30,13 @@ export type NewsListParams = {
   offset?: number;
 };
 
+export type NewsListPageResponse = {
+  items: NewsItem[];
+  total_count: number;
+  limit: number;
+  offset: number;
+};
+
 export type NewsCollectionTarget = {
   stock_id: number;
   stock_code: string;
@@ -87,4 +94,9 @@ export type NewsCollectSelectedResponse = {
   skipped_count?: number;
   message: string;
   results: NewsCollectSelectedItemResult[];
+};
+
+export type NewsBulkDeleteResponse = {
+  deleted: number;
+  failed: number;
 };

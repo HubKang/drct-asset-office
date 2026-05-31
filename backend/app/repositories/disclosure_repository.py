@@ -148,6 +148,16 @@ class DisclosureRepository:
         self.db.add(item)
         self.db.commit()
 
+    def delete_by_ids(self, disclosure_ids: list[int]) -> int:
+        if not disclosure_ids:
+            return 0
+        stmt: Select[tuple[Disclosure]] = select(Disclosure).where(Disclosure.id.in_(disclosure_ids))
+        rows = list(self.db.scalars(stmt).all())
+        for item in rows:
+            self.db.delete(item)
+        self.db.commit()
+        return len(rows)
+
     def bulk_create_skip_duplicates(self, items: list[Disclosure]) -> tuple[int, int]:
         saved = 0
         skipped = 0

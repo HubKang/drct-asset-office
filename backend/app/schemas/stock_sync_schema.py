@@ -11,6 +11,7 @@ class StockSyncRequest(BaseModel):
     dry_run: bool = False
     deactivate_missing: bool = True
     include_security_types: list[str] = Field(default_factory=lambda: ["common_stock"])
+    mode: str = "upsert"
 
     @field_validator("include_security_types")
     @classmethod
@@ -31,10 +32,13 @@ class StockSyncRequest(BaseModel):
 class StockSyncResponse(BaseModel):
     markets: list[str]
     dry_run: bool
+    mode: str = "upsert"
+    rebuild_strategy: str | None = None
     raw_fetched_count: int
     eligible_count: int
     type_counts: dict[str, int]
     type_samples: dict[str, list[dict[str, str | None]]] | None = None
+    deleted_existing_count: int = 0
     fetched_count: int
     inserted_count: int
     updated_count: int

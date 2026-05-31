@@ -35,3 +35,19 @@ class NewsCollectionTargetResponse(BaseModel):
     news_count: int
     ai_processed_count: int
     latest_collected_at: str | None
+
+
+class NewsListPageResponse(BaseModel):
+    items: list[NewsResponse]
+    total_count: int
+    limit: int
+    offset: int
+
+
+class NewsBulkDeleteRequest(BaseModel):
+    news_ids: list[int]
+
+
+class NewsBulkDeleteResponse(BaseModel):
+    deleted: int
+    failed: int

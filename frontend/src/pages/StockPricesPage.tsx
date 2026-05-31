@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+﻿import { FormEvent, useEffect, useMemo, useState } from "react";
 import EmptyState from "@/components/common/EmptyState";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
@@ -16,10 +16,11 @@ import type {
 
 type MarketFilter = "ALL" | "KOSPI" | "KOSDAQ";
 type StrategyHorizon = "swing" | "long_term";
-type SummaryTab = "price" | "market";
+type SummaryTab = "price" | "market" | "gpt";
 
 const SUMMARY_LIMIT = 20;
 const DAILY_LIMIT = 20;
+const PRICE_WORKSPACE_SOURCE_LABEL = "KIWOOM_REST (ka10001, ka10015, ka10009, ka10008)";
 const FALLBACK_GPT_PROMPT = `당신은 보수적인 주식 애널리스트 보조역입니다.
 아래 DrCT에셋 근거 패키지를 바탕으로 분석해 주세요.
 
@@ -534,73 +535,51 @@ function StockPricesPage() {
     <div className="space-y-4">
       <PageHeader
         title="관심종목 Data분석"
-        description="운영 화면에서는 Kiwoom REST 가격 데이터와 시장지표를 함께 확인합니다."
+        description="관심종목의 가격·시장지표를 확인하고 GPT 분석 근거를 구성합니다."
       />
 
-      <SectionCard title="검색">
-        <form className="price-search-row" onSubmit={onSearch}>
-          <select className="select-control" value={market} onChange={(e) => setMarket(e.target.value as MarketFilter)}>
-            <option value="ALL">전체</option>
-            <option value="KOSPI">KOSPI</option>
-            <option value="KOSDAQ">KOSDAQ</option>
-          </select>
-          <input
-            className="input-control"
-            placeholder="종목코드 또는 종목명"
-            value={keyword}
-            onChange={(e) => setKeyword(e.target.value)}
-          />
-          <button type="submit" className="btn btn-primary">
-            검색
-          </button>
-          <button type="button" className="btn btn-secondary" onClick={onReset}>
-            초기화
-          </button>
-        </form>
-      </SectionCard>
-
       <div className="price-page-content">
-        <SectionCard title="캔들 보유 종목" className="price-stock-list-card">
-          <p className="price-section-note">
-            운영 화면 기준 source는 `kiwoom_rest`이며, 좌측 목록에서는 수집 건수와 수집 기간을 빠르게 확인할 수 있습니다.
-          </p>
+        <SectionCard title="분석 가능 종목" className="price-stock-list-card">
+          <div className="price-list-title-row">
+            <span className="hint-icon" title="가격 데이터가 저장되어 분석 화면에서 확인 가능한 관심종목입니다.">ⓘ</span>
+          </div>
+          <form className="price-list-search-row" onSubmit={onSearch}>
+            <select className="select-control" value={market} onChange={(e) => setMarket(e.target.value as MarketFilter)}>
+              <option value="ALL">전체</option>
+              <option value="KOSPI">KOSPI</option>
+              <option value="KOSDAQ">KOSDAQ</option>
+            </select>
+            <input
+              className="input-control"
+              placeholder="종목코드 또는 종목명"
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
+            />
+            <button type="submit" className="btn btn-primary">
+              검색
+            </button>
+          </form>
           {loading ? <p className="text-sm text-muted">로딩 중입니다.</p> : null}
           {error ? <p className="text-sm text-rose-600">{error}</p> : null}
-          {!loading && !error && summaryItems.length === 0 ? <EmptyState message="조회된 캔들 데이터가 없습니다." /> : null}
+          {!loading && !error && summaryItems.length === 0 ? <EmptyState message="조회된 분석 가능 종목이 없습니다." /> : null}
           {!loading && !error && summaryItems.length > 0 ? (
             <>
-              <div className="table-shell">
-                <table className="data-table compact-table">
-                  <thead>
-                    <tr>
-                      <th>종목명</th>
-                      <th>수집시작일</th>
-                      <th>수집종료일</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {summaryItems.map((item) => {
-                      const selected = selectedStock?.stock_id === item.stock_id;
-                      return (
-                        <tr
-                          key={item.stock_id}
-                          className={selected ? "selected-row row-clickable" : "row-clickable"}
-                          onClick={() => setSelectedStock(item)}
-                        >
-                          <td>
-                            <div className="stock-cell">
-                              <strong>{item.stock_name}</strong>
-                              <span>{item.stock_code}</span>
-                              <span>{`건수 ${fmtNumber(item.price_count)}`}</span>
-                            </div>
-                          </td>
-                          <td className="whitespace-nowrap">{item.min_trade_date || "-"}</td>
-                          <td className="whitespace-nowrap">{item.max_trade_date || "-"}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+              <div className="price-stock-card-list">
+                {summaryItems.map((item) => {
+                  const selected = selectedStock?.stock_id === item.stock_id;
+                  return (
+                    <button
+                      type="button"
+                      key={item.stock_id}
+                      className={`price-stock-card-item ${selected ? "selected" : ""}`}
+                      onClick={() => setSelectedStock(item)}
+                    >
+                      <strong>{item.stock_name}</strong>
+                      <p>{`${item.stock_code} · 데이터 ${fmtNumber(item.price_count)}건`}</p>
+                      <p>{fmtRange(item.min_trade_date, item.max_trade_date)}</p>
+                    </button>
+                  );
+                })}
               </div>
               <div className="pagination-bar">
                 <div className="pagination-info">이번 페이지 {summaryItems.length}건</div>
@@ -633,17 +612,24 @@ function StockPricesPage() {
           ) : null}
         </SectionCard>
 
-        <SectionCard title={selectedStock ? `${selectedStock.stock_name} 상세` : "상세 정보"} className="price-daily-table-card">
-          {!selectedStock ? <EmptyState message="종목을 선택하면 가격 요약, 시장지표 요약, GPT 패키지 옵션, 일봉 데이터를 함께 확인할 수 있습니다." /> : null}
+        <SectionCard title={selectedStock ? `${selectedStock.stock_name} 분석` : "종목 분석 워크스페이스"} className="price-daily-table-card">
+          {!selectedStock ? <EmptyState message="분석할 종목을 선택하세요. 좌측 목록에서 종목을 선택하면 가격 요약, 시장지표, GPT 패키지 옵션을 확인할 수 있습니다." /> : null}
 
           {selectedStock ? (
             <>
+              <div className="price-workspace-head">
+                <h3>{`${selectedStock.stock_name} 분석`}</h3>
+                <p>{`${selectedStock.stock_code} · ${selectedStock.market || "-"} · ${PRICE_WORKSPACE_SOURCE_LABEL}`}</p>
+              </div>
               <div className="tab-group">
                 <button type="button" className={summaryTab === "price" ? "btn btn-primary" : "btn btn-secondary"} onClick={() => setSummaryTab("price")}>
                   가격 요약
                 </button>
                 <button type="button" className={summaryTab === "market" ? "btn btn-primary" : "btn btn-secondary"} onClick={() => setSummaryTab("market")}>
-                  시장지표 요약
+                  시장지표
+                </button>
+                <button type="button" className={summaryTab === "gpt" ? "btn btn-primary" : "btn btn-secondary"} onClick={() => setSummaryTab("gpt")}>
+                  GPT 패키지
                 </button>
               </div>
 
@@ -651,7 +637,7 @@ function StockPricesPage() {
                 {summaryTab === "price" ? <section className="price-detail-section">
                   <div className="price-detail-header">
                     <div className="ml-auto">
-                      <span className="badge badge-blue">KIWOOM_REST (ka10081)</span>
+                      <span className="badge badge-blue">{PRICE_WORKSPACE_SOURCE_LABEL}</span>
                     </div>
                   </div>
                   {summaryLoading ? <p className="text-sm text-muted">가격 요약을 불러오는 중입니다.</p> : null}
@@ -665,15 +651,13 @@ function StockPricesPage() {
                       <div className="price-meta-card"><p className="price-meta-label">최근 거래일</p><strong>{selectedSummary.latest_trade_date || "-"}</strong></div>
                       <div className="price-meta-card"><p className="price-meta-label">52주 고점</p><strong>{fmtPrice(selectedSummary.high_52w)}</strong></div>
                       <div className="price-meta-card"><p className="price-meta-label">52주 고점일</p><strong>{selectedSummary.high_52w_date || "-"}</strong></div>
-                      <div className="price-meta-card"><p className="price-meta-label">가격 데이터 건수</p><strong>{fmtNumber(selectedSummary.price_count)}건</strong></div>
-                      <div className="price-meta-card"><p className="price-meta-label">수집 기간</p><strong>{fmtRange(selectedSummary.min_trade_date, selectedSummary.max_trade_date)}</strong></div>
                     </div>
                   ) : null}
                 </section> : null}
 
                 {summaryTab === "market" ? <section className="price-detail-section">
                   <div className="price-detail-header">
-                    <span className="badge badge-slate ml-auto">{marketMetricsSummary?.source_label || "KIWOOM_REST (ka10001, ka10015, ka10009)"}</span>
+                    <span className="badge badge-slate ml-auto">{marketMetricsSummary?.source_label || PRICE_WORKSPACE_SOURCE_LABEL}</span>
                   </div>
                   {marketMetricsLoading ? <p className="text-sm text-muted">저장된 시장지표 요약을 불러오는 중입니다.</p> : null}
                   {!marketMetricsLoading && marketMetricsError ? <p className="text-sm text-rose-600">{marketMetricsError}</p> : null}
@@ -697,9 +681,9 @@ function StockPricesPage() {
                   ) : null}
                 </section> : null}
 
-                <section className="price-detail-section">
+                {summaryTab === "gpt" ? <section className="price-detail-section">
                   <div className="price-detail-header">
-                    <h3>GPT 자문 패키지 옵션</h3>
+                    <h3>GPT 자료 패키지 옵션</h3>
                   </div>
                   <div className="space-y-4">
                     <div className="space-y-2">
@@ -795,7 +779,7 @@ function StockPricesPage() {
                       최근 일봉 포함 범위를 252개로 설정하면 GPT에 붙여넣는 JSON 크기가 커질 수 있습니다.
                     </div>
                   ) : null}
-                </section>
+                </section> : null}
 
                 <section className="price-detail-section">
                   <div className="price-detail-header">
