@@ -637,8 +637,12 @@ class AnalysisService:
 
         for item in items:
             processed_at = now_kst()
-            disclosure_body, body_error = self._resolve_disclosure_body_text(item)
+            disclosure_body, body_error, body_source = self._resolve_disclosure_body_text(item)
             body_status = "ok" if disclosure_body else "missing"
+            if disclosure_body and body_source in {"raw_file", "dart_fetch"}:
+                # Cache fetched disclosure body so later AI summarize runs can reuse DB text first.
+                self.disclosure_repo.update_summary_text(item.id, disclosure_body)
+                item.summary = disclosure_body
             base_prompt = self._build_disclosure_item_prompt(item, disclosure_body=disclosure_body, body_status=body_status)
             attempts = max(1, LLM_ITEM_SUMMARY_RETRY_COUNT + 1)
             saved = False
@@ -1148,7 +1152,7 @@ class AnalysisService:
         text = re.sub(r"\s+", " ", text).strip()
         return text
 
-    def _resolve_disclosure_body_text(self, item: Any) -> tuple[str, str | None]:
+    def _resolve_disclosure_body_text(self, item: Any) -> tuple[str, str | None, str]:
         # 1) Prefer disclosure fields already persisted in DB.
         db_candidates = [
             getattr(item, "summary", None),
@@ -1156,19 +1160,19 @@ class AnalysisService:
         for candidate in db_candidates:
             normalized = self._normalize_news_text(candidate)
             if len(normalized) >= 80:
-                return self._truncate_text(normalized, 12000), None
+                return self._truncate_text(normalized, 12000), None, "db_summary"
 
         # 2) Try the saved raw response file.
         raw_from_file = self._extract_disclosure_text_from_raw_file(getattr(item, "raw_text_path", None), getattr(item, "dart_receipt_no", None))
         if raw_from_file:
-            return self._truncate_text(raw_from_file, 12000), None
+            return self._truncate_text(raw_from_file, 12000), None, "raw_file"
 
         # 3) Fallback to DART fetch at summarize time.
         dart_text, dart_error = self._fetch_dart_disclosure_text(getattr(item, "url", None), getattr(item, "dart_receipt_no", None))
         if dart_text:
-            return self._truncate_text(dart_text, 12000), None
+            return self._truncate_text(dart_text, 12000), None, "dart_fetch"
 
-        return "", dart_error or "missing_disclosure_body"
+        return "", dart_error or "missing_disclosure_body", "missing"
 
     def _extract_disclosure_text_from_raw_file(self, raw_text_path: str | None, receipt_no: str | None) -> str:
         if not raw_text_path:

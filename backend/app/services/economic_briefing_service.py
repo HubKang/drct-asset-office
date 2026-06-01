@@ -1,6 +1,7 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from urllib.parse import parse_qs, urlparse
@@ -46,7 +47,14 @@ from backend.app.schemas.economic_briefing_schema import (
 )
 from backend.app.services.economic_briefing_llm_service import EconomicBriefingLLMService
 from backend.app.services.youtube_metadata_service import YouTubeMetadataError, YouTubeMetadataService, YouTubeVideoMetadata
-from backend.app.services.youtube_transcript_service import TranscriptFetchError, TranscriptUnavailableError, YouTubeTranscriptService
+from backend.app.services.youtube_transcript_service import (
+    TranscriptFetchError,
+    TranscriptProviderFailure,
+    TranscriptUnavailableError,
+    YouTubeTranscriptService,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class EconomicBriefingService:
@@ -55,9 +63,9 @@ class EconomicBriefingService:
 
     def list_sources(self, status_filter: str = "all", include_deleted: bool = False) -> BriefingSourceListResponse:
         if status_filter not in {"all", "active", "inactive"}:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="status??all/active/inactive留?媛?ν빀?덈떎.")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="status??all/active/inactive筌?揶쎛?館鍮??덈뼄.")
         clauses = []
-        # 30-D-2 ?뺤콉: source????젣 ??臾쇰━ ??젣?섎?濡?include_deleted?????댁긽 ?섎?媛 ?녿떎.
+        # 30-D-2 ?類ㅼ퐠: source?????????얠눖????????嚥?include_deleted??????곴맒 ???揶쎛 ??용뼄.
         clauses.append("1=1")
         if status_filter == "active":
             clauses.append("is_active=1")
@@ -79,7 +87,7 @@ class EconomicBriefingService:
 
     def create_source(self, payload: BriefingSourceCreate) -> BriefingSourceMutationResponse:
         if payload.source_type not in {"channel", "playlist"}:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="source_type? channel ?먮뒗 playlist?ъ빞 ?⑸땲??")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="source_type?? channel ?癒?뮉 playlist??鍮???몃빍??")
         now = now_kst()
         self.db.execute(
             text(
@@ -113,12 +121,12 @@ class EconomicBriefingService:
                 """
             )
         ).mappings().first()
-        return BriefingSourceMutationResponse(success=True, message="source瑜??깅줉?덉뒿?덈떎.", inserted_count=1, item=BriefingSourceItem(**dict(row)))
+        return BriefingSourceMutationResponse(success=True, message="source???源낆쨯??됰뮸??덈뼄.", inserted_count=1, item=BriefingSourceItem(**dict(row)))
 
     def update_source(self, source_id: int, payload: BriefingSourceUpdate) -> BriefingSourceMutationResponse:
         existing = self.db.execute(text("SELECT * FROM briefing_sources WHERE id=:id"), {"id": source_id}).mappings().first()
         if not existing:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="source瑜?李얠쓣 ???놁뒿?덈떎.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="source??筌≪뼚??????곷뮸??덈뼄.")
         updates = {"id": source_id, "updated_at": now_kst()}
         set_clauses = ["updated_at=:updated_at"]
         for key in ["source_name", "source_url", "channel_id", "playlist_id", "is_default", "is_active"]:
@@ -139,12 +147,12 @@ class EconomicBriefingService:
             ),
             {"id": source_id},
         ).mappings().first()
-        return BriefingSourceMutationResponse(success=True, message="source瑜??섏젙?덉뒿?덈떎.", updated_count=1, item=BriefingSourceItem(**dict(row)))
+        return BriefingSourceMutationResponse(success=True, message="source????륁젟??됰뮸??덈뼄.", updated_count=1, item=BriefingSourceItem(**dict(row)))
 
     def deactivate_source(self, source_id: int) -> BriefingSourceMutationResponse:
         found = self.db.execute(text("SELECT id FROM briefing_sources WHERE id=:id"), {"id": source_id}).mappings().first()
         if not found:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="source瑜?李얠쓣 ???놁뒿?덈떎.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="source??筌≪뼚??????곷뮸??덈뼄.")
         self.db.execute(
             text("UPDATE briefing_sources SET is_active=0, updated_at=:updated_at WHERE id=:id"),
             {"id": source_id, "updated_at": now_kst()},
@@ -160,12 +168,12 @@ class EconomicBriefingService:
             ),
             {"id": source_id},
         ).mappings().first()
-        return BriefingSourceMutationResponse(success=True, message="source瑜?鍮꾪솢?깊솕?덉뒿?덈떎.", updated_count=1, item=BriefingSourceItem(**dict(row)))
+        return BriefingSourceMutationResponse(success=True, message="source????쑵??源딆넅??됰뮸??덈뼄.", updated_count=1, item=BriefingSourceItem(**dict(row)))
 
     def activate_source(self, source_id: int) -> BriefingSourceMutationResponse:
         found = self.db.execute(text("SELECT id FROM briefing_sources WHERE id=:id"), {"id": source_id}).mappings().first()
         if not found:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="source瑜?李얠쓣 ???놁뒿?덈떎.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="source??筌≪뼚??????곷뮸??덈뼄.")
         self.db.execute(
             text("UPDATE briefing_sources SET is_active=1, deleted_at=NULL, updated_at=:updated_at WHERE id=:id"),
             {"id": source_id, "updated_at": now_kst()},
@@ -181,14 +189,14 @@ class EconomicBriefingService:
             ),
             {"id": source_id},
         ).mappings().first()
-        return BriefingSourceMutationResponse(success=True, message="source瑜??쒖꽦?뷀뻽?듬땲??", updated_count=1, item=BriefingSourceItem(**dict(row)))
+        return BriefingSourceMutationResponse(success=True, message="source????뽮쉐?酉六??щ빍??", updated_count=1, item=BriefingSourceItem(**dict(row)))
 
     def soft_delete_source(self, source_id: int) -> BriefingSourceMutationResponse:
         found = self.db.execute(text("SELECT id FROM briefing_sources WHERE id=:id"), {"id": source_id}).mappings().first()
         if not found:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="source瑜?李얠쓣 ???놁뒿?덈떎.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="source??筌≪뼚??????곷뮸??덈뼄.")
         now = now_kst()
-        # 30-D-2 ?뺤콉: source ??젣 ?? ?곌껐???곸긽? 蹂댁〈?섎릺 source_id瑜?NULL濡??댁젣?쒕떎.
+        # 30-D-2 ?類ㅼ퐠: source ?????? ?怨뚭퍙???怨멸맒?? 癰귣똻???롫┷ source_id??NULL嚥???곸젫??뺣뼄.
         self.db.execute(
             text("UPDATE briefing_videos SET source_id=NULL, updated_at=:updated_at WHERE source_id=:source_id"),
             {"source_id": source_id, "updated_at": now},
@@ -200,7 +208,7 @@ class EconomicBriefingService:
         self.db.commit()
         return BriefingSourceMutationResponse(
             success=True,
-            message="source瑜???젣?덉뒿?덈떎. ?곌껐 ?곸긽? ?좎??섎ŉ source_id留??댁젣?섏뿀?듬땲??",
+            message="source???????됰뮸??덈뼄. ?怨뚭퍙 ?怨멸맒?? ?醫???렽?source_id筌???곸젫??뤿???щ빍??",
             updated_count=1,
             item=None,
         )
@@ -208,15 +216,15 @@ class EconomicBriefingService:
     def refresh_source_videos(self, source_id: int, max_results: int | None = None) -> BriefingSourceMutationResponse:
         row = self.db.execute(text("SELECT * FROM briefing_sources WHERE id=:id"), {"id": source_id}).mappings().first()
         if not row:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="source瑜?李얠쓣 ???놁뒿?덈떎.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="source??筌≪뼚??????곷뮸??덈뼄.")
         if row.get("deleted_at"):
-            return BriefingSourceMutationResponse(success=False, message="??젣 泥섎━??source???곸긽 紐⑸줉???덈줈怨좎묠?????놁뒿?덈떎.")
+            return BriefingSourceMutationResponse(success=False, message="????筌ｌ꼶???source???怨멸맒 筌뤴뫖以????덉쨮?⑥쥙臾??????곷뮸??덈뼄.")
         if int(row.get("is_active") or 0) != 1:
-            return BriefingSourceMutationResponse(success=False, message="鍮꾪솢??source???곸긽 紐⑸줉???덈줈怨좎묠?????놁뒿?덈떎.")
+            return BriefingSourceMutationResponse(success=False, message="??쑵???source???怨멸맒 筌뤴뫖以????덉쨮?⑥쥙臾??????곷뮸??덈뼄.")
         if str(row.get("source_type") or "") != "playlist":
-            return BriefingSourceMutationResponse(success=False, message="playlist source留??덈줈怨좎묠?????덉뒿?덈떎.")
+            return BriefingSourceMutationResponse(success=False, message="playlist source筌???덉쨮?⑥쥙臾??????됰뮸??덈뼄.")
         if not row.get("playlist_id"):
-            return BriefingSourceMutationResponse(success=False, message="playlist_id媛 ?놁뼱 ?덈줈怨좎묠?????놁뒿?덈떎.")
+            return BriefingSourceMutationResponse(success=False, message="playlist_id揶쎛 ??곷선 ??덉쨮?⑥쥙臾??????곷뮸??덈뼄.")
         limit = int(max_results or YOUTUBE_PLAYLIST_REFRESH_DEFAULT_LIMIT)
         limit = max(1, min(limit, 100))
         service = YouTubeMetadataService()
@@ -248,7 +256,7 @@ class EconomicBriefingService:
             self.db.rollback()
             return BriefingSourceMutationResponse(
                 success=False,
-                message="?곸긽 硫뷀??곗씠?????以?source ?곌껐 ?ㅻ쪟媛 諛쒖깮?덉뒿?덈떎. source ?곹깭瑜??먭???二쇱꽭??",
+                message="?怨멸맒 筌롫???怨쀬뵠??????餓?source ?怨뚭퍙 ??살첒揶쎛 獄쏆뮇源??됰뮸??덈뼄. source ?怨밴묶???癒???雅뚯눘苑??",
             )
 
         self.db.execute(
@@ -265,7 +273,7 @@ class EconomicBriefingService:
             inserted_count=inserted_count,
             updated_count=updated_count,
             skipped_count=skipped_count,
-            message="?곸긽 紐⑸줉???숆린?뷀뻽?듬땲??",
+            message="?怨멸맒 筌뤴뫖以????녿┛?酉六??щ빍??",
         )
 
     def list_videos(
@@ -354,9 +362,9 @@ class EconomicBriefingService:
     def create_manual_video(self, payload: BriefingVideoManualCreate) -> BriefingVideoMutationResponse:
         video_id = self.extract_video_id(payload.video_url)
         if not video_id:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="?좏슚??YouTube ?곸긽 URL???꾨떃?덈떎.")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="?醫륁뒞??YouTube ?怨멸맒 URL???袁⑤뻸??덈뼄.")
         if payload.source_id is not None and not self._source_exists(payload.source_id):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="?좏깮??source媛 ?좏슚?섏? ?딆뒿?덈떎.")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="?醫뤾문??source揶쎛 ?醫륁뒞??? ??녿뮸??덈뼄.")
         existing = self.db.execute(
             text(
                 """
@@ -409,7 +417,7 @@ class EconomicBriefingService:
                 ).mappings().first()
             return BriefingVideoMutationResponse(
                 success=True,
-                message="?대? ?깅줉???곸긽?낅땲??" if update_count == 0 else "?대? ?깅줉???곸긽?낅땲?? ?좏깮??source濡??곌껐??媛깆떊?덉뒿?덈떎.",
+                message="??? ?源낆쨯???怨멸맒??낅빍??" if update_count == 0 else "??? ?源낆쨯???怨멸맒??낅빍?? ?醫뤾문??source嚥??怨뚭퍙??揶쏄퉮???됰뮸??덈뼄.",
                 updated_count=update_count,
                 skipped_count=1,
                 item=BriefingVideoItem(**dict(existing)),
@@ -429,7 +437,7 @@ class EconomicBriefingService:
                 "source_id": payload.source_id,
                 "video_id": video_id,
                 "video_url": clean_url,
-                "title": f"誘몄“???곸긽 ({video_id})",
+                "title": f"沃섎챷????怨멸맒 ({video_id})",
                 "created_at": now,
                 "updated_at": now,
             },
@@ -450,12 +458,12 @@ class EconomicBriefingService:
             ),
             {"video_id": video_id},
         ).mappings().first()
-        return BriefingVideoMutationResponse(success=True, message="?섎룞 ?곸긽 URL???깅줉?덉뒿?덈떎.", inserted_count=1, item=BriefingVideoItem(**dict(row)))
+        return BriefingVideoMutationResponse(success=True, message="??롫짗 ?怨멸맒 URL???源낆쨯??됰뮸??덈뼄.", inserted_count=1, item=BriefingVideoItem(**dict(row)))
 
     def mark_video_status(self, briefing_video_id: int, payload: BriefingVideoStatusUpdate) -> BriefingVideoMutationResponse:
         existing = self.db.execute(text("SELECT id FROM briefing_videos WHERE id=:id"), {"id": briefing_video_id}).mappings().first()
         if not existing:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="?곸긽??李얠쓣 ???놁뒿?덈떎.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="?怨멸맒??筌≪뼚??????곷뮸??덈뼄.")
         updates = {"id": briefing_video_id, "updated_at": now_kst()}
         set_clauses = ["updated_at=:updated_at"]
         for key in ["transcript_status", "transcript_language", "transcript_source", "analysis_status", "error_message"]:
@@ -484,7 +492,7 @@ class EconomicBriefingService:
             ),
             {"id": briefing_video_id},
         ).mappings().first()
-        return BriefingVideoMutationResponse(success=True, message="?곸긽 ?곹깭瑜?媛깆떊?덉뒿?덈떎.", updated_count=1, item=BriefingVideoItem(**dict(row)))
+        return BriefingVideoMutationResponse(success=True, message="?怨멸맒 ?怨밴묶??揶쏄퉮???됰뮸??덈뼄.", updated_count=1, item=BriefingVideoItem(**dict(row)))
 
     def refresh_video_metadata(self, video_id: str) -> BriefingVideoMutationResponse:
         row = self.db.execute(
@@ -492,14 +500,14 @@ class EconomicBriefingService:
             {"video_id": video_id},
         ).mappings().first()
         if not row:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="?곸긽??李얠쓣 ???놁뒿?덈떎.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="?怨멸맒??筌≪뼚??????곷뮸??덈뼄.")
         service = YouTubeMetadataService()
         try:
             items = service.fetch_video_metadata([video_id])
         except YouTubeMetadataError as exc:
             return BriefingVideoMutationResponse(success=False, message=str(exc))
         if not items:
-            return BriefingVideoMutationResponse(success=False, message="YouTube?먯꽌 ?곸긽 硫뷀??곗씠?곕? 李얠? 紐삵뻽?듬땲??")
+            return BriefingVideoMutationResponse(success=False, message="YouTube?癒?퐣 ?怨멸맒 筌롫???怨쀬뵠?怨? 筌≪뼚? 筌륁궢六??щ빍??")
         now = now_kst()
         try:
             result = self._upsert_briefing_video_from_metadata(
@@ -514,7 +522,7 @@ class EconomicBriefingService:
             self.db.rollback()
             return BriefingVideoMutationResponse(
                 success=False,
-                message="?곸긽 硫뷀??곗씠?????以?source ?곌껐 ?ㅻ쪟媛 諛쒖깮?덉뒿?덈떎. source ?곹깭瑜??먭???二쇱꽭??",
+                message="?怨멸맒 筌롫???怨쀬뵠??????餓?source ?怨뚭퍙 ??살첒揶쎛 獄쏆뮇源??됰뮸??덈뼄. source ?怨밴묶???癒???雅뚯눘苑??",
             )
         self.db.commit()
         refreshed = self.db.execute(
@@ -534,7 +542,7 @@ class EconomicBriefingService:
         ).mappings().first()
         return BriefingVideoMutationResponse(
             success=True,
-            message="?곸긽 硫뷀??곗씠?곕? 媛깆떊?덉뒿?덈떎.",
+            message="?怨멸맒 筌롫???怨쀬뵠?怨? 揶쏄퉮???됰뮸??덈뼄.",
             inserted_count=1 if result == "inserted" else 0,
             updated_count=1 if result == "updated" else 0,
             skipped_count=1 if result == "skipped" else 0,
@@ -563,7 +571,7 @@ class EconomicBriefingService:
             {"video_id": video_id},
         ).mappings().first()
         if not row:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="?곸긽??李얠쓣 ???놁뒿?덈떎.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="?怨멸맒??筌≪뼚??????곷뮸??덈뼄.")
         if (ECONOMIC_BRIEFING_SKIP_IF_SUMMARIZED or ECONOMIC_BRIEFING_SUMMARY_SKIP_IF_EXISTS) and not force:
             existing_summary = self.db.execute(
                 text(
@@ -594,7 +602,7 @@ class EconomicBriefingService:
                     topic_count=0,
                     theme_mentions=[],
                     stock_mentions=[],
-                    message="?대? ?붿빟???곸긽?낅땲?? ?ъ슂?쏀븯?ㅻ㈃ force=true媛 ?꾩슂?⑸땲??",
+                    message="??? ?遺용튋???怨멸맒??낅빍?? ?????釉??삠늺 force=true揶쎛 ?袁⑹뒄??몃빍??",
                     error=None,
                 )
         total_started = time.perf_counter()
@@ -603,7 +611,7 @@ class EconomicBriefingService:
                 success=False,
                 video_id=video_id,
                 analysis_status="failed",
-                message="LLM ?붿빟 湲곕뒫??鍮꾪솢?깊솕?섏뼱 ?덉뒿?덈떎.",
+                message="LLM ?遺용튋 疫꿸퀡?????쑵??源딆넅??뤿선 ??됰뮸??덈뼄.",
                 error="llm_disabled",
             )
 
@@ -611,9 +619,16 @@ class EconomicBriefingService:
         llm_timeout_seconds = int(ECONOMIC_BRIEFING_LLM_TIMEOUT_SECONDS)
         llm_response_length = 0
         transcript_service = YouTubeTranscriptService()
+        logger.info(
+            "[EconomicBriefing] summarize_start video_id=%s transcript_status=%s analysis_status=%s checked_at=%s",
+            video_id,
+            row.get("transcript_status"),
+            row.get("analysis_status"),
+            row.get("transcript_checked_at"),
+        )
         try:
             t0 = time.perf_counter()
-            text_all, language, source = transcript_service.fetch_transcript_text(video_id)
+            text_all, language, source = transcript_service.fetch_transcript_text(video_id, caller="summarize")
             print(f"[ECON_BRIEFING_TIMING] video_id={video_id} step=transcript_fetch elapsed={time.perf_counter()-t0:.1f}s")
             t1 = time.perf_counter()
             chunks = transcript_service.split_text_into_chunks_for_llm(
@@ -632,7 +647,7 @@ class EconomicBriefingService:
                     topic_count=0,
                     theme_mentions=[],
                     stock_mentions=[],
-                    message="?붿빟 ?ㅽ뻾???ㅽ뙣?덉뒿?덈떎.",
+                    message="?遺용튋 ??쎈뻬????쎈솭??됰뮸??덈뼄.",
                     error="empty_transcript",
                 )
             if len(chunks) == 0:
@@ -645,10 +660,11 @@ class EconomicBriefingService:
                     topic_count=0,
                     theme_mentions=[],
                     stock_mentions=[],
-                    message="?붿빟 ?ㅽ뻾???ㅽ뙣?덉뒿?덈떎.",
+                    message="?遺용튋 ??쎈뻬????쎈솭??됰뮸??덈뼄.",
                     error="empty_chunks",
                 )
         except TranscriptUnavailableError as exc:
+            logger.warning("[EconomicBriefing] summarize_transcript_unavailable video_id=%s error=%s", video_id, str(exc)[:200])
             self._mark_analysis_failed(int(row["id"]), str(exc)[:300], now, llm_response_length=0, llm_timeout_seconds=llm_timeout_seconds)
             return BriefingVideoSummarizeResponse(
                 success=False,
@@ -658,11 +674,12 @@ class EconomicBriefingService:
                 topic_count=0,
                 theme_mentions=[],
                 stock_mentions=[],
-                message="?붿빟 ?ㅽ뻾???ㅽ뙣?덉뒿?덈떎.",
+                message="?遺용튋 ??쎈뻬????쎈솭??됰뮸??덈뼄.",
                 error=str(exc)[:300],
             )
-        except Exception as exc:
-            self._mark_analysis_failed(int(row["id"]), "transcript fetch failed", now, llm_response_length=0, llm_timeout_seconds=llm_timeout_seconds)
+        except TranscriptProviderFailure as exc:
+            error_text = f"transcript_source_failed:{exc.normalized_error_type}"[:300]
+            self._mark_analysis_failed(int(row["id"]), error_text, now, llm_response_length=0, llm_timeout_seconds=llm_timeout_seconds)
             return BriefingVideoSummarizeResponse(
                 success=False,
                 video_id=video_id,
@@ -671,8 +688,25 @@ class EconomicBriefingService:
                 topic_count=0,
                 theme_mentions=[],
                 stock_mentions=[],
-                message="?붿빟 ?ㅽ뻾???ㅽ뙣?덉뒿?덈떎.",
-                error=str(exc)[:300],
+                message="?遺용튋 ??쎈뻬????쎈솭??됰뮸??덈뼄.",
+                error=error_text,
+            )
+        except Exception as exc:
+            reason = exc.__class__.__name__
+            detail = str(exc).strip().replace("\n", " ")
+            logger.warning("[EconomicBriefing] summarize_transcript_failed video_id=%s error_type=%s detail=%s", video_id, reason, detail[:200])
+            error_text = f"transcript fetch failed: {reason}: {detail}"[:300] if detail else f"transcript fetch failed: {reason}"[:300]
+            self._mark_analysis_failed(int(row["id"]), error_text, now, llm_response_length=0, llm_timeout_seconds=llm_timeout_seconds)
+            return BriefingVideoSummarizeResponse(
+                success=False,
+                video_id=video_id,
+                analysis_status="failed",
+                summary_id=None,
+                topic_count=0,
+                theme_mentions=[],
+                stock_mentions=[],
+                message="?遺용튋 ??쎈뻬????쎈솭??됰뮸??덈뼄.",
+                error=error_text,
             )
 
         llm = EconomicBriefingLLMService()
@@ -690,10 +724,10 @@ class EconomicBriefingService:
                     failed_chunk_indices.append(c.index)
                     chunk_summaries.append(
                         {
-                            "summary": "??援ш컙? LLM ?붿빟???ㅽ뙣?덉뒿?덈떎.",
+                            "summary": "???닌덉퍢?? LLM ?遺용튋????쎈솭??됰뮸??덈뼄.",
                             "themes": [],
                             "stocks": [],
-                            "risks": ["LLM chunk ?붿빟 ?ㅽ뙣"],
+                            "risks": ["LLM chunk ?遺용튋 ??쎈솭"],
                         }
                     )
             if failed_chunk_indices and len(failed_chunk_indices) >= len(chunks):
@@ -706,7 +740,7 @@ class EconomicBriefingService:
                     topic_count=0,
                     theme_mentions=[],
                     stock_mentions=[],
-                    message="?붿빟 ?ㅽ뻾???ㅽ뙣?덉뒿?덈떎.",
+                    message="?遺용튋 ??쎈뻬????쎈솭??됰뮸??덈뼄.",
                     error="all_chunks_failed",
                 )
             try:
@@ -715,13 +749,13 @@ class EconomicBriefingService:
                 llm_response_length += int(overall.get("_raw_response_length") or 0)
                 print(f"[ECON_BRIEFING_TIMING] video_id={video_id} step=overall_summary elapsed={time.perf_counter()-o_started:.1f}s")
             except Exception:
-                # ?듯빀 ?붿빟???ㅽ뙣?대룄 chunk ?붿빟 寃곌낵濡??덉쟾??fallback??援ъ꽦??以묐떒???쇳븳??
+                # ???? ?遺용튋????쎈솭??猷?chunk ?遺용튋 野껉퀗?득에???됱읈??fallback???닌딄쉐??餓λ쵎?????노립??
                 overall = self._build_overall_fallback_from_chunks(chunk_summaries)
         except Exception as exc:
             err_txt = str(exc)[:200]
-            user_msg = "?붿빟 ?ㅽ뻾???ㅽ뙣?덉뒿?덈떎."
+            user_msg = "?遺용튋 ??쎈뻬????쎈솭??됰뮸??덈뼄."
             if "empty content" in err_txt.lower():
-                user_msg = "LM Studio媛 理쒖쥌 ?붿빟??諛섑솚?섏? 紐삵뻽?듬땲?? 紐⑤뜽 ?먮뒗 異쒕젰 湲몄씠瑜??뺤씤??二쇱꽭??"
+                user_msg = "LM Studio揶쎛 筌ㅼ뮇伊??遺용튋??獄쏆꼹???? 筌륁궢六??щ빍?? 筌뤴뫀???癒?뮉 ?곗뮆??疫뀀챷?좂몴??類ㅼ뵥??雅뚯눘苑??"
             self._mark_analysis_failed(int(row["id"]), f"llm failed: {err_txt}", now, llm_response_length=llm_response_length, llm_timeout_seconds=llm_timeout_seconds)
             return BriefingVideoSummarizeResponse(
                 success=False,
@@ -743,7 +777,7 @@ class EconomicBriefingService:
         risk_points = self._to_str_list(overall.get("risk_points"))
         observation_points = self._to_str_list(overall.get("observation_points"))
         if observation_points:
-            key_points.extend([f"?쒖옣 愿李??ъ씤?? {x}" for x in observation_points[:3]])
+            key_points.extend([f"??뽰삢 ?온筌?????? {x}" for x in observation_points[:3]])
         summary_text = self._normalize_summary_text(summary_text)
         quality_status, quality_message, quality_meta = self._evaluate_summary_quality(
             summary_text=summary_text,
@@ -793,7 +827,7 @@ class EconomicBriefingService:
                 topic_count=0,
                 theme_mentions=[],
                 stock_mentions=[],
-                message="?붿빟 ?ㅽ뻾???ㅽ뙣?덉뒿?덈떎.",
+                message="?遺용튋 ??쎈뻬????쎈솭??됰뮸??덈뼄.",
                 error="summary_quality_failed",
             )
 
@@ -807,7 +841,7 @@ class EconomicBriefingService:
                 topic_count=0,
                 theme_mentions=[],
                 stock_mentions=[],
-                message="?붿빟 ?ㅽ뻾???ㅽ뙣?덉뒿?덈떎.",
+                message="?遺용튋 ??쎈뻬????쎈솭??됰뮸??덈뼄.",
                 error="empty_llm_response",
             )
 
@@ -830,7 +864,7 @@ class EconomicBriefingService:
         topic_count = self._replace_topic_items(int(row["id"]), topics, now)
         analysis_status_value = "summarized" if quality_status == "ok" else "partial_failed"
         message_text = quality_message if quality_status != "ok" else (
-            f"?쇰? chunk ?붿빟 ?ㅽ뙣: {','.join(str(i) for i in failed_chunk_indices)}" if failed_chunk_indices else None
+            f"??? chunk ?遺용튋 ??쎈솭: {','.join(str(i) for i in failed_chunk_indices)}" if failed_chunk_indices else None
         )
         self.db.execute(
             text(
@@ -877,7 +911,7 @@ class EconomicBriefingService:
             topic_count=topic_count,
             theme_mentions=theme_mentions[:20],
             stock_mentions=stock_mentions[:20],
-            message="寃쎌젣 釉뚮━???붿빟????ν뻽?듬땲??" if quality_status == "ok" else "구조화 요약 일부가 생성되지 않았습니다. 재요약을 권장합니다.",
+            message="野껋럩???됰슢????遺용튋?????館六??щ빍??" if quality_status == "ok" else "援ъ“???붿빟 ?쇰?媛 ?앹꽦?섏? ?딆븯?듬땲?? ?ъ슂?쎌쓣 沅뚯옣?⑸땲??",
             error=None if quality_status == "ok" else "structured_summary_partial_failed",
         )
 
@@ -894,7 +928,7 @@ class EconomicBriefingService:
             {"video_id": video_id},
         ).mappings().first()
         if not video:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="?곸긽??李얠쓣 ???놁뒿?덈떎.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="?怨멸맒??筌≪뼚??????곷뮸??덈뼄.")
         summary_row = self.db.execute(
             text(
                 """
@@ -1214,8 +1248,8 @@ class EconomicBriefingService:
     ) -> bool:
         text = (summary_text or "").strip()
         invalid_markers = [
-            "??援ш컙? LLM ?붿빟???ㅽ뙣?덉뒿?덈떎.",
-            "?쇰? 援ш컙 ?붿빟??湲곕컲?쇰줈 ?앹꽦???꾩떆 ?듯빀 ?붿빟?낅땲??",
+            "???닌덉퍢?? LLM ?遺용튋????쎈솭??됰뮸??덈뼄.",
+            "??? ?닌덉퍢 ?遺용튋??疫꿸퀡而??곗쨮 ??밴쉐???袁⑸뻻 ???? ?遺용튋??낅빍??",
         ]
         looks_like_json = text.startswith("{") or text.startswith("[") or '"chunk_summary"' in text or '"overall_summary"' in text
         if text and text not in invalid_markers and not looks_like_json:
@@ -1263,10 +1297,10 @@ class EconomicBriefingService:
         message = ""
         if overall_len < 100:
             status = "failed"
-            message = "전체 요약이 너무 짧습니다."
+            message = "?꾩껜 ?붿빟???덈Т 吏㏃뒿?덈떎."
         elif non_empty_structured < 2:
             status = "partial_failed"
-            message = "구조화 요약 필드가 부족합니다."
+            message = "援ъ“???붿빟 ?꾨뱶媛 遺議깊빀?덈떎."
         meta = {
             "structured_sections_count": non_empty_structured,
             "key_points_count": len(key_points),
@@ -1315,7 +1349,7 @@ class EconomicBriefingService:
             return False
         blocked_tokens = [
             "llm chunk",
-            "?붿빟 ?ㅽ뙣",
+            "?遺용튋 ??쎈솭",
             "empty content",
             "fallback",
         ]
@@ -1329,7 +1363,7 @@ class EconomicBriefingService:
                 """
                 UPDATE briefing_videos
                 SET analysis_status='failed',
-                    error_message='?붿빟?꾨즺濡??쒖떆?섏뿀?쇰굹 ??λ맂 ?붿빟 ?댁슜???놁뼱 ?ъ슂?쎌씠 ?꾩슂?⑸땲??',
+                    error_message='?遺용튋?袁⑥┷嚥???뽯뻻??뤿???곌돌 ???貫留??遺용튋 ??곸뒠????곷선 ?????뚯뵠 ?袁⑹뒄??몃빍??',
                     updated_at=:updated_at
                 WHERE analysis_status='summarized'
                   AND id IN (
@@ -1366,12 +1400,23 @@ class EconomicBriefingService:
             {"video_id": video_id},
         ).mappings().first()
         if not row:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="?곸긽??李얠쓣 ???놁뒿?덈떎.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="?怨멸맒??筌≪뼚??????곷뮸??덈뼄.")
         now = now_kst()
         service = None
+        current_status_row = self.db.execute(
+            text("SELECT transcript_status, analysis_status, transcript_checked_at FROM briefing_videos WHERE id=:id"),
+            {"id": int(row["id"])},
+        ).mappings().first()
+        logger.info(
+            "[EconomicBriefing] transcript_check_start video_id=%s caller=transcript_check transcript_status=%s analysis_status=%s checked_at=%s",
+            video_id,
+            (current_status_row or {}).get("transcript_status"),
+            (current_status_row or {}).get("analysis_status"),
+            (current_status_row or {}).get("transcript_checked_at"),
+        )
         try:
             service = YouTubeTranscriptService()
-            text_all, language, source = service.fetch_transcript_text(video_id=video_id)
+            text_all, language, source = service.fetch_transcript_text(video_id=video_id, caller="transcript_check")
             chunks = service.split_text_into_chunks(text_all, max_chars=4000, overlap_chars=300)
             text_length = len(text_all)
             chunk_count = len(chunks)
@@ -1405,6 +1450,12 @@ class EconomicBriefingService:
                 },
             )
             self.db.commit()
+            logger.info(
+                "[EconomicBriefing] transcript_check_success video_id=%s text_length=%s chunk_count=%s",
+                video_id,
+                text_length,
+                chunk_count,
+            )
             return BriefingTranscriptCheckResponse(
                 success=True,
                 video_id=video_id,
@@ -1414,13 +1465,19 @@ class EconomicBriefingService:
                 text_length=text_length,
                 chunk_count=chunk_count,
                 chunk_previews=previews,
-                message="?먮쭑 異붿텧??媛?ν빀?덈떎.",
+                message="?癒?춵 ?곕뗄???揶쎛?館鍮??덈뼄.",
                 error=None,
                 failure_reason=None,
                 error_type=None,
                 attempts=getattr(service, "last_attempts", []),
+                selected_provider=source,
+                provider_results={"selected": {"success": True, "provider": source}},
+                normalized_error_type=None,
+                is_retryable=None,
+                retry_after_minutes=None,
             )
         except TranscriptUnavailableError as exc:
+            logger.warning("[EconomicBriefing] transcript_check_unavailable video_id=%s error=%s", video_id, str(exc)[:200])
             self._save_transcript_failure(int(row["id"]), now, "unavailable", str(exc)[:300])
             return BriefingTranscriptCheckResponse(
                 success=False,
@@ -1431,13 +1488,42 @@ class EconomicBriefingService:
                 text_length=0,
                 chunk_count=0,
                 chunk_previews=[],
-                message="?먮쭑??李얠쓣 ???놁뒿?덈떎.",
+                message="?癒?춵??筌≪뼚??????곷뮸??덈뼄.",
                 error=str(exc)[:300],
                 failure_reason="fetch_and_legacy_failed",
                 error_type=exc.__class__.__name__,
                 attempts=getattr(service, "last_attempts", []),
+                selected_provider="all_failed",
+                provider_results={},
+                normalized_error_type="transcript_unavailable",
+                is_retryable=False,
+                retry_after_minutes=None,
+            )
+        except TranscriptProviderFailure as exc:
+            error_msg = str(exc)[:500]
+            self._save_transcript_failure(int(row["id"]), now, "failed", error_msg)
+            return BriefingTranscriptCheckResponse(
+                success=False,
+                video_id=video_id,
+                transcript_status="failed",
+                transcript_language=None,
+                transcript_source="transcript_api" if service is not None else None,
+                text_length=0,
+                chunk_count=0,
+                chunk_previews=[],
+                message="?癒?춵 ?곕뗄?????쎈솭??됰뮸??덈뼄.",
+                error=error_msg,
+                failure_reason="provider_fallback_failed",
+                error_type=exc.normalized_error_type,
+                attempts=getattr(service, "last_attempts", []),
+                selected_provider=exc.selected_provider,
+                provider_results=exc.provider_results,
+                normalized_error_type=exc.normalized_error_type,
+                is_retryable=exc.is_retryable,
+                retry_after_minutes=exc.retry_after_minutes,
             )
         except TranscriptFetchError as exc:
+            logger.warning("[EconomicBriefing] transcript_check_failed video_id=%s error=%s", video_id, str(exc)[:200])
             self._save_transcript_failure(int(row["id"]), now, "failed", str(exc)[:300])
             return BriefingTranscriptCheckResponse(
                 success=False,
@@ -1448,14 +1534,20 @@ class EconomicBriefingService:
                 text_length=0,
                 chunk_count=0,
                 chunk_previews=[],
-                message="?먮쭑 異붿텧???ㅽ뙣?덉뒿?덈떎.",
+                message="?癒?춵 ?곕뗄?????쎈솭??됰뮸??덈뼄.",
                 error=str(exc)[:300],
                 failure_reason="fetch_and_legacy_failed",
                 error_type=exc.__class__.__name__,
                 attempts=getattr(service, "last_attempts", []),
+                selected_provider="all_failed",
+                provider_results={},
+                normalized_error_type="unknown",
+                is_retryable=True,
+                retry_after_minutes=60,
             )
         except Exception:
-            err = "?????녿뒗 ?먮쭑 泥섎━ ?ㅻ쪟"
+            err = "??????용뮉 ?癒?춵 筌ｌ꼶????살첒"
+            logger.exception("[EconomicBriefing] transcript_check_exception video_id=%s", video_id)
             self._save_transcript_failure(int(row["id"]), now, "failed", err)
             return BriefingTranscriptCheckResponse(
                 success=False,
@@ -1466,11 +1558,16 @@ class EconomicBriefingService:
                 text_length=0,
                 chunk_count=0,
                 chunk_previews=[],
-                message="?먮쭑 異붿텧???ㅽ뙣?덉뒿?덈떎.",
+                message="?癒?춵 ?곕뗄?????쎈솭??됰뮸??덈뼄.",
                 error=err,
                 failure_reason="unexpected_error",
                 error_type="Exception",
                 attempts=getattr(service, "last_attempts", []),
+                selected_provider="all_failed",
+                provider_results={},
+                normalized_error_type="unknown",
+                is_retryable=True,
+                retry_after_minutes=60,
             )
 
     def _save_transcript_failure(self, briefing_video_id: int, checked_at: str, status_value: str, error_message: str) -> None:
@@ -1538,7 +1635,7 @@ class EconomicBriefingService:
         now: str,
     ) -> str:
         if source_id_value is not None and not self._source_exists(int(source_id_value)):
-            raise RuntimeError("?곸긽 ?덈줈怨좎묠 source媛 ?좏슚?섏? ?딆뒿?덈떎. source 紐⑸줉???ㅼ떆 ?뺤씤??二쇱꽭??")
+            raise RuntimeError("?怨멸맒 ??덉쨮?⑥쥙臾?source揶쎛 ?醫륁뒞??? ??녿뮸??덈뼄. source 筌뤴뫖以????쇰뻻 ?類ㅼ뵥??雅뚯눘苑??")
         existing = self.db.execute(
             text("SELECT id, analysis_status, source_id FROM briefing_videos WHERE video_id=:video_id LIMIT 1"),
             {"video_id": item.video_id},
@@ -1642,7 +1739,7 @@ class EconomicBriefingService:
                 if sx:
                     risk_points.append(sx)
         return {
-            "overall_summary": "\n".join(summary_lines)[:8000] or "?쇰? 援ш컙 ?붿빟??湲곕컲?쇰줈 ?앹꽦???꾩떆 ?듯빀 ?붿빟?낅땲??",
+            "overall_summary": "\n".join(summary_lines)[:8000] or "??? ?닌덉퍢 ?遺용튋??疫꿸퀡而??곗쨮 ??밴쉐???袁⑸뻻 ???? ?遺용튋??낅빍??",
             "key_points": key_points[:20],
             "topics": topics[:30],
             "theme_mentions": list(dict.fromkeys(theme_mentions))[:30],
@@ -1665,4 +1762,5 @@ class EconomicBriefingService:
         if self._source_exists(current_id):
             return current_id
         return refresh_source_id
+
 

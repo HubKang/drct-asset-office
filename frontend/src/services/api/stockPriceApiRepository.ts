@@ -37,12 +37,14 @@ export const stockPriceApiRepository = {
       method: "POST",
       body: JSON.stringify({ stock_ids: stockIds }),
     }),
-  listSummary: (params?: { keyword?: string; market?: string; source?: string; limit?: number; offset?: number }) => {
+  listSummary: (params?: { keyword?: string; market?: string; source?: string; scope?: "watchlist" | "all"; limit?: number; offset?: number }) => {
     const search = new URLSearchParams();
     const resolvedSource = params?.source ?? "kiwoom_rest";
+    const resolvedScope = params?.scope ?? "watchlist";
     if (params?.keyword) search.set("keyword", params.keyword);
     if (params?.market) search.set("market", params.market);
     if (resolvedSource) search.set("source", resolvedSource);
+    if (resolvedScope) search.set("scope", resolvedScope);
     if (params?.limit !== undefined) search.set("limit", String(params.limit));
     if (params?.offset !== undefined) search.set("offset", String(params.offset));
     const query = search.toString();

@@ -13,6 +13,17 @@ type SummaryProgressState = {
   progress: number;
   status: "running" | "success" | "failed";
 };
+type RefreshStatusResult = {
+  metadataChecked: number;
+  transcriptChecked: number;
+  statusSkipped: number;
+  failed: number;
+  failedReasons: Record<string, number>;
+};
+
+const STATUS_REFRESH_RECENT_HOURS = 24;
+const TRANSCRIPT_RETRY_COOLDOWN_MINUTES = 60;
+const TRANSCRIPT_RATE_LIMIT_COOLDOWN_MINUTES = 360;
 
 const toErr = (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message : fallback);
 const extractPlaylistIdFromUrl = (value: string): string | null => {
@@ -60,6 +71,95 @@ const mapAnalysisStatus = (v: string | null | undefined) => {
   if (v === "failed") return "실패";
   return "미확인";
 };
+const parseDateMs = (value: string | null | undefined) => {
+  if (!value) return null;
+  const ms = Date.parse(value.replace(" ", "T"));
+  return Number.isFinite(ms) ? ms : null;
+};
+const isRecentWithinMinutes = (value: string | null | undefined, minutes: number) => {
+  const ms = parseDateMs(value);
+  if (ms == null) return false;
+  return Date.now() - ms < minutes * 60 * 1000;
+};
+const isRecentWithinHours = (value: string | null | undefined, hours: number) => isRecentWithinMinutes(value, hours * 60);
+const hasBlockedTranscriptError = (message: string | null | undefined) => {
+  const src = (message || "").toLowerCase();
+  return src.includes("ipblocked")
+    || src.includes("transcriptfetcherror")
+    || src.includes("429")
+    || src.includes("too many requests")
+    || src.includes("rate_limited")
+    || src.includes("yt_dlp_rate_limited")
+    || src.includes("all_providers_rate_limited")
+    || src.includes("access_limited");
+};
+const isRateLimitedTranscriptError = (message: string | null | undefined) => {
+  const src = (message || "").toLowerCase();
+  return src.includes("429")
+    || src.includes("too many requests")
+    || src.includes("rate_limited")
+    || src.includes("yt_dlp_rate_limited")
+    || src.includes("all_providers_rate_limited");
+};
+type TranscriptIssueType = "access_limited" | "unavailable" | "fetch_failed" | "summary_failed" | "none";
+const getTranscriptIssueType = (message: string | null | undefined): TranscriptIssueType => {
+  const src = (message || "").toLowerCase();
+  if (!src.trim()) return "none";
+  if (src.includes("yt_dlp_runtime_missing")) return "fetch_failed";
+  if (src.includes("yt_dlp_rate_limited") || src.includes("all_providers_rate_limited") || src.includes("rate_limited")) return "access_limited";
+  if (src.includes("yt_dlp_not_installed") || src.includes("all_providers_failed")) return "fetch_failed";
+  if (src.includes("ipblocked") || src.includes("429") || src.includes("rate") || src.includes("blocked") || src.includes("접근 제한")) return "access_limited";
+  if (src.includes("notranscriptfound") || src.includes("transcriptsdisabled") || src.includes("no transcript") || src.includes("자막 없음") || src.includes("자막이 비활성")) return "unavailable";
+  if (src.includes("transcriptfetcherror") || src.includes("자막 조회") || src.includes("transcript fetch failed")) return "fetch_failed";
+  if (src.includes("llm") || src.includes("empty content") || src.includes("json") || src.includes("model")) return "summary_failed";
+  return "fetch_failed";
+};
+const getTranscriptIssueLabel = (message: string | null | undefined) => {
+  const src = (message || "").toLowerCase();
+  if (src.includes("yt_dlp_rate_limited") || src.includes("all_providers_rate_limited") || src.includes("rate_limited")) return "YouTube 요청 제한";
+  if (src.includes("yt_dlp_runtime_missing")) return "자막 수집 실행환경 부족";
+  if (src.includes("yt_dlp_not_installed")) return "자막 수집 경로 미완성";
+  if (src.includes("all_providers_failed")) return "자막 수집 실패";
+  const issue = getTranscriptIssueType(message);
+  if (issue === "access_limited") return "자막 접근 제한";
+  if (issue === "unavailable") return "자막 없음";
+  if (issue === "summary_failed") return "요약 생성 실패";
+  if (issue === "fetch_failed") return "자막 조회 실패";
+  return "";
+};
+const getTranscriptIssueHelpText = (message: string | null | undefined) => {
+  const src = (message || "").toLowerCase();
+  if (src.includes("yt_dlp_rate_limited") || src.includes("all_providers_rate_limited") || src.includes("rate_limited")) return "YouTube에서 자막 요청이 일시적으로 제한되었습니다. 반복 시도하면 제한이 길어질 수 있어 대기 후 재시도를 권장합니다.";
+  if (src.includes("yt_dlp_runtime_missing")) return "yt-dlp 실행에 필요한 JavaScript runtime이 없어 대체 자막 수집을 수행할 수 없습니다.";
+  if (src.includes("yt_dlp_not_installed")) return "기본 자막 API가 차단되었고 yt-dlp 대체 경로가 설치되어 있지 않습니다.";
+  if (src.includes("all_providers_failed")) return "기본/대체 자막 수집 경로가 모두 실패했습니다. 네트워크/환경을 확인해 주세요.";
+  const issue = getTranscriptIssueType(message);
+  if (issue === "access_limited") return "현재 네트워크에서 YouTube 자막 접근이 제한되었습니다. 잠시 후 다시 시도하거나 네트워크 환경을 바꿔 확인해 주세요.";
+  if (issue === "unavailable") return "이 영상은 제공되는 자막이 없어 요약할 수 없습니다.";
+  if (issue === "summary_failed") return "자막은 확인되었지만 AI 요약 생성 중 문제가 발생했습니다.";
+  if (issue === "fetch_failed") return "자막 조회 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.";
+  return "";
+};
+const compactErrorMessage = (message: string | null | undefined) => {
+  const label = getTranscriptIssueLabel(message);
+  if (label) return label;
+  if (!message) return "";
+  return message.length > 28 ? `${message.slice(0, 28)}...` : message;
+};
+const mapAnalysisStatusLabel = (analysisStatus: string | null | undefined, errorMessage: string | null | undefined) => {
+  const normalized = (analysisStatus || "").toLowerCase();
+  if (!normalized || normalized === "unknown" || normalized === "pending") return "대기";
+  if (normalized === "summarized" || normalized === "completed") return "요약완료";
+  if (normalized === "partial_failed") return "부분실패";
+  if (normalized === "failed") {
+    const issue = getTranscriptIssueType(errorMessage);
+    if (issue === "access_limited" || issue === "unavailable" || issue === "fetch_failed") return "자막 실패";
+    return "요약 실패";
+  }
+  return "미확인";
+};
+const getTranscriptCooldownMinutes = (message: string | null | undefined) =>
+  isRateLimitedTranscriptError(message) ? TRANSCRIPT_RATE_LIMIT_COOLDOWN_MINUTES : TRANSCRIPT_RETRY_COOLDOWN_MINUTES;
 const parseMaybeJson = (text: string): unknown | null => {
   const src = text.trim();
   if (!src) return null;
@@ -192,7 +292,7 @@ const normalizeSummaryForDisplay = (summary: BriefingSummaryDetailResponse["summ
 };
 
 function EconomicBriefingPage() {
-  const [tab, setTab] = useState<Tab>("sources");
+  const [tab, setTab] = useState<Tab>("videos");
   const [sources, setSources] = useState<BriefingSource[]>([]);
   const [videos, setVideos] = useState<BriefingVideo[]>([]);
   const [sourceStatusFilter, setSourceStatusFilter] = useState<BriefingSourceStatus>("all");
@@ -204,6 +304,7 @@ function EconomicBriefingPage() {
   const [registerUrl, setRegisterUrl] = useState("");
   const [registerName, setRegisterName] = useState("");
   const [manualSourceId, setManualSourceId] = useState<string>("");
+  const [sourceFormOpen, setSourceFormOpen] = useState(false);
 
   const [summaryDetail, setSummaryDetail] = useState<BriefingSummaryDetailResponse | null>(null);
   const [selectedSummaryVideo, setSelectedSummaryVideo] = useState<BriefingVideo | null>(null);
@@ -215,6 +316,8 @@ function EconomicBriefingPage() {
 
   const [summaryProgressMap, setSummaryProgressMap] = useState<Record<string, SummaryProgressState>>({});
   const progressTimers = useRef<Record<string, number>>({});
+  const [refreshingVideoStatuses, setRefreshingVideoStatuses] = useState(false);
+  const [manualTranscriptCheckingMap, setManualTranscriptCheckingMap] = useState<Record<string, boolean>>({});
 
   const activeSources = useMemo(() => sources.filter((s) => s.is_active === 1), [sources]);
   const activePlaylistSources = useMemo(
@@ -237,47 +340,80 @@ function EconomicBriefingPage() {
     }
   };
 
-  const loadVideos = async (filter?: SourceFilter) => {
+  const fetchVideosByFilter = async (filter?: SourceFilter): Promise<BriefingVideo[]> => {
     const selected = filter ?? videoSourceFilter;
+    if (selected === "all") {
+      const res = await repositories.economicBriefing.getBriefingVideos({ limit: 200 });
+      return res.items;
+    }
+    if (selected === "manual") {
+      const res = await repositories.economicBriefing.getBriefingVideos({ limit: 200, manual_only: true });
+      return res.items;
+    }
+    const sourceId = Number(selected.replace("source:", ""));
+    const res = await repositories.economicBriefing.getBriefingVideos({ limit: 200, source_id: sourceId });
+    return res.items;
+  };
+
+  const loadVideos = async (filter?: SourceFilter) => {
     try {
-      if (selected === "all") {
-        const res = await repositories.economicBriefing.getBriefingVideos({ limit: 200 });
-        setVideos(res.items);
-        setCurrentPage(1);
-        return;
-      }
-      if (selected === "manual") {
-        const res = await repositories.economicBriefing.getBriefingVideos({ limit: 200, manual_only: true });
-        setVideos(res.items);
-        setCurrentPage(1);
-        return;
-      }
-      const sourceId = Number(selected.replace("source:", ""));
-      const res = await repositories.economicBriefing.getBriefingVideos({ limit: 200, source_id: sourceId });
-      setVideos(res.items);
+      const items = await fetchVideosByFilter(filter);
+      setVideos(items);
       setCurrentPage(1);
     } catch (e) {
       setError(toErr(e, "영상 목록 조회에 실패했습니다."));
     }
   };
 
-  const refreshVideosFromYouTube = async () => {
-    const selected = videoSourceFilter;
-    if (selected === "manual") {
-      setError("수동/미분류는 YouTube 새로고침 대상이 아닙니다.");
-      return;
-    }
-    if (selected === "all") {
-      const targets = activePlaylistSources;
-      if (targets.length === 0) {
-        setError("새로고침할 활성 재생목록 source가 없습니다.");
-        return;
-      }
+  const shouldRefreshMetadata = (video: BriefingVideo) => {
+    if (!video.title || !video.channel_name || !video.published_at || !video.duration_seconds) return true;
+    return !isRecentWithinHours(video.updated_at, STATUS_REFRESH_RECENT_HOURS);
+  };
+
+  const accumulateReason = (bag: Record<string, number>, reason: string) => {
+    bag[reason] = (bag[reason] || 0) + 1;
+  };
+
+  const refreshStatusesForVideos = async (items: BriefingVideo[]): Promise<RefreshStatusResult> => {
+    const metadataTargets = items.filter(shouldRefreshMetadata);
+    const metadataSet = new Set(metadataTargets.map((v) => v.video_id));
+    const statusSkipped = items.filter((v) => !metadataSet.has(v.video_id)).length;
+
+    let metadataChecked = 0;
+    const transcriptChecked = 0;
+    let failed = 0;
+    const failedReasons: Record<string, number> = {};
+
+    for (const video of metadataTargets) {
       try {
-        let fetched = 0;
-        let inserted = 0;
-        let updated = 0;
-        let skipped = 0;
+        const meta = await repositories.economicBriefing.refreshBriefingVideoMetadata(video.video_id);
+        if (meta.success) metadataChecked += 1;
+        else {
+          failed += 1;
+          accumulateReason(failedReasons, "metadata_failed");
+        }
+      } catch {
+        failed += 1;
+        accumulateReason(failedReasons, "metadata_failed");
+      }
+    }
+
+    return { metadataChecked, transcriptChecked, statusSkipped, failed, failedReasons };
+  };
+
+  const refreshVideosFromYouTube = async () => {
+    setError("");
+    setMessage("");
+    setRefreshingVideoStatuses(true);
+    const selected = videoSourceFilter;
+    try {
+      let fetched = 0;
+      let inserted = 0;
+      let updated = 0;
+      let skipped = 0;
+
+      if (selected === "all") {
+        const targets = activePlaylistSources;
         for (const s of targets) {
           const res = await repositories.economicBriefing.refreshBriefingSourceVideos(s.id, { max_results: 20 });
           fetched += res.fetched_count ?? 0;
@@ -285,37 +421,87 @@ function EconomicBriefingPage() {
           updated += res.updated_count ?? 0;
           skipped += res.skipped_count ?? 0;
         }
-        setMessage(`영상 목록을 동기화했습니다. (fetched=${fetched}, inserted=${inserted}, updated=${updated}, skipped=${skipped})`);
-        await loadSources();
-        await loadVideos("all");
-      } catch (e) {
-        setError(toErr(e, "영상 새로고침에 실패했습니다."));
+      } else if (selected !== "manual") {
+        const sourceId = Number(selected.replace("source:", ""));
+        if (!Number.isFinite(sourceId)) {
+          setError("유효한 source를 선택해 주세요.");
+          return;
+        }
+        const source = sources.find((s) => s.id === sourceId);
+        if (!source) {
+          setError("선택한 source를 찾을 수 없습니다.");
+          return;
+        }
+        if (source.source_type === "playlist") {
+          const res = await repositories.economicBriefing.refreshBriefingSourceVideos(sourceId, { max_results: 20 });
+          if (!res.success) {
+            setError(res.message || "영상 새로고침에 실패했습니다.");
+            return;
+          }
+          fetched += res.fetched_count ?? 0;
+          inserted += res.inserted_count ?? 0;
+          updated += res.updated_count ?? 0;
+          skipped += res.skipped_count ?? 0;
+        }
       }
-      return;
-    }
 
-    const sourceId = Number(selected.replace("source:", ""));
-    if (!Number.isFinite(sourceId)) {
-      setError("유효한 source를 선택해 주세요.");
-      return;
-    }
-    try {
-      const source = sources.find((s) => s.id === sourceId);
-      if (source && source.source_type !== "playlist") {
-        setMessage("재생목록 source만 새로고침할 수 있습니다. 단일 영상은 등록된 1건만 유지됩니다.");
-        await loadVideos(selected);
-        return;
-      }
-      const res = await repositories.economicBriefing.refreshBriefingSourceVideos(sourceId, { max_results: 20 });
-      if (!res.success) {
-        setError(res.message || "영상 새로고침에 실패했습니다.");
-        return;
-      }
-      setMessage(`${res.message} (fetched=${res.fetched_count}, inserted=${res.inserted_count}, updated=${res.updated_count}, skipped=${res.skipped_count})`);
       await loadSources();
+      const refreshedItems = await fetchVideosByFilter(selected);
+      const statusResult = await refreshStatusesForVideos(refreshedItems);
       await loadVideos(selected);
+      const reasonSummary = Object.entries(statusResult.failedReasons)
+        .map(([k, v]) => `${k} ${v}`)
+        .join(", ");
+      setMessage(
+        `영상 목록을 새로 불러왔습니다. 목록 ${refreshedItems.length}건 · 소스갱신 fetched ${fetched}/inserted ${inserted}/updated ${updated}/skipped ${skipped} · 메타확인 ${statusResult.metadataChecked}건 · 자막확인 ${statusResult.transcriptChecked}건(자동확인 중단) · 건너뜀 ${statusResult.statusSkipped}건 · 실패 ${statusResult.failed}건${reasonSummary ? ` (${reasonSummary})` : ""}`,
+      );
+      if (statusResult.failed > 0) {
+        setError("일부 영상 메타데이터 갱신에 실패했습니다. 잠시 후 다시 시도해 주세요.");
+      }
     } catch (e) {
       setError(toErr(e, "영상 새로고침에 실패했습니다."));
+    } finally {
+      setRefreshingVideoStatuses(false);
+    }
+  };
+
+  const isAnalysisCompleted = (status: string | null | undefined) => {
+    const normalized = (status || "").toLowerCase();
+    return normalized === "summarized" || normalized === "completed";
+  };
+
+  const isTranscriptCooldownActive = (video: BriefingVideo) =>
+    hasBlockedTranscriptError(video.error_message)
+      && isRecentWithinMinutes(video.transcript_checked_at, getTranscriptCooldownMinutes(video.error_message));
+
+  const shouldShowTranscriptRetryButton = (video: BriefingVideo) => {
+    if (isAnalysisCompleted(video.analysis_status)) return false;
+    const transcriptStatus = (video.transcript_status || "unknown").toLowerCase();
+    if (transcriptStatus === "available" || transcriptStatus === "unavailable") return false;
+    if (transcriptStatus === "failed" || transcriptStatus === "error" || transcriptStatus === "unknown" || transcriptStatus === "pending" || transcriptStatus === "") {
+      return true;
+    }
+    if (hasBlockedTranscriptError(video.error_message)) return true;
+    return false;
+  };
+
+  const refreshSingleTranscript = async (video: BriefingVideo) => {
+    const key = video.video_id;
+    if (manualTranscriptCheckingMap[key]) return;
+    setError("");
+    setManualTranscriptCheckingMap((prev) => ({ ...prev, [key]: true }));
+    try {
+      const result = await repositories.economicBriefing.checkBriefingVideoTranscript(video.video_id);
+      if (result.success) {
+        setMessage("자막 상태를 확인했습니다.");
+      } else {
+        setError("자막 조회에 실패했습니다. 현재 네트워크에서 YouTube 자막 접근이 제한될 수 있습니다.");
+      }
+      await loadVideos(videoSourceFilter);
+    } catch (e) {
+      setError(toErr(e, "자막 조회에 실패했습니다. 현재 네트워크에서 YouTube 자막 접근이 제한될 수 있습니다."));
+    } finally {
+      setManualTranscriptCheckingMap((prev) => ({ ...prev, [key]: false }));
     }
   };
 
@@ -355,6 +541,8 @@ function EconomicBriefingPage() {
       }
       setRegisterUrl("");
       setRegisterName("");
+      setManualSourceId("");
+      setSourceFormOpen(false);
     } catch (e) {
       setError(toErr(e, "URL 등록에 실패했습니다."));
     }
@@ -391,34 +579,6 @@ function EconomicBriefingPage() {
       await loadVideos();
     } catch (e) {
       setError(toErr(e, "source 삭제에 실패했습니다."));
-    }
-  };
-
-  const refreshVideoMetadata = async (videoId: string) => {
-    try {
-      const res = await repositories.economicBriefing.refreshBriefingVideoMetadata(videoId);
-      if (!res.success) {
-        setError(res.message);
-        return;
-      }
-      setMessage(res.message);
-      await loadVideos();
-    } catch (e) {
-      setError(toErr(e, "메타갱신에 실패했습니다."));
-    }
-  };
-
-  const checkTranscript = async (videoId: string) => {
-    try {
-      const res = await repositories.economicBriefing.checkBriefingVideoTranscript(videoId);
-      if (res.success) {
-        setMessage(`${videoId}: ${res.message}`);
-      } else {
-        setError(`${videoId}: ${res.message}${res.error ? ` (${res.error})` : ""}`);
-      }
-      await loadVideos();
-    } catch (e) {
-      setError(toErr(e, "자막확인에 실패했습니다."));
     }
   };
 
@@ -570,41 +730,45 @@ function EconomicBriefingPage() {
             <button
               type="button"
               className={`border-b-2 bg-transparent pb-3 text-sm transition-colors duration-150 ${
-                tab === "sources"
-                  ? "border-slate-900 font-semibold text-slate-900"
-                  : "border-transparent font-medium text-slate-500 hover:text-slate-900"
-              }`}
-              onClick={() => setTab("sources")}
-            >
-              채널/재생목록 관리
-            </button>
-            <button
-              type="button"
-              className={`border-b-2 bg-transparent pb-3 text-sm transition-colors duration-150 ${
                 tab === "videos"
                   ? "border-slate-900 font-semibold text-slate-900"
                   : "border-transparent font-medium text-slate-500 hover:text-slate-900"
               }`}
               onClick={() => setTab("videos")}
             >
-              영상 목록
+              영상 수집/요약
+            </button>
+            <button
+              type="button"
+              className={`border-b-2 bg-transparent pb-3 text-sm transition-colors duration-150 ${
+                tab === "sources"
+                  ? "border-slate-900 font-semibold text-slate-900"
+                  : "border-transparent font-medium text-slate-500 hover:text-slate-900"
+              }`}
+              onClick={() => setTab("sources")}
+            >
+              소스 관리
             </button>
           </nav>
         </div>
       </SectionCard>
 
       {tab === "sources" ? (
-        <SectionCard title="채널/재생목록 관리">
+        <SectionCard title="소스 관리">
+          <p className="text-sm text-muted mb-3">등록한 YouTube 채널/재생목록/단일 영상 URL을 관리합니다. 활성 소스만 수집 대상이 됩니다.</p>
           <div className="flex gap-2 items-center mb-3 flex-wrap">
             <button type="button" className={`btn ${sourceStatusFilter === "all" ? "btn-primary" : "btn-secondary"}`} onClick={() => setSourceStatusFilter("all")}>전체</button>
             <button type="button" className={`btn ${sourceStatusFilter === "active" ? "btn-primary" : "btn-secondary"}`} onClick={() => setSourceStatusFilter("active")}>활성</button>
             <button type="button" className={`btn ${sourceStatusFilter === "inactive" ? "btn-primary" : "btn-secondary"}`} onClick={() => setSourceStatusFilter("inactive")}>비활성</button>
+            <button type="button" className="btn btn-secondary" onClick={() => setSourceFormOpen((v) => !v)}>
+              {sourceFormOpen ? "등록 폼 닫기" : "+ 새 소스 등록"}
+            </button>
           </div>
 
+          {sourceFormOpen ? (
           <div className="border rounded p-3 mb-4">
             <div className="font-semibold mb-1">YouTube URL 등록</div>
             <p className="text-xs text-muted mb-2">재생목록 URL은 여러 영상을 가져올 source로 등록됩니다. 단일 영상 URL은 영상 1건만 등록됩니다.</p>
-            <p className="text-xs text-muted mb-2">등록한 URL은 기본적으로 활성 상태로 저장됩니다. 필요하면 목록에서 비활성화할 수 있습니다.</p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               <select className="input-control" value={registerType} onChange={(e) => setRegisterType(e.target.value as RegisterType)}>
                 <option value="playlist">재생목록으로 등록</option>
@@ -622,21 +786,25 @@ function EconomicBriefingPage() {
               )}
               <div className="flex gap-2">
                 <button type="button" className="btn btn-primary" onClick={() => void registerYouTubeUrl()}>등록</button>
-                <button type="button" className="btn btn-secondary" onClick={() => { setRegisterUrl(""); setRegisterName(""); }}>초기화</button>
+                <button type="button" className="btn btn-secondary" onClick={() => { setRegisterUrl(""); setRegisterName(""); setManualSourceId(""); }}>초기화</button>
+                <button type="button" className="btn btn-secondary" onClick={() => setSourceFormOpen(false)}>닫기</button>
               </div>
             </div>
           </div>
+          ) : null}
 
           <div className="table-shell overflow-auto">
             <table className="data-table compact-table">
-              <thead><tr><th>ID</th><th>유형</th><th>이름</th><th>URL</th><th>상태</th><th>관리</th></tr></thead>
+              <thead><tr><th>유형</th><th>이름</th><th>source 분류</th><th>URL</th><th>상태</th><th>관리</th></tr></thead>
               <tbody>
                 {sources.map((s) => (
                   <tr key={s.id}>
-                    <td>{s.id}</td>
                     <td>{s.source_type}</td>
                     <td>{s.source_name}</td>
-                    <td className="max-w-[420px] truncate">{s.source_url}</td>
+                    <td>{s.source_type === "playlist" ? "재생목록 source" : "채널 source"}</td>
+                    <td className="max-w-[220px] truncate" title={s.source_url}>
+                      <a href={s.source_url} target="_blank" rel="noreferrer" className="text-blue-700 hover:underline">YouTube 열기</a>
+                    </td>
                     <td>{s.is_active ? "활성" : "비활성"}</td>
                     <td>
                       <div className="flex gap-1 flex-wrap">
@@ -662,18 +830,26 @@ function EconomicBriefingPage() {
       ) : null}
 
       {tab === "videos" ? (
-        <SectionCard title="영상 목록">
+        <SectionCard title="영상 수집/요약">
           <div className="flex gap-2 mb-3 items-center flex-wrap">
             <select className="input-control" value={videoSourceFilter} onChange={(e) => setVideoSourceFilter(e.target.value as SourceFilter)}>
               <option value="all">전체</option>
               <option value="manual">수동/미분류</option>
               {activePlaylistSources.map((s) => <option key={s.id} value={`source:${s.id}`}>{s.source_name}</option>)}
             </select>
-            <button type="button" className="btn btn-secondary" onClick={() => void refreshVideosFromYouTube()}>새로고침</button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => void refreshVideosFromYouTube()}
+              disabled={refreshingVideoStatuses}
+              title="영상 목록을 새로 불러옵니다. 자막 확인은 필요한 영상에서 개별 실행합니다."
+            >
+              {refreshingVideoStatuses ? "새로고침 중..." : "목록 새로고침"}
+            </button>
           </div>
           <div className="table-shell overflow-auto">
-            <table className="data-table compact-table">
-              <thead><tr><th>게시일</th><th>제목</th><th>채널명</th><th>길이</th><th>자막상태</th><th>분석상태</th><th>관리</th></tr></thead>
+            <table className="data-table compact-table economic-videos-table">
+              <thead><tr><th className="eb-col-date">게시일</th><th className="eb-col-title">제목</th><th className="eb-col-channel">채널명</th><th className="eb-col-duration">길이</th><th className="eb-col-transcript">자막상태</th><th className="eb-col-analysis">분석상태</th><th className="eb-col-actions">관리</th></tr></thead>
               <tbody>
                 {pagedVideos.map((v) => {
                   const progressState = summaryProgressMap[v.video_id];
@@ -681,29 +857,53 @@ function EconomicBriefingPage() {
                   const running = progressState?.status === "running";
                   const canViewSummary = v.summary_has_content === true;
                   const isSelectedSummary = summaryPanelOpen && selectedSummaryVideo?.video_id === v.video_id;
+                  const showTranscriptRetry = shouldShowTranscriptRetryButton(v);
+                  const transcriptCooldown = isTranscriptCooldownActive(v);
+                  const manualTranscriptChecking = manualTranscriptCheckingMap[v.video_id] === true;
+                  const transcriptIssueType = getTranscriptIssueType(v.error_message);
+                  const summarizeDisabled = running
+                    || (v.transcript_status || "").toLowerCase() === "unavailable"
+                    || (transcriptCooldown && transcriptIssueType === "access_limited");
+                  const summarizeTitle = (v.transcript_status || "").toLowerCase() === "unavailable"
+                    ? "자막이 없어 요약할 수 없습니다."
+                    : (transcriptCooldown && transcriptIssueType === "access_limited"
+                      ? "자막 접근 제한 상태입니다. 잠시 후 다시 시도해 주세요."
+                      : ((v.transcript_status || "").toLowerCase() !== "available"
+                        ? "자막 상태가 불안정합니다. 먼저 자막 재확인을 권장합니다."
+                        : undefined));
                   return (
                     <tr key={v.id}>
                       <td>{formatDate(v.published_at)}</td>
-                      <td className="max-w-[320px] truncate" title={v.title}>{v.title}</td>
+                      <td className="eb-col-title-cell" title={v.title}>{v.title}</td>
                       <td>{v.channel_name || "-"}</td>
                       <td>{formatDuration(v.duration_seconds)}</td>
                       <td>{mapTranscriptStatus(v.transcript_status)}</td>
-                      <td>{mapAnalysisStatus(v.analysis_status)}</td>
+                      <td>{mapAnalysisStatusLabel(v.analysis_status, v.error_message)}</td>
                       <td>
-                        <div className="flex gap-1 items-center flex-wrap">
-                          <button type="button" className="btn btn-secondary px-2 py-1 text-xs" onClick={() => void refreshVideoMetadata(v.video_id)}>메타갱신</button>
-                          <button type="button" className="btn btn-secondary px-2 py-1 text-xs" onClick={() => void checkTranscript(v.video_id)}>자막확인</button>
+                        <div className="eb-action-group">
+                          {showTranscriptRetry ? (
+                            <button
+                              type="button"
+                              className="btn btn-secondary eb-action-btn"
+                              disabled={manualTranscriptChecking || transcriptCooldown}
+                              onClick={() => void refreshSingleTranscript(v)}
+                              title={transcriptCooldown ? "요청 제한 상태입니다. 잠시 후 다시 시도하세요." : "해당 영상 1건의 자막 상태를 다시 확인합니다."}
+                            >
+                              {manualTranscriptChecking ? "확인 중..." : (transcriptCooldown ? "요청 제한 대기" : "자막 재확인")}
+                            </button>
+                          ) : null}
                           <button
                             type="button"
-                            className="btn btn-primary px-2 py-1 text-xs"
-                            disabled={v.transcript_status !== "available" || running}
+                            className="btn btn-primary eb-action-btn"
+                            disabled={summarizeDisabled}
                             onClick={() => void summarizeVideo(v)}
+                            title={summarizeTitle}
                           >
-                            {running ? "요약중..." : "요약실행"}
+                            {running ? "요약중..." : (v.analysis_status === "failed" ? "재시도" : (v.analysis_status === "summarized" ? "재요약" : "요약실행"))}
                           </button>
                           <button
                             type="button"
-                            className="btn btn-secondary px-2 py-1 text-xs"
+                            className="btn btn-secondary eb-action-btn"
                             disabled={!canViewSummary}
                             onClick={() => void openSummaryPanel(v)}
                             title={canViewSummary ? (isSelectedSummary ? "닫기" : "요약보기") : "저장된 요약 내용이 없습니다."}
@@ -717,7 +917,14 @@ function EconomicBriefingPage() {
                           </div>
                         ) : null}
                         {progress === 100 ? <div className="text-xs mt-1 text-green-600">요약완료</div> : null}
-                        {v.error_message ? <div className="text-xs text-red-600 max-w-[260px] truncate" title={v.error_message}>{v.error_message}</div> : null}
+                        {v.error_message ? (
+                          <div
+                            className="text-xs text-red-600 max-w-[260px] truncate"
+                            title={`${getTranscriptIssueHelpText(v.error_message) || ""}${getTranscriptIssueHelpText(v.error_message) ? " | " : ""}${v.error_message}`}
+                          >
+                            {compactErrorMessage(v.error_message)}
+                          </div>
+                        ) : null}
                       </td>
                     </tr>
                   );

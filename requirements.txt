@@ -56,3 +56,4 @@ uvicorn==0.46.0
 websocket-client==1.9.0
 wheel==0.47.0
 youtube-transcript-api==1.1.1
+yt-dlp==2026.3.17

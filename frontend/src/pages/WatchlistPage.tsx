@@ -193,7 +193,7 @@ function WatchlistPage() {
 
   useEffect(() => {
     if (expandedThemes.length === 0 && themeGroups.length > 0) {
-      setExpandedThemes(themeGroups.slice(0, 3).map((x) => x.themeName));
+      setExpandedThemes(themeGroups.map((x) => x.themeName));
     }
   }, [themeGroups, expandedThemes.length]);
 

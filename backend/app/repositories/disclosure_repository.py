@@ -139,6 +139,14 @@ class DisclosureRepository:
         self.db.add(item)
         self.db.commit()
 
+    def update_summary_text(self, disclosure_id: int, summary: str | None) -> None:
+        item = self.get_by_id(disclosure_id)
+        if not item:
+            return
+        item.summary = summary
+        self.db.add(item)
+        self.db.commit()
+
     def mark_ai_summary_failed(self, disclosure_id: int, error_message: str, ai_processed_at: str) -> None:
         item = self.get_by_id(disclosure_id)
         if not item:

@@ -12,3 +12,9 @@ class SchemaCommentService:
 
     def list_comments(self, table_name: str | None) -> list[SchemaComment]:
         return self.repo.list(table_name=table_name)
+
+    def list_tables(self, table_name: str | None) -> list[dict[str, object]]:
+        return self.repo.list_tables(table_name=table_name)
+
+    def list_columns(self, table_name: str) -> list[dict[str, object]]:
+        return self.repo.list_columns(table_name=table_name)

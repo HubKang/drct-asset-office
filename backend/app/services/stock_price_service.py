@@ -172,6 +172,8 @@ class StockPriceService:
         collected_count = len(payload)
         saved = self.price_repo.upsert_daily_rows(stock.id, source, payload)
         if payload:
+            self.price_repo.recalculate_change_rate_for_stock(stock.id, source=source, digits=2)
+        if payload:
             self.recalculate_moving_averages(stock.id)
         logger.info(
             "일봉 수집 저장 완료: stock_id=%s stock_code=%s normalized=%s source=%s collected=%s saved=%s start=%s end=%s",
@@ -443,11 +445,23 @@ class StockPriceService:
             "message": "선택 종목 기술적 지표 재계산이 완료되었습니다.",
         }
 
-    def list_summary(self, keyword: str | None, market: str | None, source: str | None, limit: int, offset: int) -> dict:
+    def list_summary(
+        self,
+        keyword: str | None,
+        market: str | None,
+        source: str | None,
+        scope: str | None,
+        limit: int,
+        offset: int,
+    ) -> dict:
+        resolved_scope = (scope or "watchlist").strip().lower()
+        if resolved_scope not in {"watchlist", "all"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid scope")
         items = self.price_repo.list_price_summary(
             keyword=keyword,
             market=market,
             source=source,
+            scope=resolved_scope,
             limit=limit,
             offset=offset,
         )

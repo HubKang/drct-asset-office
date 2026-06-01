@@ -33,6 +33,7 @@ def list_stock_price_summary(
     keyword: str | None = Query(default=None),
     market: str | None = Query(default=None),
     source: str | None = Query(default=None),
+    scope: str | None = Query(default="watchlist"),
     limit: int = Query(default=20, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
@@ -41,6 +42,7 @@ def list_stock_price_summary(
         keyword=keyword,
         market=market,
         source=source,
+        scope=scope,
         limit=limit,
         offset=offset,
     )

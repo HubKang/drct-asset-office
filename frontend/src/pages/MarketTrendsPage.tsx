@@ -54,6 +54,9 @@ const getNaverChartImageUrl = (stockCode: string, period: "week" | "month3" | "y
   return `https://ssl.pstatic.net/imgfinance/chart/item/area/${period}/${code}.png?sidcode=${sidcode}`;
 };
 
+const getNaverMarketChartImageUrl = (market: "KOSPI" | "KOSDAQ", sidcode: number) =>
+  `https://ssl.pstatic.net/imgstock/chart3/day90/${market}.png?sidcode=${sidcode}`;
+
 const estimatedTradingValue = (item: { estimated_trading_value?: number | null; current_price?: number | null; volume?: number | null; trading_value?: number | null }) => {
   if (item.estimated_trading_value != null) return item.estimated_trading_value;
   if (item.current_price != null && item.volume != null) return Math.max(0, item.current_price) * Math.max(0, item.volume);
@@ -607,7 +610,26 @@ function MarketTrendsPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="시장 트랜드 분석" description="조건검색 결과를 수급 이벤트 후보로 저장하고 분석 우선순위를 관리합니다." />
+      <PageHeader
+        title="시장 트랜드 분석"
+        description="조건검색 결과를 수급 이벤트 후보로 저장하고 분석 우선순위를 관리합니다."
+        action={(
+          <button
+            type="button"
+            className="btn btn-secondary"
+            title="핀업 테마로그를 새 창으로 엽니다."
+            onClick={() => {
+              window.open(
+                "https://finance.finup.co.kr/lab/themelog/popup?Fullscreen=true",
+                "_blank",
+                "noopener,noreferrer",
+              );
+            }}
+          >
+            핀업 테마 열기
+          </button>
+        )}
+      />
       {message ? <div className="inline-result">{message}</div> : null}
       {error ? <div className="inline-result inline-error">{error}</div> : null}
 
@@ -685,7 +707,7 @@ function MarketTrendsPage() {
                       onClick={() => { setSelectedConditionSeq(c.condition_seq); setSelectedConditionName(c.condition_name); }}
                       title={c.condition_name}
                     >
-                      <strong>{c.condition_seq.padStart(2, "0")}.</strong>
+                      <strong>[{c.condition_seq.padStart(2, "0")}]</strong>
                       <span>{c.condition_name}</span>
                     </button>
                   );
@@ -902,10 +924,56 @@ function MarketTrendsPage() {
           </SectionCard>
 
           <SectionCard title="">
-            <div className="watchlist-card-title-wrap">
-              <h3 className="section-title m-0">선택 테마 상세 종목{selectedFlowTheme ? ` - ${selectedFlowTheme.name}` : ""}</h3>
+            <div className="theme-detail-header">
+              <div className="theme-detail-title-block">
+                <div className="watchlist-card-title-wrap">
+                  <h3 className="section-title m-0">선택 테마 상세 종목{selectedFlowTheme ? ` - ${selectedFlowTheme.name}` : ""}</h3>
+                </div>
+                {selectedFlowTheme && selectedThemeMeta ? <p className="text-sm text-muted mb-2">{selectedThemeMeta.stockCount}종목 · 대표 {selectedThemeMeta.representative}</p> : null}
+              </div>
+              <div className="market-mini-charts">
+                <div className="market-mini-chart-card">
+                  <p className="market-mini-chart-label">KOSPI 3개월</p>
+                  {brokenCharts["market-kospi-month3"] ? (
+                    <div className="market-mini-chart-fallback">차트 이미지 없음</div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="market-mini-chart-button"
+                      onClick={() => setZoomedChart({ url: getNaverMarketChartImageUrl("KOSPI", chartSidcode), alt: "KOSPI 3개월 차트" })}
+                    >
+                      <img
+                        src={getNaverMarketChartImageUrl("KOSPI", chartSidcode)}
+                        alt="KOSPI 3개월 차트"
+                        loading="lazy"
+                        className="market-mini-chart-image"
+                        onError={() => onChartError("market-kospi-month3")}
+                      />
+                    </button>
+                  )}
+                </div>
+                <div className="market-mini-chart-card">
+                  <p className="market-mini-chart-label">KOSDAQ 3개월</p>
+                  {brokenCharts["market-kosdaq-month3"] ? (
+                    <div className="market-mini-chart-fallback">차트 이미지 없음</div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="market-mini-chart-button"
+                      onClick={() => setZoomedChart({ url: getNaverMarketChartImageUrl("KOSDAQ", chartSidcode), alt: "KOSDAQ 3개월 차트" })}
+                    >
+                      <img
+                        src={getNaverMarketChartImageUrl("KOSDAQ", chartSidcode)}
+                        alt="KOSDAQ 3개월 차트"
+                        loading="lazy"
+                        className="market-mini-chart-image"
+                        onError={() => onChartError("market-kosdaq-month3")}
+                      />
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
-            {selectedFlowTheme && selectedThemeMeta ? <p className="text-sm text-muted mb-2">{selectedThemeMeta.stockCount}종목 · 대표 {selectedThemeMeta.representative}</p> : null}
             {flowStocksLoading ? <p className="text-sm text-muted">상세 종목을 조회 중입니다.</p> : null}
             {!flowStocksLoading && selectedFlowTheme && flowStocks.length === 0 ? <p className="text-sm text-muted">선택한 테마에 연결된 종목이 없습니다.</p> : null}
 

@@ -174,6 +174,11 @@ class BriefingTranscriptCheckResponse(BaseModel):
     failure_reason: str | None = None
     error_type: str | None = None
     attempts: list[dict[str, object]] = Field(default_factory=list)
+    selected_provider: str | None = None
+    provider_results: dict[str, dict[str, object]] = Field(default_factory=dict)
+    normalized_error_type: str | None = None
+    is_retryable: bool | None = None
+    retry_after_minutes: int | None = None
 
 
 class BriefingVideoSummarizeResponse(BaseModel):

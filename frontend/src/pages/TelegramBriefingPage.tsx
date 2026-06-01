@@ -4,7 +4,7 @@ import SectionCard from "@/components/common/SectionCard";
 import { repositories } from "@/services";
 import type { TelegramAuthStatus, TelegramItem, TelegramSource, TelegramSourceConnectionTest } from "@/types/telegram";
 
-const tabs = ["채널 관리", "수집/메시지 목록"] as const;
+const tabs = ["수집/메시지 목록", "채널 관리"] as const;
 const PAGE_SIZE = 20;
 
 const summaryStatusLabelMap: Record<string, string> = {
@@ -147,7 +147,7 @@ function hasMeaningfulMessageType(value?: string | null): boolean {
 }
 
 function TelegramBriefingPage() {
-  const [tab, setTab] = useState<(typeof tabs)[number]>("채널 관리");
+  const [tab, setTab] = useState<(typeof tabs)[number]>("수집/메시지 목록");
   const [sources, setSources] = useState<TelegramSource[]>([]);
   const [items, setItems] = useState<TelegramItem[]>([]);
   const [totalCount, setTotalCount] = useState(0);
@@ -161,8 +161,10 @@ function TelegramBriefingPage() {
   const [isCollectingSelected, setIsCollectingSelected] = useState(false);
   const [isDeletingSelected, setIsDeletingSelected] = useState(false);
   const [isAddingSource, setIsAddingSource] = useState(false);
+  const [isSourceFormOpen, setIsSourceFormOpen] = useState(false);
   const [sourceActionLoading, setSourceActionLoading] = useState<Record<string, boolean>>({});
   const [message, setMessage] = useState("");
+  const [pageError, setPageError] = useState("");
   const [collectionMode, setCollectionMode] = useState("");
   const [collectionError, setCollectionError] = useState("");
   const [collectionDiagnostics, setCollectionDiagnostics] = useState<Record<string, boolean>>({});
@@ -184,23 +186,69 @@ function TelegramBriefingPage() {
   const [newChannel, setNewChannel] = useState("");
   const [newMemo, setNewMemo] = useState("");
 
-  const totalPages = useMemo(() => Math.max(1, Math.ceil(totalCount / PAGE_SIZE)), [totalCount]);
-  const allCurrentPageSelected = useMemo(() => items.length > 0 && items.every((it) => selectedItemIds.includes(it.id)), [items, selectedItemIds]);
+  function aiActionLabel(summaryStatus?: string | null) {
+    const key = (summaryStatus || "").toLowerCase();
+    if (key === "summarized") return "재요약";
+    if (key === "failed") return "재시도";
+    return "요약";
+  }
+
+  function aiProcessLabel(item: TelegramItem) {
+    const key = (item.summary_status || "").toLowerCase();
+    const keyPoints = parseJsonArray(item.key_points_json);
+    const fallback = isFallbackSummary(item.summary_text, keyPoints);
+    if (key === "summarized" && Number(item.summary_has_content) === 1 && !fallback) return "AI완료";
+    if (key === "pending") return "대기";
+    if (key === "failed") return "실패";
+    if (key === "skipped") return "제외";
+    if (key === "summarized" && fallback) return "실패";
+    return "미확인";
+  }
+
+  function aiProcessBadgeClass(item: TelegramItem) {
+    const key = aiProcessLabel(item);
+    if (key === "AI완료") return "bg-emerald-100 text-emerald-700";
+    if (key === "실패") return "bg-rose-100 text-rose-700";
+    if (key === "제외") return "bg-amber-100 text-amber-700";
+    return "bg-slate-100 text-slate-700";
+  }
+
+  const safeItems = useMemo(() => (Array.isArray(items) ? items : []), [items]);
+  const safeSources = useMemo(() => (Array.isArray(sources) ? sources : []), [sources]);
+  const totalPages = useMemo(() => Math.max(1, Math.ceil((Number(totalCount) || 0) / PAGE_SIZE)), [totalCount]);
+  const allCurrentPageSelected = useMemo(
+    () => safeItems.length > 0 && safeItems.every((it) => selectedItemIds.includes(it.id)),
+    [safeItems, selectedItemIds]
+  );
+  const messageSummary = useMemo(() => {
+    const summarized = safeItems.filter((it) => aiProcessLabel(it) === "AI완료").length;
+    const failed = safeItems.filter((it) => aiProcessLabel(it) === "실패").length;
+    const activeSources = safeSources.filter((s) => Number(s.is_active) === 1).length;
+    return { summarized, failed, activeSources };
+  }, [safeItems, safeSources]);
   const selectedDetailItem = useMemo(
-    () => items.find((it) => it.id === selectedDetailItemId) ?? null,
-    [items, selectedDetailItemId]
+    () => safeItems.find((it) => it.id === selectedDetailItemId) ?? null,
+    [safeItems, selectedDetailItemId]
   );
 
   const loadSources = async () => {
-    const data = await repositories.telegram.listSources(false);
-    setSources(data);
-    setChannelInputs((prev) => {
-      const next = { ...prev };
-      data.forEach((s) => {
-        if (!next[s.id]) next[s.id] = s.channel_username;
+    try {
+      const data = await repositories.telegram.listSources(false);
+      const normalized = Array.isArray(data) ? data : [];
+      setSources(normalized);
+      setChannelInputs((prev) => {
+        const next = { ...prev };
+        normalized.forEach((s) => {
+          if (!next[s.id]) next[s.id] = s.channel_username;
+        });
+        return next;
       });
-      return next;
-    });
+      setPageError("");
+    } catch (error) {
+      setSources([]);
+      const errorMessage = error instanceof Error ? error.message : "채널 목록을 불러오지 못했습니다.";
+      setPageError(`채널 목록 오류: ${errorMessage}`);
+    }
   };
 
   const loadAuthStatus = async () => {
@@ -217,15 +265,23 @@ function TelegramBriefingPage() {
     const page = opts?.page ?? currentPage;
     const selectedSource = opts?.source ?? sourceId;
     const selectedDate = opts?.date ?? targetDate;
-    const data = await repositories.telegram.listItems({
-      source_id: selectedSource === "0" ? undefined : selectedSource,
-      date_from: selectedDate,
-      date_to: selectedDate,
-      limit: PAGE_SIZE,
-      offset: (page - 1) * PAGE_SIZE,
-    });
-    setItems(data.items);
-    setTotalCount(data.total_count);
+    try {
+      const data = await repositories.telegram.listItems({
+        source_id: selectedSource === "0" ? undefined : selectedSource,
+        date_from: selectedDate,
+        date_to: selectedDate,
+        limit: PAGE_SIZE,
+        offset: (page - 1) * PAGE_SIZE,
+      });
+      setItems(Array.isArray(data?.items) ? data.items : []);
+      setTotalCount(Number(data?.total_count) || 0);
+      setPageError("");
+    } catch (error) {
+      setItems([]);
+      setTotalCount(0);
+      const errorMessage = error instanceof Error ? error.message : "메시지 목록을 불러오지 못했습니다.";
+      setPageError(`메시지 목록 오류: ${errorMessage}`);
+    }
   };
 
   useEffect(() => {
@@ -254,6 +310,7 @@ function TelegramBriefingPage() {
       setNewMemo("");
       await loadSources();
       setMessage("채널이 추가되었습니다.");
+      setIsSourceFormOpen(false);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "채널 추가에 실패했습니다.";
       setMessage(`채널 추가 실패: ${errorMessage}`);
@@ -275,7 +332,7 @@ function TelegramBriefingPage() {
       });
       setCollectionMode(result.source_mode);
       setCollectionError(result.error_message || "");
-      setCollectionDiagnostics(result.diagnostics || {});
+      setCollectionDiagnostics((result.diagnostics && typeof result.diagnostics === "object") ? result.diagnostics : {});
       await loadAuthStatus();
       setCurrentPage(1);
       setSelectedDetailItemId(null);
@@ -287,6 +344,11 @@ function TelegramBriefingPage() {
       );
       await loadItems({ page: 1, source: sourceId, date: targetDate });
       await loadSources();
+      setPageError("");
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "채널 수집에 실패했습니다.";
+      setMessage(`수집 실패: ${errorMessage}`);
+      setPageError(`수집 오류: ${errorMessage}`);
     } finally {
       setIsCollectingSelected(false);
     }
@@ -303,7 +365,7 @@ function TelegramBriefingPage() {
       });
       setCollectionMode(result.source_mode);
       setCollectionError(result.error_message || "");
-      setCollectionDiagnostics(result.diagnostics || {});
+      setCollectionDiagnostics((result.diagnostics && typeof result.diagnostics === "object") ? result.diagnostics : {});
       await loadAuthStatus();
       setSourceId("0");
       setCurrentPage(1);
@@ -316,6 +378,11 @@ function TelegramBriefingPage() {
       );
       await loadItems({ page: 1, source: "0", date: targetDate });
       await loadSources();
+      setPageError("");
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "전체 채널 수집에 실패했습니다.";
+      setMessage(`전체 수집 실패: ${errorMessage}`);
+      setPageError(`수집 오류: ${errorMessage}`);
     } finally {
       setIsCollectingAll(false);
     }
@@ -374,12 +441,12 @@ function TelegramBriefingPage() {
 
   const onToggleSelectAllCurrentPage = () => {
     if (allCurrentPageSelected) {
-      const currentIds = new Set(items.map((it) => it.id));
+      const currentIds = new Set(safeItems.map((it) => it.id));
       setSelectedItemIds((prev) => prev.filter((id) => !currentIds.has(id)));
       return;
     }
     const merged = new Set<number>(selectedItemIds);
-    items.forEach((it) => merged.add(it.id));
+    safeItems.forEach((it) => merged.add(it.id));
     setSelectedItemIds(Array.from(merged));
   };
 
@@ -441,7 +508,7 @@ function TelegramBriefingPage() {
       await loadItems({ page: currentPage });
       setSelectedDetailItemId(itemId);
       setMessage("메시지 요약이 완료되었습니다.");
-      const existsInPage = items.some((it) => it.id === itemId);
+      const existsInPage = safeItems.some((it) => it.id === itemId);
       if (!existsInPage) {
         setSelectedDetailItemId(null);
       } else {
@@ -474,7 +541,7 @@ function TelegramBriefingPage() {
       setSelectedDetailItemId(null);
       setSelectedItemIds([]);
 
-      const shouldMovePrev = items.length === result.deleted_count && currentPage > 1;
+      const shouldMovePrev = safeItems.length === result.deleted_count && currentPage > 1;
       const nextPage = shouldMovePrev ? currentPage - 1 : currentPage;
       setCurrentPage(nextPage);
       await loadItems({ page: nextPage });
@@ -572,33 +639,6 @@ function TelegramBriefingPage() {
     }
   };
 
-  const aiActionLabel = (summaryStatus?: string | null) => {
-    const key = (summaryStatus || "").toLowerCase();
-    if (key === "summarized") return "재요약";
-    if (key === "failed") return "재시도";
-    return "요약";
-  };
-
-  const aiProcessLabel = (item: TelegramItem) => {
-    const key = (item.summary_status || "").toLowerCase();
-    const keyPoints = parseJsonArray(item.key_points_json);
-    const fallback = isFallbackSummary(item.summary_text, keyPoints);
-    if (key === "summarized" && Number(item.summary_has_content) === 1 && !fallback) return "AI완료";
-    if (key === "pending") return "대기";
-    if (key === "failed") return "실패";
-    if (key === "skipped") return "제외";
-    if (key === "summarized" && fallback) return "실패";
-    return "미확인";
-  };
-
-  const aiProcessBadgeClass = (item: TelegramItem) => {
-    const key = aiProcessLabel(item);
-    if (key === "AI완료") return "bg-emerald-100 text-emerald-700";
-    if (key === "실패") return "bg-rose-100 text-rose-700";
-    if (key === "제외") return "bg-amber-100 text-amber-700";
-    return "bg-slate-100 text-slate-700";
-  };
-
   return (
     <div className="space-y-4">
       <PageHeader title="텔레그램 브리핑" description="텔레그램 채널 기반 투자 참고 메시지 수집/요약/조회" />
@@ -624,6 +664,7 @@ function TelegramBriefingPage() {
       </SectionCard>
 
       {message ? <p className="text-sm text-emerald-700">{message}</p> : null}
+      {pageError ? <p className="text-sm text-rose-700">{pageError}</p> : null}
       {collectionMode ? (
         <p className="text-sm text-slate-700">
           source_mode: <b>{collectionMode}</b>{" "}
@@ -643,7 +684,18 @@ function TelegramBriefingPage() {
 
       {tab === "채널 관리" ? (
         <SectionCard title="채널 관리">
-          <form className="grid grid-cols-1 gap-2 md:grid-cols-4" onSubmit={onAddSource}>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <p className="text-sm text-slate-600">등록한 텔레그램 채널을 관리합니다. 활성 채널만 수집 대상입니다.</p>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setIsSourceFormOpen((prev) => !prev)}
+            >
+              {isSourceFormOpen ? "등록 폼 닫기" : "+ 새 채널 등록"}
+            </button>
+          </div>
+          {isSourceFormOpen ? (
+          <form className="mb-3 grid grid-cols-1 gap-2 md:grid-cols-4" onSubmit={onAddSource}>
             <input className="input-control" placeholder="채널명" value={newSourceName} onChange={(e) => setNewSourceName(e.target.value)} />
             <input className="input-control" placeholder="@username 또는 invite link" value={newChannel} onChange={(e) => setNewChannel(e.target.value)} />
             <input className="input-control" placeholder="메모" value={newMemo} onChange={(e) => setNewMemo(e.target.value)} />
@@ -655,11 +707,12 @@ function TelegramBriefingPage() {
               {isAddingSource ? "추가 중..." : "채널 추가"}
             </button>
           </form>
+          ) : null}
           <div className="table-shell mt-3">
-            <table className="data-table min-w-[1300px]"><thead><tr><th>ID</th><th>채널명</th><th>username/link</th><th>활성</th><th>마지막 수집</th><th>메모</th><th>접근 테스트</th><th>관리</th></tr></thead><tbody>
-              {sources.map((s) => (
+            <table className="data-table min-w-[1140px]"><thead><tr><th>채널명</th><th>username/link</th><th>활성</th><th>마지막 수집</th><th>메모</th><th>접근 테스트</th><th>관리</th></tr></thead><tbody>
+              {safeSources.map((s) => (
                 <tr key={s.id}>
-                  <td>{s.id}</td><td>{s.source_name}</td>
+                  <td>{s.source_name}</td>
                   <td>
                     <div className="flex gap-2">
                       <input className="input-control min-w-[220px]" value={channelInputs[s.id] || ""} onChange={(e) => setChannelInputs((prev) => ({ ...prev, [s.id]: e.target.value }))} />
@@ -723,6 +776,24 @@ function TelegramBriefingPage() {
 
       {tab === "수집/메시지 목록" ? (
         <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <SectionCard title="조회 메시지">
+              <p className="text-2xl font-semibold text-slate-900">{totalCount}건</p>
+              <p className="mt-1 text-xs text-slate-500">선택 날짜/채널 기준</p>
+            </SectionCard>
+            <SectionCard title="활성 채널">
+              <p className="text-2xl font-semibold text-slate-900">{messageSummary.activeSources}개</p>
+              <p className="mt-1 text-xs text-slate-500">수집 대상</p>
+            </SectionCard>
+            <SectionCard title="페이지 AI완료">
+              <p className="text-2xl font-semibold text-emerald-700">{messageSummary.summarized}건</p>
+              <p className="mt-1 text-xs text-slate-500">현재 페이지 기준</p>
+            </SectionCard>
+            <SectionCard title="페이지 실패">
+              <p className="text-2xl font-semibold text-rose-700">{messageSummary.failed}건</p>
+              <p className="mt-1 text-xs text-slate-500">현재 페이지 기준</p>
+            </SectionCard>
+          </div>
           <SectionCard title="수집 및 조회 조건">
             <div className="flex flex-nowrap items-center gap-2 overflow-x-auto">
               <input
@@ -743,7 +814,7 @@ function TelegramBriefingPage() {
                 }}
               >
                 <option value="0">전체 채널</option>
-                {sources.map((s) => <option key={s.id} value={String(s.id)}>{s.source_name}</option>)}
+                {safeSources.map((s) => <option key={s.id} value={String(s.id)}>{s.source_name}</option>)}
               </select>
               <div className="flex flex-nowrap items-center gap-2">
                 <button
@@ -752,7 +823,7 @@ function TelegramBriefingPage() {
                   onClick={() => void onQueryItems()}
                   disabled={isQuerying || isCollectingAll || isCollectingSelected || isDeletingSelected}
                 >
-                  {isQuerying ? "조회 중..." : "조회"}
+                  {isQuerying ? "불러오는 중..." : "목록 조회"}
                 </button>
                 <button
                   type="button"
@@ -760,7 +831,7 @@ function TelegramBriefingPage() {
                   onClick={() => void onCollectAll()}
                   disabled={isCollectingAll || isCollectingSelected || isQuerying || isDeletingSelected}
                 >
-                  {isCollectingAll ? "전체 수집 중..." : "전체 활성 채널 수집"}
+                  {isCollectingAll ? "수집 중..." : "전체 채널 수집"}
                 </button>
                 <button
                   type="button"
@@ -793,7 +864,7 @@ function TelegramBriefingPage() {
               <p className="text-sm text-slate-700">총 {totalCount}건 | {currentPage} / {totalPages} 페이지 | 선택 {selectedItemIds.length}건</p>
               <div className="flex gap-2">
                 <button type="button" className="btn btn-secondary" onClick={() => void onSummarizeSelected()} disabled={selectedItemIds.length === 0 || isSummarizingSelected}>
-                  {isSummarizingSelected ? "요약 중..." : "선택 메시지 LLM 요약"}
+                  {isSummarizingSelected ? "요약 중..." : `선택 요약 ${selectedItemIds.length}건`}
                 </button>
                 <button
                   type="button"
@@ -808,7 +879,7 @@ function TelegramBriefingPage() {
             <div className={`grid grid-cols-1 gap-4 ${selectedDetailItem ? "xl:grid-cols-[minmax(0,1fr)_420px]" : ""}`}>
               <div className="min-w-0 overflow-x-auto">
                 <div className="table-shell">
-                <table className="data-table min-w-[1450px]">
+                <table className="data-table min-w-[1180px]">
                 <thead>
                   <tr>
                     <th><input type="checkbox" checked={allCurrentPageSelected} onClick={(e) => e.stopPropagation()} onChange={onToggleSelectAllCurrentPage} /></th>
@@ -816,7 +887,7 @@ function TelegramBriefingPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((it) => {
+                  {safeItems.map((it) => {
                     const keyPoints = parseJsonArray(it.key_points_json);
                     const isSelected = selectedDetailItemId === it.id;
                     return (
@@ -844,16 +915,21 @@ function TelegramBriefingPage() {
                           </td>
                           <td>{it.message_date}</td>
                           <td className="min-w-[110px]">{it.source_name}</td>
-                          <td className="max-w-[640px]"><div className="cell-clamp-2">{getTelegramDisplayContent(it)}</div></td>
-                          <td>{it.tag || "-"}</td>
+                          <td className="max-w-[760px]"><div className="cell-clamp-2">{getTelegramDisplayContent(it)}</div></td>
+                          <td className="max-w-[140px]"><div className="truncate" title={it.tag || "-"}>{it.tag || "-"}</div></td>
                           <td>{it.score}</td>
-                          <td>{labelOf(sentimentLabelMap, it.sentiment)}</td>
-                          <td>{labelOf(riskLabelMap, it.risk_level)}</td>
-                          <td>{it.event_type}</td>
+                          <td className="whitespace-nowrap">{labelOf(sentimentLabelMap, it.sentiment)}</td>
+                          <td className="whitespace-nowrap">{labelOf(riskLabelMap, it.risk_level)}</td>
+                          <td className="max-w-[120px]"><div className="truncate" title={it.event_type || "-"}>{it.event_type || "-"}</div></td>
                         </tr>
                       </Fragment>
                     );
                   })}
+                  {safeItems.length === 0 ? (
+                    <tr>
+                      <td colSpan={10} className="py-6 text-center text-sm text-slate-500">수집된 메시지가 없습니다.</td>
+                    </tr>
+                  ) : null}
                 </tbody>
                 </table>
                 </div>

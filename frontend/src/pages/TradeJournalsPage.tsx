@@ -40,6 +40,7 @@ const threeMonthsAgo = () => {
 };
 const formatWon = (value?: number | null) => `${Number(value ?? 0).toLocaleString("ko-KR")}원`;
 const formatRate = (value?: number | null) => `${Number(value ?? 0).toFixed(1)}%`;
+const safeNumber = (value?: number | null) => (Number.isFinite(Number(value)) ? Number(value) : 0);
 
 function TradeJournalsPage() {
   const [items, setItems] = useState<TradeJournal[]>([]);
@@ -83,9 +84,21 @@ function TradeJournalsPage() {
   const [imageMemo, setImageMemo] = useState("");
   const [imageFile, setImageFile] = useState<File | null>(null);
 
+  const safeItems = useMemo(() => (Array.isArray(items) ? items : []), [items]);
+  const safeMethods = useMemo(() => (Array.isArray(tradeMethods) ? tradeMethods : []), [tradeMethods]);
+
+  const summaryStats = useMemo(() => {
+    const total = safeItems.length;
+    const wins = safeItems.filter((row) => row.result_type === "profit").length;
+    const losses = safeItems.filter((row) => row.result_type === "loss").length;
+    const avgProfitRate = total > 0 ? safeItems.reduce((acc, row) => acc + safeNumber(row.profit_rate), 0) / total : 0;
+    const realizedSum = safeItems.reduce((acc, row) => acc + safeNumber(row.realized_profit), 0);
+    return { total, wins, losses, avgProfitRate, realizedSum };
+  }, [safeItems]);
+
   const totalRealized = useMemo(
-    () => items.reduce((acc, row) => acc + Number(row.realized_profit ?? 0), 0),
-    [items]
+    () => safeItems.reduce((acc, row) => acc + safeNumber(row.realized_profit), 0),
+    [safeItems]
   );
 
   const loadTradeMethods = async () => {
@@ -103,7 +116,7 @@ function TradeJournalsPage() {
         stock_name: filters.stock_name || undefined,
         result_type: filters.result_type || undefined,
       });
-      setItems(response.items ?? []);
+      setItems(Array.isArray(response.items) ? response.items : []);
     } catch (e) {
       setError(e instanceof Error ? e.message : "목록 조회에 실패했습니다.");
     } finally {
@@ -320,30 +333,52 @@ function TradeJournalsPage() {
     <div className="space-y-4">
       <PageHeader title="매매일지" description="매매일지 관리 · GPT 매매복기" />
 
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+        <SectionCard title="총 거래">
+          <p className="text-2xl font-semibold text-slate-900">{summaryStats.total}건</p>
+        </SectionCard>
+        <SectionCard title="승리">
+          <p className="text-2xl font-semibold text-emerald-700">{summaryStats.wins}건</p>
+        </SectionCard>
+        <SectionCard title="손실">
+          <p className="text-2xl font-semibold text-rose-700">{summaryStats.losses}건</p>
+        </SectionCard>
+        <SectionCard title="평균 수익률">
+          <p className="text-2xl font-semibold text-slate-900">{formatRate(summaryStats.avgProfitRate)}</p>
+        </SectionCard>
+        <SectionCard title="실현손익 합계">
+          <p className="text-2xl font-semibold text-slate-900">{formatWon(summaryStats.realizedSum)}</p>
+        </SectionCard>
+      </div>
+
       <SectionCard title="조회 기간">
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-6">
+        <div className="mb-2 text-xs text-slate-600">
+          매수일 기준으로 매매일지를 조회합니다.
+          <span className="info-dot" title="매수일 기준으로 매매일지를 조회합니다. 매도일 기준 분석은 후속 기능으로 분리됩니다.">i</span>
+        </div>
+        <div className="trade-journal-search-row">
           <input
-            className="input-control"
+            className="input-control trade-journal-date-input"
             type="date"
             value={filters.start_date}
             onChange={(e) => setFilters((p) => ({ ...p, start_date: e.target.value }))}
             aria-label="시작일"
           />
           <input
-            className="input-control"
+            className="input-control trade-journal-date-input"
             type="date"
             value={filters.end_date}
             onChange={(e) => setFilters((p) => ({ ...p, end_date: e.target.value }))}
             aria-label="종료일"
           />
           <input
-            className="input-control"
+            className="input-control trade-journal-stock-input"
             value={filters.stock_name}
             onChange={(e) => setFilters((p) => ({ ...p, stock_name: e.target.value }))}
             placeholder="종목명"
           />
           <select
-            className="select-control"
+            className="select-control trade-journal-status-select"
             value={filters.result_type}
             onChange={(e) => setFilters((p) => ({ ...p, result_type: e.target.value }))}
           >
@@ -353,12 +388,12 @@ function TradeJournalsPage() {
               </option>
             ))}
           </select>
-          <button type="button" className="btn btn-primary" onClick={() => void loadList()}>
+          <button type="button" className="btn btn-primary trade-journal-search-btn" onClick={() => void loadList()}>
             {loading ? "조회 중" : "조회"}
           </button>
           <button
             type="button"
-            className="btn btn-secondary"
+            className="btn btn-secondary trade-journal-reset-btn"
             onClick={() =>
               setFilters({
                 start_date: threeDaysAgo(),
@@ -370,40 +405,37 @@ function TradeJournalsPage() {
           >
             초기화
           </button>
+          <button type="button" className="btn btn-secondary trade-journal-create-btn" onClick={openCreate}>
+            + 새 매매일지
+          </button>
         </div>
       </SectionCard>
 
       <SectionCard title="GPT 실패 패턴 분석 패키지">
-        <p className="mb-2 text-sm text-slate-600">
-          기간/목록 단위로 손실 거래, 손절 거래, 실패 사유 기록 거래를 모아 실패 패턴을 분석합니다.
-        </p>
+        <div className="mb-2 text-xs text-slate-600">
+          조회 기간 기준의 손실/실패 거래를 모아 GPT 분석 패키지를 생성합니다.
+          <span className="info-dot" title="조회 기간 또는 목록 기준의 손실 거래, 실패 사유 기록 거래를 모아 GPT 분석 패키지를 생성합니다.">i</span>
+        </div>
         <div className="mb-2 flex flex-wrap gap-2">
           <button type="button" className="btn btn-secondary" onClick={() => void generateFailurePatternPackage()} disabled={failureLoading}>
-            {failureLoading ? "생성 중..." : "GPT 실패 패턴 분석 패키지 생성"}
+            {failureLoading ? "생성 중..." : "패키지 생성"}
           </button>
           <button type="button" className="btn btn-secondary" onClick={() => void copyFailurePatternPackage()} disabled={!failurePatternPackage?.markdown}>
             전체 복사
           </button>
         </div>
-        <div className="rounded border border-slate-200 bg-slate-50 p-3">
-          <p className="mb-2 text-sm font-medium text-slate-700">GPT 실패 패턴 분석 패키지 미리보기</p>
-          {failurePatternPackage?.markdown ? (
+        {failurePatternPackage?.markdown ? (
+          <div className="rounded border border-slate-200 bg-slate-50 p-3">
+            <p className="mb-2 text-sm font-medium text-slate-700">GPT 실패 패턴 분석 패키지 미리보기</p>
             <pre className="max-h-64 overflow-auto whitespace-pre-wrap text-xs text-slate-700">{failurePatternPackage.markdown}</pre>
-          ) : (
-            <p className="text-sm text-slate-500">패키지를 생성하면 이 영역에 Markdown 미리보기가 표시됩니다.</p>
-          )}
-        </div>
+          </div>
+        ) : null}
       </SectionCard>
 
       {message ? <p className="inline-result inline-success">{message}</p> : null}
       {error ? <p className="inline-result inline-error">{error}</p> : null}
 
       <SectionCard title="매매일지 목록">
-        <div className="mb-2 flex justify-end">
-          <button type="button" className="btn btn-primary" onClick={openCreate}>
-            새 매매일지
-          </button>
-        </div>
         <div className="trade-journal-table-shell">
           <table className="data-table trade-journal-table">
             <thead>
@@ -412,27 +444,36 @@ function TradeJournalsPage() {
                 <th>매도일</th>
                 <th>종목명</th>
                 <th>상태</th>
+                <th>결과</th>
+                <th>매매기법</th>
                 <th>수익률</th>
                 <th>실현손익</th>
-                <th>이미지</th>
+                <th>이미지 <span className="info-dot" title="등록된 차트 이미지 개수입니다.">i</span></th>
                 <th>관리</th>
               </tr>
             </thead>
             <tbody>
-              {items.map((item) => (
+              {safeItems.map((item) => (
                 <tr key={item.id} className="trade-journal-row" onClick={() => void openEdit(item.id)}>
                   <td>{item.buy_date?.slice(0, 10)}</td>
                   <td>{item.sell_date?.slice(0, 10) || "-"}</td>
                   <td>{item.stock_name}</td>
+                  <td>{item.sell_date ? "매도완료" : "보유중"}</td>
                   <td>{RESULT_TYPE_OPTIONS.find((x) => x.value === (item.result_type || "holding"))?.label || "보유중"}</td>
+                  <td>{item.trade_method_name || "-"}</td>
                   <td>{formatRate(item.profit_rate)}</td>
                   <td>{formatWon(item.realized_profit)}</td>
-                  <td>{item.image_count ?? 0}</td>
-                  <td>상세</td>
+                  <td>{safeNumber(item.image_count)}</td>
+                  <td><button type="button" className="btn btn-secondary btn-table-sm" onClick={(e) => { e.stopPropagation(); void openEdit(item.id); }}>상세</button></td>
                 </tr>
               ))}
+              {safeItems.length === 0 ? (
+                <tr>
+                  <td colSpan={10} className="py-6 text-center text-sm text-slate-500">조회된 매매일지가 없습니다.</td>
+                </tr>
+              ) : null}
               <tr className="trade-journal-summary-row">
-                <td colSpan={5}>실현손익 합계</td>
+                <td colSpan={7}>실현손익 합계</td>
                 <td>{formatWon(totalRealized)}</td>
                 <td colSpan={2} />
               </tr>
@@ -495,7 +536,7 @@ function TradeJournalsPage() {
                     onChange={(e) => setForm((p) => ({ ...p, trade_method_id: e.target.value ? Number(e.target.value) : null }))}
                   >
                     <option value="">선택</option>
-                    {tradeMethods.map((m) => (
+                    {safeMethods.map((m) => (
                       <option key={m.id} value={m.id}>
                         {m.method_name}
                       </option>

@@ -18,6 +18,7 @@ const defaultForm: ClassificationRuleCreatePayload = {
   is_active: true,
   description: "",
 };
+const PAGE_SIZE = 20;
 
 function ClassificationRulesPage() {
   const [items, setItems] = useState<ClassificationRule[]>([]);
@@ -32,8 +33,23 @@ function ClassificationRulesPage() {
   const [form, setForm] = useState<ClassificationRuleCreatePayload>(defaultForm);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [submitLoading, setSubmitLoading] = useState(false);
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
 
   const isEdit = useMemo(() => editingId !== null, [editingId]);
+  const safeRules = useMemo(() => (Array.isArray(items) ? items : []), [items]);
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(safeRules.length / PAGE_SIZE)), [safeRules.length]);
+  const pagedRules = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return safeRules.slice(start, start + PAGE_SIZE);
+  }, [safeRules, currentPage]);
+  const summary = useMemo(() => {
+    const total = safeRules.length;
+    const active = safeRules.filter((row) => row.is_active).length;
+    const news = safeRules.filter((row) => row.target_type === "news").length;
+    const disclosure = safeRules.filter((row) => row.target_type === "disclosure").length;
+    return { total, active, news, disclosure };
+  }, [safeRules]);
 
   const load = async () => {
     setLoading(true);
@@ -47,7 +63,7 @@ function ClassificationRulesPage() {
         limit: 100,
         offset: 0,
       });
-      setItems(data);
+      setItems(Array.isArray(data) ? data : []);
     } catch (e) {
       setError(e instanceof Error ? e.message : "분류 규칙을 불러오지 못했습니다.");
     } finally {
@@ -61,6 +77,7 @@ function ClassificationRulesPage() {
 
   const onSearch = async (e: FormEvent) => {
     e.preventDefault();
+    setCurrentPage(1);
     await load();
   };
 
@@ -69,6 +86,7 @@ function ClassificationRulesPage() {
     setRuleGroup("");
     setIsActive("");
     setKeyword("");
+    setCurrentPage(1);
     setTimeout(() => {
       load();
     }, 0);
@@ -86,6 +104,8 @@ function ClassificationRulesPage() {
       }
       setForm(defaultForm);
       setEditingId(null);
+      setIsFormOpen(false);
+      setCurrentPage(1);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "규칙 저장 중 오류가 발생했습니다.");
@@ -96,6 +116,7 @@ function ClassificationRulesPage() {
 
   const startEdit = (row: ClassificationRule) => {
     setEditingId(row.id);
+    setIsFormOpen(true);
     setForm({
       target_type: row.target_type,
       rule_group: row.rule_group,
@@ -119,23 +140,45 @@ function ClassificationRulesPage() {
     }
   };
 
+  const onActivate = async (ruleId: number) => {
+    try {
+      await repositories.classificationRules.updateClassificationRule(ruleId, { is_active: true });
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "규칙 활성화 중 오류가 발생했습니다.");
+    }
+  };
+
   const onCancelEdit = () => {
     setEditingId(null);
     setForm(defaultForm);
+    setIsFormOpen(false);
   };
 
   return (
     <div className="space-y-4">
       <PageHeader title="분류 규칙 관리" description="뉴스와 공시의 태그·중요도·감성/리스크 분류 기준을 관리합니다." />
+      <SectionCard title="업무 목적">
+        <p className="text-sm text-slate-600">
+          뉴스/공시 본문 키워드에 따라 태그, 이벤트 유형, 리스크, 점수 보정을 자동 적용하는 규칙을 관리합니다.
+        </p>
+      </SectionCard>
+
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <SectionCard title="전체 규칙"><p className="text-2xl font-semibold text-slate-900">{summary.total}건</p></SectionCard>
+        <SectionCard title="활성 규칙"><p className="text-2xl font-semibold text-slate-900">{summary.active}건</p></SectionCard>
+        <SectionCard title="뉴스 규칙"><p className="text-2xl font-semibold text-slate-900">{summary.news}건</p></SectionCard>
+        <SectionCard title="공시 규칙"><p className="text-2xl font-semibold text-slate-900">{summary.disclosure}건</p></SectionCard>
+      </div>
 
       <SectionCard title="검색/필터">
-        <form onSubmit={onSearch} className="grid grid-cols-1 gap-2 md:grid-cols-6">
-          <select className="select-control" value={targetType} onChange={(e) => setTargetType(e.target.value)}>
+        <form onSubmit={onSearch} className="classification-rules-filter-row">
+          <select className="select-control classification-rules-filter-target" value={targetType} onChange={(e) => setTargetType(e.target.value)}>
             <option value="">전체 대상</option>
             <option value="news">뉴스</option>
             <option value="disclosure">공시</option>
           </select>
-          <select className="select-control" value={ruleGroup} onChange={(e) => setRuleGroup(e.target.value)}>
+          <select className="select-control classification-rules-filter-group" value={ruleGroup} onChange={(e) => setRuleGroup(e.target.value)}>
             <option value="">전체 그룹</option>
             <option value="tag">태그</option>
             <option value="sentiment">감성</option>
@@ -143,18 +186,22 @@ function ClassificationRulesPage() {
             <option value="disclosure_event_type">공시 이벤트</option>
             <option value="disclosure_risk_level">공시 리스크</option>
           </select>
-          <select className="select-control" value={isActive} onChange={(e) => setIsActive(e.target.value)}>
+          <select className="select-control classification-rules-filter-active" value={isActive} onChange={(e) => setIsActive(e.target.value)}>
             <option value="">전체 상태</option>
             <option value="true">사용</option>
             <option value="false">미사용</option>
           </select>
-          <input className="input-control" placeholder="keyword" value={keyword} onChange={(e) => setKeyword(e.target.value)} />
-          <button type="submit" className="btn btn-primary">검색</button>
-          <button type="button" className="btn btn-secondary" onClick={onReset}>초기화</button>
+          <input className="input-control classification-rules-filter-keyword" placeholder="keyword" value={keyword} onChange={(e) => setKeyword(e.target.value)} />
+          <button type="submit" className="btn btn-primary classification-rules-filter-search">검색</button>
+          <button type="button" className="btn btn-secondary classification-rules-filter-reset" onClick={onReset}>초기화</button>
+          <button type="button" className="btn btn-secondary classification-rules-filter-create" onClick={() => { setEditingId(null); setForm(defaultForm); setIsFormOpen((prev) => !prev); }}>
+            + 새 규칙 등록
+          </button>
         </form>
       </SectionCard>
 
-      <SectionCard title="규칙 등록/수정">
+      {isFormOpen ? (
+      <SectionCard title={isEdit ? "규칙 수정" : "규칙 신규 등록"}>
         <form onSubmit={onSubmit} className="grid grid-cols-1 gap-2 md:grid-cols-4">
           <select className="select-control" value={form.target_type} onChange={(e) => setForm({ ...form, target_type: e.target.value })}>
             <option value="news">news</option>
@@ -182,62 +229,65 @@ function ClassificationRulesPage() {
             <button type="submit" className="btn btn-primary" disabled={submitLoading}>
               {isEdit ? "저장" : "신규 등록"}
             </button>
-            {isEdit ? <button type="button" className="btn btn-secondary" onClick={onCancelEdit}>취소</button> : null}
+            <button type="button" className="btn btn-secondary" onClick={onCancelEdit}>취소</button>
           </div>
         </form>
       </SectionCard>
+      ) : null}
 
       <SectionCard title="규칙 목록">
         {loading ? <p className="text-sm text-muted">조회 중입니다.</p> : null}
         {error ? <p className="text-sm text-rose-600">{error}</p> : null}
-        {!loading && !error && items.length === 0 ? <EmptyState message="분류 규칙이 없습니다." /> : null}
+        {!loading && !error && safeRules.length === 0 ? <EmptyState message="분류 규칙이 없습니다." /> : null}
 
-        {!loading && !error && items.length > 0 ? (
+        {!loading && !error && safeRules.length > 0 ? (
           <div className="table-shell">
-            <table className="data-table min-w-[1550px]">
+            <table className="data-table classification-rules-table">
               <thead>
                 <tr>
-                  <th>ID</th>
                   <th>대상</th>
                   <th>그룹</th>
                   <th>규칙명</th>
                   <th>키워드</th>
-                  <th>출력 필드</th>
-                  <th>출력 값</th>
-                  <th>점수 가감</th>
+                  <th>결과</th>
+                  <th>점수</th>
                   <th>우선순위</th>
-                  <th>사용 여부</th>
-                  <th>설명</th>
-                  <th>수정</th>
-                  <th>비활성화</th>
+                  <th>상태</th>
+                  <th>관리</th>
                 </tr>
               </thead>
               <tbody>
-                {items.map((row) => (
+                {pagedRules.map((row) => (
                   <tr key={row.id}>
-                    <td>{row.id}</td>
-                    <td>{row.target_type}</td>
+                    <td>{row.target_type === "news" ? <StatusBadge label="뉴스" tone="blue" /> : <StatusBadge label="공시" tone="amber" />}</td>
                     <td>{row.rule_group}</td>
                     <td>{row.rule_name}</td>
-                    <td className="min-w-56">{row.keywords}</td>
-                    <td>{row.output_field}</td>
-                    <td>{row.output_value}</td>
+                    <td className="classification-rules-cell-ellipsis" title={row.keywords}>{row.keywords}</td>
+                    <td className="classification-rules-cell-ellipsis" title={`${row.output_field} = ${row.output_value}`}>{row.output_field} = {row.output_value}</td>
                     <td>{row.score_delta}</td>
                     <td>{row.priority}</td>
                     <td>{row.is_active ? <StatusBadge label="사용" tone="emerald" /> : <StatusBadge label="미사용" tone="slate" />}</td>
-                    <td>{row.description ?? "-"}</td>
-                    <td><button type="button" className="btn btn-secondary" onClick={() => startEdit(row)}>수정</button></td>
                     <td>
-                      {row.is_active ? (
-                        <button type="button" className="btn btn-danger" onClick={() => onDeactivate(row.id)}>비활성화</button>
-                      ) : (
-                        "-"
-                      )}
+                      <div className="flex gap-2">
+                        <button type="button" className="btn btn-secondary" onClick={() => startEdit(row)}>수정</button>
+                        {row.is_active ? (
+                          <button type="button" className="btn btn-danger" onClick={() => onDeactivate(row.id)}>비활성화</button>
+                        ) : (
+                          <button type="button" className="btn btn-secondary" onClick={() => onActivate(row.id)}>활성</button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+        ) : null}
+        {!loading && !error && safeRules.length > 0 ? (
+          <div className="mt-3 flex items-center justify-center gap-2">
+            <span className="text-sm text-slate-700">총 {safeRules.length}건 | {currentPage} / {totalPages}</span>
+            <button type="button" className="btn btn-secondary" disabled={currentPage <= 1} onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}>이전</button>
+            <button type="button" className="btn btn-secondary" disabled={currentPage >= totalPages} onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}>다음</button>
           </div>
         ) : null}
       </SectionCard>

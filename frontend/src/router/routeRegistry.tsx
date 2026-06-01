@@ -41,7 +41,7 @@ export const routeRegistry: RouteItem[] = [
   { routeKey: "stocks", path: "/stocks", title: "종목 관리", description: "종목 마스터 관리", component: <StocksPage /> },
   { routeKey: "watchlist", path: "/watchlist", title: "관심종목 Data수집", description: "분석 우선 종목 Pool 관리", component: <WatchlistPage /> },
   { routeKey: "stock-prices", path: "/stock-prices", title: "관심종목 Data분석", description: "일봉/이동평균 데이터 검증", component: <StockPricesPage /> },
-  { routeKey: "schema-comments", path: "/schema-comments", title: "스키마 코멘트", description: "테이블/컬럼 코멘트 사전", component: <SchemaCommentsPage /> },
+  { routeKey: "schema-comments", path: "/schema-comments", title: "DrCT테이블정보", description: "DrCT에셋 데이터베이스의 테이블/컬럼 구조 조회", component: <SchemaCommentsPage /> },
   { routeKey: "news", path: "/news", title: "뉴스 관리", description: "뉴스 수집/요약 결과 조회", component: <NewsPage /> },
   { routeKey: "disclosures", path: "/disclosures", title: "공시 관리", description: "DART 공시 수집/요약 결과 조회", component: <DisclosuresPage /> },
   { routeKey: "collection-runs", path: "/collection-runs", title: "수집 이력", description: "수집 실행 로그 확인", component: <CollectionRunsPage /> },
@@ -58,5 +58,6 @@ export const routeRegistry: RouteItem[] = [
 ];
 
 export const routeRegistryMap = Object.fromEntries(routeRegistry.map((route) => [route.routeKey, route]));
+
 
 

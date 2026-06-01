@@ -14,7 +14,7 @@ import type {
   StockPriceSummaryItem,
 } from "@/types/stockPrice";
 
-type MarketFilter = "ALL" | "KOSPI" | "KOSDAQ";
+type AnalysisScope = "watchlist" | "all";
 type StrategyHorizon = "swing" | "long_term";
 type SummaryTab = "price" | "market" | "gpt";
 
@@ -236,7 +236,7 @@ function candleReferenceSummary(reference: EvidencePriceCandleReferenceBlock | n
 
 function StockPricesPage() {
   const [keyword, setKeyword] = useState("");
-  const [market, setMarket] = useState<MarketFilter>("ALL");
+  const [analysisScope, setAnalysisScope] = useState<AnalysisScope>("watchlist");
   const [offset, setOffset] = useState(0);
 
   const [summaryItems, setSummaryItems] = useState<StockPriceSummaryItem[]>([]);
@@ -286,18 +286,18 @@ function StockPricesPage() {
     nextOffset = offset,
     nextFilters?: {
       keyword?: string;
-      market?: MarketFilter;
+      analysisScope?: AnalysisScope;
     },
   ) => {
     setLoading(true);
     setError("");
     try {
       const activeKeyword = nextFilters?.keyword ?? keyword;
-      const activeMarket = nextFilters?.market ?? market;
+      const activeScope = nextFilters?.analysisScope ?? analysisScope;
       const response = await repositories.stockPrices.listSummary({
         keyword: activeKeyword.trim() || undefined,
-        market: activeMarket === "ALL" ? undefined : activeMarket,
         source: "kiwoom_rest",
+        scope: activeScope,
         limit: SUMMARY_LIMIT,
         offset: nextOffset,
       });
@@ -505,9 +505,9 @@ function StockPricesPage() {
 
   const onReset = async () => {
     setKeyword("");
-    setMarket("ALL");
+    setAnalysisScope("watchlist");
     setOffset(0);
-    await loadListSummary(0, { keyword: "", market: "ALL" });
+    await loadListSummary(0, { keyword: "", analysisScope: "watchlist" });
   };
 
   const onToggleSimilarPatterns = (checked: boolean) => {
@@ -533,21 +533,17 @@ function StockPricesPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader
-        title="관심종목 Data분석"
-        description="관심종목의 가격·시장지표를 확인하고 GPT 분석 근거를 구성합니다."
-      />
+      <PageHeader title="관심종목 Data분석" description="관심종목의 가격·시장지표를 확인하고 GPT 분석 근거를 구성합니다." />
 
       <div className="price-page-content">
-        <SectionCard title="분석 가능 종목" className="price-stock-list-card">
+        <SectionCard title="분석 종목 목록" className="price-stock-list-card">
           <div className="price-list-title-row">
-            <span className="hint-icon" title="가격 데이터가 저장되어 분석 화면에서 확인 가능한 관심종목입니다.">ⓘ</span>
+            <span className="hint-icon" title="필터 조건에 맞는 가격 데이터 보유 종목을 표시합니다.">ⓘ</span>
           </div>
           <form className="price-list-search-row" onSubmit={onSearch}>
-            <select className="select-control" value={market} onChange={(e) => setMarket(e.target.value as MarketFilter)}>
-              <option value="ALL">전체</option>
-              <option value="KOSPI">KOSPI</option>
-              <option value="KOSDAQ">KOSDAQ</option>
+            <select className="select-control" value={analysisScope} onChange={(e) => setAnalysisScope(e.target.value as AnalysisScope)}>
+              <option value="watchlist">관심종목만</option>
+              <option value="all">전체 데이터</option>
             </select>
             <input
               className="input-control"
@@ -561,7 +557,7 @@ function StockPricesPage() {
           </form>
           {loading ? <p className="text-sm text-muted">로딩 중입니다.</p> : null}
           {error ? <p className="text-sm text-rose-600">{error}</p> : null}
-          {!loading && !error && summaryItems.length === 0 ? <EmptyState message="조회된 분석 가능 종목이 없습니다." /> : null}
+          {!loading && !error && summaryItems.length === 0 ? <EmptyState message="조회된 분석 종목이 없습니다." /> : null}
           {!loading && !error && summaryItems.length > 0 ? (
             <>
               <div className="price-stock-card-list">

@@ -5,7 +5,7 @@ import { repositories } from "@/services";
 import type { TradeJournal, TradeMethod, TradeMethodGptGuidePackage } from "@/types/tradeJournal";
 
 type ActiveFilter = "all" | "active" | "inactive";
-type DetailMode = "create" | "edit";
+type DetailMode = "view" | "create" | "edit";
 
 type MethodDetailForm = {
   method_name: string;
@@ -101,6 +101,12 @@ const formatResult = (value?: string | null): string => {
   return "보유중";
 };
 
+const parseLines = (value?: string | null): string[] =>
+  (value || "")
+    .split("\n")
+    .map((line) => line.replace(/^\s*[-*]\s*/, "").trim())
+    .filter(Boolean);
+
 function TradeMethodsPage() {
   const [items, setItems] = useState<TradeMethod[]>([]);
   const [keyword, setKeyword] = useState("");
@@ -118,10 +124,27 @@ function TradeMethodsPage() {
   const [guidePackage, setGuidePackage] = useState<TradeMethodGptGuidePackage | null>(null);
   const [guideLoading, setGuideLoading] = useState(false);
 
+  const safeItems = useMemo(() => (Array.isArray(items) ? items : []), [items]);
+
   const selectedMethod = useMemo(
     () => items.find((item) => item.id === selectedMethodId) ?? null,
     [items, selectedMethodId]
   );
+  const selectedStats = selectedMethodId ? statsByMethod[selectedMethodId] : undefined;
+
+  const summaryStats = useMemo(() => {
+    const activeMethodCount = safeItems.filter((item) => Number(item.is_active) === 1).length;
+    const totalTrades = Object.values(statsByMethod).reduce((acc, stat) => acc + Number(stat.trade_count || 0), 0);
+    const avgWinRate =
+      safeItems.length > 0
+        ? safeItems.reduce((acc, item) => acc + Number(statsByMethod[item.id]?.win_rate ?? 0), 0) / safeItems.length
+        : 0;
+    const totalRealizedProfit = Object.values(statsByMethod).reduce(
+      (acc, stat) => acc + Number(stat.realized_profit_sum || 0),
+      0
+    );
+    return { activeMethodCount, totalTrades, avgWinRate, totalRealizedProfit };
+  }, [safeItems, statsByMethod]);
 
   const checklistText = detailForm.checklist.join("\n");
   const marketTags = normalizeTags(detailForm.market_conditions);
@@ -201,7 +224,7 @@ function TradeMethodsPage() {
     const parsed = parseMethodMeta(item.description);
     const checklist = toChecklist(item.entry_rule);
     setSelectedMethodId(item.id);
-    setDetailMode("edit");
+    setDetailMode("view");
     setDetailForm({
       method_name: item.method_name || "",
       core_concept: parsed.coreConcept,
@@ -217,6 +240,11 @@ function TradeMethodsPage() {
     setIsDetailOpen(true);
     setMessage("");
     setError("");
+  };
+
+  const startEditMode = () => {
+    if (!selectedMethod) return;
+    setDetailMode("edit");
   };
 
   const closeDetail = () => {
@@ -310,24 +338,39 @@ function TradeMethodsPage() {
     <div className="space-y-4">
       <PageHeader title="매매기법" description="주력 매매기법을 정리하고 반복 훈련을 위한 가이드를 준비합니다." />
 
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <SectionCard title="활성 기법">
+          <p className="text-2xl font-semibold text-slate-900">{summaryStats.activeMethodCount}개</p>
+        </SectionCard>
+        <SectionCard title="총 거래">
+          <p className="text-2xl font-semibold text-slate-900">{summaryStats.totalTrades}건</p>
+        </SectionCard>
+        <SectionCard title="평균 승률">
+          <p className="text-2xl font-semibold text-slate-900">{formatRate(summaryStats.avgWinRate)}</p>
+        </SectionCard>
+        <SectionCard title="누적 손익">
+          <p className="text-2xl font-semibold text-slate-900">{formatWon(summaryStats.totalRealizedProfit)}</p>
+        </SectionCard>
+      </div>
+
       <SectionCard title="검색">
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
+        <div className="trade-method-search-row">
           <input
-            className="input-control"
+            className="input-control trade-method-search-input"
             placeholder="매매기법명/핵심개념 검색"
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
             onKeyDown={handleSearchKeyDown}
           />
-          <select className="select-control" value={activeFilter} onChange={(e) => setActiveFilter(e.target.value as ActiveFilter)}>
+          <select className="select-control trade-method-status-select" value={activeFilter} onChange={(e) => setActiveFilter(e.target.value as ActiveFilter)}>
             <option value="all">전체</option>
             <option value="active">활성</option>
             <option value="inactive">비활성</option>
           </select>
-          <button type="button" className="btn btn-primary" onClick={() => void load()} disabled={loading}>
+          <button type="button" className="btn btn-primary trade-method-search-button" onClick={() => void load()} disabled={loading}>
             {loading ? "조회 중..." : "조회"}
           </button>
-          <button type="button" className="btn btn-secondary" onClick={openCreate}>
+          <button type="button" className="btn btn-secondary trade-method-create-button" onClick={openCreate}>
             + 새 매매기법
           </button>
         </div>
@@ -338,25 +381,33 @@ function TradeMethodsPage() {
       <div className="trade-method-layout">
         <SectionCard title="매매기법 목록">
           <div className="trade-method-card-list">
-            {items.map((item) => {
+            {safeItems.map((item) => {
               const parsed = parseMethodMeta(item.description);
               const stats = statsByMethod[item.id];
-              const selected = isDetailOpen && selectedMethodId === item.id && detailMode === "edit";
+              const selected = isDetailOpen && selectedMethodId === item.id && (detailMode === "view" || detailMode === "edit");
               return (
                 <button
                   key={item.id}
                   type="button"
-                  className={`trade-method-card ${selected ? "active" : ""}`}
+                  className={`trade-method-card ${selected ? "selected" : ""}`}
                   onClick={() => openEdit(item)}
                 >
-                  <div className="trade-method-card-top">
+                  <div className="trade-method-card-header">
                     <h3>{item.method_name}</h3>
                     <span className={`badge ${item.is_active ? "badge-emerald" : "badge-slate"}`}>
                       {item.is_active ? "활성" : "비활성"}
                     </span>
                   </div>
-                  <p>{parsed.coreConcept || "핵심 개념이 없습니다."}</p>
+                  {parsed.marketConditions.length > 0 ? (
+                    <div className="trade-method-tag-list">
+                      {parsed.marketConditions.slice(0, 3).map((tag) => (
+                        <span key={`${item.id}-${tag}`} className="trade-method-tag active">{tag}</span>
+                      ))}
+                    </div>
+                  ) : null}
+                  <p className="trade-method-card-concept">{parsed.coreConcept || "핵심 개념이 없습니다."}</p>
                   <div className="trade-method-card-stats">
+                    <span>거래 {stats?.trade_count ?? 0}건</span>
                     <span>승률 {formatRate(stats?.win_rate)}</span>
                     <span>평균 {formatRate(stats?.avg_profit_rate)}</span>
                     <span>누적 {formatWon(stats?.realized_profit_sum)}</span>
@@ -364,7 +415,7 @@ function TradeMethodsPage() {
                 </button>
               );
             })}
-            {items.length === 0 ? <p className="text-sm text-slate-500">등록된 매매기법이 없습니다.</p> : null}
+            {safeItems.length === 0 ? <p className="text-sm text-slate-500">등록된 매매기법이 없습니다.</p> : null}
           </div>
         </SectionCard>
 
@@ -385,6 +436,50 @@ function TradeMethodsPage() {
               </div>
 
               <div className="trade-journal-detail-drawer-body space-y-4">
+                {detailMode === "view" && selectedMethod ? (
+                  <>
+                    <div className="detail-section">
+                      <h4 className="detail-label mb-2">기본 정보</h4>
+                      <div className="space-y-2 text-sm text-slate-700">
+                        <p><b>기법명:</b> {selectedMethod.method_name || "-"}</p>
+                        <p><b>핵심 개념:</b> {parseMethodMeta(selectedMethod.description).coreConcept || "등록된 핵심 개념이 없습니다."}</p>
+                        <p><b>시장 환경:</b> {parseMethodMeta(selectedMethod.description).marketConditions.join(", ") || "등록된 시장 환경 태그가 없습니다."}</p>
+                      </div>
+                    </div>
+                    <div className="detail-section">
+                      <h4 className="detail-label mb-2">성과 요약</h4>
+                      <div className="trade-method-stats-grid">
+                        <div className="rounded border border-slate-200 bg-white p-3"><p className="text-xs text-slate-500">거래 수</p><strong>{selectedStats?.trade_count ?? 0}건</strong></div>
+                        <div className="rounded border border-slate-200 bg-white p-3"><p className="text-xs text-slate-500">승률</p><strong>{formatRate(selectedStats?.win_rate)}</strong></div>
+                        <div className="rounded border border-slate-200 bg-white p-3"><p className="text-xs text-slate-500">평균 수익률</p><strong>{formatRate(selectedStats?.avg_profit_rate)}</strong></div>
+                        <div className="rounded border border-slate-200 bg-white p-3"><p className="text-xs text-slate-500">누적 손익</p><strong>{formatWon(selectedStats?.realized_profit_sum)}</strong></div>
+                      </div>
+                    </div>
+                    <div className="detail-section">
+                      <h4 className="detail-label mb-2">진입 조건</h4>
+                      <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
+                        {toChecklist(selectedMethod.entry_rule).length > 0 ? toChecklist(selectedMethod.entry_rule).map((line, idx) => <li key={`entry-${idx}`}>{line}</li>) : <li>등록된 진입 조건이 없습니다.</li>}
+                      </ul>
+                    </div>
+                    <div className="detail-section">
+                      <h4 className="detail-label mb-2">청산 조건</h4>
+                      <p className="text-sm text-slate-700 whitespace-pre-wrap">{selectedMethod.take_profit_rule || selectedMethod.stop_loss_rule || "등록된 청산 조건이 없습니다."}</p>
+                    </div>
+                    <div className="detail-section">
+                      <h4 className="detail-label mb-2">실패 패턴</h4>
+                      <p className="text-sm text-slate-700 whitespace-pre-wrap">{selectedMethod.exit_rule || "등록된 실패 패턴이 없습니다."}</p>
+                    </div>
+                    <div className="detail-section">
+                      <h4 className="detail-label mb-2">체크리스트</h4>
+                      <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
+                        {parseLines(selectedMethod.entry_rule).length > 0 ? parseLines(selectedMethod.entry_rule).map((line, idx) => <li key={`check-${idx}`}>{line}</li>) : <li>등록된 체크리스트가 없습니다.</li>}
+                      </ul>
+                    </div>
+                  </>
+                ) : null}
+
+                {detailMode !== "view" ? (
+                <>
                 <div className="detail-section">
                   <h4 className="detail-label mb-2">매매기법 정의</h4>
                   <div className="trade-detail-form-grid">
@@ -474,6 +569,8 @@ function TradeMethodsPage() {
                     </div>
                   </div>
                 </div>
+                </>
+                ) : null}
 
                 {detailMode === "edit" && selectedMethodId ? (
                   <div className="detail-section">
@@ -575,9 +672,13 @@ function TradeMethodsPage() {
               </div>
 
               <div className="trade-journal-detail-drawer-footer">
-                <button type="button" className="btn btn-primary" onClick={() => void onSubmit()} disabled={saving}>
-                  {saving ? "저장 중..." : "저장"}
-                </button>
+                {detailMode === "view" ? (
+                  <button type="button" className="btn btn-primary" onClick={startEditMode}>수정</button>
+                ) : (
+                  <button type="button" className="btn btn-primary" onClick={() => void onSubmit()} disabled={saving}>
+                    {saving ? "저장 중..." : "저장"}
+                  </button>
+                )}
                 {detailMode === "edit" ? (
                   <button type="button" className="btn btn-secondary" onClick={() => void toggleActive()}>
                     {detailForm.is_active ? "비활성화" : "활성화"}

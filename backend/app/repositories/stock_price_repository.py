@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from backend.app.core.config import now_kst
 from backend.app.entities.stock import Stock
 from backend.app.entities.stock_daily_price import StockDailyPrice
+from backend.app.entities.watchlist import Watchlist
 
 
 class StockPriceRepository:
@@ -185,6 +186,50 @@ class StockPriceRepository:
     def commit(self) -> None:
         self.db.commit()
 
+    def recalculate_change_rate_for_stock(self, stock_id: int, source: str, digits: int = 2) -> dict[str, int]:
+        rows = (
+            self.db.query(StockDailyPrice)
+            .filter(StockDailyPrice.stock_id == stock_id, StockDailyPrice.source == source)
+            .order_by(StockDailyPrice.trade_date.asc(), StockDailyPrice.id.asc())
+            .all()
+        )
+        updated_count = 0
+        null_count = 0
+        prev_close: float | None = None
+        for row in rows:
+            close_price = None if row.close_price is None else float(row.close_price)
+            next_rate: float | None
+            if prev_close in (None, 0) or close_price is None:
+                next_rate = None
+            else:
+                next_rate = round(((close_price - float(prev_close)) / float(prev_close)) * 100, digits)
+
+            current_rate = None if row.change_rate is None else float(row.change_rate)
+            changed = (current_rate is None and next_rate is not None) or (
+                current_rate is not None and next_rate is None
+            ) or (current_rate is not None and next_rate is not None and abs(current_rate - next_rate) >= 0.000001)
+
+            if changed:
+                row.change_rate = next_rate
+                row.updated_at = now_kst()
+                self.db.add(row)
+                updated_count += 1
+            if next_rate is None:
+                null_count += 1
+            prev_close = close_price
+
+        self.db.commit()
+        return {"row_count": len(rows), "updated_count": updated_count, "null_count": null_count}
+
+    def list_distinct_stock_ids_by_source(self, source: str) -> list[int]:
+        stmt = (
+            select(StockDailyPrice.stock_id)
+            .where(StockDailyPrice.source == source)
+            .distinct()
+            .order_by(StockDailyPrice.stock_id.asc())
+        )
+        return [int(x) for x in self.db.scalars(stmt).all()]
+
     def count_by_stock(self, stock_id: int) -> int:
         stmt = select(func.count(StockDailyPrice.id)).where(StockDailyPrice.stock_id == stock_id)
         return int(self.db.scalar(stmt) or 0)
@@ -230,6 +275,7 @@ class StockPriceRepository:
         keyword: str | None,
         market: str | None,
         source: str | None,
+        scope: str | None,
         limit: int,
         offset: int,
     ) -> list[dict]:
@@ -293,6 +339,9 @@ class StockPriceRepository:
             .join(summary_subq, Stock.id == summary_subq.c.stock_id)
             .join(latest_subq, Stock.id == latest_subq.c.stock_id)
         )
+
+        if (scope or "watchlist") == "watchlist":
+            stmt = stmt.join(Watchlist, Watchlist.stock_id == Stock.id).where(Watchlist.is_active == 1)
 
         if keyword:
             keyword_like = f"%{keyword}%"
