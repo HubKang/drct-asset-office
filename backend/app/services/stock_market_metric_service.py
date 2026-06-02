@@ -369,7 +369,7 @@ class StockMarketMetricService:
         except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="???? ???? ???? ?????. Kiwoom REST API ?? ??? ?? ???? ??? ???.",
+                detail="시장 개요 조회에 실패했습니다. Kiwoom REST API 연결 상태와 인증 정보를 확인해 주세요.",
             ) from exc
 
     def collect_selected(self, stock_ids: list[int], source: str = "kiwoom_rest") -> dict:

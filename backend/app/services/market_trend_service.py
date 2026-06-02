@@ -1063,8 +1063,8 @@ class MarketTrendService:
         return DailyThemeFlowResponse(
             trade_date=str(base_trade_date),
             description=(
-                "蹂?吏묎퀎???ъ슜?먭? 遺?ы븳 ?뚮쭏 湲곗????대? 李멸퀬 吏?쒖엯?덈떎. "
-                "怨듭떇 ?낆쥌/?뚮쭏 遺꾨쪟媛 ?꾨땲硫? 理쒖쥌 ?ъ옄 ?먮떒? ?ъ슜?먭? ?섑뻾?⑸땲??"
+                "본 집계는 사용자가 보정한 테마 기준을 참고 지표로 사용합니다. "
+                "공식 업종/테마 분류가 아니므로 최종 판단은 사용자가 수행합니다."
             ),
             summary={
                 "event_count": int(summary.get("event_count") or 0),

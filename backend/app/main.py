@@ -27,6 +27,7 @@ from backend.app.api.routes_stocks import router as stocks_router
 from backend.app.api.routes_stock_prices import router as stock_prices_router
 from backend.app.api.routes_telegram import router as telegram_router
 from backend.app.api.routes_trade_journals import router as trade_journals_router
+from backend.app.api.routes_trade_reviews import router as trade_reviews_router
 from backend.app.api.routes_watchlist import router as watchlist_router
 from backend.app.core.database import ensure_runtime_schema
 from backend.app.core.config import PROJECT_ROOT
@@ -70,5 +71,6 @@ app.include_router(external_kiwoom_router)
 app.include_router(economic_briefing_router)
 app.include_router(telegram_router)
 app.include_router(trade_journals_router)
+app.include_router(trade_reviews_router)
 app.include_router(architecture_router)
 app.mount("/static", StaticFiles(directory=str(PROJECT_ROOT / "data")), name="static")

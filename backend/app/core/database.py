@@ -871,11 +871,97 @@ def ensure_runtime_schema() -> None:
             )
             """
         )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS trade_reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                stock_id INTEGER NOT NULL DEFAULT 0,
+                decision_id INTEGER,
+                review_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                result_summary TEXT,
+                what_was_right TEXT,
+                what_was_wrong TEXT,
+                lesson_learned TEXT,
+                journal_id INTEGER NOT NULL,
+                method_id INTEGER,
+                review_status TEXT DEFAULT '미복기',
+                trade_grade TEXT,
+                principle_followed TEXT,
+                entry_quality TEXT,
+                exit_quality TEXT,
+                risk_control_quality TEXT,
+                emotion_control_quality TEXT,
+                impulse_trade INTEGER DEFAULT 0,
+                main_mistake TEXT,
+                good_point TEXT,
+                improvement_point TEXT,
+                next_action TEXT,
+                review_memo TEXT,
+                gpt_review_text TEXT,
+                reviewed_at TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (journal_id) REFERENCES trade_journals(id),
+                FOREIGN KEY (method_id) REFERENCES trade_methods(id)
+            )
+            """
+        )
+        trade_review_columns = {
+            str(row[1]) for row in conn.exec_driver_sql("PRAGMA table_info(trade_reviews)").fetchall()
+        }
+        trade_review_column_defs = {
+            "journal_id": "INTEGER",
+            "method_id": "INTEGER",
+            "review_status": "TEXT DEFAULT '미복기'",
+            "trade_grade": "TEXT",
+            "principle_followed": "TEXT",
+            "entry_quality": "TEXT",
+            "exit_quality": "TEXT",
+            "risk_control_quality": "TEXT",
+            "emotion_control_quality": "TEXT",
+            "impulse_trade": "INTEGER DEFAULT 0",
+            "main_mistake": "TEXT",
+            "good_point": "TEXT",
+            "improvement_point": "TEXT",
+            "next_action": "TEXT",
+            "review_memo": "TEXT",
+            "gpt_review_text": "TEXT",
+            "reviewed_at": "TEXT",
+            "updated_at": "TEXT",
+        }
+        for column_name, column_def in trade_review_column_defs.items():
+            if column_name not in trade_review_columns:
+                conn.exec_driver_sql(f"ALTER TABLE trade_reviews ADD COLUMN {column_name} {column_def}")
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS trade_review_check_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                review_id INTEGER NOT NULL,
+                journal_id INTEGER NOT NULL,
+                method_id INTEGER,
+                item_type TEXT NOT NULL,
+                item_order INTEGER DEFAULT 0,
+                item_text TEXT NOT NULL,
+                is_checked INTEGER DEFAULT 0,
+                note TEXT,
+                source_field TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (review_id) REFERENCES trade_reviews(id)
+            )
+            """
+        )
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_trade_methods_active_sort ON trade_methods(is_active, sort_order)")
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_trade_journals_buy_date ON trade_journals(buy_date)")
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_trade_journals_method_id ON trade_journals(trade_method_id)")
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_trade_journals_result_type ON trade_journals(result_type)")
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_trade_journal_images_journal_id ON trade_journal_images(trade_journal_id)")
+        conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS ux_trade_reviews_journal_id ON trade_reviews(journal_id)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_trade_reviews_status ON trade_reviews(review_status)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_trade_reviews_grade ON trade_reviews(trade_grade)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_trade_review_check_items_review_id ON trade_review_check_items(review_id)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_trade_review_check_items_journal_id ON trade_review_check_items(journal_id)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_trade_review_check_items_type ON trade_review_check_items(item_type)")
         conn.exec_driver_sql(
             """
             INSERT OR IGNORE INTO telegram_sources
