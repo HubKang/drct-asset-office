@@ -30,6 +30,8 @@ import type {
   RefreshKiwoomConditionsResponse,
   ThemeStatus,
   MarketEventThemeLinkListResponse,
+  ManualSupplyEventCandidateRequest,
+  ManualSupplyEventCandidateResponse,
   AddMarketEventThemeLinkRequest,
   AddMarketEventThemeLinkResponse,
   RemoveMarketEventThemeLinkResponse,
@@ -103,6 +105,11 @@ export const marketTrendApiRepository = {
   assignThemeToTrendEvent: (eventId: number, payload: AssignThemeToTrendEventRequest) =>
     apiRequest<AssignThemeToTrendEventResponse>(`/market-trends/events/${eventId}/theme`, {
       method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  createManualSupplyEventCandidate: (payload: ManualSupplyEventCandidateRequest) =>
+    apiRequest<ManualSupplyEventCandidateResponse>("/market-trends/supply-event-candidates/manual", {
+      method: "POST",
       body: JSON.stringify(payload),
     }),
   getDailyThemeFlow: (params?: { trade_date?: string; only_supply_theme?: boolean; market_scope?: MarketScope }) => {

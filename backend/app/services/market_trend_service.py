@@ -18,6 +18,8 @@ from backend.app.schemas.market_trend_schema import (
     DailyThemeFlowItem,
     DailyThemeFlowResponse,
     DetectEventsFromSnapshotResponse,
+    ManualSupplyEventCandidateRequest,
+    ManualSupplyEventCandidateResponse,
     MarketPriceSnapshotResponse,
     MarketTrendEventResponse,
     TrendDetectionSettingResponse,
@@ -878,6 +880,150 @@ class MarketTrendService:
             )
             for row in rows
         ]
+
+    def create_manual_supply_event_candidate(
+        self,
+        payload: ManualSupplyEventCandidateRequest,
+    ) -> ManualSupplyEventCandidateResponse:
+        trade_date = (payload.trade_date or "").strip()
+        if not trade_date:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="감지일을 입력해 주세요.")
+
+        memo = (payload.memo or "").strip()
+        if not memo:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="메모를 입력해 주세요.")
+
+        stock = None
+        if payload.stock_id is not None:
+            stock = self.db.execute(
+                text(
+                    """
+                    SELECT id, stock_code, stock_name, market
+                    FROM stocks
+                    WHERE id = :stock_id AND is_active = 1
+                    LIMIT 1
+                    """
+                ),
+                {"stock_id": payload.stock_id},
+            ).mappings().first()
+
+        if stock is None and payload.stock_code:
+            code = _normalize_stock_code(payload.stock_code)
+            stock = self.db.execute(
+                text(
+                    """
+                    SELECT id, stock_code, stock_name, market
+                    FROM stocks
+                    WHERE is_active = 1
+                      AND (stock_code = :stock_code OR stock_code = :prefixed_stock_code)
+                    LIMIT 1
+                    """
+                ),
+                {"stock_code": code, "prefixed_stock_code": f"A{code}"},
+            ).mappings().first()
+
+        if stock is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="등록할 종목을 찾을 수 없습니다.")
+
+        stock_id = int(stock["id"])
+        duplicate = self.db.execute(
+            text(
+                """
+                SELECT id
+                FROM market_trend_events
+                WHERE trade_date = :trade_date
+                  AND stock_id = :stock_id
+                  AND COALESCE(is_active, 1) = 1
+                  AND COALESCE(deleted_at, '') = ''
+                LIMIT 1
+                """
+            ),
+            {"trade_date": trade_date, "stock_id": stock_id},
+        ).mappings().first()
+        if duplicate:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="이미 해당 날짜의 수급 이벤트 후보로 등록된 종목입니다.",
+            )
+
+        if payload.theme_id is not None:
+            theme = self.db.execute(
+                text("SELECT id FROM market_themes WHERE id = :theme_id AND COALESCE(is_active, 1) = 1 LIMIT 1"),
+                {"theme_id": payload.theme_id},
+            ).mappings().first()
+            if not theme:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="선택한 테마를 찾을 수 없습니다.")
+
+        now = now_kst()
+        result = self.db.execute(
+            text(
+                """
+                INSERT INTO market_trend_events (
+                    trade_date, stock_id, stock_code, stock_name, market_type,
+                    market_cap, trading_value, change_rate, intraday_range_rate,
+                    event_type, detection_setting_id,
+                    applied_min_market_cap, applied_min_trading_value, applied_min_change_rate,
+                    applied_min_intraday_range_rate, applied_use_market_cap, applied_use_trading_value,
+                    applied_use_change_rate, applied_use_intraday_range,
+                    theme_id, theme_status, primary_theme_id, reason_summary, user_memo,
+                    is_active, created_at, updated_at, detection_source, condition_seq, condition_name, detected_at
+                ) VALUES (
+                    :trade_date, :stock_id, :stock_code, :stock_name, :market_type,
+                    NULL, :trading_value, :change_rate, NULL,
+                    'manual_supply_event', NULL,
+                    NULL, NULL, NULL,
+                    NULL, NULL, NULL,
+                    NULL, NULL,
+                    :theme_id, :theme_status, :theme_id, :reason_summary, :user_memo,
+                    1, :created_at, :updated_at, 'manual', 'manual', '직접등록', :detected_at
+                )
+                """
+            ),
+            {
+                "trade_date": trade_date,
+                "stock_id": stock_id,
+                "stock_code": _normalize_stock_code(str(stock["stock_code"])),
+                "stock_name": stock["stock_name"],
+                "market_type": stock["market"],
+                "trading_value": payload.trading_value,
+                "change_rate": payload.change_rate,
+                "theme_id": payload.theme_id,
+                "theme_status": "manual_assigned" if payload.theme_id is not None else "unassigned",
+                "reason_summary": "직접등록",
+                "user_memo": memo,
+                "created_at": now,
+                "updated_at": now,
+                "detected_at": now,
+            },
+        )
+        event_id = int(result.lastrowid)
+
+        if payload.theme_id is not None:
+            self.db.execute(
+                text(
+                    """
+                    INSERT INTO market_trend_event_theme_links (
+                        event_id, market_theme_id, link_reason, user_memo, is_primary, is_active, created_at, updated_at
+                    ) VALUES (
+                        :event_id, :market_theme_id, '직접등록', :user_memo, 1, 1, :created_at, :updated_at
+                    )
+                    """
+                ),
+                {
+                    "event_id": event_id,
+                    "market_theme_id": payload.theme_id,
+                    "user_memo": memo,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+
+        self.db.commit()
+        return ManualSupplyEventCandidateResponse(
+            success=True,
+            event_id=event_id,
+            message="수급 이벤트 후보를 직접 등록했습니다.",
+        )
 
     def assign_event_theme(self, event_id: int, payload: AssignThemeToTrendEventRequest) -> AssignThemeToTrendEventResponse:
         event = self.db.execute(

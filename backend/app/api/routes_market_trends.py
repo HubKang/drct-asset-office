@@ -14,6 +14,8 @@ from backend.app.schemas.market_trend_schema import (
     DailyThemeFlowResponse,
     DetectEventsFromSnapshotRequest,
     DetectEventsFromSnapshotResponse,
+    ManualSupplyEventCandidateRequest,
+    ManualSupplyEventCandidateResponse,
     MarketPriceSnapshotResponse,
     MarketTrendEventResponse,
     TrendDetectionSettingResponse,
@@ -104,6 +106,17 @@ def list_market_trend_events(
         limit=limit,
         offset=offset,
     )
+
+
+@router.post(
+    "/market-trends/supply-event-candidates/manual",
+    response_model=ManualSupplyEventCandidateResponse,
+)
+def create_manual_supply_event_candidate(
+    payload: ManualSupplyEventCandidateRequest,
+    db: Session = Depends(get_db),
+) -> ManualSupplyEventCandidateResponse:
+    return MarketTrendService(db).create_manual_supply_event_candidate(payload)
 
 
 @router.patch("/market-trends/events/{event_id}/theme", response_model=AssignThemeToTrendEventResponse)

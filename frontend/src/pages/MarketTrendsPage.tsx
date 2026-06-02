@@ -13,11 +13,20 @@ import type {
   MonthlyThemeFlowCalendarDay,
   MonthlyThemeFlowTrendTheme,
 } from "@/types/marketTrend";
+import type { Stock } from "@/types/stock";
 
 type ActiveTab = "kiwoom" | "flow" | "monthly";
 type SortOrder = "asc" | "desc";
 type ConditionOrderMode = "number" | "name";
 type ResultSortKey = "stock_code" | "stock_name" | "current_price" | "change_rate" | "volume" | "estimated_trading_value";
+type ManualCandidateForm = {
+  trade_date: string;
+  change_rate: string;
+  trading_value: string;
+  volume: string;
+  theme_id: string;
+  memo: string;
+};
 
 const fmtNumber = (value: number | null | undefined) => (value == null ? "-" : value.toLocaleString("ko-KR"));
 const fmtPct = (value: number | null | undefined) => (value == null ? "-" : `${value.toFixed(2)}%`);
@@ -132,6 +141,20 @@ function MarketTrendsPage() {
   const [selectedMonthlyDate, setSelectedMonthlyDate] = useState<string>("");
   const [monthlyLoading, setMonthlyLoading] = useState<boolean>(false);
   const [eventNameSortOrder, setEventNameSortOrder] = useState<SortOrder>("asc");
+  const [manualModalOpen, setManualModalOpen] = useState(false);
+  const [manualStockKeyword, setManualStockKeyword] = useState("");
+  const [manualStockResults, setManualStockResults] = useState<Stock[]>([]);
+  const [manualSelectedStock, setManualSelectedStock] = useState<Stock | null>(null);
+  const [manualStockLoading, setManualStockLoading] = useState(false);
+  const [manualSaving, setManualSaving] = useState(false);
+  const [manualForm, setManualForm] = useState<ManualCandidateForm>({
+    trade_date: tradeDate,
+    change_rate: "",
+    trading_value: "",
+    volume: "",
+    theme_id: "",
+    memo: "",
+  });
 
   const toggleSort = <T extends string,>(prev: { key: T; order: SortOrder }, key: T): { key: T; order: SortOrder } => {
     if (prev.key === key) {
@@ -345,6 +368,92 @@ function MarketTrendsPage() {
       setMarketThemes(items.map((x) => ({ id: x.id, theme_name: x.theme_name })));
     } catch {
       setMarketThemes([]);
+    }
+  };
+
+  const openManualCandidateModal = () => {
+    setManualModalOpen(true);
+    setManualStockKeyword("");
+    setManualStockResults([]);
+    setManualSelectedStock(null);
+    setManualForm({
+      trade_date: tradeDate,
+      change_rate: "",
+      trading_value: "",
+      volume: "",
+      theme_id: "",
+      memo: "",
+    });
+  };
+
+  const searchManualCandidateStocks = async () => {
+    const keyword = manualStockKeyword.trim();
+    if (!keyword) {
+      setError("종목명 또는 종목코드를 입력해 주세요.");
+      return;
+    }
+    setError("");
+    setManualStockLoading(true);
+    try {
+      const rows = await repositories.stocks.list({ keyword, is_active: 1, limit: 20, offset: 0 });
+      setManualStockResults(rows);
+      if (rows.length === 0) setError("검색 결과가 없습니다. 종목명 또는 종목코드를 다시 확인해 주세요.");
+    } catch (e) {
+      setError(toErr(e, "종목 검색에 실패했습니다."));
+      setManualStockResults([]);
+    } finally {
+      setManualStockLoading(false);
+    }
+  };
+
+  const saveManualCandidate = async () => {
+    if (!manualSelectedStock) {
+      setError("직접등록할 종목을 선택해 주세요.");
+      return;
+    }
+    if (!manualForm.trade_date) {
+      setError("감지일을 선택해 주세요.");
+      return;
+    }
+    if (!manualForm.memo.trim()) {
+      setError("직접등록 사유 또는 메모를 입력해 주세요.");
+      return;
+    }
+    const toOptionalNumber = (value: string) => {
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      const parsed = Number(trimmed);
+      return Number.isFinite(parsed) ? parsed : Number.NaN;
+    };
+    const changeRate = toOptionalNumber(manualForm.change_rate);
+    const tradingValue = toOptionalNumber(manualForm.trading_value);
+    const volume = toOptionalNumber(manualForm.volume);
+    if (Number.isNaN(changeRate) || Number.isNaN(tradingValue) || Number.isNaN(volume)) {
+      setError("등락률, 거래대금, 거래량은 숫자로 입력해 주세요.");
+      return;
+    }
+    setError("");
+    setMessage("");
+    setManualSaving(true);
+    try {
+      const res = await repositories.marketTrends.createManualSupplyEventCandidate({
+        trade_date: manualForm.trade_date,
+        stock_id: manualSelectedStock.id,
+        stock_code: manualSelectedStock.stock_code,
+        change_rate: changeRate,
+        trading_value: tradingValue == null ? null : Math.round(tradingValue),
+        volume: volume == null ? null : Math.round(volume),
+        theme_id: manualForm.theme_id ? Number(manualForm.theme_id) : null,
+        memo: manualForm.memo.trim(),
+      });
+      setMessage(res.message || "수급 이벤트 후보를 직접 등록했습니다.");
+      setManualModalOpen(false);
+      setTradeDate(manualForm.trade_date);
+      await Promise.all([loadEvents(manualForm.trade_date), loadFlow(manualForm.trade_date)]);
+    } catch (e) {
+      setError(toErr(e, "수급 이벤트 후보 직접등록에 실패했습니다."));
+    } finally {
+      setManualSaving(false);
     }
   };
 
@@ -793,6 +902,7 @@ function MarketTrendsPage() {
             <div className="flex gap-2 items-end mb-2 flex-wrap">
               <input className="input-control" style={{ width: "160px", minWidth: "160px" }} type="date" value={tradeDate} onChange={(e) => setTradeDate(e.target.value)} />
               <button type="button" className="btn btn-secondary" onClick={() => void loadEvents()}>조회</button>
+              <button type="button" className="btn btn-primary" onClick={openManualCandidateModal}>+ 후보 직접등록</button>
             </div>
             <div className="table-shell">
               <table className="data-table compact-table">
@@ -815,6 +925,7 @@ function MarketTrendsPage() {
                           <div className="stock-cell">
                             <strong>{e.stock_name || "-"}</strong>
                             <span>{e.stock_code || "-"}</span>
+                            {e.detection_source === "manual" ? <span className="manual-candidate-badge">직접등록</span> : null}
                           </div>
                         </td>
                         <td>{e.market_type || "-"}</td><td className="text-right">{fmtPct(e.change_rate)}</td>
@@ -843,6 +954,143 @@ function MarketTrendsPage() {
               </table>
             </div>
           </SectionCard>
+        </div>
+      ) : null}
+
+      {manualModalOpen ? (
+        <div className="modal-backdrop" onClick={() => setManualModalOpen(false)}>
+          <div className="modal-card manual-candidate-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="trade-journal-detail-header">
+              <h3>수급 이벤트 후보 직접등록</h3>
+              <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => setManualModalOpen(false)}>
+                닫기
+              </button>
+            </div>
+            <p className="text-sm text-muted mb-3">
+              직접등록 후보는 관심종목 Pool에 추가하지 않고, 현재 수급 이벤트 후보 데이터에만 저장됩니다.
+            </p>
+
+            <div className="manual-candidate-grid">
+              <label className="manual-candidate-field">
+                <span>감지일</span>
+                <input
+                  className="input-control"
+                  type="date"
+                  value={manualForm.trade_date}
+                  onChange={(e) => setManualForm((prev) => ({ ...prev, trade_date: e.target.value }))}
+                />
+              </label>
+              <label className="manual-candidate-field">
+                <span>테마 선택</span>
+                <select
+                  className="input-control"
+                  value={manualForm.theme_id}
+                  onChange={(e) => setManualForm((prev) => ({ ...prev, theme_id: e.target.value }))}
+                >
+                  <option value="">테마 미지정</option>
+                  {marketThemes.map((theme) => (
+                    <option key={theme.id} value={theme.id}>{theme.theme_name}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <form
+              className="manual-candidate-search"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void searchManualCandidateStocks();
+              }}
+            >
+              <input
+                className="input-control"
+                placeholder="종목명 또는 종목코드 입력"
+                value={manualStockKeyword}
+                onChange={(e) => setManualStockKeyword(e.target.value)}
+              />
+              <button type="submit" className="btn btn-primary" disabled={manualStockLoading}>
+                {manualStockLoading ? "검색 중..." : "검색"}
+              </button>
+            </form>
+
+            {manualSelectedStock ? (
+              <div className="manual-candidate-selected">
+                <strong>{manualSelectedStock.stock_name}</strong>
+                <span>{normalizeStockCode(manualSelectedStock.stock_code)} · {manualSelectedStock.market || "-"}</span>
+              </div>
+            ) : null}
+
+            {manualStockResults.length > 0 ? (
+              <div className="manual-candidate-stock-list">
+                {manualStockResults.map((stock) => {
+                  const selected = manualSelectedStock?.id === stock.id;
+                  return (
+                    <button
+                      key={stock.id}
+                      type="button"
+                      className={`manual-candidate-stock-item ${selected ? "selected" : ""}`}
+                      onClick={() => setManualSelectedStock(stock)}
+                    >
+                      <strong>{stock.stock_name}</strong>
+                      <span>{normalizeStockCode(stock.stock_code)} · {stock.market || "-"}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+
+            <div className="manual-candidate-grid mt-3">
+              <label className="manual-candidate-field">
+                <span>등락률(%)</span>
+                <input
+                  className="input-control"
+                  inputMode="decimal"
+                  placeholder="예: 12.5"
+                  value={manualForm.change_rate}
+                  onChange={(e) => setManualForm((prev) => ({ ...prev, change_rate: e.target.value }))}
+                />
+              </label>
+              <label className="manual-candidate-field">
+                <span>거래대금(원)</span>
+                <input
+                  className="input-control"
+                  inputMode="numeric"
+                  placeholder="예: 50000000000"
+                  value={manualForm.trading_value}
+                  onChange={(e) => setManualForm((prev) => ({ ...prev, trading_value: e.target.value }))}
+                />
+              </label>
+              <label className="manual-candidate-field">
+                <span>거래량</span>
+                <input
+                  className="input-control"
+                  inputMode="numeric"
+                  placeholder="선택 입력"
+                  value={manualForm.volume}
+                  onChange={(e) => setManualForm((prev) => ({ ...prev, volume: e.target.value }))}
+                />
+              </label>
+            </div>
+
+            <label className="manual-candidate-field mt-3">
+              <span>메모</span>
+              <textarea
+                className="input-control manual-candidate-memo"
+                placeholder="직접등록 사유를 입력해 주세요."
+                value={manualForm.memo}
+                onChange={(e) => setManualForm((prev) => ({ ...prev, memo: e.target.value }))}
+              />
+            </label>
+
+            <div className="manual-candidate-actions">
+              <button type="button" className="btn btn-secondary" onClick={() => setManualModalOpen(false)}>
+                취소
+              </button>
+              <button type="button" className="btn btn-primary" disabled={manualSaving} onClick={() => void saveManualCandidate()}>
+                {manualSaving ? "저장 중..." : "직접등록 저장"}
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
 

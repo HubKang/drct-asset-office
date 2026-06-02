@@ -122,6 +122,23 @@ class MarketTrendEventResponse(BaseModel):
     applied_condition: dict[str, object]
 
 
+class ManualSupplyEventCandidateRequest(BaseModel):
+    trade_date: str
+    stock_id: int | None = None
+    stock_code: str | None = None
+    change_rate: float | None = None
+    trading_value: int | None = Field(default=None, ge=0)
+    volume: int | None = Field(default=None, ge=0)
+    theme_id: int | None = None
+    memo: str = Field(min_length=1, max_length=1000)
+
+
+class ManualSupplyEventCandidateResponse(BaseModel):
+    success: bool
+    event_id: int
+    message: str
+
+
 class AssignThemeToTrendEventRequest(BaseModel):
     theme_id: int
     reason_summary: str | None = None

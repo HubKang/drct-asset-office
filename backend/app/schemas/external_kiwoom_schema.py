@@ -150,6 +150,7 @@ class KiwoomMarketEventItemOut(BaseModel):
     theme_status: str | None = None
     condition_seq: str | None = None
     condition_name: str | None = None
+    detection_source: str | None = None
     user_memo: str | None = None
     detected_at: str | None = None
     updated_at: str | None = None

@@ -2250,6 +2250,97 @@ a:focus-visible {
   padding: 16px;
 }
 
+.manual-candidate-modal {
+  width: min(880px, 100%);
+}
+
+.manual-candidate-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.manual-candidate-field {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.manual-candidate-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.manual-candidate-selected {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  border: 1px solid #bbf7d0;
+  border-radius: 12px;
+  background: #f0fdf4;
+  color: #166534;
+  padding: 10px 12px;
+}
+
+.manual-candidate-stock-list {
+  display: grid;
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+  margin-top: 10px;
+}
+
+.manual-candidate-stock-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.manual-candidate-stock-item:hover,
+.manual-candidate-stock-item.selected {
+  border-color: #15803d;
+  background: #f0fdf4;
+}
+
+.manual-candidate-memo {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.manual-candidate-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.manual-candidate-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  margin-top: 4px;
+  border: 1px solid #bbf7d0;
+  border-radius: 999px;
+  background: #f0fdf4;
+  color: #15803d;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 2px 7px;
+}
+
 .trade-journal-stock-results {
   margin-top: 10px;
   max-height: 320px;

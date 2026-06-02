@@ -583,7 +583,7 @@ class ExternalKiwoomService:
                 JOIN market_trend_event_theme_links l ON l.event_id = mte.id
                 JOIN market_themes mt ON mt.id = l.market_theme_id
                 WHERE mte.trade_date = :trade_date
-                  AND mte.detection_source = 'kiwoom_condition'
+                  AND mte.detection_source IN ('kiwoom_condition', 'manual')
                   AND COALESCE(mte.is_active, 1) = 1
                   AND COALESCE(l.is_active, 1) = 1
                   AND COALESCE(mt.is_active, 1) = 1
@@ -609,7 +609,7 @@ class ExternalKiwoomService:
                 JOIN market_trend_event_theme_links l ON l.event_id = mte.id
                 JOIN market_themes mt ON mt.id = l.market_theme_id
                 WHERE mte.trade_date = :trade_date
-                  AND mte.detection_source = 'kiwoom_condition'
+                  AND mte.detection_source IN ('kiwoom_condition', 'manual')
                   AND COALESCE(mte.is_active, 1) = 1
                   AND COALESCE(l.is_active, 1) = 1
                   AND COALESCE(mt.is_active, 1) = 1
@@ -837,7 +837,7 @@ class ExternalKiwoomService:
                 LEFT JOIN stocks s ON s.id = mte.stock_id
                 WHERE mte.trade_date = :trade_date
                   AND mt.id = :market_theme_id
-                  AND mte.detection_source = 'kiwoom_condition'
+                  AND mte.detection_source IN ('kiwoom_condition', 'manual')
                   AND COALESCE(mte.is_active, 1) = 1
                   AND COALESCE(l.is_active, 1) = 1
                   AND COALESCE(mt.is_active, 1) = 1
@@ -902,7 +902,7 @@ class ExternalKiwoomService:
                 JOIN market_trend_event_theme_links l ON l.event_id = mte.id
                 JOIN market_themes mt ON mt.id = l.market_theme_id
                 WHERE mte.trade_date BETWEEN :start_date AND :end_date
-                  AND mte.detection_source IN ('kiwoom_condition', 'kiwoom_rest')
+                  AND mte.detection_source IN ('kiwoom_condition', 'kiwoom_rest', 'manual')
                   AND COALESCE(mte.is_active, 1) = 1
                   AND COALESCE(l.is_active, 1) = 1
                   AND COALESCE(mt.is_active, 1) = 1
@@ -989,7 +989,7 @@ class ExternalKiwoomService:
                 JOIN market_trend_event_theme_links l ON l.event_id = mte.id
                 JOIN market_themes mt ON mt.id = l.market_theme_id
                 WHERE mte.trade_date BETWEEN :start_date AND :end_date
-                  AND mte.detection_source IN ('kiwoom_condition', 'kiwoom_rest')
+                  AND mte.detection_source IN ('kiwoom_condition', 'kiwoom_rest', 'manual')
                   AND COALESCE(mte.is_active, 1) = 1
                   AND COALESCE(l.is_active, 1) = 1
                   AND COALESCE(mt.is_active, 1) = 1
@@ -1110,9 +1110,9 @@ class ExternalKiwoomService:
             text(
                 """
                 SELECT id AS event_id, trade_date, stock_code, stock_name, market_type, change_rate,
-                       theme_status, condition_seq, condition_name, user_memo, detected_at, updated_at
+                       theme_status, condition_seq, condition_name, detection_source, user_memo, detected_at, updated_at
                 FROM market_trend_events
-                WHERE detection_source='kiwoom_condition'
+                WHERE detection_source IN ('kiwoom_condition', 'manual')
                   AND trade_date=:trade_date
                   AND is_active=1
                 ORDER BY detected_at DESC, id DESC
@@ -1128,10 +1128,10 @@ class ExternalKiwoomService:
             text(
                 """
                 SELECT id AS event_id, trade_date, stock_code, stock_name, market_type, change_rate,
-                       theme_status, condition_seq, condition_name, user_memo, detected_at, updated_at
+                       theme_status, condition_seq, condition_name, detection_source, user_memo, detected_at, updated_at
                 FROM market_trend_events
                 WHERE id=:event_id
-                  AND detection_source='kiwoom_condition'
+                  AND detection_source IN ('kiwoom_condition', 'manual')
                 LIMIT 1
                 """
             ),
@@ -1159,7 +1159,7 @@ class ExternalKiwoomService:
             text(
                 """
                 SELECT id AS event_id, trade_date, stock_code, stock_name, market_type, change_rate,
-                       theme_status, condition_seq, condition_name, user_memo, detected_at, updated_at
+                       theme_status, condition_seq, condition_name, detection_source, user_memo, detected_at, updated_at
                 FROM market_trend_events
                 WHERE id=:event_id
                 LIMIT 1
@@ -1172,7 +1172,7 @@ class ExternalKiwoomService:
     def delete_market_event(self, event_id: int) -> KiwoomMarketEventDeleteResponse:
         now = now_kst()
         existing = self.db.execute(
-            text("SELECT id FROM market_trend_events WHERE id=:event_id AND detection_source='kiwoom_condition'"),
+            text("SELECT id FROM market_trend_events WHERE id=:event_id AND detection_source IN ('kiwoom_condition', 'manual')"),
             {"event_id": event_id},
         ).mappings().first()
         if not existing:
@@ -1215,7 +1215,7 @@ class ExternalKiwoomService:
     def add_market_event_theme(self, event_id: int, payload: KiwoomMarketEventThemeLinkAddRequest) -> KiwoomMarketEventThemeLinkAddResponse:
         now = now_kst()
         event_row = self.db.execute(
-            text("SELECT id FROM market_trend_events WHERE id=:event_id AND is_active=1 AND detection_source='kiwoom_condition'"),
+            text("SELECT id FROM market_trend_events WHERE id=:event_id AND is_active=1 AND detection_source IN ('kiwoom_condition', 'manual')"),
             {"event_id": event_id},
         ).mappings().first()
         if not event_row:
@@ -1305,3 +1305,4 @@ class ExternalKiwoomService:
         )
         self.db.commit()
         return KiwoomMarketEventThemeLinkDeleteResponse(success=True, link_id=link_id)
+

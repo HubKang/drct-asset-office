@@ -64,6 +64,23 @@ export type MarketTrendEvent = {
   };
 };
 
+export type ManualSupplyEventCandidateRequest = {
+  trade_date: string;
+  stock_id?: number | null;
+  stock_code?: string | null;
+  change_rate?: number | null;
+  trading_value?: number | null;
+  volume?: number | null;
+  theme_id?: number | null;
+  memo: string;
+};
+
+export type ManualSupplyEventCandidateResponse = {
+  success: boolean;
+  event_id: number;
+  message: string;
+};
+
 export type MarketPriceSnapshot = {
   snapshot_date: string;
   snapshot_time: string;
@@ -313,6 +330,7 @@ export type KiwoomMarketEventItem = {
   theme_status: string | null;
   condition_seq: string | null;
   condition_name: string | null;
+  detection_source?: string | null;
   user_memo: string | null;
   detected_at: string | null;
   updated_at: string | null;
