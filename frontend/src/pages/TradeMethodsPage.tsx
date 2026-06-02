@@ -10,10 +10,10 @@ type DetailMode = "view" | "create" | "edit";
 type MethodDetailForm = {
   method_name: string;
   core_concept: string;
-  checklist: string[];
-  take_profit_rule: string;
-  stop_loss_rule: string;
+  entry_conditions: string;
+  exit_conditions: string;
   failure_patterns: string;
+  checklist: string;
   market_conditions: string[];
   sort_order: number;
   is_active: boolean;
@@ -34,10 +34,10 @@ const MARKET_TAG_OPTIONS = ["급등주", "눌림목", "하락반등", "테마주
 const defaultForm = (): MethodDetailForm => ({
   method_name: "",
   core_concept: "",
-  checklist: [""],
-  take_profit_rule: "",
-  stop_loss_rule: "",
+  entry_conditions: "",
+  exit_conditions: "",
   failure_patterns: "",
+  checklist: "",
   market_conditions: [],
   sort_order: 0,
   is_active: true,
@@ -64,17 +64,7 @@ const buildDescription = (coreConcept: string, marketConditions: string[]): stri
   return `${concept}${concept ? "\n" : ""}[시장환경] ${tags.join(", ")}`;
 };
 
-const toChecklist = (entryRule?: string | null): string[] =>
-  (entryRule || "")
-    .split("\n")
-    .map((line) => line.replace(/^\s*[-*]\s*/, "").trim())
-    .filter(Boolean);
-
-const checklistToEntryRule = (items: string[]): string | undefined => {
-  const normalized = items.map((item) => item.trim()).filter(Boolean);
-  if (normalized.length === 0) return undefined;
-  return normalized.map((item) => `- ${item}`).join("\n");
-};
+const normalizeText = (value: string): string | undefined => value.trim() || undefined;
 
 const normalizeTags = (tags: string[]): string[] => {
   const merged = tags.join(" ");
@@ -146,7 +136,6 @@ function TradeMethodsPage() {
     return { activeMethodCount, totalTrades, avgWinRate, totalRealizedProfit };
   }, [safeItems, statsByMethod]);
 
-  const checklistText = detailForm.checklist.join("\n");
   const marketTags = normalizeTags(detailForm.market_conditions);
 
   const setFormField = <K extends keyof MethodDetailForm>(key: K, value: MethodDetailForm[K]) => {
@@ -222,16 +211,15 @@ function TradeMethodsPage() {
       return;
     }
     const parsed = parseMethodMeta(item.description);
-    const checklist = toChecklist(item.entry_rule);
     setSelectedMethodId(item.id);
     setDetailMode("view");
     setDetailForm({
       method_name: item.method_name || "",
       core_concept: parsed.coreConcept,
-      checklist: checklist.length > 0 ? checklist : [""],
-      take_profit_rule: item.take_profit_rule || "",
-      stop_loss_rule: item.stop_loss_rule || "",
-      failure_patterns: item.exit_rule || "",
+      entry_conditions: item.entry_rule || "",
+      exit_conditions: item.exit_rule || "",
+      failure_patterns: item.stop_loss_rule || "",
+      checklist: item.take_profit_rule || "",
       market_conditions: parsed.marketConditions,
       sort_order: item.sort_order || 0,
       is_active: item.is_active === 1,
@@ -265,10 +253,10 @@ function TradeMethodsPage() {
       const payload = {
         method_name: detailForm.method_name.trim(),
         description: buildDescription(detailForm.core_concept, detailForm.market_conditions),
-        entry_rule: checklistToEntryRule(detailForm.checklist),
-        take_profit_rule: detailForm.take_profit_rule.trim() || undefined,
-        stop_loss_rule: detailForm.stop_loss_rule.trim() || undefined,
-        exit_rule: detailForm.failure_patterns.trim() || undefined,
+        entry_rule: normalizeText(detailForm.entry_conditions),
+        exit_rule: normalizeText(detailForm.exit_conditions),
+        stop_loss_rule: normalizeText(detailForm.failure_patterns),
+        take_profit_rule: normalizeText(detailForm.checklist),
         sort_order: Number(detailForm.sort_order) || 0,
         is_active: detailForm.is_active,
       };
@@ -458,21 +446,25 @@ function TradeMethodsPage() {
                     <div className="detail-section">
                       <h4 className="detail-label mb-2">진입 조건</h4>
                       <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
-                        {toChecklist(selectedMethod.entry_rule).length > 0 ? toChecklist(selectedMethod.entry_rule).map((line, idx) => <li key={`entry-${idx}`}>{line}</li>) : <li>등록된 진입 조건이 없습니다.</li>}
+                        {parseLines(selectedMethod.entry_rule).length > 0 ? parseLines(selectedMethod.entry_rule).map((line, idx) => <li key={`entry-${idx}`}>{line}</li>) : <li>등록된 진입 조건이 없습니다.</li>}
                       </ul>
                     </div>
                     <div className="detail-section">
                       <h4 className="detail-label mb-2">청산 조건</h4>
-                      <p className="text-sm text-slate-700 whitespace-pre-wrap">{selectedMethod.take_profit_rule || selectedMethod.stop_loss_rule || "등록된 청산 조건이 없습니다."}</p>
+                      <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
+                        {parseLines(selectedMethod.exit_rule).length > 0 ? parseLines(selectedMethod.exit_rule).map((line, idx) => <li key={`exit-${idx}`}>{line}</li>) : <li>등록된 청산 조건이 없습니다.</li>}
+                      </ul>
                     </div>
                     <div className="detail-section">
                       <h4 className="detail-label mb-2">실패 패턴</h4>
-                      <p className="text-sm text-slate-700 whitespace-pre-wrap">{selectedMethod.exit_rule || "등록된 실패 패턴이 없습니다."}</p>
+                      <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
+                        {parseLines(selectedMethod.stop_loss_rule).length > 0 ? parseLines(selectedMethod.stop_loss_rule).map((line, idx) => <li key={`failure-${idx}`}>{line}</li>) : <li>등록된 실패 패턴이 없습니다.</li>}
+                      </ul>
                     </div>
                     <div className="detail-section">
                       <h4 className="detail-label mb-2">체크리스트</h4>
                       <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
-                        {parseLines(selectedMethod.entry_rule).length > 0 ? parseLines(selectedMethod.entry_rule).map((line, idx) => <li key={`check-${idx}`}>{line}</li>) : <li>등록된 체크리스트가 없습니다.</li>}
+                        {parseLines(selectedMethod.take_profit_rule).length > 0 ? parseLines(selectedMethod.take_profit_rule).map((line, idx) => <li key={`check-${idx}`}>{line}</li>) : <li>등록된 체크리스트가 없습니다.</li>}
                       </ul>
                     </div>
                   </>
@@ -520,19 +512,39 @@ function TradeMethodsPage() {
                       <textarea
                         className="textarea-control"
                         rows={4}
-                        value={checklistText}
-                        onChange={(e) => setFormField("checklist", e.target.value.split("\n"))}
+                        value={detailForm.entry_conditions}
+                        onChange={(e) => setFormField("entry_conditions", e.target.value)}
                         placeholder="예: 거래대금 500억 이상, 주도 테마, 눌림목, 이평선 지지, 전고점 돌파"
+                      />
+                    </div>
+                    <div>
+                      <label className="detail-label">청산 조건</label>
+                      <textarea
+                        className="textarea-control"
+                        rows={4}
+                        value={detailForm.exit_conditions}
+                        onChange={(e) => setFormField("exit_conditions", e.target.value)}
+                        placeholder="예: 목표 수익률 도달, 기준선 이탈, 거래량 급감, 손절 기준 도달"
                       />
                     </div>
                     <div>
                       <label className="detail-label">실패 패턴</label>
                       <textarea
                         className="textarea-control"
-                        rows={3}
+                        rows={4}
                         value={detailForm.failure_patterns}
                         onChange={(e) => setFormField("failure_patterns", e.target.value)}
-                        placeholder="예: 추격매수, 거래대금 감소, 주도주 이탈, 손절 지연"
+                        placeholder="예: 돌파 후 거래량 감소, 윗꼬리 출현, 시장 주도주 교체"
+                      />
+                    </div>
+                    <div>
+                      <label className="detail-label">체크리스트</label>
+                      <textarea
+                        className="textarea-control"
+                        rows={4}
+                        value={detailForm.checklist}
+                        onChange={(e) => setFormField("checklist", e.target.value)}
+                        placeholder="예: 시장 흐름 확인, 테마 강도 확인, 손절선 설정, 분할매수 여부 확인"
                       />
                     </div>
                     <div>

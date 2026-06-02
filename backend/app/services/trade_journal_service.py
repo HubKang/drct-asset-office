@@ -753,7 +753,7 @@ class TradeJournalService:
             "entry_conditions": method.entry_rule,
             "exit_conditions": method.exit_rule,
             "risk_rules": method.stop_loss_rule,
-            "checklist": self._parse_checklist(method.entry_rule),
+            "checklist": self._parse_checklist(method.take_profit_rule),
             "market_environment": self._extract_market_environment(method.description),
             "is_active": method.is_active,
         }

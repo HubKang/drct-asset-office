@@ -3376,6 +3376,20 @@ a:focus-visible {
   white-space: nowrap;
 }
 
+.economic-videos-table .summary-view-button.is-ready {
+  background: #16a34a;
+  color: #ffffff;
+  border: 1px solid #15803d;
+  font-weight: 800;
+  box-shadow: 0 4px 10px rgba(22, 163, 74, 0.18);
+}
+
+.economic-videos-table .summary-view-button.is-ready:not(:disabled):hover {
+  background: #15803d;
+  border-color: #166534;
+  box-shadow: 0 6px 14px rgba(22, 163, 74, 0.24);
+}
+
 .schema-comment-filter-row {
   display: flex;
   align-items: center;

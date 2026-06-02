@@ -857,6 +857,7 @@ function EconomicBriefingPage() {
                   const running = progressState?.status === "running";
                   const canViewSummary = v.summary_has_content === true;
                   const isSelectedSummary = summaryPanelOpen && selectedSummaryVideo?.video_id === v.video_id;
+                  const summaryReady = isAnalysisCompleted(v.analysis_status);
                   const showTranscriptRetry = shouldShowTranscriptRetryButton(v);
                   const transcriptCooldown = isTranscriptCooldownActive(v);
                   const manualTranscriptChecking = manualTranscriptCheckingMap[v.video_id] === true;
@@ -903,7 +904,7 @@ function EconomicBriefingPage() {
                           </button>
                           <button
                             type="button"
-                            className="btn btn-secondary eb-action-btn"
+                            className={`btn btn-secondary eb-action-btn summary-view-button${summaryReady ? " is-ready" : ""}`}
                             disabled={!canViewSummary}
                             onClick={() => void openSummaryPanel(v)}
                             title={canViewSummary ? (isSelectedSummary ? "닫기" : "요약보기") : "저장된 요약 내용이 없습니다."}
