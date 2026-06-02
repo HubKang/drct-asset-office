@@ -11,6 +11,7 @@ import TradeCalendarPage from "@/pages/TradeCalendarPage";
 import TradeMethodsPage from "@/pages/TradeMethodsPage";
 import TradeJournalsPage from "@/pages/TradeJournalsPage";
 import TradeReviewsPage from "@/pages/TradeReviewsPage";
+import TradeTrainingPage from "@/pages/TradeTrainingPage";
 import MarketThemesPage from "@/pages/MarketThemesPage";
 import MarketTrendsPage from "@/pages/MarketTrendsPage";
 import NewsPage from "@/pages/NewsPage";
@@ -55,6 +56,7 @@ export const routeRegistry: RouteItem[] = [
   { routeKey: "trade-journals", path: "/trade-journals", title: "매매일지", description: "매매일지 등록/조회", component: <TradeJournalsPage /> },
   { routeKey: "trade-calendar", path: "/trade-calendar", title: "매매달력", description: "월간 매매달력/통계", component: <TradeCalendarPage /> },
   { routeKey: "trade-reviews", path: "/trade-reviews", title: "매매복기", description: "매매 습관과 원칙 준수 여부 복기", component: <TradeReviewsPage /> },
+  { routeKey: "trade-training", path: "/trading/training", title: "매매훈련", description: "과거 일봉을 하루씩 넘기며 매수·매도 판단을 훈련", component: <TradeTrainingPage /> },
   { routeKey: "settings", path: "/settings", title: "설정", description: "GPT 분석 프롬프트 설정 관리", component: <GptPromptSettingsPage /> },
   { routeKey: "drct-architecture", path: "/drct-architecture", title: "DrCT아키텍처", description: "폴더 구조/정리 정책 점검", component: <DrctArchitecturePage /> },
 ];

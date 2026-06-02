@@ -1056,6 +1056,604 @@ a:focus-visible {
   white-space: nowrap;
 }
 
+.training-layout {
+  display: grid;
+  grid-template-columns: 360px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.training-main {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.training-stock-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 94px;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.training-stock-search .btn {
+  gap: 6px;
+}
+
+.training-stock-list {
+  max-height: 280px;
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.training-stock-item {
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 8px;
+  background: #fff;
+  padding: 9px 10px;
+  text-align: left;
+  display: grid;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.training-stock-item strong {
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.training-stock-item span {
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.training-stock-item.selected {
+  background: #eef6ff;
+  border-color: #93c5fd;
+  box-shadow: inset 3px 0 0 #2563eb;
+}
+
+.training-option-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.training-option-grid label,
+.training-order-grid label,
+.training-reason-field {
+  display: grid;
+  gap: 5px;
+}
+
+.training-option-grid span,
+.training-order-grid span,
+.training-reason-field span {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.training-start-button {
+  width: 100%;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.training-session-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.training-session-head strong {
+  display: block;
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.training-session-head span {
+  display: block;
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.training-session-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.training-session-actions .btn {
+  gap: 6px;
+}
+
+.training-chart-shell {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.training-chart {
+  width: 100%;
+  min-width: 820px;
+  display: block;
+}
+
+.training-chart-empty {
+  min-height: 360px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  background: #f8fafc;
+}
+
+.training-current-grid,
+.training-stat-grid,
+.training-order-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.training-current-grid div,
+.training-stat-grid div,
+.training-order-summary div {
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 8px 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.training-current-grid span,
+.training-stat-grid span,
+.training-order-summary span {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.training-current-grid strong,
+.training-stat-grid strong,
+.training-order-summary strong {
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.training-info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.training-positive {
+  color: #b91c1c !important;
+}
+
+.training-negative {
+  color: #1d4ed8 !important;
+}
+
+.training-log-table th,
+.training-log-table td {
+  white-space: nowrap;
+}
+
+.training-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(15, 23, 42, 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+}
+
+.training-modal {
+  width: min(560px, 100%);
+  max-height: calc(100vh - 36px);
+  overflow: auto;
+  border-radius: 10px;
+  border: 1px solid var(--color-hairline-cloud);
+  background: #fff;
+  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.22);
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+}
+
+.training-result-modal {
+  width: min(1120px, 100%);
+}
+
+.training-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.training-modal-head h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.training-result-subtitle {
+  margin: 4px 0 0;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.training-icon-button {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 8px;
+  background: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.training-modal-market {
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #eff6ff;
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px;
+}
+
+.training-modal-market strong {
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.training-modal-market span {
+  color: #334155;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.training-order-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.training-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.training-result-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.training-result-grid div {
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 9px 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.training-result-grid span {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.training-result-grid strong {
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.training-result-small-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.training-result-section {
+  display: grid;
+  gap: 8px;
+}
+
+.training-result-section h4 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.training-equity-chart-shell {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.training-equity-chart {
+  width: 100%;
+  min-width: 680px;
+  display: block;
+}
+
+.training-equity-empty {
+  min-height: 160px;
+}
+
+.training-result-table {
+  min-width: 1080px;
+}
+
+.training-result-table th,
+.training-result-table td {
+  white-space: nowrap;
+}
+
+.training-result-note {
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1e40af;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.training-result-help {
+  margin: 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.training-review-section,
+.training-gpt-section {
+  border-top: 1px solid var(--color-hairline-cloud);
+  padding-top: 12px;
+}
+
+.training-review-grid {
+  display: grid;
+  grid-template-columns: 160px 220px 160px;
+  gap: 8px;
+}
+
+.training-review-grid label,
+.training-review-text-grid label {
+  display: grid;
+  gap: 5px;
+}
+
+.training-review-grid span,
+.training-review-text-grid span {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.training-review-text-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.training-result-actions,
+.training-gpt-package-head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.training-gpt-package {
+  display: grid;
+  gap: 8px;
+}
+
+.training-gpt-package-head {
+  justify-content: space-between;
+}
+
+.training-gpt-package-head strong {
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.training-gpt-prompt {
+  min-height: 320px;
+  font-family: "Noto Sans KR", Pretendard, sans-serif;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.training-main-focused {
+  max-width: 1480px;
+}
+
+.training-main-focused .training-chart-shell {
+  margin-top: 12px;
+}
+
+.training-settings-modal {
+  width: min(760px, 100%);
+}
+
+.training-settings-stock-list {
+  max-height: 340px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.training-settings-option-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.training-settings-help {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1e40af;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.training-kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(126px, 1fr));
+  gap: 8px;
+  margin: 10px 0 12px;
+}
+
+.training-kpi-strip div {
+  min-width: 0;
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 8px 10px;
+  display: grid;
+  gap: 3px;
+}
+
+.training-kpi-strip span {
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.training-kpi-strip strong {
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.training-slider-block {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.training-slider-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.training-slider-head span {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.training-slider-head strong {
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.training-order-slider {
+  width: 100%;
+  accent-color: #2563eb;
+}
+
+.training-quick-percent-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.training-quick-percent-row button {
+  min-width: 52px;
+  height: 30px;
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.training-quick-percent-row button.selected {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+@media (max-width: 1200px) {
+  .training-layout,
+  .training-info-grid {
+    grid-template-columns: 1fr;
+  }
+
+}
+
+@media (max-width: 760px) {
+  .training-session-head,
+  .training-modal-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .training-session-actions,
+  .training-session-actions .btn,
+  .training-modal-actions .btn {
+    width: 100%;
+  }
+
+  .training-order-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .training-result-grid,
+  .training-result-small-grid,
+  .training-review-grid,
+  .training-review-text-grid,
+  .training-settings-stock-list,
+  .training-settings-option-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .training-kpi-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .numeric-cell {
   text-align: right;
 }

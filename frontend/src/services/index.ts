@@ -14,6 +14,7 @@ import { stockApiRepository } from "@/services/api/stockApiRepository";
 import { stockPriceApiRepository } from "@/services/api/stockPriceApiRepository";
 import { tradeJournalApiRepository } from "@/services/api/tradeJournalApiRepository";
 import { tradeReviewApiRepository } from "@/services/api/tradeReviewApiRepository";
+import { tradeTrainingApiRepository } from "@/services/api/tradeTrainingApiRepository";
 import { watchlistApiRepository } from "@/services/api/watchlistApiRepository";
 import { advisoryPackageMockRepository } from "@/services/mock/advisoryPackageMockRepository";
 import { classificationRuleMockRepository } from "@/services/mock/classificationRuleMockRepository";
@@ -48,6 +49,7 @@ export const repositories = {
   gptPromptTemplates: useMock ? gptPromptTemplateMockRepository : gptPromptTemplateApiRepository,
   tradeJournals: tradeJournalApiRepository,
   tradeReviews: tradeReviewApiRepository,
+  tradeTraining: tradeTrainingApiRepository,
 };
 
 export const dataSourceLabel = useMock ? "mock" : "api";

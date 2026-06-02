@@ -19,6 +19,7 @@
   { "menuKey": "trade", "title": "매매일지", "routeKey": "trade-journals" },
   { "menuKey": "trade", "title": "매매달력", "routeKey": "trade-calendar" },
   { "menuKey": "trade", "title": "매매복기", "routeKey": "trade-reviews" },
+  { "menuKey": "trade", "title": "매매훈련", "routeKey": "trade-training" },
 
   { "menuKey": "analysis-rules", "title": "분류 규칙 관리", "routeKey": "classification-rules" },
 

@@ -964,6 +964,112 @@ def ensure_runtime_schema() -> None:
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_trade_review_check_items_type ON trade_review_check_items(item_type)")
         conn.exec_driver_sql(
             """
+            CREATE TABLE IF NOT EXISTS simulation_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                stock_code TEXT NOT NULL,
+                stock_name TEXT,
+                start_date TEXT NOT NULL,
+                end_date TEXT NOT NULL,
+                current_date TEXT,
+                current_index INTEGER DEFAULT 0,
+                initial_cash REAL NOT NULL,
+                cash REAL NOT NULL,
+                position_qty INTEGER DEFAULT 0,
+                avg_price REAL DEFAULT 0,
+                realized_profit REAL DEFAULT 0,
+                status TEXT DEFAULT '진행중',
+                options_json TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_simulation_sessions_stock_code ON simulation_sessions(stock_code)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_simulation_sessions_status ON simulation_sessions(status)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_simulation_sessions_created_at ON simulation_sessions(created_at)"
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS simulation_trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL,
+                trade_date TEXT NOT NULL,
+                side TEXT NOT NULL,
+                price REAL NOT NULL,
+                quantity INTEGER NOT NULL,
+                fee REAL DEFAULT 0,
+                amount REAL NOT NULL,
+                realized_profit REAL DEFAULT 0,
+                reason TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES simulation_sessions(id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_simulation_trades_session_id ON simulation_trades(session_id)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_simulation_trades_trade_date ON simulation_trades(trade_date)"
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS simulation_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL,
+                trade_date TEXT NOT NULL,
+                cash REAL NOT NULL,
+                position_qty INTEGER DEFAULT 0,
+                avg_price REAL DEFAULT 0,
+                evaluation_amount REAL DEFAULT 0,
+                total_asset REAL DEFAULT 0,
+                unrealized_profit REAL DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES simulation_sessions(id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_simulation_snapshots_session_id ON simulation_snapshots(session_id)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_simulation_snapshots_trade_date ON simulation_snapshots(trade_date)"
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS simulation_reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL,
+                review_status TEXT DEFAULT '미복기',
+                self_review_text TEXT,
+                gpt_prompt_text TEXT,
+                gpt_review_text TEXT,
+                improvement_point TEXT,
+                next_training_goal TEXT,
+                main_mistake TEXT,
+                discipline_score INTEGER,
+                reviewed_at TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES simulation_sessions(id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_simulation_reviews_session_id "
+            "ON simulation_reviews(session_id)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_simulation_reviews_status "
+            "ON simulation_reviews(review_status)"
+        )
+        conn.exec_driver_sql(
+            """
             INSERT OR IGNORE INTO telegram_sources
             (source_name, channel_username, channel_title, source_type, description, is_active, is_default, is_deleted, created_at, updated_at)
             VALUES
