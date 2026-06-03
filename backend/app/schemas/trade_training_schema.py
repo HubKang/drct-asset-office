@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from backend.app.schemas.trade_journal_schema import TradeMethodResponse
+
 
 class TrainingStockItem(BaseModel):
     stock_id: int
@@ -21,6 +23,7 @@ class TrainingStockListResponse(BaseModel):
 
 class TrainingSessionCreate(BaseModel):
     stock_code: str
+    method_id: int | None = None
     initial_cash: float = Field(default=50_000_000, gt=0)
     fee_rate: float = Field(default=0.001, ge=0, le=0.1)
     display_days: int = Field(default=80, ge=1, le=400)
@@ -39,6 +42,7 @@ class TrainingSessionResponse(BaseModel):
     id: int
     stock_code: str
     stock_name: str | None = None
+    method_id: int | None = None
     start_date: str
     end_date: str
     current_date: str | None = None
@@ -94,6 +98,7 @@ class TrainingTradeResponse(BaseModel):
 
 class TrainingSessionDetailResponse(BaseModel):
     session: TrainingSessionResponse
+    trade_method: TradeMethodResponse | None = None
     candles: list[TrainingCandle] = Field(default_factory=list)
     current_candle: TrainingCandle | None = None
     account: TrainingAccountResponse

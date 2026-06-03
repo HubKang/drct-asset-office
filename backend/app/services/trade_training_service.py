@@ -94,10 +94,17 @@ class TradeTrainingService:
         if not rows:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="선택 기간에 가격 데이터가 없습니다.")
 
+        method_id = None
+        if payload.method_id:
+            method = self.repo.get_trade_method(int(payload.method_id))
+            if method and int(method.get("is_active") or 0) == 1:
+                method_id = int(method["id"])
+
         created = self.repo.create_session(
             {
                 "stock_code": stock["stock_code"],
                 "stock_name": stock["stock_name"],
+                "method_id": method_id,
                 "start_date": str(rows[0]["trade_date"]),
                 "end_date": str(rows[-1]["trade_date"]),
                 "current_date": str(rows[0]["trade_date"]),
@@ -205,6 +212,7 @@ class TradeTrainingService:
         decorated = self._decorate_candles(visible_prices, moving_averages)
         return {
             "session": self._response_session(session),
+            "trade_method": self.repo.get_trade_method(int(session["method_id"])) if session.get("method_id") else None,
             "candles": decorated,
             "current_candle": decorated[-1] if decorated else None,
             "account": self._calc_account(session, current_candle),

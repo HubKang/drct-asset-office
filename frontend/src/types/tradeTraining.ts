@@ -1,3 +1,5 @@
+import type { TradeMethod } from "@/types/tradeJournal";
+
 export type TrainingStockItem = {
   stock_id: number;
   stock_code: string;
@@ -16,6 +18,7 @@ export type TrainingStockListResponse = {
 
 export type TrainingSessionCreate = {
   stock_code: string;
+  method_id?: number | null;
   initial_cash: number;
   fee_rate: number;
   display_days: number;
@@ -34,6 +37,7 @@ export type TrainingSession = {
   id: number;
   stock_code: string;
   stock_name: string | null;
+  method_id?: number | null;
   start_date: string;
   end_date: string;
   current_date: string | null;
@@ -89,6 +93,7 @@ export type TrainingTrade = {
 
 export type TrainingSessionDetail = {
   session: TrainingSession;
+  trade_method?: TradeMethod | null;
   candles: TrainingCandle[];
   current_candle: TrainingCandle | null;
   account: TrainingAccount;

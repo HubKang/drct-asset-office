@@ -4,6 +4,7 @@ import EmptyState from "@/components/common/EmptyState";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import { repositories } from "@/services";
+import type { TradeMethod } from "@/types/tradeJournal";
 import type {
   SimulationReview,
   TrainingCandle,
@@ -315,12 +316,64 @@ function EquityCurveChart({ points }: { points: TrainingEquityCurvePoint[] }) {
   );
 }
 
+function tradeMethodValue(method: TradeMethod | null | undefined, ...fields: Array<keyof TradeMethod>): string {
+  if (!method) return "";
+  for (const field of fields) {
+    const value = method[field];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+function rulePreview(value?: string | null): string {
+  const text = (value || "").trim();
+  if (!text) return "등록된 원칙이 없습니다.";
+  return text;
+}
+
+function TrainingMethodPrinciples({
+  method,
+  compact = false,
+}: {
+  method: TradeMethod | null | undefined;
+  compact?: boolean;
+}) {
+  if (!method) return null;
+  const items = [
+    { label: "핵심개념", value: tradeMethodValue(method, "core_concept") },
+    { label: "설명", value: tradeMethodValue(method, "description") },
+    { label: "매수조건", value: tradeMethodValue(method, "buy_condition", "entry_rule") },
+    { label: "매도조건", value: tradeMethodValue(method, "sell_condition", "exit_rule") },
+    { label: "익절기준", value: tradeMethodValue(method, "take_profit_rule") },
+    { label: "손절기준", value: tradeMethodValue(method, "stop_loss_rule") },
+    { label: "진입&비중 방식", value: tradeMethodValue(method, "position_sizing_rule") },
+    { label: "체크리스트", value: tradeMethodValue(method, "checklist", "take_profit_rule") },
+  ];
+  return (
+    <div className={`training-method-principles ${compact ? "compact" : ""}`}>
+      <div className="training-method-principles-title">{method.method_name}</div>
+      <div className="training-method-principles-grid">
+        {items.map((item) => (
+          <div key={item.label} className="training-method-principle-card">
+            <span>{item.label}</span>
+            <p>{rulePreview(item.value)}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function SettingsModal({
   q,
   setQ,
   stocks,
   selectedStock,
   setSelectedStock,
+  tradeMethods,
+  selectedMethodId,
+  setSelectedMethodId,
+  methodLoadError,
   initialCash,
   setInitialCash,
   feeRatePct,
@@ -343,6 +396,10 @@ function SettingsModal({
   stocks: TrainingStockItem[];
   selectedStock: TrainingStockItem | null;
   setSelectedStock: (stock: TrainingStockItem) => void;
+  tradeMethods: TradeMethod[];
+  selectedMethodId: number | null;
+  setSelectedMethodId: (methodId: number | null) => void;
+  methodLoadError: string;
   initialCash: number;
   setInitialCash: (value: number) => void;
   feeRatePct: number;
@@ -378,12 +435,26 @@ function SettingsModal({
           </button>
         </div>
 
-        <div className="training-stock-search">
+        <div className="training-stock-search training-settings-top-row">
           <input className="input-control" value={q} onChange={(event) => setQ(event.target.value)} placeholder="종목명 또는 코드 검색" />
           <button className="btn btn-secondary" type="button" disabled={loading} onClick={() => void onSearch()}>
             <Search size={16} /> 검색
           </button>
+          <select
+            className="select-control training-method-select"
+            value={selectedMethodId ?? ""}
+            onChange={(event) => setSelectedMethodId(event.target.value ? Number(event.target.value) : null)}
+            aria-label="훈련기법 선택"
+          >
+            <option value="">선택 안함 / 자유훈련</option>
+            {tradeMethods.map((method) => (
+              <option key={method.id} value={method.id}>
+                {method.method_name}
+              </option>
+            ))}
+          </select>
         </div>
+        {methodLoadError ? <p className="training-method-load-error">{methodLoadError}</p> : null}
 
         <div className="training-stock-list training-settings-stock-list">
           {stocks.length === 0 ? <EmptyState message="가격 데이터가 있는 종목이 없습니다." /> : null}
@@ -936,6 +1007,9 @@ function TradeTrainingPage() {
   const [q, setQ] = useState("");
   const [stocks, setStocks] = useState<TrainingStockItem[]>([]);
   const [selectedStock, setSelectedStock] = useState<TrainingStockItem | null>(null);
+  const [tradeMethods, setTradeMethods] = useState<TradeMethod[]>([]);
+  const [selectedMethodId, setSelectedMethodId] = useState<number | null>(null);
+  const [methodLoadError, setMethodLoadError] = useState("");
   const [initialCash, setInitialCash] = useState(50_000_000);
   const [feeRatePct, setFeeRatePct] = useState(0.1);
   const [displayDays, setDisplayDays] = useState(80);
@@ -953,6 +1027,12 @@ function TradeTrainingPage() {
   const [showAvgPriceLine, setShowAvgPriceLine] = useState(false);
   const [scrollTargetDate, setScrollTargetDate] = useState<string | null>(null);
   const [highlightedTradeDate, setHighlightedTradeDate] = useState<string | null>(null);
+  const [showMethodPrinciples, setShowMethodPrinciples] = useState(false);
+
+  const selectedTrainingMethod = useMemo(
+    () => tradeMethods.find((method) => method.id === selectedMethodId) ?? null,
+    [tradeMethods, selectedMethodId]
+  );
 
   const loadStocks = async (keyword = q) => {
     setLoading(true);
@@ -969,8 +1049,24 @@ function TradeTrainingPage() {
     }
   };
 
+  const loadTradeMethods = async () => {
+    setMethodLoadError("");
+    try {
+      const rows = await repositories.tradeJournals.listTradeMethods({ is_active: 1 });
+      setTradeMethods(rows);
+      setSelectedMethodId((prev) => (prev && rows.some((method) => method.id === prev) ? prev : null));
+    } catch (nextError) {
+      setTradeMethods([]);
+      setSelectedMethodId(null);
+      setMethodLoadError(
+        nextError instanceof Error ? nextError.message : "매매기법 목록을 불러오지 못했습니다. 자유훈련으로 시작할 수 있습니다."
+      );
+    }
+  };
+
   useEffect(() => {
     void loadStocks("");
+    void loadTradeMethods();
   }, []);
 
   useEffect(() => {
@@ -988,6 +1084,7 @@ function TradeTrainingPage() {
     try {
       const response = await repositories.tradeTraining.createSession({
         stock_code: selectedStock.stock_code,
+        method_id: selectedMethodId,
         initial_cash: initialCash,
         fee_rate: feeRatePct / 100,
         display_days: displayDays,
@@ -999,6 +1096,7 @@ function TradeTrainingPage() {
       setShowAvgPriceLine(false);
       setScrollTargetDate(null);
       setHighlightedTradeDate(null);
+      setShowMethodPrinciples(false);
       setSettingsOpen(false);
       setMessage("훈련 세션을 시작했습니다.");
     } catch (nextError) {
@@ -1102,15 +1200,42 @@ function TradeTrainingPage() {
         title="매매훈련"
         description="과거 일봉을 하루씩 넘기며 매수·매도 판단을 훈련합니다."
         action={
-          <button type="button" className="btn btn-primary" onClick={() => setSettingsOpen(true)}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => {
+              void loadTradeMethods();
+              setSettingsOpen(true);
+            }}
+          >
             <Settings size={16} /> 훈련 설정
           </button>
         }
       />
 
       <div className="training-main training-main-focused">
-        {error ? <div className="inline-result inline-error">{error}</div> : null}
-        {message ? <div className="inline-result">{message}</div> : null}
+        <div className="training-status-row">
+          <div className="training-message-panel">
+            {error ? <div className="inline-result inline-error">{error}</div> : null}
+            {!error && message ? <div className="inline-result">{message}</div> : null}
+          </div>
+          {detail ? (
+            <div className="training-method-reference">
+              <span>훈련 기법: {detail.trade_method?.method_name || "자유훈련"}</span>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={!detail.trade_method}
+                onClick={() => setShowMethodPrinciples((prev) => !prev)}
+              >
+                원칙 보기
+              </button>
+            </div>
+          ) : null}
+        </div>
+        {detail?.trade_method && showMethodPrinciples ? (
+          <TrainingMethodPrinciples method={detail.trade_method} compact />
+        ) : null}
 
         {!detail ? (
           <SectionCard title="훈련 화면">
@@ -1191,6 +1316,10 @@ function TradeTrainingPage() {
           stocks={stocks}
           selectedStock={selectedStock}
           setSelectedStock={setSelectedStock}
+          tradeMethods={tradeMethods}
+          selectedMethodId={selectedMethodId}
+          setSelectedMethodId={setSelectedMethodId}
+          methodLoadError={methodLoadError}
           initialCash={initialCash}
           setInitialCash={setInitialCash}
           feeRatePct={feeRatePct}

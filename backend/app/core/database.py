@@ -979,6 +979,7 @@ def ensure_runtime_schema() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 stock_code TEXT NOT NULL,
                 stock_name TEXT,
+                method_id INTEGER,
                 start_date TEXT NOT NULL,
                 end_date TEXT NOT NULL,
                 current_date TEXT,
@@ -995,8 +996,16 @@ def ensure_runtime_schema() -> None:
             )
             """
         )
+        simulation_session_columns = {
+            str(row[1]) for row in conn.exec_driver_sql("PRAGMA table_info(simulation_sessions)").fetchall()
+        }
+        if "method_id" not in simulation_session_columns:
+            conn.exec_driver_sql("ALTER TABLE simulation_sessions ADD COLUMN method_id INTEGER")
         conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_simulation_sessions_stock_code ON simulation_sessions(stock_code)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_simulation_sessions_method_id ON simulation_sessions(method_id)"
         )
         conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_simulation_sessions_status ON simulation_sessions(status)"

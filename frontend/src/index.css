@@ -1084,8 +1084,17 @@ a:focus-visible {
   margin-bottom: 10px;
 }
 
+.training-settings-top-row {
+  grid-template-columns: minmax(220px, 420px) 94px minmax(180px, 260px);
+  align-items: center;
+}
+
 .training-stock-search .btn {
   gap: 6px;
+}
+
+.training-method-select {
+  min-width: 0;
 }
 
 .training-stock-list {
@@ -1157,6 +1166,50 @@ a:focus-visible {
   gap: 12px;
   align-items: flex-start;
   margin-bottom: 12px;
+}
+
+.training-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.training-message-panel {
+  flex: 0 1 520px;
+  min-width: 0;
+}
+
+.training-message-panel .inline-result {
+  margin: 0;
+}
+
+.training-method-reference {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  max-width: 100%;
+}
+
+.training-method-reference span {
+  min-height: 34px;
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 8px;
+  background: #fff;
+  padding: 8px 10px;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.training-method-reference .btn {
+  min-height: 34px;
+  padding: 8px 10px;
+  font-size: 12px;
 }
 
 .training-session-head strong {
@@ -1572,6 +1625,65 @@ a:focus-visible {
   line-height: 1.5;
 }
 
+.training-method-load-error {
+  margin: -4px 0 0;
+  color: #b45309;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.training-method-principles {
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 8px;
+  background: #fff;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.training-method-principles.compact {
+  padding: 10px;
+}
+
+.training-method-principles-title {
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.training-method-principles-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.training-method-principle-card {
+  min-width: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 8px 10px;
+}
+
+.training-method-principle-card span {
+  display: block;
+  margin-bottom: 4px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.training-method-principle-card p {
+  margin: 0;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
 .training-kpi-strip {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(126px, 1fr));
@@ -1731,6 +1843,21 @@ a:focus-visible {
     flex-direction: column;
   }
 
+  .training-status-row,
+  .training-method-reference {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .training-method-reference {
+    width: 100%;
+  }
+
+  .training-method-reference span,
+  .training-method-reference .btn {
+    width: 100%;
+  }
+
   .training-session-actions,
   .training-session-actions .btn,
   .training-modal-actions .btn {
@@ -1746,7 +1873,9 @@ a:focus-visible {
   .training-review-grid,
   .training-review-text-grid,
   .training-settings-stock-list,
-  .training-settings-option-grid {
+  .training-settings-option-grid,
+  .training-settings-top-row,
+  .training-method-principles-grid {
     grid-template-columns: 1fr;
   }
 

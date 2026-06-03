@@ -164,6 +164,7 @@ class TradeTrainingRepository:
         now = now_kst()
         params = {
             **payload,
+            "method_id": payload.get("method_id"),
             "options_json": json.dumps(payload.get("options") or {}, ensure_ascii=False),
             "created_at": now,
             "updated_at": now,
@@ -172,12 +173,12 @@ class TradeTrainingRepository:
             text(
                 """
                 INSERT INTO simulation_sessions (
-                    stock_code, stock_name, start_date, end_date, current_date, current_index,
+                    stock_code, stock_name, method_id, start_date, end_date, current_date, current_index,
                     initial_cash, cash, position_qty, avg_price, realized_profit, status,
                     options_json, created_at, updated_at
                 )
                 VALUES (
-                    :stock_code, :stock_name, :start_date, :end_date, :current_date, :current_index,
+                    :stock_code, :stock_name, :method_id, :start_date, :end_date, :current_date, :current_index,
                     :initial_cash, :cash, :position_qty, :avg_price, :realized_profit, :status,
                     :options_json, :created_at, :updated_at
                 )
@@ -192,6 +193,37 @@ class TradeTrainingRepository:
         row = self.db.execute(
             text("SELECT * FROM simulation_sessions WHERE id = :id"),
             {"id": session_id},
+        ).mappings().first()
+        return dict(row) if row else None
+
+    def get_trade_method(self, method_id: int | None) -> dict[str, Any] | None:
+        if not method_id:
+            return None
+        row = self.db.execute(
+            text(
+                """
+                SELECT
+                    id,
+                    method_name,
+                    core_concept,
+                    description,
+                    buy_condition,
+                    sell_condition,
+                    position_sizing_rule,
+                    entry_rule,
+                    exit_rule,
+                    stop_loss_rule,
+                    take_profit_rule,
+                    checklist,
+                    is_active,
+                    sort_order,
+                    created_at,
+                    updated_at
+                FROM trade_methods
+                WHERE id = :id
+                """
+            ),
+            {"id": method_id},
         ).mappings().first()
         return dict(row) if row else None
 
