@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.app.api.routes_analysis import router as analysis_router
 from backend.app.api.routes_architecture import router as architecture_router
 from backend.app.api.routes_advisory_packages import router as advisory_packages_router
+from backend.app.api.routes_backtest import router as backtest_router
 from backend.app.api.routes_collectors import router as collectors_router
 from backend.app.api.routes_collection_runs import router as collection_runs_router
 from backend.app.api.routes_classification_rules import router as classification_rules_router
@@ -72,6 +73,7 @@ app.include_router(external_kiwoom_router)
 app.include_router(economic_briefing_router)
 app.include_router(telegram_router)
 app.include_router(trade_training_router)
+app.include_router(backtest_router)
 app.include_router(trade_journals_router)
 app.include_router(trade_reviews_router)
 app.include_router(architecture_router)

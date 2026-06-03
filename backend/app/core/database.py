@@ -1090,6 +1090,122 @@ def ensure_runtime_schema() -> None:
         )
         conn.exec_driver_sql(
             """
+            CREATE TABLE IF NOT EXISTS backtest_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_name TEXT NOT NULL,
+                description TEXT,
+                trade_method_id INTEGER,
+                buy_conditions_json TEXT NOT NULL,
+                sell_conditions_json TEXT NOT NULL,
+                position_rule_json TEXT NOT NULL,
+                fee_rate REAL NOT NULL DEFAULT 0.00015,
+                slippage_rate REAL NOT NULL DEFAULT 0,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_backtest_rules_active ON backtest_rules(is_active)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_backtest_rules_trade_method_id ON backtest_rules(trade_method_id)"
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS backtest_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_id INTEGER NOT NULL,
+                stock_code TEXT NOT NULL,
+                stock_name TEXT,
+                start_date TEXT NOT NULL,
+                end_date TEXT NOT NULL,
+                initial_cash REAL NOT NULL,
+                final_asset REAL,
+                total_profit REAL,
+                total_return_rate REAL,
+                max_drawdown REAL,
+                trade_count INTEGER DEFAULT 0,
+                win_count INTEGER DEFAULT 0,
+                loss_count INTEGER DEFAULT 0,
+                breakeven_count INTEGER DEFAULT 0,
+                win_rate REAL,
+                avg_profit_rate REAL,
+                avg_loss_rate REAL,
+                profit_factor REAL,
+                avg_holding_days REAL,
+                total_fee REAL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'completed',
+                message TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_backtest_runs_rule_id ON backtest_runs(rule_id)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_backtest_runs_stock_code ON backtest_runs(stock_code)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_backtest_runs_created_at ON backtest_runs(created_at)"
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS backtest_trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id INTEGER NOT NULL,
+                buy_date TEXT NOT NULL,
+                sell_date TEXT,
+                buy_price REAL NOT NULL,
+                sell_price REAL,
+                quantity INTEGER NOT NULL,
+                buy_amount REAL NOT NULL,
+                sell_amount REAL,
+                fee REAL DEFAULT 0,
+                profit REAL,
+                profit_rate REAL,
+                holding_days INTEGER,
+                exit_reason TEXT,
+                buy_signal_json TEXT,
+                sell_signal_json TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_backtest_trades_run_id ON backtest_trades(run_id)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_backtest_trades_buy_date ON backtest_trades(buy_date)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_backtest_trades_sell_date ON backtest_trades(sell_date)"
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS backtest_equity_curve (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id INTEGER NOT NULL,
+                trade_date TEXT NOT NULL,
+                cash REAL NOT NULL,
+                position_qty INTEGER NOT NULL DEFAULT 0,
+                position_value REAL NOT NULL DEFAULT 0,
+                total_asset REAL NOT NULL,
+                drawdown_rate REAL NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_backtest_equity_curve_run_id ON backtest_equity_curve(run_id)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_backtest_equity_curve_trade_date ON backtest_equity_curve(trade_date)"
+        )
+        conn.exec_driver_sql(
+            """
             INSERT OR IGNORE INTO telegram_sources
             (source_name, channel_username, channel_title, source_type, description, is_active, is_default, is_deleted, created_at, updated_at)
             VALUES

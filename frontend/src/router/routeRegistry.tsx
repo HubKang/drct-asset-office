@@ -1,4 +1,5 @@
-﻿import AdvisoryPackagePage from "@/pages/AdvisoryPackagePage";
+import AdvisoryPackagePage from "@/pages/AdvisoryPackagePage";
+import BacktestPage from "@/pages/BacktestPage";
 import ClassificationRulesPage from "@/pages/ClassificationRulesPage";
 import CollectionRunsPage from "@/pages/CollectionRunsPage";
 import DashboardPage from "@/pages/DashboardPage";
@@ -57,11 +58,9 @@ export const routeRegistry: RouteItem[] = [
   { routeKey: "trade-calendar", path: "/trade-calendar", title: "매매달력", description: "월간 매매달력/통계", component: <TradeCalendarPage /> },
   { routeKey: "trade-reviews", path: "/trade-reviews", title: "매매복기", description: "매매 습관과 원칙 준수 여부 복기", component: <TradeReviewsPage /> },
   { routeKey: "trade-training", path: "/trading/training", title: "매매훈련", description: "과거 일봉을 하루씩 넘기며 매수·매도 판단을 훈련", component: <TradeTrainingPage /> },
+  { routeKey: "backtest", path: "/trading/backtest", title: "매매기준 백테스트", description: "계산 가능한 기준을 과거 일봉에 적용해 성과와 손실 구조를 검증", component: <BacktestPage /> },
   { routeKey: "settings", path: "/settings", title: "설정", description: "GPT 분석 프롬프트 설정 관리", component: <GptPromptSettingsPage /> },
   { routeKey: "drct-architecture", path: "/drct-architecture", title: "DrCT아키텍처", description: "폴더 구조/정리 정책 점검", component: <DrctArchitecturePage /> },
 ];
 
 export const routeRegistryMap = Object.fromEntries(routeRegistry.map((route) => [route.routeKey, route]));
-
-
-
