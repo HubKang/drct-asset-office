@@ -814,11 +814,16 @@ def ensure_runtime_schema() -> None:
             CREATE TABLE IF NOT EXISTS trade_methods (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 method_name TEXT NOT NULL,
+                core_concept TEXT,
                 description TEXT,
+                buy_condition TEXT,
+                sell_condition TEXT,
+                position_sizing_rule TEXT,
                 entry_rule TEXT,
                 exit_rule TEXT,
                 stop_loss_rule TEXT,
                 take_profit_rule TEXT,
+                checklist TEXT,
                 is_active INTEGER NOT NULL DEFAULT 1,
                 sort_order INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
@@ -826,6 +831,12 @@ def ensure_runtime_schema() -> None:
             )
             """
         )
+        trade_method_columns = {
+            str(row[1]) for row in conn.exec_driver_sql("PRAGMA table_info(trade_methods)").fetchall()
+        }
+        for column_name in ("core_concept", "buy_condition", "sell_condition", "position_sizing_rule", "checklist"):
+            if column_name not in trade_method_columns:
+                conn.exec_driver_sql(f"ALTER TABLE trade_methods ADD COLUMN {column_name} TEXT")
         conn.exec_driver_sql(
             """
             CREATE TABLE IF NOT EXISTS trade_journals (

@@ -47,7 +47,7 @@ class TradeJournalService:
 
     def create_trade_method(self, payload):
         now = now_kst()
-        data = payload.model_dump()
+        data = self._normalize_trade_method_payload(payload.model_dump())
         data["is_active"] = 1 if data.get("is_active", True) else 0
         data["created_at"] = now
         data["updated_at"] = now
@@ -57,10 +57,33 @@ class TradeJournalService:
         item = self.repo.get_trade_method(method_id)
         if not item:
             raise HTTPException(status_code=404, detail="trade method not found")
-        updates = payload.model_dump(exclude_unset=True)
+        updates = self._normalize_trade_method_payload(payload.model_dump(exclude_unset=True))
         if "is_active" in updates:
             updates["is_active"] = 1 if updates["is_active"] else 0
         return self.repo.update_trade_method(item, updates)
+
+    @staticmethod
+    def _normalize_trade_method_payload(data: dict) -> dict:
+        text_fields = [
+            "core_concept",
+            "description",
+            "buy_condition",
+            "sell_condition",
+            "position_sizing_rule",
+            "entry_rule",
+            "exit_rule",
+            "stop_loss_rule",
+            "take_profit_rule",
+            "checklist",
+        ]
+        for field in text_fields:
+            if field in data and isinstance(data[field], str):
+                data[field] = data[field].strip() or None
+        if "buy_condition" in data and not data.get("entry_rule"):
+            data["entry_rule"] = data.get("buy_condition")
+        if "sell_condition" in data and not data.get("exit_rule"):
+            data["exit_rule"] = data.get("sell_condition")
+        return data
 
     def list_trade_journals(
         self,
@@ -749,11 +772,16 @@ class TradeJournalService:
             "method_id": method.id,
             "strategy_name": method.method_name,
             "description": method.description,
-            "core_concept": method.description,
-            "entry_conditions": method.entry_rule,
-            "exit_conditions": method.exit_rule,
-            "risk_rules": method.stop_loss_rule,
-            "checklist": self._parse_checklist(method.take_profit_rule),
+            "core_concept": self._method_value(method, "core_concept", "description"),
+            "buy_condition": self._method_value(method, "buy_condition", "entry_rule"),
+            "sell_condition": self._method_value(method, "sell_condition", "exit_rule"),
+            "position_sizing_rule": self._method_value(method, "position_sizing_rule"),
+            "take_profit_rule": self._method_value(method, "take_profit_rule"),
+            "stop_loss_rule": self._method_value(method, "stop_loss_rule"),
+            "entry_conditions": self._method_value(method, "buy_condition", "entry_rule"),
+            "exit_conditions": self._method_value(method, "sell_condition", "exit_rule"),
+            "risk_rules": self._method_value(method, "stop_loss_rule"),
+            "checklist": self._parse_checklist(self._method_value(method, "checklist", "take_profit_rule")),
             "market_environment": self._extract_market_environment(method.description),
             "is_active": method.is_active,
         }
@@ -1334,6 +1362,14 @@ class TradeJournalService:
     def _parse_checklist(self, entry_rule: str | None) -> list[str]:
         return [x.strip().lstrip("-").strip() for x in (entry_rule or "").split("\n") if x.strip()]
 
+    @staticmethod
+    def _method_value(method, *field_names: str) -> str | None:
+        for field_name in field_names:
+            value = getattr(method, field_name, None)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+
     def _extract_market_environment(self, description: str | None) -> list[str]:
         text = (description or "").strip()
         if "[시장환경]" not in text:
@@ -1406,9 +1442,11 @@ class TradeJournalService:
             f"- 매매기법명: {strategy.get('strategy_name')}\n"
             f"- 핵심 개념: {strategy.get('core_concept') or '-'}\n"
             f"- 설명: {strategy.get('description') or '-'}\n"
-            f"- 진입 조건: {strategy.get('entry_conditions') or '-'}\n"
-            f"- 청산 조건: {strategy.get('exit_conditions') or '-'}\n"
-            f"- 리스크 규칙: {strategy.get('risk_rules') or '-'}\n"
+            f"- 매수조건: {strategy.get('buy_condition') or strategy.get('entry_conditions') or '-'}\n"
+            f"- 매도조건: {strategy.get('sell_condition') or strategy.get('exit_conditions') or '-'}\n"
+            f"- 진입&비중 방식: {strategy.get('position_sizing_rule') or '-'}\n"
+            f"- 익절기준: {strategy.get('take_profit_rule') or '-'}\n"
+            f"- 손절기준: {strategy.get('stop_loss_rule') or strategy.get('risk_rules') or '-'}\n"
             f"- 체크리스트: {', '.join(strategy.get('checklist') or []) or '-'}\n"
             f"- 시장 환경: {', '.join(strategy.get('market_environment') or []) or '-'}\n\n"
             "## 3. 현재 실전 성과 요약\n"

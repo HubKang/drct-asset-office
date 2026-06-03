@@ -16,10 +16,14 @@ class TradeReviewService:
     VALID_PRINCIPLE = {"지킴", "일부 위반", "위반", "미확인"}
     VALID_QUALITY = {"좋음", "보통", "나쁨", "미확인"}
     METHOD_CHECK_SOURCES = (
-        ("entry", "entry_rule", "entry_rule"),
-        ("exit", "exit_rule", "exit_rule"),
-        ("failure", "stop_loss_rule", "stop_loss_rule"),
-        ("checklist", "take_profit_rule", "take_profit_rule"),
+        ("buy", "buy_condition", "buy_condition"),
+        ("sell", "sell_condition", "sell_condition"),
+        ("position", "position_sizing_rule", "position_sizing_rule"),
+        ("take_profit", "take_profit_rule", "take_profit_rule"),
+        ("stop_loss", "stop_loss_rule", "stop_loss_rule"),
+        ("checklist", "checklist", "checklist"),
+        ("buy", "entry_rule", "entry_rule"),
+        ("sell", "exit_rule", "exit_rule"),
     )
 
     def __init__(self, db: Session) -> None:
@@ -196,9 +200,18 @@ class TradeReviewService:
         now = now_kst()
         rows: list[dict[str, object]] = []
         order = 1
+        seen_lines: set[tuple[str, str]] = set()
         for item_type, attr_name, source_field in self.METHOD_CHECK_SOURCES:
+            if attr_name in {"entry_rule", "exit_rule"}:
+                fallback_blocked_by = "buy_condition" if attr_name == "entry_rule" else "sell_condition"
+                if getattr(method, fallback_blocked_by, None):
+                    continue
             text = getattr(method, attr_name, None)
             for line in self.normalize_rule_lines(text):
+                dedupe_key = (item_type, line)
+                if dedupe_key in seen_lines:
+                    continue
+                seen_lines.add(dedupe_key)
                 rows.append(
                     {
                         "review_id": review.id,
@@ -250,20 +263,26 @@ class TradeReviewService:
     def _build_method_summary(self, method) -> str:
         if not method:
             return "[2. 연결된 매매기법]\n- 연결된 매매기법: 등록된 내용 없음"
-        core_concept = self._extract_core_concept(getattr(method, "description", None))
+        core_concept = getattr(method, "core_concept", None) or self._extract_core_concept(getattr(method, "description", None))
+        buy_condition = getattr(method, "buy_condition", None) or getattr(method, "entry_rule", None)
+        sell_condition = getattr(method, "sell_condition", None) or getattr(method, "exit_rule", None)
         return (
             "[2. 연결된 매매기법]\n"
             f"- 매매기법명: {self._display(getattr(method, 'method_name', None))}\n"
             f"- 핵심 개념: {self._display(core_concept)}\n"
             f"- 설명: {self._display(getattr(method, 'description', None))}\n\n"
-            "진입 조건:\n"
-            f"{self._line_block(getattr(method, 'entry_rule', None))}\n\n"
-            "청산 조건:\n"
-            f"{self._line_block(getattr(method, 'exit_rule', None))}\n\n"
-            "실패 패턴:\n"
+            "매수조건:\n"
+            f"{self._line_block(buy_condition)}\n\n"
+            "매도조건:\n"
+            f"{self._line_block(sell_condition)}\n\n"
+            "진입&비중 방식:\n"
+            f"{self._line_block(getattr(method, 'position_sizing_rule', None))}\n\n"
+            "익절기준:\n"
+            f"{self._line_block(getattr(method, 'take_profit_rule', None))}\n\n"
+            "손절기준:\n"
             f"{self._line_block(getattr(method, 'stop_loss_rule', None))}\n\n"
             "체크리스트:\n"
-            f"{self._line_block(getattr(method, 'take_profit_rule', None))}"
+            f"{self._line_block(getattr(method, 'checklist', None) or getattr(method, 'take_profit_rule', None))}"
         )
 
     def _build_review_summary(self, review) -> str:

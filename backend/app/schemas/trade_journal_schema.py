@@ -5,22 +5,32 @@ from pydantic import BaseModel, Field
 
 class TradeMethodCreate(BaseModel):
     method_name: str = Field(min_length=1, max_length=120)
+    core_concept: str | None = None
     description: str | None = None
+    buy_condition: str | None = None
+    sell_condition: str | None = None
+    position_sizing_rule: str | None = None
     entry_rule: str | None = None
     exit_rule: str | None = None
     stop_loss_rule: str | None = None
     take_profit_rule: str | None = None
+    checklist: str | None = None
     is_active: bool = True
     sort_order: int = 0
 
 
 class TradeMethodUpdate(BaseModel):
     method_name: str | None = Field(default=None, min_length=1, max_length=120)
+    core_concept: str | None = None
     description: str | None = None
+    buy_condition: str | None = None
+    sell_condition: str | None = None
+    position_sizing_rule: str | None = None
     entry_rule: str | None = None
     exit_rule: str | None = None
     stop_loss_rule: str | None = None
     take_profit_rule: str | None = None
+    checklist: str | None = None
     is_active: bool | None = None
     sort_order: int | None = None
 
@@ -28,11 +38,16 @@ class TradeMethodUpdate(BaseModel):
 class TradeMethodResponse(BaseModel):
     id: int
     method_name: str
+    core_concept: str | None
     description: str | None
+    buy_condition: str | None
+    sell_condition: str | None
+    position_sizing_rule: str | None
     entry_rule: str | None
     exit_rule: str | None
     stop_loss_rule: str | None
     take_profit_rule: str | None
+    checklist: str | None
     is_active: int
     sort_order: int
     created_at: str

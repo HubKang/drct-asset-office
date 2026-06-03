@@ -1,11 +1,16 @@
 export type TradeMethod = {
   id: number;
   method_name: string;
+  core_concept?: string | null;
   description?: string | null;
+  buy_condition?: string | null;
+  sell_condition?: string | null;
+  position_sizing_rule?: string | null;
   entry_rule?: string | null;
   exit_rule?: string | null;
   stop_loss_rule?: string | null;
   take_profit_rule?: string | null;
+  checklist?: string | null;
   is_active: number;
   sort_order: number;
   created_at?: string;
@@ -14,11 +19,16 @@ export type TradeMethod = {
 
 export type TradeMethodSaveRequest = {
   method_name: string;
+  core_concept?: string;
   description?: string;
+  buy_condition?: string;
+  sell_condition?: string;
+  position_sizing_rule?: string;
   entry_rule?: string;
   exit_rule?: string;
   stop_loss_rule?: string;
   take_profit_rule?: string;
+  checklist?: string;
   is_active: boolean;
   sort_order: number;
 };

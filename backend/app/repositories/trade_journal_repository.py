@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Select, and_, case, func, select
+from sqlalchemy import Select, and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import now_kst
@@ -18,7 +18,16 @@ class TradeJournalRepository:
         if is_active is not None:
             stmt = stmt.where(TradeMethod.is_active == is_active)
         if keyword:
-            stmt = stmt.where(TradeMethod.method_name.like(f"%{keyword.strip()}%"))
+            pattern = f"%{keyword.strip()}%"
+            stmt = stmt.where(
+                or_(
+                    TradeMethod.method_name.like(pattern),
+                    TradeMethod.core_concept.like(pattern),
+                    TradeMethod.description.like(pattern),
+                    TradeMethod.buy_condition.like(pattern),
+                    TradeMethod.sell_condition.like(pattern),
+                )
+            )
         stmt = stmt.order_by(TradeMethod.sort_order.asc(), TradeMethod.id.asc())
         return list(self.db.scalars(stmt).all())
 

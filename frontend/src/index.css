@@ -3270,6 +3270,41 @@ a:focus-visible {
   gap: 16px;
 }
 
+.trade-method-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.trade-method-summary-card {
+  min-height: 58px;
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 8px;
+  background: #fff;
+  padding: 9px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.trade-method-summary-label {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.trade-method-summary-value {
+  min-width: 0;
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 800;
+  text-align: right;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
 .trade-method-search-row {
   display: flex;
   align-items: center;
@@ -3308,7 +3343,7 @@ a:focus-visible {
 
 .trade-method-card {
   border: 1px solid var(--color-hairline-cloud);
-  border-radius: 16px;
+  border-radius: 8px;
   background: #fff;
   padding: 14px;
   display: grid;
@@ -3330,10 +3365,42 @@ a:focus-visible {
 
 .trade-method-card-concept {
   margin: 0;
-  color: #475569;
+  color: #0f172a;
   font-size: 13px;
   line-height: 1.5;
   min-height: 38px;
+  font-weight: 700;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.trade-method-card-lines {
+  display: grid;
+  gap: 5px;
+  border-top: 1px solid #eef2f7;
+  padding-top: 8px;
+}
+
+.trade-method-card-lines p {
+  margin: 0;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.trade-method-card-lines b {
+  display: inline-block;
+  min-width: 34px;
+  margin-right: 6px;
+  color: #0f172a;
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .trade-method-card-stats {
@@ -3381,8 +3448,106 @@ a:focus-visible {
 
 .trade-method-stats-grid {
   display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.trade-method-stat-card {
+  min-height: 48px;
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 8px;
+  background: #fff;
+  padding: 7px 9px;
+  display: grid;
+  align-content: center;
+  gap: 2px;
+}
+
+.trade-method-stat-card span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.trade-method-stat-card strong {
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.trade-method-info-block {
+  display: grid;
+  gap: 8px;
+}
+
+.trade-method-info-block div {
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px 12px;
+}
+
+.trade-method-info-block span {
+  display: block;
+  margin-bottom: 4px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.trade-method-info-block strong,
+.trade-method-info-block p {
+  margin: 0;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.trade-method-info-block p {
+  color: #334155;
+  font-weight: 600;
+}
+
+.trade-method-principle-grid {
+  display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.trade-method-rule-card {
+  min-width: 0;
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px 12px;
+}
+
+.trade-method-rule-card h5 {
+  margin: 0 0 8px;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.trade-method-rule-list {
+  margin: 0;
+  padding-left: 16px;
+  color: #334155;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.trade-method-rule-list li + li {
+  margin-top: 4px;
 }
 
 .trade-method-recent-wrap {
@@ -4154,6 +4319,12 @@ a:focus-visible {
 }
 
 @media (max-width: 900px) {
+  .trade-method-summary-grid,
+  .trade-method-stats-grid,
+  .trade-method-principle-grid {
+    grid-template-columns: 1fr;
+  }
+
   .trade-method-search-row {
     flex-wrap: wrap;
   }

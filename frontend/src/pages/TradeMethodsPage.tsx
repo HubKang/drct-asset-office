@@ -10,11 +10,13 @@ type DetailMode = "view" | "create" | "edit";
 type MethodDetailForm = {
   method_name: string;
   core_concept: string;
-  entry_conditions: string;
-  exit_conditions: string;
-  failure_patterns: string;
+  description: string;
+  buy_condition: string;
+  sell_condition: string;
+  position_sizing_rule: string;
+  take_profit_rule: string;
+  stop_loss_rule: string;
   checklist: string;
-  market_conditions: string[];
   sort_order: number;
   is_active: boolean;
 };
@@ -29,16 +31,16 @@ type MethodStats = {
   recent_trades: TradeJournal[];
 };
 
-const MARKET_TAG_OPTIONS = ["급등주", "눌림목", "하락반등", "테마주", "반도체", "장시작"];
-
 const defaultForm = (): MethodDetailForm => ({
   method_name: "",
   core_concept: "",
-  entry_conditions: "",
-  exit_conditions: "",
-  failure_patterns: "",
+  description: "",
+  buy_condition: "",
+  sell_condition: "",
+  position_sizing_rule: "",
+  take_profit_rule: "",
+  stop_loss_rule: "",
   checklist: "",
-  market_conditions: [],
   sort_order: 0,
   is_active: true,
 });
@@ -56,22 +58,14 @@ const parseMethodMeta = (description?: string | null): { coreConcept: string; ma
   return { coreConcept, marketConditions: tags };
 };
 
-const buildDescription = (coreConcept: string, marketConditions: string[]): string | undefined => {
-  const concept = coreConcept.trim();
-  const tags = marketConditions.map((tag) => tag.trim()).filter(Boolean);
-  if (!concept && tags.length === 0) return undefined;
-  if (tags.length === 0) return concept || undefined;
-  return `${concept}${concept ? "\n" : ""}[시장환경] ${tags.join(", ")}`;
-};
-
 const normalizeText = (value: string): string | undefined => value.trim() || undefined;
 
-const normalizeTags = (tags: string[]): string[] => {
-  const merged = tags.join(" ");
-  return merged
-    .split(/[\s,\n]+/)
-    .map((tag) => tag.trim())
-    .filter(Boolean);
+const methodValue = (method: TradeMethod, ...fields: Array<keyof TradeMethod>): string => {
+  for (const field of fields) {
+    const value = method[field];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
 };
 
 const formatRate = (value?: number | null): string => `${Number(value ?? 0).toFixed(1)}%`;
@@ -96,6 +90,15 @@ const parseLines = (value?: string | null): string[] =>
     .split("\n")
     .map((line) => line.replace(/^\s*[-*]\s*/, "").trim())
     .filter(Boolean);
+
+const RuleList = ({ value, emptyText }: { value?: string | null; emptyText: string }) => {
+  const lines = parseLines(value);
+  return (
+    <ul className="trade-method-rule-list">
+      {lines.length > 0 ? lines.map((line, idx) => <li key={`${line}-${idx}`}>{line}</li>) : <li>{emptyText}</li>}
+    </ul>
+  );
+};
 
 function TradeMethodsPage() {
   const [items, setItems] = useState<TradeMethod[]>([]);
@@ -135,8 +138,6 @@ function TradeMethodsPage() {
     );
     return { activeMethodCount, totalTrades, avgWinRate, totalRealizedProfit };
   }, [safeItems, statsByMethod]);
-
-  const marketTags = normalizeTags(detailForm.market_conditions);
 
   const setFormField = <K extends keyof MethodDetailForm>(key: K, value: MethodDetailForm[K]) => {
     setDetailForm((prev) => ({ ...prev, [key]: value }));
@@ -215,12 +216,14 @@ function TradeMethodsPage() {
     setDetailMode("view");
     setDetailForm({
       method_name: item.method_name || "",
-      core_concept: parsed.coreConcept,
-      entry_conditions: item.entry_rule || "",
-      exit_conditions: item.exit_rule || "",
-      failure_patterns: item.stop_loss_rule || "",
-      checklist: item.take_profit_rule || "",
-      market_conditions: parsed.marketConditions,
+      core_concept: methodValue(item, "core_concept") || parsed.coreConcept,
+      description: methodValue(item, "description"),
+      buy_condition: methodValue(item, "buy_condition", "entry_rule"),
+      sell_condition: methodValue(item, "sell_condition", "exit_rule"),
+      position_sizing_rule: methodValue(item, "position_sizing_rule"),
+      take_profit_rule: methodValue(item, "take_profit_rule"),
+      stop_loss_rule: methodValue(item, "stop_loss_rule"),
+      checklist: methodValue(item, "checklist", "take_profit_rule"),
       sort_order: item.sort_order || 0,
       is_active: item.is_active === 1,
     });
@@ -252,11 +255,16 @@ function TradeMethodsPage() {
     try {
       const payload = {
         method_name: detailForm.method_name.trim(),
-        description: buildDescription(detailForm.core_concept, detailForm.market_conditions),
-        entry_rule: normalizeText(detailForm.entry_conditions),
-        exit_rule: normalizeText(detailForm.exit_conditions),
-        stop_loss_rule: normalizeText(detailForm.failure_patterns),
-        take_profit_rule: normalizeText(detailForm.checklist),
+        core_concept: normalizeText(detailForm.core_concept),
+        description: normalizeText(detailForm.description),
+        buy_condition: normalizeText(detailForm.buy_condition),
+        sell_condition: normalizeText(detailForm.sell_condition),
+        position_sizing_rule: normalizeText(detailForm.position_sizing_rule),
+        take_profit_rule: normalizeText(detailForm.take_profit_rule),
+        stop_loss_rule: normalizeText(detailForm.stop_loss_rule),
+        checklist: normalizeText(detailForm.checklist),
+        entry_rule: normalizeText(detailForm.buy_condition),
+        exit_rule: normalizeText(detailForm.sell_condition),
         sort_order: Number(detailForm.sort_order) || 0,
         is_active: detailForm.is_active,
       };
@@ -326,26 +334,30 @@ function TradeMethodsPage() {
     <div className="space-y-4">
       <PageHeader title="매매기법" description="주력 매매기법을 정리하고 반복 훈련을 위한 가이드를 준비합니다." />
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <SectionCard title="활성 기법">
-          <p className="text-2xl font-semibold text-slate-900">{summaryStats.activeMethodCount}개</p>
-        </SectionCard>
-        <SectionCard title="총 거래">
-          <p className="text-2xl font-semibold text-slate-900">{summaryStats.totalTrades}건</p>
-        </SectionCard>
-        <SectionCard title="평균 승률">
-          <p className="text-2xl font-semibold text-slate-900">{formatRate(summaryStats.avgWinRate)}</p>
-        </SectionCard>
-        <SectionCard title="누적 손익">
-          <p className="text-2xl font-semibold text-slate-900">{formatWon(summaryStats.totalRealizedProfit)}</p>
-        </SectionCard>
+      <div className="trade-method-summary-grid">
+        <div className="trade-method-summary-card">
+          <span className="trade-method-summary-label">활성 기법</span>
+          <strong className="trade-method-summary-value">{summaryStats.activeMethodCount}개</strong>
+        </div>
+        <div className="trade-method-summary-card">
+          <span className="trade-method-summary-label">총 거래</span>
+          <strong className="trade-method-summary-value">{summaryStats.totalTrades}건</strong>
+        </div>
+        <div className="trade-method-summary-card">
+          <span className="trade-method-summary-label">평균 승률</span>
+          <strong className="trade-method-summary-value">{formatRate(summaryStats.avgWinRate)}</strong>
+        </div>
+        <div className="trade-method-summary-card">
+          <span className="trade-method-summary-label">누적 손익</span>
+          <strong className="trade-method-summary-value">{formatWon(summaryStats.totalRealizedProfit)}</strong>
+        </div>
       </div>
 
       <SectionCard title="검색">
         <div className="trade-method-search-row">
           <input
             className="input-control trade-method-search-input"
-            placeholder="매매기법명/핵심개념 검색"
+            placeholder="매매기법명/핵심개념/매수조건 검색"
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
             onKeyDown={handleSearchKeyDown}
@@ -373,6 +385,9 @@ function TradeMethodsPage() {
               const parsed = parseMethodMeta(item.description);
               const stats = statsByMethod[item.id];
               const selected = isDetailOpen && selectedMethodId === item.id && (detailMode === "view" || detailMode === "edit");
+              const coreConcept = methodValue(item, "core_concept") || parsed.coreConcept;
+              const buyCondition = methodValue(item, "buy_condition", "entry_rule");
+              const sellCondition = methodValue(item, "sell_condition", "exit_rule");
               return (
                 <button
                   key={item.id}
@@ -386,14 +401,11 @@ function TradeMethodsPage() {
                       {item.is_active ? "활성" : "비활성"}
                     </span>
                   </div>
-                  {parsed.marketConditions.length > 0 ? (
-                    <div className="trade-method-tag-list">
-                      {parsed.marketConditions.slice(0, 3).map((tag) => (
-                        <span key={`${item.id}-${tag}`} className="trade-method-tag active">{tag}</span>
-                      ))}
-                    </div>
-                  ) : null}
-                  <p className="trade-method-card-concept">{parsed.coreConcept || "핵심 개념이 없습니다."}</p>
+                  <p className="trade-method-card-concept">{coreConcept || "핵심 개념이 없습니다."}</p>
+                  <div className="trade-method-card-lines">
+                    <p><b>매수</b>{buyCondition || "매수조건이 없습니다."}</p>
+                    <p><b>매도</b>{sellCondition || "매도조건이 없습니다."}</p>
+                  </div>
                   <div className="trade-method-card-stats">
                     <span>거래 {stats?.trade_count ?? 0}건</span>
                     <span>승률 {formatRate(stats?.win_rate)}</span>
@@ -428,44 +440,58 @@ function TradeMethodsPage() {
                   <>
                     <div className="detail-section">
                       <h4 className="detail-label mb-2">기본 정보</h4>
-                      <div className="space-y-2 text-sm text-slate-700">
-                        <p><b>기법명:</b> {selectedMethod.method_name || "-"}</p>
-                        <p><b>핵심 개념:</b> {parseMethodMeta(selectedMethod.description).coreConcept || "등록된 핵심 개념이 없습니다."}</p>
-                        <p><b>시장 환경:</b> {parseMethodMeta(selectedMethod.description).marketConditions.join(", ") || "등록된 시장 환경 태그가 없습니다."}</p>
+                      <div className="trade-method-info-block">
+                        <div>
+                          <span>기법명</span>
+                          <strong>{selectedMethod.method_name || "-"}</strong>
+                        </div>
+                        <div>
+                          <span>핵심개념</span>
+                          <p>{methodValue(selectedMethod, "core_concept") || parseMethodMeta(selectedMethod.description).coreConcept || "등록된 핵심개념이 없습니다."}</p>
+                        </div>
+                        <div>
+                          <span>설명</span>
+                          <p>{methodValue(selectedMethod, "description") || "등록된 설명이 없습니다."}</p>
+                        </div>
                       </div>
                     </div>
                     <div className="detail-section">
                       <h4 className="detail-label mb-2">성과 요약</h4>
                       <div className="trade-method-stats-grid">
-                        <div className="rounded border border-slate-200 bg-white p-3"><p className="text-xs text-slate-500">거래 수</p><strong>{selectedStats?.trade_count ?? 0}건</strong></div>
-                        <div className="rounded border border-slate-200 bg-white p-3"><p className="text-xs text-slate-500">승률</p><strong>{formatRate(selectedStats?.win_rate)}</strong></div>
-                        <div className="rounded border border-slate-200 bg-white p-3"><p className="text-xs text-slate-500">평균 수익률</p><strong>{formatRate(selectedStats?.avg_profit_rate)}</strong></div>
-                        <div className="rounded border border-slate-200 bg-white p-3"><p className="text-xs text-slate-500">누적 손익</p><strong>{formatWon(selectedStats?.realized_profit_sum)}</strong></div>
+                        <div className="trade-method-stat-card"><span>거래 수</span><strong>{selectedStats?.trade_count ?? 0}건</strong></div>
+                        <div className="trade-method-stat-card"><span>승률</span><strong>{formatRate(selectedStats?.win_rate)}</strong></div>
+                        <div className="trade-method-stat-card"><span>평균 수익률</span><strong>{formatRate(selectedStats?.avg_profit_rate)}</strong></div>
+                        <div className="trade-method-stat-card"><span>누적 손익</span><strong>{formatWon(selectedStats?.realized_profit_sum)}</strong></div>
                       </div>
                     </div>
                     <div className="detail-section">
-                      <h4 className="detail-label mb-2">진입 조건</h4>
-                      <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
-                        {parseLines(selectedMethod.entry_rule).length > 0 ? parseLines(selectedMethod.entry_rule).map((line, idx) => <li key={`entry-${idx}`}>{line}</li>) : <li>등록된 진입 조건이 없습니다.</li>}
-                      </ul>
-                    </div>
-                    <div className="detail-section">
-                      <h4 className="detail-label mb-2">청산 조건</h4>
-                      <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
-                        {parseLines(selectedMethod.exit_rule).length > 0 ? parseLines(selectedMethod.exit_rule).map((line, idx) => <li key={`exit-${idx}`}>{line}</li>) : <li>등록된 청산 조건이 없습니다.</li>}
-                      </ul>
-                    </div>
-                    <div className="detail-section">
-                      <h4 className="detail-label mb-2">실패 패턴</h4>
-                      <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
-                        {parseLines(selectedMethod.stop_loss_rule).length > 0 ? parseLines(selectedMethod.stop_loss_rule).map((line, idx) => <li key={`failure-${idx}`}>{line}</li>) : <li>등록된 실패 패턴이 없습니다.</li>}
-                      </ul>
-                    </div>
-                    <div className="detail-section">
-                      <h4 className="detail-label mb-2">체크리스트</h4>
-                      <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
-                        {parseLines(selectedMethod.take_profit_rule).length > 0 ? parseLines(selectedMethod.take_profit_rule).map((line, idx) => <li key={`check-${idx}`}>{line}</li>) : <li>등록된 체크리스트가 없습니다.</li>}
-                      </ul>
+                      <h4 className="detail-label mb-2">매매 원칙서</h4>
+                      <div className="trade-method-principle-grid">
+                        <div className="trade-method-rule-card">
+                          <h5>매수조건</h5>
+                          <RuleList value={methodValue(selectedMethod, "buy_condition", "entry_rule")} emptyText="등록된 매수조건이 없습니다." />
+                        </div>
+                        <div className="trade-method-rule-card">
+                          <h5>매도조건</h5>
+                          <RuleList value={methodValue(selectedMethod, "sell_condition", "exit_rule")} emptyText="등록된 매도조건이 없습니다." />
+                        </div>
+                        <div className="trade-method-rule-card">
+                          <h5>익절기준</h5>
+                          <RuleList value={methodValue(selectedMethod, "take_profit_rule")} emptyText="등록된 익절기준이 없습니다." />
+                        </div>
+                        <div className="trade-method-rule-card">
+                          <h5>손절기준</h5>
+                          <RuleList value={methodValue(selectedMethod, "stop_loss_rule")} emptyText="등록된 손절기준이 없습니다." />
+                        </div>
+                        <div className="trade-method-rule-card">
+                          <h5>진입&비중 방식</h5>
+                          <RuleList value={methodValue(selectedMethod, "position_sizing_rule")} emptyText="등록된 비중 방식이 없습니다." />
+                        </div>
+                        <div className="trade-method-rule-card">
+                          <h5>체크리스트</h5>
+                          <RuleList value={methodValue(selectedMethod, "checklist", "take_profit_rule")} emptyText="등록된 체크리스트가 없습니다." />
+                        </div>
+                      </div>
                     </div>
                   </>
                 ) : null}
@@ -473,7 +499,7 @@ function TradeMethodsPage() {
                 {detailMode !== "view" ? (
                 <>
                 <div className="detail-section">
-                  <h4 className="detail-label mb-2">매매기법 정의</h4>
+                  <h4 className="detail-label mb-2">기본 정보</h4>
                   <div className="trade-detail-form-grid">
                     <div className="trade-detail-field">
                       <label className="detail-label">기법명</label>
@@ -489,52 +515,79 @@ function TradeMethodsPage() {
                       />
                     </div>
                     <div className="trade-detail-field md:col-span-2">
-                      <label className="detail-label">핵심 개념</label>
-                      <input className="input-control" value={detailForm.core_concept} onChange={(e) => setFormField("core_concept", e.target.value)} />
+                      <label className="detail-label">핵심개념</label>
+                      <textarea
+                        className="textarea-control"
+                        rows={2}
+                        value={detailForm.core_concept}
+                        onChange={(e) => setFormField("core_concept", e.target.value)}
+                        placeholder="예: 주도 테마가 살아 있고 첫 눌림에서 수급이 재유입되는 구간만 공략"
+                      />
                     </div>
                     <div className="trade-detail-field md:col-span-2">
                       <label className="detail-label">설명</label>
                       <textarea
                         className="textarea-control"
-                        rows={2}
-                        value={buildDescription(detailForm.core_concept, detailForm.market_conditions) ?? ""}
-                        readOnly
+                        rows={3}
+                        value={detailForm.description}
+                        onChange={(e) => setFormField("description", e.target.value)}
+                        placeholder="이 기법을 어떤 시장과 종목 상황에서 쓰는지, 훈련자가 기억해야 할 맥락을 적어주세요."
                       />
                     </div>
                   </div>
                 </div>
 
                 <div className="detail-section">
-                  <h4 className="detail-label mb-2">조건 관리</h4>
+                  <h4 className="detail-label mb-2">매매 기준</h4>
                   <div className="space-y-3">
                     <div>
-                      <label className="detail-label">진입 조건</label>
+                      <label className="detail-label">매수조건</label>
                       <textarea
                         className="textarea-control"
                         rows={4}
-                        value={detailForm.entry_conditions}
-                        onChange={(e) => setFormField("entry_conditions", e.target.value)}
-                        placeholder="예: 거래대금 500억 이상, 주도 테마, 눌림목, 이평선 지지, 전고점 돌파"
+                        value={detailForm.buy_condition}
+                        onChange={(e) => setFormField("buy_condition", e.target.value)}
+                        placeholder="예: 거래대금 500억 이상, 주도 테마 1~2등주, 첫 눌림, 기준선 지지 확인 후 매수"
                       />
                     </div>
                     <div>
-                      <label className="detail-label">청산 조건</label>
+                      <label className="detail-label">매도조건</label>
                       <textarea
                         className="textarea-control"
                         rows={4}
-                        value={detailForm.exit_conditions}
-                        onChange={(e) => setFormField("exit_conditions", e.target.value)}
-                        placeholder="예: 목표 수익률 도달, 기준선 이탈, 거래량 급감, 손절 기준 도달"
+                        value={detailForm.sell_condition}
+                        onChange={(e) => setFormField("sell_condition", e.target.value)}
+                        placeholder="예: 매수 논리 훼손, 주도 테마 약화, 기준선 이탈, 목표 구간 도달 시 분할 매도"
                       />
                     </div>
                     <div>
-                      <label className="detail-label">실패 패턴</label>
+                      <label className="detail-label">진입&비중 방식</label>
                       <textarea
                         className="textarea-control"
                         rows={4}
-                        value={detailForm.failure_patterns}
-                        onChange={(e) => setFormField("failure_patterns", e.target.value)}
-                        placeholder="예: 돌파 후 거래량 감소, 윗꼬리 출현, 시장 주도주 교체"
+                        value={detailForm.position_sizing_rule}
+                        onChange={(e) => setFormField("position_sizing_rule", e.target.value)}
+                        placeholder="예: 1차 50%, 지지 재확인 시 30%, 돌파 확인 시 20%. 손절선 멀면 진입 비중 축소"
+                      />
+                    </div>
+                    <div>
+                      <label className="detail-label">익절기준</label>
+                      <textarea
+                        className="textarea-control"
+                        rows={3}
+                        value={detailForm.take_profit_rule}
+                        onChange={(e) => setFormField("take_profit_rule", e.target.value)}
+                        placeholder="예: 1차 목표가에서 30% 익절, 전고점 저항에서 추가 익절, 거래량 둔화 시 잔량 축소"
+                      />
+                    </div>
+                    <div>
+                      <label className="detail-label">손절기준</label>
+                      <textarea
+                        className="textarea-control"
+                        rows={3}
+                        value={detailForm.stop_loss_rule}
+                        onChange={(e) => setFormField("stop_loss_rule", e.target.value)}
+                        placeholder="예: 기준봉 저가 이탈, 매수 근거 훼손, 시장 급락 전환 시 즉시 손절"
                       />
                     </div>
                     <div>
@@ -547,38 +600,6 @@ function TradeMethodsPage() {
                         placeholder="예: 시장 흐름 확인, 테마 강도 확인, 손절선 설정, 분할매수 여부 확인"
                       />
                     </div>
-                    <div>
-                      <label className="detail-label">시장 환경 태그</label>
-                      <div className="mb-2 flex flex-wrap gap-2">
-                        {MARKET_TAG_OPTIONS.map((tag) => {
-                          const active = marketTags.includes(tag);
-                          return (
-                            <button
-                              key={tag}
-                              type="button"
-                              className={`chip ${active ? "chip-active" : ""}`}
-                              onClick={() => {
-                                const next = active ? marketTags.filter((x) => x !== tag) : [...marketTags, tag];
-                                setFormField("market_conditions", next);
-                              }}
-                            >
-                              {tag}
-                            </button>
-                          );
-                        })}
-                      </div>
-                      {marketTags.length > 0 ? (
-                        <div className="flex flex-wrap gap-2">
-                          {marketTags.map((tag) => (
-                            <span key={`badge-${tag}`} className="badge badge-slate">
-                              {tag}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-xs text-slate-500">선택된 시장 환경 태그가 없습니다.</p>
-                      )}
-                    </div>
                   </div>
                 </div>
                 </>
@@ -587,23 +608,11 @@ function TradeMethodsPage() {
                 {detailMode === "edit" && selectedMethodId ? (
                   <div className="detail-section">
                     <h4 className="detail-label mb-2">성과 요약</h4>
-                    <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-                      <div className="rounded border border-slate-200 bg-white p-3">
-                        <p className="text-xs text-slate-500">거래 수</p>
-                        <strong>{statsByMethod[selectedMethodId]?.trade_count ?? 0}건</strong>
-                      </div>
-                      <div className="rounded border border-slate-200 bg-white p-3">
-                        <p className="text-xs text-slate-500">승률</p>
-                        <strong>{formatRate(statsByMethod[selectedMethodId]?.win_rate)}</strong>
-                      </div>
-                      <div className="rounded border border-slate-200 bg-white p-3">
-                        <p className="text-xs text-slate-500">평균 수익률</p>
-                        <strong>{formatRate(statsByMethod[selectedMethodId]?.avg_profit_rate)}</strong>
-                      </div>
-                      <div className="rounded border border-slate-200 bg-white p-3">
-                        <p className="text-xs text-slate-500">누적 손익</p>
-                        <strong>{formatWon(statsByMethod[selectedMethodId]?.realized_profit_sum)}</strong>
-                      </div>
+                    <div className="trade-method-stats-grid">
+                      <div className="trade-method-stat-card"><span>거래 수</span><strong>{statsByMethod[selectedMethodId]?.trade_count ?? 0}건</strong></div>
+                      <div className="trade-method-stat-card"><span>승률</span><strong>{formatRate(statsByMethod[selectedMethodId]?.win_rate)}</strong></div>
+                      <div className="trade-method-stat-card"><span>평균 수익률</span><strong>{formatRate(statsByMethod[selectedMethodId]?.avg_profit_rate)}</strong></div>
+                      <div className="trade-method-stat-card"><span>누적 손익</span><strong>{formatWon(statsByMethod[selectedMethodId]?.realized_profit_sum)}</strong></div>
                     </div>
                   </div>
                 ) : null}
