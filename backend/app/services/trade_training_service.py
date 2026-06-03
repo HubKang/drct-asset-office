@@ -200,10 +200,8 @@ class TradeTrainingService:
         current_index = min(max(int(session.get("current_index") or 0), 0), max(len(prices) - 1, 0))
         current_candle = prices[current_index] if prices else None
         options = self._parse_options(session)
-        display_days = int(options.get("display_days") or 80)
-        visible_start = max(0, current_index - display_days + 1)
-        visible_prices = prices[visible_start : current_index + 1]
         moving_averages = self._clean_mas(list(options.get("moving_averages") or [5, 20, 60]))
+        visible_prices = prices[: current_index + 1]
         decorated = self._decorate_candles(visible_prices, moving_averages)
         return {
             "session": self._response_session(session),

@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { BarChart3, PauseCircle, Play, Search, Settings, ShoppingCart, StepForward, X } from "lucide-react";
 import EmptyState from "@/components/common/EmptyState";
 import PageHeader from "@/components/common/PageHeader";
@@ -74,24 +74,38 @@ function maStyle(key: string): { color: string; width: number } {
   }
 }
 
-function CandleChart({ candles }: { candles: TrainingCandle[] }) {
-  const width = 1080;
+function CandleChart({
+  candles,
+  avgPriceLine,
+  displayDays,
+  scrollTargetDate,
+  highlightedTradeDate,
+}: {
+  candles: TrainingCandle[];
+  avgPriceLine?: number | null;
+  displayDays: number;
+  scrollTargetDate?: string | null;
+  highlightedTradeDate?: string | null;
+}) {
+  const [tooltip, setTooltip] = useState<{ candle: TrainingCandle; x: number; y: number; changeRate: number | null } | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const fallbackWidth = 1080;
+  const [chartViewportWidth, setChartViewportWidth] = useState(fallbackWidth);
   const priceHeight = 420;
   const volumeHeight = 96;
   const pad = { top: 22, right: 46, bottom: 30, left: 62 };
-  const chartWidth = width - pad.left - pad.right;
+  const baseChartWidth = Math.max(320, chartViewportWidth - pad.left - pad.right);
+  const visibleDays = Math.max(20, displayDays || 80);
+  const slot = Math.max(4, baseChartWidth / visibleDays);
+  const chartWidth = Math.max(baseChartWidth, candles.length * slot);
+  const width = Math.ceil(chartWidth + pad.left + pad.right);
   const height = pad.top + priceHeight + volumeHeight + pad.bottom + 22;
-
-  if (candles.length === 0) {
-    return <div className="training-chart-empty">훈련을 시작하면 차트가 표시됩니다.</div>;
-  }
 
   const priced = candles.filter((candle) => candle.high !== null && candle.low !== null);
   const minPrice = priced.length ? Math.min(...priced.map((candle) => Number(candle.low))) : 0;
   const maxPrice = priced.length ? Math.max(...priced.map((candle) => Number(candle.high))) : 1;
   const span = Math.max(1, maxPrice - minPrice);
   const maxVolume = Math.max(1, ...candles.map((candle) => Number(candle.volume || 0)));
-  const slot = chartWidth / Math.max(1, candles.length);
   const bodyWidth = Math.max(4, Math.min(13, slot * 0.58));
   const maKeys = Array.from(new Set(candles.flatMap((candle) => Object.keys(candle.moving_averages || {})))).sort(
     (a, b) => Number(a.replace("ma", "")) - Number(b.replace("ma", "")),
@@ -102,10 +116,55 @@ function CandleChart({ candles }: { candles: TrainingCandle[] }) {
     return pad.top + ((maxPrice - value) / span) * priceHeight;
   };
   const xAt = (idx: number) => pad.left + idx * slot + slot / 2;
+  const showAvgLine = !!avgPriceLine && avgPriceLine > 0 && avgPriceLine >= minPrice && avgPriceLine <= maxPrice;
+  const avgLineY = showAvgLine ? yPrice(avgPriceLine) : 0;
+  const tooltipWidth = 174;
+  const tooltipHeight = 154;
+  const chartCenterX = pad.left + chartWidth / 2;
+  const preferredTooltipX = tooltip && tooltip.x > chartCenterX ? tooltip.x - tooltipWidth - 12 : (tooltip?.x || 0) + 12;
+  const tooltipX = tooltip ? Math.min(width - pad.right - tooltipWidth, Math.max(pad.left + 8, preferredTooltipX)) : 0;
+  const tooltipY = tooltip ? Math.min(pad.top + priceHeight - tooltipHeight, Math.max(pad.top + 8, tooltip.y - tooltipHeight / 2)) : 0;
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const updateWidth = () => {
+      setChartViewportWidth(Math.max(320, Math.floor(el.clientWidth || fallbackWidth)));
+    };
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || candles.length === 0 || scrollTargetDate) return;
+    requestAnimationFrame(() => {
+      el.scrollLeft = el.scrollWidth;
+    });
+  }, [candles.length, candles[candles.length - 1]?.trade_date, scrollTargetDate]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !scrollTargetDate) return;
+    const targetIndex = candles.findIndex((candle) => candle.trade_date === scrollTargetDate);
+    if (targetIndex < 0) return;
+    requestAnimationFrame(() => {
+      const targetX = xAt(targetIndex);
+      el.scrollLeft = Math.max(0, targetX - el.clientWidth / 2);
+    });
+  }, [scrollTargetDate, candles]);
+
+  if (candles.length === 0) {
+    return <div className="training-chart-empty">훈련을 시작하면 차트가 표시됩니다.</div>;
+  }
 
   return (
-    <div className="training-chart-shell">
-      <svg className="training-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="일봉 훈련 차트">
+    <div className="training-chart-card">
+      <div className="training-chart-viewport" ref={scrollRef}>
+        <div className="training-chart-track" style={{ width }}>
+          <svg className="training-chart-svg" width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label="일봉 훈련 차트" onMouseLeave={() => setTooltip(null)}>
         <rect x={0} y={0} width={width} height={height} rx={8} fill="#ffffff" />
         {[0, 0.25, 0.5, 0.75, 1].map((rate) => {
           const y = pad.top + priceHeight * rate;
@@ -132,6 +191,16 @@ function CandleChart({ candles }: { candles: TrainingCandle[] }) {
           return points ? <polyline key={key} points={points} fill="none" stroke={style.color} strokeWidth={style.width} /> : null;
         })}
 
+        {showAvgLine ? (
+          <g pointerEvents="none">
+            <line x1={pad.left} x2={width - pad.right} y1={avgLineY} y2={avgLineY} stroke="#7c3aed" strokeWidth={1.4} strokeDasharray="4 4" />
+            <rect x={width - pad.right - 112} y={avgLineY - 13} width={106} height={22} rx={6} fill="#f5f3ff" stroke="#c4b5fd" />
+            <text x={width - pad.right - 102} y={avgLineY + 2} fontSize="11" fill="#5b21b6">
+              평균단가 {fmtNumber(avgPriceLine)}
+            </text>
+          </g>
+        ) : null}
+
         {candles.map((candle, idx) => {
           const x = xAt(idx);
           const open = Number(candle.open || 0);
@@ -144,14 +213,49 @@ function CandleChart({ candles }: { candles: TrainingCandle[] }) {
           const bottom = yPrice(Math.min(open, close));
           const bodyHeight = Math.max(2, bottom - top);
           const volumeBarHeight = (Number(candle.volume || 0) / maxVolume) * volumeHeight;
+          const prevClose = idx > 0 ? Number(candles[idx - 1]?.close || 0) : 0;
+          const changeRate = prevClose > 0 && close > 0 ? ((close - prevClose) / prevClose) * 100 : null;
           return (
             <g key={candle.trade_date}>
+              {highlightedTradeDate === candle.trade_date ? (
+                <rect x={x - slot / 2} y={pad.top} width={slot} height={priceHeight + 22 + volumeHeight} fill="#fef3c7" opacity={0.42} />
+              ) : null}
               <line x1={x} x2={x} y1={yPrice(high)} y2={yPrice(low)} stroke={color} strokeWidth={1.4} />
               <rect x={x - bodyWidth / 2} y={top} width={bodyWidth} height={bodyHeight} fill={isUp ? "#fff1f2" : "#eff6ff"} stroke={color} strokeWidth={1.2} />
               <rect x={x - bodyWidth / 2} y={pad.top + priceHeight + 22 + volumeHeight - volumeBarHeight} width={bodyWidth} height={volumeBarHeight} fill={isUp ? "#fecaca" : "#bfdbfe"} />
+              <rect
+                x={x - slot / 2}
+                y={pad.top}
+                width={slot}
+                height={priceHeight + 22 + volumeHeight}
+                fill="transparent"
+                onMouseEnter={() => setTooltip({ candle, x, y: yPrice(high), changeRate })}
+                onMouseMove={() => setTooltip({ candle, x, y: yPrice(high), changeRate })}
+              />
             </g>
           );
         })}
+
+        {tooltip ? (
+          <g className="training-candle-tooltip" transform={`translate(${tooltipX}, ${tooltipY})`} pointerEvents="none">
+            <rect width={tooltipWidth} height={tooltipHeight} rx={8} fill="#0f172a" opacity={0.7} />
+            <text x={12} y={21} fontSize="12" fontWeight={800} fill="#f8fafc">{tooltip.candle.trade_date}</text>
+            <text x={12} y={43} fontSize="11" fill="#cbd5e1">시가</text>
+            <text x={92} y={43} fontSize="11" fontWeight={700} fill="#ffffff">{fmtWon(tooltip.candle.open)}</text>
+            <text x={12} y={61} fontSize="11" fill="#cbd5e1">고가</text>
+            <text x={92} y={61} fontSize="11" fontWeight={700} fill="#ffffff">{fmtWon(tooltip.candle.high)}</text>
+            <text x={12} y={79} fontSize="11" fill="#cbd5e1">저가</text>
+            <text x={92} y={79} fontSize="11" fontWeight={700} fill="#ffffff">{fmtWon(tooltip.candle.low)}</text>
+            <text x={12} y={97} fontSize="11" fill="#cbd5e1">종가</text>
+            <text x={92} y={97} fontSize="11" fontWeight={700} fill="#ffffff">{fmtWon(tooltip.candle.close)}</text>
+            <text x={12} y={115} fontSize="11" fill="#cbd5e1">등락률</text>
+            <text x={92} y={115} fontSize="11" fontWeight={700} fill={Number(tooltip.changeRate || 0) > 0 ? "#fecaca" : Number(tooltip.changeRate || 0) < 0 ? "#bfdbfe" : "#ffffff"}>
+              {tooltip.changeRate === null ? "-" : fmtPercent(tooltip.changeRate)}
+            </text>
+            <text x={12} y={133} fontSize="11" fill="#cbd5e1">거래량</text>
+            <text x={92} y={133} fontSize="11" fontWeight={700} fill="#ffffff">{fmtNumber(tooltip.candle.volume)}</text>
+          </g>
+        ) : null}
 
         <line x1={pad.left} x2={width - pad.right} y1={pad.top + priceHeight + 22 + volumeHeight} y2={pad.top + priceHeight + 22 + volumeHeight} stroke="#cbd5e1" />
         <text x={pad.left} y={height - 8} fontSize="11" fill="#64748b">{candles[0]?.trade_date}</text>
@@ -165,7 +269,9 @@ function CandleChart({ candles }: { candles: TrainingCandle[] }) {
             </g>
           );
         })}
-      </svg>
+          </svg>
+        </div>
+      </div>
     </div>
   );
 }
@@ -759,22 +865,63 @@ function OrderModal({
   );
 }
 
-function TrainingKpiStrip({ detail }: { detail: TrainingSessionDetail }) {
+function TrainingKpiStrip({
+  detail,
+  showAvgPriceLine,
+  onToggleAvgPriceLine,
+}: {
+  detail: TrainingSessionDetail;
+  showAvgPriceLine: boolean;
+  onToggleAvgPriceLine: () => void;
+}) {
   const positionProfit = detail.account.position_profit ?? detail.account.unrealized_profit;
   const positionReturnRate = detail.account.position_return_rate ?? detail.account.unrealized_return_rate;
   const realizedProfit = detail.account.realized_profit ?? detail.session.realized_profit;
   const items = [
     { label: "현재가", value: fmtWon(detail.account.current_price ?? detail.current_candle?.close) },
     { label: "보유수량", value: `${fmtNumber(detail.session.position_qty)}주` },
-    { label: "평균단가", value: fmtWon(detail.session.avg_price) },
+    {
+      label: "평균단가",
+      value: fmtWon(detail.session.avg_price),
+      hint: showAvgPriceLine ? "차트표시중" : "차트표시",
+      onClick: onToggleAvgPriceLine,
+      active: showAvgPriceLine,
+      disabled: detail.session.position_qty <= 0 || detail.session.avg_price <= 0,
+    },
     { label: "현재포지션손익", value: fmtSignedWon(positionProfit), className: profitClass(positionProfit) },
     { label: "현재포지션수익률", value: fmtPercent(positionReturnRate), className: profitClass(positionReturnRate) },
     { label: "실현손익", value: fmtSignedWon(realizedProfit), className: profitClass(realizedProfit) },
+  ];
+  return (
+    <div className="training-kpi-strip">
+      {items.map((item) => (
+        <button
+          type="button"
+          key={item.label}
+          className={`training-kpi-card ${item.active ? "active" : ""} ${item.disabled ? "disabled" : ""}`}
+          onClick={item.onClick}
+          disabled={item.disabled}
+          tabIndex={item.onClick ? 0 : -1}
+          aria-disabled={item.disabled || !item.onClick}
+        >
+          <span>{item.label}</span>
+          <strong className={item.className || ""}>{item.value}</strong>
+          {item.hint ? <small>{item.hint}</small> : null}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function TrainingChartSummary({ detail }: { detail: TrainingSessionDetail }) {
+  const items = [
+    { label: "현재투자금", value: fmtWon(detail.account.evaluation_amount) },
+    { label: "남은투자금", value: fmtWon(detail.session.cash) },
     { label: "누적손익", value: fmtSignedWon(detail.account.total_profit), className: profitClass(detail.account.total_profit) },
     { label: "누적수익률", value: fmtPercent(detail.account.total_return_rate), className: profitClass(detail.account.total_return_rate) },
   ];
   return (
-    <div className="training-kpi-strip">
+    <div className="training-chart-summary-grid">
       {items.map((item) => (
         <div key={item.label}>
           <span>{item.label}</span>
@@ -803,6 +950,9 @@ function TradeTrainingPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [orderMode, setOrderMode] = useState<OrderMode | null>(null);
+  const [showAvgPriceLine, setShowAvgPriceLine] = useState(false);
+  const [scrollTargetDate, setScrollTargetDate] = useState<string | null>(null);
+  const [highlightedTradeDate, setHighlightedTradeDate] = useState<string | null>(null);
 
   const loadStocks = async (keyword = q) => {
     setLoading(true);
@@ -823,6 +973,12 @@ function TradeTrainingPage() {
     void loadStocks("");
   }, []);
 
+  useEffect(() => {
+    if (detail && (detail.session.position_qty <= 0 || detail.session.avg_price <= 0)) {
+      setShowAvgPriceLine(false);
+    }
+  }, [detail?.session.position_qty, detail?.session.avg_price]);
+
   const startSession = async () => {
     if (!selectedStock) return;
     setLoading(true);
@@ -840,6 +996,9 @@ function TradeTrainingPage() {
         moving_averages: normalizeMas(movingAverageText),
       });
       setDetail(response);
+      setShowAvgPriceLine(false);
+      setScrollTargetDate(null);
+      setHighlightedTradeDate(null);
       setSettingsOpen(false);
       setMessage("훈련 세션을 시작했습니다.");
     } catch (nextError) {
@@ -871,6 +1030,7 @@ function TradeTrainingPage() {
     try {
       const response = await action();
       setDetail(response);
+      setScrollTargetDate(null);
       setMessage(successMessage);
       if (response.session.status === "완료") {
         await openResultReport(response.session.id);
@@ -890,6 +1050,7 @@ function TradeTrainingPage() {
     try {
       const response = await repositories.tradeTraining.finish(detail.session.id);
       setDetail((prev) => (prev ? { ...prev, session: response.session, account: response.account } : prev));
+      setScrollTargetDate(null);
       setMessage(response.message);
       await openResultReport(response.session.id);
     } catch (nextError) {
@@ -906,8 +1067,26 @@ function TradeTrainingPage() {
         ? await repositories.tradeTraining.buy(detail.session.id, payload)
         : await repositories.tradeTraining.sell(detail.session.id, payload);
     setDetail(response);
+    setScrollTargetDate(null);
     setOrderMode(null);
     setMessage(orderMode === "BUY" ? "매수 체결되었습니다." : "매도 체결되었습니다.");
+  };
+
+  const focusTradeDate = (tradeDate: string) => {
+    if (!detail?.candles.some((candle) => candle.trade_date === tradeDate)) {
+      setMessage("해당 거래일의 캔들을 찾을 수 없습니다.");
+      return;
+    }
+    setHighlightedTradeDate(tradeDate);
+    setScrollTargetDate(tradeDate);
+  };
+
+  const toggleAvgPriceLine = () => {
+    if (!detail || detail.session.position_qty <= 0 || detail.session.avg_price <= 0) {
+      setMessage("보유 중인 포지션이 없어 평균단가선을 표시할 수 없습니다.");
+      return;
+    }
+    setShowAvgPriceLine((prev) => !prev);
   };
 
   const progressText = useMemo(() => {
@@ -918,7 +1097,7 @@ function TradeTrainingPage() {
   const canTrade = detail?.session.status === "진행중";
 
   return (
-    <div className="space-y-4">
+    <div className="trade-training-page space-y-4">
       <PageHeader
         title="매매훈련"
         description="과거 일봉을 하루씩 넘기며 매수·매도 판단을 훈련합니다."
@@ -964,16 +1143,15 @@ function TradeTrainingPage() {
                 </div>
               </div>
 
-              <TrainingKpiStrip detail={detail} />
-              <CandleChart candles={detail.candles} />
-
-              <div className="training-current-grid">
-                <div><span>시가</span><strong>{fmtWon(detail.current_candle?.open)}</strong></div>
-                <div><span>고가</span><strong>{fmtWon(detail.current_candle?.high)}</strong></div>
-                <div><span>저가</span><strong>{fmtWon(detail.current_candle?.low)}</strong></div>
-                <div><span>종가</span><strong>{fmtWon(detail.current_candle?.close)}</strong></div>
-                <div><span>거래량</span><strong>{fmtNumber(detail.current_candle?.volume)}</strong></div>
-              </div>
+              <TrainingKpiStrip detail={detail} showAvgPriceLine={showAvgPriceLine} onToggleAvgPriceLine={toggleAvgPriceLine} />
+              <CandleChart
+                candles={detail.candles}
+                avgPriceLine={showAvgPriceLine && detail.session.position_qty > 0 ? detail.session.avg_price : null}
+                displayDays={displayDays}
+                scrollTargetDate={scrollTargetDate}
+                highlightedTradeDate={highlightedTradeDate}
+              />
+              <TrainingChartSummary detail={detail} />
             </SectionCard>
 
             <SectionCard title="거래 로그">
@@ -983,7 +1161,12 @@ function TradeTrainingPage() {
                     <thead><tr><th>일자</th><th>구분</th><th className="numeric-cell">가격</th><th className="numeric-cell">수량</th><th className="numeric-cell">손익</th><th>사유</th></tr></thead>
                     <tbody>
                       {detail.trades.map((trade) => (
-                        <tr key={trade.id}>
+                        <tr
+                          key={trade.id}
+                          className={`training-log-row ${highlightedTradeDate === trade.trade_date ? "active" : ""}`}
+                          onClick={() => focusTradeDate(trade.trade_date)}
+                          title="차트에서 보기"
+                        >
                           <td>{trade.trade_date}</td>
                           <td><span className={trade.side === "BUY" ? "badge badge-blue" : "badge badge-rose"}>{trade.side === "BUY" ? "매수" : "매도"}</span></td>
                           <td className="numeric-cell">{fmtWon(trade.price)}</td>
