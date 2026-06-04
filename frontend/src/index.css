@@ -1904,6 +1904,12 @@ a:focus-visible {
   margin-bottom: 12px;
 }
 
+.training-settings-stock-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-height: none;
+  overflow: visible;
+}
+
 .training-stock-item {
   border: 1px solid var(--color-hairline-cloud);
   border-radius: 8px;
@@ -1930,6 +1936,38 @@ a:focus-visible {
   background: #eef6ff;
   border-color: #93c5fd;
   box-shadow: inset 3px 0 0 #2563eb;
+}
+
+.training-stock-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: -2px 0 12px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.training-stock-page-button {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #334155;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.training-stock-page-button:hover:not(:disabled) {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.training-stock-page-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .training-option-grid {
@@ -2840,6 +2878,10 @@ a:focus-visible {
 
   .training-kpi-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .training-settings-stock-list {
+    grid-template-columns: 1fr;
   }
 
   .training-bottom-summary-row {

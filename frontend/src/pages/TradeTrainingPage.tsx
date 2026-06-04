@@ -57,6 +57,7 @@ type TradeLogRow = {
 };
 
 const DEFAULT_MA_TEXT = "5,10,20,60,120";
+const STOCKS_PAGE_SIZE = 6;
 
 function createDrawingId(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
@@ -775,9 +776,22 @@ function SettingsModal({
   onStart: () => Promise<void>;
   onClose: () => void;
 }) {
+  const [stockPage, setStockPage] = useState(1);
+  const totalStockPages = Math.max(1, Math.ceil(stocks.length / STOCKS_PAGE_SIZE));
+  const safeStockPage = Math.min(stockPage, totalStockPages);
+  const pagedStocks = stocks.slice((safeStockPage - 1) * STOCKS_PAGE_SIZE, safeStockPage * STOCKS_PAGE_SIZE);
+
+  useEffect(() => {
+    setStockPage(1);
+  }, [q]);
+
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     await onStart();
+  };
+  const searchStocks = async () => {
+    setStockPage(1);
+    await onSearch();
   };
 
   return (
@@ -794,8 +808,22 @@ function SettingsModal({
         </div>
 
         <div className="training-stock-search training-settings-top-row">
-          <input className="input-control" value={q} onChange={(event) => setQ(event.target.value)} placeholder="종목명 또는 코드 검색" />
-          <button className="btn btn-secondary" type="button" disabled={loading} onClick={() => void onSearch()}>
+          <input
+            className="input-control"
+            value={q}
+            onChange={(event) => {
+              setQ(event.target.value);
+              setStockPage(1);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                event.preventDefault();
+                void searchStocks();
+              }
+            }}
+            placeholder="종목명 또는 코드 검색"
+          />
+          <button className="btn btn-secondary" type="button" disabled={loading} onClick={() => void searchStocks()}>
             <Search size={16} /> 검색
           </button>
           <select
@@ -816,7 +844,7 @@ function SettingsModal({
 
         <div className="training-stock-list training-settings-stock-list">
           {stocks.length === 0 ? <EmptyState message="가격 데이터가 있는 종목이 없습니다." /> : null}
-          {stocks.map((stock) => (
+          {pagedStocks.map((stock) => (
             <button
               type="button"
               className={`training-stock-item ${selectedStock?.stock_id === stock.stock_id ? "selected" : ""}`}
@@ -828,6 +856,17 @@ function SettingsModal({
             </button>
           ))}
         </div>
+        {stocks.length > STOCKS_PAGE_SIZE ? (
+          <div className="training-stock-pagination">
+            <button type="button" className="training-stock-page-button" disabled={safeStockPage <= 1} onClick={() => setStockPage((prev) => Math.max(1, prev - 1))}>
+              이전
+            </button>
+            <span>{safeStockPage} / {totalStockPages}</span>
+            <button type="button" className="training-stock-page-button" disabled={safeStockPage >= totalStockPages} onClick={() => setStockPage((prev) => Math.min(totalStockPages, prev + 1))}>
+              다음
+            </button>
+          </div>
+        ) : null}
 
         <div className="training-option-grid training-settings-option-grid">
           <label><span>초기자금</span><input className="input-control" type="number" min={1} value={initialCash} onChange={(event) => setInitialCash(Number(event.target.value) || 0)} /></label>
@@ -837,7 +876,7 @@ function SettingsModal({
           <label><span>시작일</span><input className="input-control" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label>
           <label><span>종료일</span><input className="input-control" type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label>
         </div>
-        <p className="training-settings-help">시작일을 비우면 수집된 최초 일자부터 시작하고, 종료일을 비우면 수집된 최종 일자까지 진행합니다.</p>
+        <p className="training-settings-help">선택한 종목의 수집 기간이 기본값으로 설정됩니다. 필요하면 직접 수정할 수 있습니다.</p>
 
         <div className="training-modal-actions">
           <button type="button" className="btn btn-secondary" onClick={onClose}>닫기</button>
@@ -1440,6 +1479,12 @@ function TradeTrainingPage() {
     void loadStocks("");
     void loadTradeMethods();
   }, []);
+
+  useEffect(() => {
+    if (!selectedStock) return;
+    setStartDate(selectedStock.first_date || "");
+    setEndDate(selectedStock.last_date || "");
+  }, [selectedStock?.stock_id]);
 
   useEffect(() => {
     if (detail && (detail.session.position_qty <= 0 || detail.session.avg_price <= 0)) {
