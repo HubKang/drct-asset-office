@@ -2049,6 +2049,41 @@ a:focus-visible {
   overflow: hidden;
 }
 
+.training-chart-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.training-chart-tool-btn {
+  padding: 6px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.training-chart-tool-btn:hover:not(:disabled) {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.training-chart-tool-btn.active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.training-chart-tool-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .training-chart-viewport {
   position: relative;
   width: 100%;
@@ -2073,6 +2108,82 @@ a:focus-visible {
   max-width: none;
   display: block;
   flex: none;
+}
+
+.training-drawing-line {
+  stroke: #6b7280;
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.training-drawing-horizontal {
+  stroke-dasharray: 5 4;
+}
+
+.training-drawing-trend {
+  stroke: #2563eb;
+  stroke-width: 1.5;
+}
+
+.training-drawing-line.active {
+  stroke: #111827;
+  stroke-width: 2.5;
+}
+
+.training-drawing-hit-line {
+  stroke: transparent;
+  stroke-width: 12;
+  cursor: pointer;
+  pointer-events: stroke;
+  vector-effect: non-scaling-stroke;
+}
+
+.training-drawing-pending-point {
+  fill: #2563eb;
+  stroke: #ffffff;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.training-chart-drawing-layer {
+  cursor: crosshair;
+}
+
+.training-trade-marker {
+  cursor: pointer;
+}
+
+.training-trade-marker circle {
+  stroke: #ffffff;
+  stroke-width: 1.6;
+  filter: drop-shadow(0 1px 2px rgba(15, 23, 42, 0.22));
+  vector-effect: non-scaling-stroke;
+}
+
+.training-trade-marker-buy circle {
+  fill: #2563eb;
+}
+
+.training-trade-marker-sell circle {
+  fill: #ef4444;
+}
+
+.training-trade-marker-active circle {
+  stroke: #111827;
+  stroke-width: 2.4;
+}
+
+.training-trade-marker-text {
+  fill: #ffffff;
+  font-size: 10px;
+  font-weight: 800;
+  text-anchor: middle;
+  pointer-events: none;
+  user-select: none;
+}
+
+.training-trade-tooltip text {
+  font-family: inherit;
 }
 
 .training-chart-empty {
@@ -2137,6 +2248,15 @@ a:focus-visible {
 .training-log-table th,
 .training-log-table td {
   white-space: nowrap;
+}
+
+.training-log-table .numeric-cell {
+  min-width: 78px;
+}
+
+.training-log-reason-cell {
+  min-width: 120px;
+  white-space: normal;
 }
 
 .training-log-row {
@@ -2543,31 +2663,71 @@ a:focus-visible {
   font-weight: 800;
 }
 
-.training-chart-summary-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 10px;
+.training-bottom-summary-row {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  margin-top: 8px;
 }
 
-.training-chart-summary-grid div {
+.training-bottom-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(140px, 1fr));
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.training-bottom-kpi {
   border: 1px solid var(--color-hairline-cloud);
   border-radius: 8px;
   background: #f8fafc;
   padding: 8px 10px;
+  min-height: 46px;
   display: grid;
   gap: 4px;
 }
 
-.training-chart-summary-grid span {
+.training-bottom-kpi span {
   color: #64748b;
   font-size: 11px;
 }
 
-.training-chart-summary-grid strong {
+.training-bottom-kpi strong {
   color: #0f172a;
   font-size: 13px;
   font-weight: 800;
+}
+
+.training-bottom-next-button {
+  flex: 0 0 auto;
+  min-width: 86px;
+  padding: 0 16px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  align-self: stretch;
+  cursor: pointer;
+}
+
+.training-bottom-next-button:hover:not(:disabled) {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.training-bottom-next-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .training-slider-block {
@@ -2682,8 +2842,16 @@ a:focus-visible {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .training-chart-summary-grid {
+  .training-bottom-summary-row {
+    flex-direction: column;
+  }
+
+  .training-bottom-kpis {
     grid-template-columns: 1fr;
+  }
+
+  .training-bottom-next-button {
+    min-height: 42px;
   }
 }
 

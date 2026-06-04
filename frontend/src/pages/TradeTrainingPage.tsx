@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { BarChart3, PauseCircle, Play, Search, Settings, ShoppingCart, StepForward, X } from "lucide-react";
 import EmptyState from "@/components/common/EmptyState";
 import PageHeader from "@/components/common/PageHeader";
@@ -14,11 +14,58 @@ import type {
   TrainingResult,
   TrainingSessionDetail,
   TrainingStockItem,
+  TrainingTrade,
 } from "@/types/tradeTraining";
 
 type OrderMode = "BUY" | "SELL";
+type TradeMarkerSide = "BUY" | "SELL";
+type DrawingTool = "horizontal" | "trend" | null;
+type TrendPoint = {
+  index: number;
+  price: number;
+};
+type ChartDrawing =
+  | {
+      id: string;
+      type: "horizontal";
+      price: number;
+    }
+  | {
+      id: string;
+      type: "trend";
+      startIndex: number;
+      startPrice: number;
+      endIndex: number;
+      endPrice: number;
+    };
+type TradeMarker = {
+  key: string;
+  tradeDate: string;
+  side: TradeMarkerSide;
+  trades: TrainingTrade[];
+  x: number;
+  y: number;
+};
+type TradeMarkerTooltip = TradeMarker & {
+  tooltipX: number;
+  tooltipY: number;
+};
+type TradeLogRow = {
+  trade: TrainingTrade;
+  tradeAmount: number;
+  currentInvestedAmount: number;
+};
 
 const DEFAULT_MA_TEXT = "5,10,20,60,120";
+
+function createDrawingId(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  return `drawing-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
 
 function fmtNumber(value: number | null | undefined, digits = 0): string {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return "-";
@@ -49,6 +96,36 @@ function profitClass(value: number | null | undefined): string {
   return "";
 }
 
+function buildTradeLogRows(trades: TrainingTrade[]): TradeLogRow[] {
+  let runningQty = 0;
+  let runningAvgPrice = 0;
+  let runningInvestedAmount = 0;
+
+  return trades.map((trade) => {
+    const side = String(trade.side || "").toUpperCase();
+    const price = Number(trade.price || 0);
+    const quantity = Number(trade.quantity || 0);
+    const tradeAmount = price * quantity;
+
+    if (side === "BUY" || trade.side === "매수") {
+      const previousInvestedAmount = runningQty * runningAvgPrice;
+      runningQty += quantity;
+      runningInvestedAmount = previousInvestedAmount + tradeAmount;
+      runningAvgPrice = runningQty > 0 ? runningInvestedAmount / runningQty : 0;
+    } else if (side === "SELL" || trade.side === "매도") {
+      runningQty = Math.max(0, runningQty - quantity);
+      runningInvestedAmount = runningQty > 0 ? runningQty * runningAvgPrice : 0;
+      if (runningQty === 0) runningAvgPrice = 0;
+    }
+
+    return {
+      trade,
+      tradeAmount,
+      currentInvestedAmount: runningInvestedAmount,
+    };
+  });
+}
+
 function normalizeMas(value: string): number[] {
   const items = value
     .split(",")
@@ -76,19 +153,32 @@ function maStyle(key: string): { color: string; width: number } {
 }
 
 function CandleChart({
+  sessionId,
   candles,
+  trades,
   avgPriceLine,
   displayDays,
   scrollTargetDate,
   highlightedTradeDate,
+  highlightedTradeId,
+  onMarkerClick,
 }: {
+  sessionId?: number | string | null;
   candles: TrainingCandle[];
+  trades: TrainingTrade[];
   avgPriceLine?: number | null;
   displayDays: number;
   scrollTargetDate?: string | null;
   highlightedTradeDate?: string | null;
+  highlightedTradeId?: number | null;
+  onMarkerClick?: (tradeDate: string, tradeId: number | null) => void;
 }) {
   const [tooltip, setTooltip] = useState<{ candle: TrainingCandle; x: number; y: number; changeRate: number | null } | null>(null);
+  const [markerTooltip, setMarkerTooltip] = useState<TradeMarkerTooltip | null>(null);
+  const [drawingTool, setDrawingTool] = useState<DrawingTool>(null);
+  const [chartDrawings, setChartDrawings] = useState<ChartDrawing[]>([]);
+  const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
+  const [pendingTrendStart, setPendingTrendStart] = useState<TrendPoint | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fallbackWidth = 1080;
   const [chartViewportWidth, setChartViewportWidth] = useState(fallbackWidth);
@@ -117,6 +207,7 @@ function CandleChart({
     return pad.top + ((maxPrice - value) / span) * priceHeight;
   };
   const xAt = (idx: number) => pad.left + idx * slot + slot / 2;
+  const priceAtY = (y: number) => maxPrice - ((y - pad.top) / priceHeight) * span;
   const showAvgLine = !!avgPriceLine && avgPriceLine > 0 && avgPriceLine >= minPrice && avgPriceLine <= maxPrice;
   const avgLineY = showAvgLine ? yPrice(avgPriceLine) : 0;
   const tooltipWidth = 174;
@@ -125,6 +216,47 @@ function CandleChart({
   const preferredTooltipX = tooltip && tooltip.x > chartCenterX ? tooltip.x - tooltipWidth - 12 : (tooltip?.x || 0) + 12;
   const tooltipX = tooltip ? Math.min(width - pad.right - tooltipWidth, Math.max(pad.left + 8, preferredTooltipX)) : 0;
   const tooltipY = tooltip ? Math.min(pad.top + priceHeight - tooltipHeight, Math.max(pad.top + 8, tooltip.y - tooltipHeight / 2)) : 0;
+  const tradeMarkers = useMemo<TradeMarker[]>(() => {
+    const markerOffset = 16;
+    const candleByDate = new Map(candles.map((candle, idx) => [candle.trade_date, { candle, idx }]));
+    const grouped = new Map<string, { tradeDate: string; side: TradeMarkerSide; trades: TrainingTrade[] }>();
+
+    trades.forEach((trade) => {
+      const sideText = String(trade.side || "").toUpperCase();
+      const side: TradeMarkerSide | null = sideText === "BUY" || trade.side === "매수" ? "BUY" : sideText === "SELL" || trade.side === "매도" ? "SELL" : null;
+      if (!side || !candleByDate.has(trade.trade_date)) return;
+      const key = `${trade.trade_date}-${side}`;
+      const current = grouped.get(key);
+      if (current) {
+        current.trades.push(trade);
+      } else {
+        grouped.set(key, { tradeDate: trade.trade_date, side, trades: [trade] });
+      }
+    });
+
+    return Array.from(grouped.values()).flatMap((group) => {
+      const target = candleByDate.get(group.tradeDate);
+      if (!target) return [];
+      const high = Number(target.candle.high || 0);
+      const low = Number(target.candle.low || 0);
+      if (!high || !low) return [];
+      const y = group.side === "BUY"
+        ? Math.min(pad.top + priceHeight + markerOffset, yPrice(low) + markerOffset)
+        : Math.max(pad.top + markerOffset / 2, yPrice(high) - markerOffset);
+      return [{
+        key: `${group.tradeDate}-${group.side}`,
+        tradeDate: group.tradeDate,
+        side: group.side,
+        trades: group.trades,
+        x: xAt(target.idx),
+        y,
+      }];
+    });
+  }, [candles, trades, maxPrice, span, slot]);
+  const markerTooltipWidth = 238;
+  const markerTooltipHeight = markerTooltip ? 46 + Math.min(3, markerTooltip.trades.length) * 56 + (markerTooltip.trades.length > 3 ? 18 : 0) : 0;
+  const markerTooltipX = markerTooltip ? Math.min(width - pad.right - markerTooltipWidth, Math.max(pad.left + 8, markerTooltip.tooltipX + 12)) : 0;
+  const markerTooltipY = markerTooltip ? Math.min(pad.top + priceHeight - markerTooltipHeight, Math.max(pad.top + 8, markerTooltip.tooltipY - markerTooltipHeight / 2)) : 0;
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -157,15 +289,133 @@ function CandleChart({
     });
   }, [scrollTargetDate, candles]);
 
+  useEffect(() => {
+    setChartDrawings([]);
+    setSelectedDrawingId(null);
+    setPendingTrendStart(null);
+    setDrawingTool(null);
+  }, [sessionId]);
+
+  const toggleDrawingTool = (tool: Exclude<DrawingTool, null>) => {
+    setDrawingTool((current) => {
+      const nextTool = current === tool ? null : tool;
+      setPendingTrendStart(null);
+      return nextTool;
+    });
+    setTooltip(null);
+    setMarkerTooltip(null);
+  };
+
+  const handleDeleteSelectedDrawing = () => {
+    if (!selectedDrawingId) return;
+    setChartDrawings((prev) => prev.filter((drawing) => drawing.id !== selectedDrawingId));
+    setSelectedDrawingId(null);
+    setPendingTrendStart(null);
+  };
+
+  const handleClearAllDrawings = () => {
+    setChartDrawings([]);
+    setSelectedDrawingId(null);
+    setPendingTrendStart(null);
+    setDrawingTool(null);
+  };
+
+  const getChartPointFromMouseEvent = (event: MouseEvent<SVGRectElement>): TrendPoint | null => {
+    if (!candles.length || slot <= 0 || priceHeight <= 0 || !Number.isFinite(minPrice) || !Number.isFinite(maxPrice)) return null;
+    const rect = event.currentTarget.ownerSVGElement?.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return null;
+
+    const rawX = ((event.clientX - rect.left) / rect.width) * width;
+    const rawY = ((event.clientY - rect.top) / rect.height) * height;
+    if (!Number.isFinite(rawX) || !Number.isFinite(rawY)) return null;
+
+    const minX = pad.left + slot / 2;
+    const maxX = pad.left + Math.max(0, candles.length - 1) * slot + slot / 2;
+    const x = clampNumber(rawX, minX, maxX);
+    const y = clampNumber(rawY, pad.top, pad.top + priceHeight);
+    const index = clampNumber(Math.round((x - pad.left - slot / 2) / slot), 0, candles.length - 1);
+    const price = priceAtY(y);
+    if (!Number.isFinite(price)) return null;
+    return { index, price };
+  };
+
+  const handleChartDrawingClick = (event: MouseEvent<SVGRectElement>) => {
+    if (!drawingTool) return;
+    event.stopPropagation();
+
+    const point = getChartPointFromMouseEvent(event);
+    if (!point) return;
+
+    if (drawingTool === "horizontal") {
+      setChartDrawings((prev) => [...prev, { id: createDrawingId(), type: "horizontal", price: point.price }]);
+      setSelectedDrawingId(null);
+      setTooltip(null);
+      setMarkerTooltip(null);
+      return;
+    }
+
+    if (!pendingTrendStart) {
+      setPendingTrendStart(point);
+      setSelectedDrawingId(null);
+      setTooltip(null);
+      setMarkerTooltip(null);
+      return;
+    }
+
+    const samePoint = pendingTrendStart.index === point.index && Math.abs(pendingTrendStart.price - point.price) < span * 0.001;
+    if (samePoint) return;
+
+    setChartDrawings((prev) => [
+      ...prev,
+      {
+        id: createDrawingId(),
+        type: "trend",
+        startIndex: pendingTrendStart.index,
+        startPrice: pendingTrendStart.price,
+        endIndex: point.index,
+        endPrice: point.price,
+      },
+    ]);
+    setPendingTrendStart(null);
+    setSelectedDrawingId(null);
+    setTooltip(null);
+    setMarkerTooltip(null);
+  };
+
   if (candles.length === 0) {
     return <div className="training-chart-empty">훈련을 시작하면 차트가 표시됩니다.</div>;
   }
 
   return (
     <div className="training-chart-card">
+      <div className="training-chart-tools">
+        <button className={`training-chart-tool-btn ${drawingTool === "horizontal" ? "active" : ""}`} type="button" onClick={() => toggleDrawingTool("horizontal")}>
+          수평선
+        </button>
+        <button className={`training-chart-tool-btn ${drawingTool === "trend" ? "active" : ""}`} type="button" onClick={() => toggleDrawingTool("trend")}>
+          추세선
+        </button>
+        <button className="training-chart-tool-btn" type="button" onClick={handleDeleteSelectedDrawing} disabled={!selectedDrawingId}>
+          선택삭제
+        </button>
+        <button className="training-chart-tool-btn" type="button" onClick={handleClearAllDrawings} disabled={chartDrawings.length === 0 && !pendingTrendStart}>
+          전체삭제
+        </button>
+      </div>
       <div className="training-chart-viewport" ref={scrollRef}>
         <div className="training-chart-track" style={{ width }}>
-          <svg className="training-chart-svg" width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label="일봉 훈련 차트" onMouseLeave={() => setTooltip(null)}>
+          <svg
+            className="training-chart-svg"
+            width={width}
+            height={height}
+            viewBox={`0 0 ${width} ${height}`}
+            role="img"
+            aria-label="일봉 훈련 차트"
+            onMouseLeave={() => {
+              setTooltip(null);
+              setMarkerTooltip(null);
+            }}
+          >
         <rect x={0} y={0} width={width} height={height} rx={8} fill="#ffffff" />
         {[0, 0.25, 0.5, 0.75, 1].map((rate) => {
           const y = pad.top + priceHeight * rate;
@@ -230,14 +480,122 @@ function CandleChart({
                 width={slot}
                 height={priceHeight + 22 + volumeHeight}
                 fill="transparent"
-                onMouseEnter={() => setTooltip({ candle, x, y: yPrice(high), changeRate })}
-                onMouseMove={() => setTooltip({ candle, x, y: yPrice(high), changeRate })}
+                onMouseEnter={() => !drawingTool && setTooltip({ candle, x, y: yPrice(high), changeRate })}
+                onMouseMove={() => !drawingTool && setTooltip({ candle, x, y: yPrice(high), changeRate })}
               />
             </g>
           );
         })}
 
-        {tooltip ? (
+        {chartDrawings.map((drawing) => {
+          const isSelected = selectedDrawingId === drawing.id;
+          const lineProps = drawing.type === "horizontal"
+            ? { x1: pad.left, x2: width - pad.right, y1: yPrice(drawing.price), y2: yPrice(drawing.price) }
+            : { x1: xAt(drawing.startIndex), x2: xAt(drawing.endIndex), y1: yPrice(drawing.startPrice), y2: yPrice(drawing.endPrice) };
+          const className = drawing.type === "horizontal"
+            ? `training-drawing-line training-drawing-horizontal ${isSelected ? "active" : ""}`
+            : `training-drawing-line training-drawing-trend ${isSelected ? "active" : ""}`;
+          return (
+            <g key={drawing.id}>
+              <line
+                className="training-drawing-hit-line"
+                {...lineProps}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setSelectedDrawingId(drawing.id);
+                }}
+              />
+              <line className={className} {...lineProps} pointerEvents="none" />
+            </g>
+          );
+        })}
+
+        {pendingTrendStart ? (
+          <circle
+            className="training-drawing-pending-point"
+            cx={xAt(pendingTrendStart.index)}
+            cy={yPrice(pendingTrendStart.price)}
+            r={4}
+            pointerEvents="none"
+          />
+        ) : null}
+
+        {tradeMarkers.map((marker) => {
+          const isActive = highlightedTradeDate === marker.tradeDate || marker.trades.some((trade) => trade.id === highlightedTradeId);
+          const label = marker.side === "BUY" ? "B" : "S";
+          const sideLabel = marker.side === "BUY" ? "매수" : "매도";
+          return (
+            <g
+              key={marker.key}
+              className={`training-trade-marker training-trade-marker-${marker.side.toLowerCase()} ${isActive ? "training-trade-marker-active" : ""}`}
+              transform={`translate(${marker.x}, ${marker.y})`}
+              pointerEvents={drawingTool ? "none" : "auto"}
+              onMouseEnter={() => {
+                if (drawingTool) return;
+                setTooltip(null);
+                setMarkerTooltip({ ...marker, tooltipX: marker.x, tooltipY: marker.y });
+              }}
+              onMouseMove={() => {
+                if (drawingTool) return;
+                setTooltip(null);
+                setMarkerTooltip({ ...marker, tooltipX: marker.x, tooltipY: marker.y });
+              }}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (drawingTool) return;
+                onMarkerClick?.(marker.tradeDate, marker.trades[0]?.id ?? null);
+              }}
+            >
+              <circle r={8.5} />
+              <text className="training-trade-marker-text" y={3.5}>{label}</text>
+              <title>{marker.tradeDate} {sideLabel} {marker.trades.length}건</title>
+            </g>
+          );
+        })}
+
+        {drawingTool ? (
+          <rect
+            className="training-chart-drawing-layer"
+            x={pad.left}
+            y={pad.top}
+            width={Math.max(1, chartWidth)}
+            height={priceHeight}
+            fill="transparent"
+            pointerEvents="all"
+            onClick={handleChartDrawingClick}
+          />
+        ) : null}
+
+        {markerTooltip ? (
+          <g className="training-trade-tooltip" transform={`translate(${markerTooltipX}, ${markerTooltipY})`} pointerEvents="none">
+            <rect width={markerTooltipWidth} height={markerTooltipHeight} rx={8} fill="#0f172a" opacity={0.82} />
+            <text x={12} y={21} fontSize="12" fontWeight={800} fill="#f8fafc">
+              {markerTooltip.tradeDate} {markerTooltip.side === "BUY" ? "매수" : "매도"} {markerTooltip.trades.length > 1 ? `${markerTooltip.trades.length}건` : ""}
+            </text>
+            {markerTooltip.trades.slice(0, 3).map((trade, idx) => {
+              const baseY = 45 + idx * 56;
+              return (
+                <g key={trade.id}>
+                  <text x={12} y={baseY} fontSize="11" fill="#cbd5e1">가격</text>
+                  <text x={64} y={baseY} fontSize="11" fontWeight={700} fill="#ffffff">{fmtWon(trade.price)}</text>
+                  <text x={132} y={baseY} fontSize="11" fill="#cbd5e1">수량</text>
+                  <text x={170} y={baseY} fontSize="11" fontWeight={700} fill="#ffffff">{fmtNumber(trade.quantity)}주</text>
+                  <text x={12} y={baseY + 18} fontSize="11" fill="#cbd5e1">거래금액</text>
+                  <text x={76} y={baseY + 18} fontSize="11" fontWeight={700} fill="#ffffff">{fmtWon(trade.amount)}</text>
+                  <text x={12} y={baseY + 36} fontSize="11" fill="#cbd5e1">손익</text>
+                  <text x={64} y={baseY + 36} fontSize="11" fontWeight={700} fill={Number(trade.realized_profit || 0) > 0 ? "#fecaca" : Number(trade.realized_profit || 0) < 0 ? "#bfdbfe" : "#ffffff"}>
+                    {fmtSignedWon(trade.realized_profit)}
+                  </text>
+                  <text x={132} y={baseY + 36} fontSize="11" fill="#cbd5e1">사유</text>
+                  <text x={170} y={baseY + 36} fontSize="11" fontWeight={700} fill="#ffffff">{trade.reason || "-"}</text>
+                </g>
+              );
+            })}
+            {markerTooltip.trades.length > 3 ? (
+              <text x={12} y={markerTooltipHeight - 12} fontSize="11" fill="#cbd5e1">외 {markerTooltip.trades.length - 3}건</text>
+            ) : null}
+          </g>
+        ) : tooltip ? (
           <g className="training-candle-tooltip" transform={`translate(${tooltipX}, ${tooltipY})`} pointerEvents="none">
             <rect width={tooltipWidth} height={tooltipHeight} rx={8} fill="#0f172a" opacity={0.7} />
             <text x={12} y={21} fontSize="12" fontWeight={800} fill="#f8fafc">{tooltip.candle.trade_date}</text>
@@ -984,7 +1342,15 @@ function TrainingKpiStrip({
   );
 }
 
-function TrainingChartSummary({ detail }: { detail: TrainingSessionDetail }) {
+function TrainingChartSummary({
+  detail,
+  onNext,
+  nextDisabled,
+}: {
+  detail: TrainingSessionDetail;
+  onNext: () => void;
+  nextDisabled: boolean;
+}) {
   const items = [
     { label: "현재투자금", value: fmtWon(detail.account.evaluation_amount) },
     { label: "남은투자금", value: fmtWon(detail.session.cash) },
@@ -992,13 +1358,18 @@ function TrainingChartSummary({ detail }: { detail: TrainingSessionDetail }) {
     { label: "누적수익률", value: fmtPercent(detail.account.total_return_rate), className: profitClass(detail.account.total_return_rate) },
   ];
   return (
-    <div className="training-chart-summary-grid">
-      {items.map((item) => (
-        <div key={item.label}>
-          <span>{item.label}</span>
-          <strong className={item.className || ""}>{item.value}</strong>
-        </div>
-      ))}
+    <div className="training-bottom-summary-row">
+      <div className="training-bottom-kpis">
+        {items.map((item) => (
+          <div className="training-bottom-kpi" key={item.label}>
+            <span>{item.label}</span>
+            <strong className={item.className || ""}>{item.value}</strong>
+          </div>
+        ))}
+      </div>
+      <button className="training-bottom-next-button" type="button" disabled={nextDisabled} onClick={onNext}>
+        <StepForward size={15} /> 다음
+      </button>
     </div>
   );
 }
@@ -1027,6 +1398,7 @@ function TradeTrainingPage() {
   const [showAvgPriceLine, setShowAvgPriceLine] = useState(false);
   const [scrollTargetDate, setScrollTargetDate] = useState<string | null>(null);
   const [highlightedTradeDate, setHighlightedTradeDate] = useState<string | null>(null);
+  const [highlightedTradeId, setHighlightedTradeId] = useState<number | null>(null);
   const [showMethodPrinciples, setShowMethodPrinciples] = useState(false);
 
   const selectedTrainingMethod = useMemo(
@@ -1096,6 +1468,7 @@ function TradeTrainingPage() {
       setShowAvgPriceLine(false);
       setScrollTargetDate(null);
       setHighlightedTradeDate(null);
+      setHighlightedTradeId(null);
       setShowMethodPrinciples(false);
       setSettingsOpen(false);
       setMessage("훈련 세션을 시작했습니다.");
@@ -1176,7 +1549,18 @@ function TradeTrainingPage() {
       return;
     }
     setHighlightedTradeDate(tradeDate);
+    setHighlightedTradeId(null);
     setScrollTargetDate(tradeDate);
+  };
+
+  const highlightTradeMarker = (tradeDate: string, tradeId: number | null) => {
+    setHighlightedTradeDate(tradeDate);
+    setHighlightedTradeId(tradeId);
+  };
+
+  const handleNextDay = () => {
+    if (!detail) return;
+    void mutateDetail(() => repositories.tradeTraining.next(detail.session.id), "다음 거래일로 이동했습니다.");
   };
 
   const toggleAvgPriceLine = () => {
@@ -1191,6 +1575,7 @@ function TradeTrainingPage() {
     if (!detail) return "-";
     return `${fmtNumber(detail.session.current_index + 1)}일차 · ${detail.session.start_date} ~ ${detail.session.end_date}`;
   }, [detail]);
+  const tradeLogRows = useMemo(() => buildTradeLogRows(detail?.trades ?? []), [detail?.trades]);
 
   const canTrade = detail?.session.status === "진행중";
 
@@ -1250,7 +1635,7 @@ function TradeTrainingPage() {
                   <span>{progressText} · 상태 {detail.session.status}</span>
                 </div>
                 <div className="training-session-actions">
-                  <button className="btn btn-secondary" type="button" disabled={!canTrade || loading} onClick={() => mutateDetail(() => repositories.tradeTraining.next(detail.session.id), "다음 거래일로 이동했습니다.")}>
+                  <button className="btn btn-secondary" type="button" disabled={!canTrade || loading} onClick={handleNextDay}>
                     <StepForward size={16} /> 다음
                   </button>
                   <button className="btn btn-primary" type="button" disabled={!canTrade || loading} onClick={() => setOrderMode("BUY")}>
@@ -1270,36 +1655,45 @@ function TradeTrainingPage() {
 
               <TrainingKpiStrip detail={detail} showAvgPriceLine={showAvgPriceLine} onToggleAvgPriceLine={toggleAvgPriceLine} />
               <CandleChart
+                sessionId={detail.session.id}
                 candles={detail.candles}
+                trades={detail.trades}
                 avgPriceLine={showAvgPriceLine && detail.session.position_qty > 0 ? detail.session.avg_price : null}
                 displayDays={displayDays}
                 scrollTargetDate={scrollTargetDate}
                 highlightedTradeDate={highlightedTradeDate}
+                highlightedTradeId={highlightedTradeId}
+                onMarkerClick={highlightTradeMarker}
               />
-              <TrainingChartSummary detail={detail} />
+              <TrainingChartSummary detail={detail} onNext={handleNextDay} nextDisabled={!canTrade || loading} />
             </SectionCard>
 
             <SectionCard title="거래 로그">
               {detail.trades.length === 0 ? <EmptyState message="아직 체결된 훈련 거래가 없습니다." /> : (
                 <div className="table-shell">
                   <table className="data-table compact-table training-log-table">
-                    <thead><tr><th>일자</th><th>구분</th><th className="numeric-cell">가격</th><th className="numeric-cell">수량</th><th className="numeric-cell">손익</th><th>사유</th></tr></thead>
+                    <thead><tr><th>일자</th><th>구분</th><th className="numeric-cell">가격</th><th className="numeric-cell">수량</th><th className="numeric-cell">매매금액</th><th className="numeric-cell">현투자금액</th><th className="numeric-cell">손익</th><th>사유</th></tr></thead>
                     <tbody>
-                      {detail.trades.map((trade) => (
-                        <tr
-                          key={trade.id}
-                          className={`training-log-row ${highlightedTradeDate === trade.trade_date ? "active" : ""}`}
-                          onClick={() => focusTradeDate(trade.trade_date)}
-                          title="차트에서 보기"
-                        >
-                          <td>{trade.trade_date}</td>
-                          <td><span className={trade.side === "BUY" ? "badge badge-blue" : "badge badge-rose"}>{trade.side === "BUY" ? "매수" : "매도"}</span></td>
-                          <td className="numeric-cell">{fmtWon(trade.price)}</td>
-                          <td className="numeric-cell">{fmtNumber(trade.quantity)}</td>
-                          <td className={`numeric-cell ${profitClass(trade.realized_profit)}`}>{fmtSignedWon(trade.realized_profit)}</td>
-                          <td>{trade.reason || "-"}</td>
-                        </tr>
-                      ))}
+                      {tradeLogRows.map((row) => {
+                        const trade = row.trade;
+                        return (
+                          <tr
+                            key={trade.id}
+                            className={`training-log-row ${highlightedTradeDate === trade.trade_date || highlightedTradeId === trade.id ? "active" : ""}`}
+                            onClick={() => focusTradeDate(trade.trade_date)}
+                            title="차트에서 보기"
+                          >
+                            <td>{trade.trade_date}</td>
+                            <td><span className={trade.side === "BUY" ? "badge badge-blue" : "badge badge-rose"}>{trade.side === "BUY" ? "매수" : "매도"}</span></td>
+                            <td className="numeric-cell">{fmtWon(trade.price)}</td>
+                            <td className="numeric-cell">{fmtNumber(trade.quantity)}</td>
+                            <td className="numeric-cell">{fmtWon(row.tradeAmount)}</td>
+                            <td className="numeric-cell">{fmtWon(row.currentInvestedAmount)}</td>
+                            <td className={`numeric-cell ${profitClass(trade.realized_profit)}`}>{fmtSignedWon(trade.realized_profit)}</td>
+                            <td className="training-log-reason-cell">{trade.reason || "-"}</td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
