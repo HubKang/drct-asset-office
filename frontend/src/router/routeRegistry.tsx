@@ -1,4 +1,5 @@
 import AdvisoryPackagePage from "@/pages/AdvisoryPackagePage";
+import AnalysisIndicatorSettingsPage from "@/pages/AnalysisIndicatorSettingsPage";
 import BacktestPage from "@/pages/BacktestPage";
 import ClassificationRulesPage from "@/pages/ClassificationRulesPage";
 import CollectionRunsPage from "@/pages/CollectionRunsPage";
@@ -21,6 +22,7 @@ import StockPricesPage from "@/pages/StockPricesPage";
 import StocksPage from "@/pages/StocksPage";
 import WatchlistPage from "@/pages/WatchlistPage";
 import PageHeader from "@/components/common/PageHeader";
+import PatternResearchPage from "@/pages/PatternResearchPage";
 
 function ComingSoonPage({ title }: { title: string }) {
   return (
@@ -59,7 +61,9 @@ export const routeRegistry: RouteItem[] = [
   { routeKey: "trade-reviews", path: "/trade-reviews", title: "매매복기", description: "매매 습관과 원칙 준수 여부 복기", component: <TradeReviewsPage /> },
   { routeKey: "trade-training", path: "/trading/training", title: "매매훈련", description: "과거 일봉을 하루씩 넘기며 매수·매도 판단을 훈련", component: <TradeTrainingPage /> },
   { routeKey: "backtest", path: "/trading/backtest", title: "매매기준 백테스트", description: "계산 가능한 기준을 과거 일봉에 적용해 성과와 손실 구조를 검증", component: <BacktestPage /> },
+  { routeKey: "pattern-research", path: "/trading/pattern-research", title: "매매패턴 AI연구", description: "자연어 목표를 성공/실패 샘플과 GPT 연구 패키지로 변환", component: <PatternResearchPage /> },
   { routeKey: "settings", path: "/settings", title: "설정", description: "GPT 분석 프롬프트 설정 관리", component: <GptPromptSettingsPage /> },
+  { routeKey: "analysis-indicator-settings", path: "/settings/analysis-indicators", title: "매매연구 지표 설정", description: "매매목표 해석용 지표·별칭·조건 템플릿 관리", component: <AnalysisIndicatorSettingsPage /> },
   { routeKey: "drct-architecture", path: "/drct-architecture", title: "DrCT아키텍처", description: "폴더 구조/정리 정책 점검", component: <DrctArchitecturePage /> },
 ];
 

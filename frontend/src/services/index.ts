@@ -1,4 +1,5 @@
-﻿import { advisoryPackageApiRepository } from "@/services/api/advisoryPackageApiRepository";
+import { advisoryPackageApiRepository } from "@/services/api/advisoryPackageApiRepository";
+import { analysisIndicatorApiRepository } from "@/services/api/analysisIndicatorApiRepository";
 import { architectureApiRepository } from "@/services/api/architectureApiRepository";
 import { backtestApiRepository } from "@/services/api/backtestApiRepository";
 import { classificationRuleApiRepository } from "@/services/api/classificationRuleApiRepository";
@@ -6,6 +7,7 @@ import { collectionRunApiRepository } from "@/services/api/collectionRunApiRepos
 import { disclosureApiRepository } from "@/services/api/disclosureApiRepository";
 import { economicBriefingApiRepository } from "@/services/api/economicBriefingApiRepository";
 import { newsApiRepository } from "@/services/api/newsApiRepository";
+import { patternResearchApiRepository } from "@/services/api/patternResearchApiRepository";
 import { telegramApiRepository } from "@/services/api/telegramApiRepository";
 import { marketThemeApiRepository } from "@/services/api/marketThemeApiRepository";
 import { marketTrendApiRepository } from "@/services/api/marketTrendApiRepository";
@@ -33,6 +35,7 @@ import { appConfig } from "@/services/config/appConfig";
 const useMock = appConfig.dataSource !== "api";
 
 export const repositories = {
+  analysisIndicators: analysisIndicatorApiRepository,
   architecture: architectureApiRepository,
   backtest: backtestApiRepository,
   stocks: useMock ? stockMockRepository : stockApiRepository,
@@ -52,6 +55,7 @@ export const repositories = {
   tradeJournals: tradeJournalApiRepository,
   tradeReviews: tradeReviewApiRepository,
   tradeTraining: tradeTrainingApiRepository,
+  patternResearch: patternResearchApiRepository,
 };
 
 export const dataSourceLabel = useMock ? "mock" : "api";

@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from backend.app.api.routes_analysis import router as analysis_router
+from backend.app.api.routes_analysis_indicators import router as analysis_indicators_router
 from backend.app.api.routes_architecture import router as architecture_router
 from backend.app.api.routes_advisory_packages import router as advisory_packages_router
 from backend.app.api.routes_backtest import router as backtest_router
@@ -21,6 +22,7 @@ from backend.app.api.routes_market_theme_candidates import router as market_them
 from backend.app.api.routes_market_themes import router as market_themes_router
 from backend.app.api.routes_market_trends import router as market_trends_router
 from backend.app.api.routes_news import router as news_router
+from backend.app.api.routes_pattern_research import router as pattern_research_router
 from backend.app.api.routes_kiwoom import router as kiwoom_router
 from backend.app.api.routes_reports import router as reports_router
 from backend.app.api.routes_schema_comments import router as schema_comments_router
@@ -66,6 +68,7 @@ app.include_router(collectors_router)
 app.include_router(collection_runs_router)
 app.include_router(classification_rules_router)
 app.include_router(analysis_router)
+app.include_router(analysis_indicators_router)
 app.include_router(reports_router)
 app.include_router(advisory_packages_router)
 app.include_router(gpt_prompt_templates_router)
@@ -74,6 +77,7 @@ app.include_router(economic_briefing_router)
 app.include_router(telegram_router)
 app.include_router(trade_training_router)
 app.include_router(backtest_router)
+app.include_router(pattern_research_router)
 app.include_router(trade_journals_router)
 app.include_router(trade_reviews_router)
 app.include_router(architecture_router)

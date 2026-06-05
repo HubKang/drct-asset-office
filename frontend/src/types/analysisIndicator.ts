@@ -1,0 +1,101 @@
+export type AnalysisIndicator = {
+  id: number;
+  indicator_key: string;
+  indicator_name: string;
+  description?: string | null;
+  source_type: string;
+  source_table?: string | null;
+  source_column?: string | null;
+  calculation_formula?: string | null;
+  calculation_type?: string | null;
+  parameters_json?: string | null;
+  required_columns_json?: string | null;
+  data_type?: string | null;
+  unit?: string | null;
+  category?: string | null;
+  allowed_operators_json?: string | null;
+  default_operator?: string | null;
+  default_value_json?: string | null;
+  example_expressions?: string | null;
+  is_available_for_rule?: number | null;
+  is_available_for_llm?: number | null;
+  is_entry_allowed?: number | null;
+  is_success_allowed?: number | null;
+  is_failure_allowed?: number | null;
+  needs_review_default?: number | null;
+  execution_supported?: number | null;
+  execution_status?: string | null;
+  execution_message?: string | null;
+  is_active?: number | null;
+  sort_order?: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AnalysisIndicatorAlias = {
+  id: number;
+  alias_text: string;
+  indicator_key: string;
+  alias_type?: string | null;
+  match_type?: string | null;
+  default_operator?: string | null;
+  default_value_json?: string | null;
+  default_category?: string | null;
+  apply_to_samples_default?: number | null;
+  needs_review?: number | null;
+  confidence?: number | null;
+  description?: string | null;
+  is_active?: number | null;
+  sort_order?: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AnalysisConditionTemplate = {
+  id: number;
+  template_key: string;
+  template_name: string;
+  description?: string | null;
+  template_type?: string | null;
+  condition_json: string;
+  default_apply_to_samples?: number | null;
+  needs_review?: number | null;
+  is_available_for_llm?: number | null;
+  is_active?: number | null;
+  sort_order?: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AnalysisLlmCatalog = {
+  indicators: Array<Record<string, unknown>>;
+  aliases: Array<Record<string, unknown>>;
+  condition_templates: Array<Record<string, unknown>>;
+};
+
+export type AnalysisIndicatorCandidate = {
+  id: number;
+  source_type?: string | null;
+  source_text?: string | null;
+  suggested_indicator_key: string;
+  suggested_indicator_name?: string | null;
+  description?: string | null;
+  calculation_type?: string | null;
+  formula_description?: string | null;
+  parameters_json?: string | null;
+  required_indicators_json?: string | null;
+  usage_json?: string | null;
+  lookahead_risk?: number | null;
+  validation_status?: string | null;
+  validation_message?: string | null;
+  execution_supported?: number | null;
+  execution_status?: string | null;
+  execution_message?: string | null;
+  decision_status?: string | null;
+  decision_note?: string | null;
+  linked_indicator_id?: number | null;
+  origin_research_run_id?: number | null;
+  is_active?: number | null;
+  created_at: string;
+  updated_at: string;
+};

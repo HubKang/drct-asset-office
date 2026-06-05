@@ -21,10 +21,12 @@
   { "menuKey": "trade", "title": "매매복기", "routeKey": "trade-reviews" },
   { "menuKey": "trade", "title": "매매훈련", "routeKey": "trade-training" },
   { "menuKey": "trade", "title": "매매기준 백테스트", "routeKey": "backtest" },
+  { "menuKey": "trade", "title": "매매패턴 AI연구", "routeKey": "pattern-research" },
 
   { "menuKey": "analysis-rules", "title": "분류 규칙 관리", "routeKey": "classification-rules" },
 
   { "menuKey": "system", "title": "설정", "routeKey": "settings" },
+  { "menuKey": "system", "title": "매매연구 지표 설정", "routeKey": "analysis-indicator-settings" },
   { "menuKey": "system", "title": "DrCT아키텍처", "routeKey": "drct-architecture" },
   { "menuKey": "system", "title": "DrCT테이블정보", "routeKey": "schema-comments" }
 ]

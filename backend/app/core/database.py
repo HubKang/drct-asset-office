@@ -6,6 +6,13 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from backend.app.core.config import DATABASE_URL, SQLITE_BUSY_TIMEOUT_MS, SQLITE_JOURNAL_MODE, SQLITE_SYNCHRONOUS
+from backend.app.services.analysis_indicator_defaults import (
+    BASE_OPERATORS,
+    DEFAULT_ANALYSIS_ALIASES,
+    DEFAULT_ANALYSIS_CONDITION_TEMPLATES,
+    DEFAULT_ANALYSIS_INDICATORS,
+    json_text,
+)
 from backend.app.services.gpt_prompt_template_defaults import DEFAULT_GPT_PROMPTS
 from backend.app.services.market_theme_defaults import DEFAULT_MARKET_THEMES, keywords_json
 
@@ -1197,6 +1204,328 @@ def ensure_runtime_schema() -> None:
                 created_at TEXT NOT NULL
             )
             """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS analysis_indicators (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                indicator_key TEXT NOT NULL UNIQUE,
+                indicator_name TEXT NOT NULL,
+                description TEXT,
+                source_type TEXT NOT NULL,
+                source_table TEXT,
+                source_column TEXT,
+                calculation_formula TEXT,
+                calculation_type TEXT,
+                parameters_json TEXT,
+                required_columns_json TEXT,
+                data_type TEXT,
+                unit TEXT,
+                category TEXT,
+                allowed_operators_json TEXT,
+                default_operator TEXT,
+                default_value_json TEXT,
+                example_expressions TEXT,
+                is_available_for_rule INTEGER DEFAULT 1,
+                is_available_for_llm INTEGER DEFAULT 1,
+                is_entry_allowed INTEGER DEFAULT 1,
+                is_success_allowed INTEGER DEFAULT 0,
+                is_failure_allowed INTEGER DEFAULT 0,
+                needs_review_default INTEGER DEFAULT 0,
+                execution_supported INTEGER DEFAULT 0,
+                execution_status TEXT,
+                execution_message TEXT,
+                is_active INTEGER DEFAULT 1,
+                sort_order INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_analysis_indicators_active_sort "
+            "ON analysis_indicators(is_active, sort_order)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_analysis_indicators_category "
+            "ON analysis_indicators(category)"
+        )
+        analysis_indicator_columns = {
+            str(row[1]) for row in conn.exec_driver_sql("PRAGMA table_info(analysis_indicators)").fetchall()
+        }
+        if "calculation_type" not in analysis_indicator_columns:
+            conn.exec_driver_sql("ALTER TABLE analysis_indicators ADD COLUMN calculation_type TEXT")
+        if "parameters_json" not in analysis_indicator_columns:
+            conn.exec_driver_sql("ALTER TABLE analysis_indicators ADD COLUMN parameters_json TEXT")
+        if "execution_supported" not in analysis_indicator_columns:
+            conn.exec_driver_sql("ALTER TABLE analysis_indicators ADD COLUMN execution_supported INTEGER DEFAULT 0")
+        if "execution_status" not in analysis_indicator_columns:
+            conn.exec_driver_sql("ALTER TABLE analysis_indicators ADD COLUMN execution_status TEXT")
+        if "execution_message" not in analysis_indicator_columns:
+            conn.exec_driver_sql("ALTER TABLE analysis_indicators ADD COLUMN execution_message TEXT")
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS analysis_indicator_aliases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                alias_text TEXT NOT NULL,
+                indicator_key TEXT NOT NULL,
+                alias_type TEXT,
+                match_type TEXT,
+                default_operator TEXT,
+                default_value_json TEXT,
+                default_category TEXT,
+                apply_to_samples_default INTEGER DEFAULT 0,
+                needs_review INTEGER DEFAULT 1,
+                confidence REAL DEFAULT 0.8,
+                description TEXT,
+                is_active INTEGER DEFAULT 1,
+                sort_order INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(alias_text, indicator_key)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_analysis_indicator_aliases_indicator_key "
+            "ON analysis_indicator_aliases(indicator_key)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_analysis_indicator_aliases_active_sort "
+            "ON analysis_indicator_aliases(is_active, sort_order)"
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS analysis_condition_templates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                template_key TEXT NOT NULL UNIQUE,
+                template_name TEXT NOT NULL,
+                description TEXT,
+                template_type TEXT,
+                condition_json TEXT NOT NULL,
+                default_apply_to_samples INTEGER DEFAULT 0,
+                needs_review INTEGER DEFAULT 1,
+                is_available_for_llm INTEGER DEFAULT 1,
+                is_active INTEGER DEFAULT 1,
+                sort_order INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS analysis_indicator_candidates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_type TEXT,
+                source_text TEXT,
+                suggested_indicator_key TEXT NOT NULL,
+                suggested_indicator_name TEXT,
+                description TEXT,
+                calculation_type TEXT,
+                formula_description TEXT,
+                parameters_json TEXT,
+                required_indicators_json TEXT,
+                usage_json TEXT,
+                lookahead_risk INTEGER DEFAULT 0,
+                validation_status TEXT,
+                validation_message TEXT,
+                execution_supported INTEGER DEFAULT 0,
+                execution_status TEXT,
+                execution_message TEXT,
+                decision_status TEXT DEFAULT 'pending',
+                decision_note TEXT,
+                linked_indicator_id INTEGER,
+                origin_research_run_id INTEGER,
+                is_active INTEGER DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_analysis_indicator_candidates_status "
+            "ON analysis_indicator_candidates(decision_status, validation_status)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_analysis_indicator_candidates_key "
+            "ON analysis_indicator_candidates(suggested_indicator_key)"
+        )
+        analysis_candidate_columns = {
+            str(row[1]) for row in conn.exec_driver_sql("PRAGMA table_info(analysis_indicator_candidates)").fetchall()
+        }
+        if "execution_supported" not in analysis_candidate_columns:
+            conn.exec_driver_sql("ALTER TABLE analysis_indicator_candidates ADD COLUMN execution_supported INTEGER DEFAULT 0")
+        if "execution_status" not in analysis_candidate_columns:
+            conn.exec_driver_sql("ALTER TABLE analysis_indicator_candidates ADD COLUMN execution_status TEXT")
+        if "execution_message" not in analysis_candidate_columns:
+            conn.exec_driver_sql("ALTER TABLE analysis_indicator_candidates ADD COLUMN execution_message TEXT")
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_analysis_condition_templates_active_sort "
+            "ON analysis_condition_templates(is_active, sort_order)"
+        )
+        for row in DEFAULT_ANALYSIS_INDICATORS:
+            conn.exec_driver_sql(
+                """
+                INSERT OR IGNORE INTO analysis_indicators (
+                    indicator_key, indicator_name, description, source_type, source_table, source_column,
+                    calculation_formula, calculation_type, parameters_json, required_columns_json, data_type, unit, category, allowed_operators_json,
+                    default_operator, default_value_json, example_expressions, is_available_for_rule,
+                    is_available_for_llm, is_entry_allowed, is_success_allowed, is_failure_allowed,
+                    needs_review_default, execution_supported, execution_status, execution_message, is_active, sort_order, created_at, updated_at
+                )
+                VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                """,
+                (
+                    str(row["indicator_key"]),
+                    str(row["indicator_name"]),
+                    row.get("description"),
+                    str(row.get("source_type") or "calculated"),
+                    row.get("source_table"),
+                    row.get("source_column"),
+                    row.get("calculation_formula"),
+                    row.get("calculation_type"),
+                    row.get("parameters_json") or json_text({}),
+                    row.get("required_columns_json") or json_text([]),
+                    row.get("data_type") or "number",
+                    row.get("unit"),
+                    row.get("category") or "condition",
+                    row.get("allowed_operators_json") or json_text(BASE_OPERATORS),
+                    row.get("default_operator"),
+                    row.get("default_value_json"),
+                    row.get("example_expressions"),
+                    int(row.get("is_available_for_rule", 1)),
+                    int(row.get("is_available_for_llm", 1)),
+                    int(row.get("is_entry_allowed", 1)),
+                    int(row.get("is_success_allowed", 0)),
+                    int(row.get("is_failure_allowed", 0)),
+                    int(row.get("needs_review_default", 0)),
+                    int(row.get("execution_supported", 1 if row.get("calculation_type") == "distance_pct" else 0)),
+                    row.get("execution_status") or ("supported" if row.get("calculation_type") == "distance_pct" else None),
+                    row.get("execution_message") or ("distance_pct 계산 유형은 샘플 엔진에서 실행 가능합니다." if row.get("calculation_type") == "distance_pct" else None),
+                    int(row.get("is_active", 1)),
+                    int(row.get("sort_order", 0)),
+                ),
+            )
+        for row in DEFAULT_ANALYSIS_ALIASES:
+            conn.exec_driver_sql(
+                """
+                INSERT OR IGNORE INTO analysis_indicator_aliases (
+                    alias_text, indicator_key, alias_type, match_type, default_operator, default_value_json,
+                    default_category, apply_to_samples_default, needs_review, confidence, description,
+                    is_active, sort_order, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                (
+                    str(row["alias_text"]),
+                    str(row["indicator_key"]),
+                    row.get("alias_type") or "phrase",
+                    row.get("match_type") or "contains",
+                    row.get("default_operator"),
+                    row.get("default_value_json"),
+                    row.get("default_category") or "entry_filter",
+                    int(row.get("apply_to_samples_default", 0)),
+                    int(row.get("needs_review", 1)),
+                    float(row.get("confidence", 0.8)),
+                    row.get("description"),
+                    int(row.get("is_active", 1)),
+                    int(row.get("sort_order", 0)),
+                ),
+            )
+        for row in DEFAULT_ANALYSIS_CONDITION_TEMPLATES:
+            conn.exec_driver_sql(
+                """
+                INSERT OR IGNORE INTO analysis_condition_templates (
+                    template_key, template_name, description, template_type, condition_json,
+                    default_apply_to_samples, needs_review, is_available_for_llm, is_active,
+                    sort_order, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                (
+                    str(row["template_key"]),
+                    str(row["template_name"]),
+                    row.get("description"),
+                    row.get("template_type") or "entry_filter",
+                    str(row["condition_json"]),
+                    int(row.get("default_apply_to_samples", 0)),
+                    int(row.get("needs_review", 1)),
+                    int(row.get("is_available_for_llm", 1)),
+                    int(row.get("is_active", 1)),
+                    int(row.get("sort_order", 0)),
+                ),
+            )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS pattern_research_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                research_name TEXT,
+                stock_codes_json TEXT NOT NULL,
+                start_date TEXT NOT NULL,
+                end_date TEXT NOT NULL,
+                goal_text TEXT,
+                parsed_goal_json TEXT,
+                target_return_pct REAL,
+                target_days INTEGER,
+                stop_loss_pct REAL,
+                max_holding_days INTEGER,
+                summary_json TEXT,
+                gpt_prompt_text TEXT,
+                gpt_response_text TEXT,
+                status TEXT NOT NULL DEFAULT 'completed',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_pattern_research_runs_created_at "
+            "ON pattern_research_runs(created_at)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_pattern_research_runs_status "
+            "ON pattern_research_runs(status)"
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS pattern_research_samples (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id INTEGER NOT NULL,
+                stock_code TEXT NOT NULL,
+                stock_name TEXT,
+                trade_date TEXT NOT NULL,
+                entry_price REAL,
+                max_future_return_pct REAL,
+                min_future_return_pct REAL,
+                future_return_pct REAL,
+                target_hit INTEGER DEFAULT 0,
+                stop_hit INTEGER DEFAULT 0,
+                result_label TEXT NOT NULL,
+                features_json TEXT,
+                pattern_tags_json TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (run_id) REFERENCES pattern_research_runs(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_pattern_research_samples_run_id "
+            "ON pattern_research_samples(run_id)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_pattern_research_samples_result_label "
+            "ON pattern_research_samples(result_label)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_pattern_research_samples_stock_code "
+            "ON pattern_research_samples(stock_code)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_pattern_research_samples_trade_date "
+            "ON pattern_research_samples(trade_date)"
         )
         conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_backtest_equity_curve_run_id ON backtest_equity_curve(run_id)"
