@@ -398,8 +398,9 @@ def build_pattern_samples(
     parsed_goal = parsed_goal or {}
     entry_filters = list(parsed_goal.get("entry_filters") or [])
     exclude_filters = list(parsed_goal.get("exclude_filters") or [])
+    reference_conditions = list(parsed_goal.get("reference_conditions") or [])
     applied_entry_filters = [item for item in entry_filters if item.get("apply_to_samples")]
-    reference_entry_filters = [item for item in entry_filters if not item.get("apply_to_samples")]
+    reference_entry_filters = [item for item in entry_filters if not item.get("apply_to_samples")] + reference_conditions
     applied_exclude_filters = [item for item in exclude_filters if item.get("apply_to_samples")]
     dynamic_definitions = _dynamic_indicator_definitions(parsed_goal)
     applied_conditions = applied_entry_filters + applied_exclude_filters

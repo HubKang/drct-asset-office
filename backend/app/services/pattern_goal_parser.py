@@ -91,7 +91,7 @@ def _condition(
 
 class PatternGoalParser:
     def parse(self, goal_text: str) -> dict[str, Any]:
-        text = goal_text.strip()
+        text = re.sub(r"\s+", " ", goal_text.strip())
         target_days, warnings = _extract_target_days(text)
         target_return_pct = _extract_target_return(text)
         stop_loss_pct = _extract_stop_loss(text)
@@ -121,6 +121,7 @@ class PatternGoalParser:
         entry_filters: list[dict[str, Any]] = []
         exclude_filters: list[dict[str, Any]] = []
         unsupported_items: list[dict[str, Any]] = []
+        temporary_indicators: list[dict[str, Any]] = []
         indicator_candidates = [
             f"max_future_return_{target_days}d",
             f"min_future_return_{target_days}d",
@@ -148,6 +149,38 @@ class PatternGoalParser:
                 )
             )
             indicator_candidates.extend(["ma20", "recent_5d_return"])
+        if re.search(r"5\s*일선.*10\s*일선|5\s*일\s*이동평균.*10\s*일\s*이동평균|5\s*일선.*근처|10\s*일선.*근처", text):
+            add_entry(
+                _condition(
+                    source_text="5일선이 10일선 근처",
+                    label="5일선-10일선 이격률",
+                    indicator="ma5_vs_ma10_pct",
+                    operator="between",
+                    value=[-3, 3],
+                    expression="-3 <= ma5_vs_ma10_pct <= 3",
+                    apply_to_samples=False,
+                    status="needs_review",
+                    source="rule_base_candidate",
+                )
+            )
+            temporary_indicators.append(
+                {
+                    "indicator_key": "ma5_vs_ma10_pct",
+                    "indicator_name": "5일선과 10일선 이격률",
+                    "calculation_type": "distance_pct",
+                    "parameters": {
+                        "target_indicator": "ma5",
+                        "base_indicator": "ma10",
+                        "unit": "%",
+                    },
+                    "required_indicators": ["ma5", "ma10"],
+                    "execution_supported": True,
+                    "execution_status": "supported",
+                    "execution_message": "distance_pct 계산 유형은 샘플 엔진에서 실행 가능합니다.",
+                    "scope": "run_only",
+                }
+            )
+            indicator_candidates.extend(["ma5", "ma10", "ma5_vs_ma10_pct"])
         if re.search(r"종가(?:는|가)?\s*20\s*일선\s*위|20\s*일선\s*위", text):
             add_entry(
                 _condition(
@@ -247,6 +280,47 @@ class PatternGoalParser:
                 }
             )
             indicator_candidates.append("recent_3d_return")
+        rapid_candle_match = re.search(
+            r"(?P<window>\d+)\s*일\s*(?:안에|이내|내|동안)?[^\n。.!?]*?(?P<return>\d+(?:\.\d+)?)\s*%\s*이상\s*급등.*?(?:캔들|봉)?",
+            _normalize_percent_text(text),
+        )
+        if rapid_candle_match:
+            window = int(rapid_candle_match.group("window"))
+            return_pct = float(rapid_candle_match.group("return"))
+            source_text = f"{window}일 내에 {return_pct:g}% 이상 급등한 캔들이 있다"
+            add_entry(
+                _condition(
+                    source_text=source_text,
+                    label=f"최근 {window}일 급등 캔들 존재",
+                    indicator=f"max_return_1d_{window}d",
+                    operator=">=",
+                    value=return_pct,
+                    expression=f"max_return_1d_{window}d >= {return_pct:g}",
+                    apply_to_samples=False,
+                    status="needs_review",
+                    source="rule_base_candidate",
+                )
+            )
+            unsupported_items.append(
+                {
+                    "source_text": source_text,
+                    "natural_text": source_text,
+                    "reason": f"최근 {window}거래일 동안 일간 수익률 {return_pct:g}% 이상 캔들이 있었는지 확인하는 수식 후보입니다.",
+                    "indicator_key": f"max_return_1d_{window}d",
+                    "indicator_name": f"최근 {window}일 최대 일간수익률",
+                    "expression": f"max_return_1d_{window}d >= {return_pct:g}",
+                    "calculation_type": "rolling_high",
+                    "required_indicators": ["return_1d"],
+                    "parameters": {
+                        "target_indicator": "return_1d",
+                        "window": window,
+                        "unit": "%",
+                    },
+                    "status": "needs_review",
+                    "display_group": "formula_required",
+                }
+            )
+            indicator_candidates.extend(["return_1d", f"max_return_1d_{window}d"])
         if any(keyword in text for keyword in ("세력", "주도주 느낌", "수급")):
             unsupported_items.append({"source_text": "세력/수급/주도주 느낌", "reason": "현재 보유 데이터만으로 직접 계산하기 어려움"})
 
@@ -279,6 +353,7 @@ class PatternGoalParser:
             "exclude_filters": exclude_filters,
             "hypothesis_conditions": entry_filters + exclude_filters,
             "indicator_candidates": list(dict.fromkeys(indicator_candidates)),
+            "temporary_indicators": temporary_indicators,
             "unsupported_items": unsupported_items,
             "warnings": warnings,
         }
