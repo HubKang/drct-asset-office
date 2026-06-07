@@ -8391,6 +8391,77 @@ a:focus-visible {
   background: #ffffff;
 }
 
+.auto-param-promising-card {
+  margin-top: 12px;
+  display: grid;
+  gap: 10px;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  background: #f0fdf4;
+  padding: 12px;
+}
+
+.auto-param-promising-card > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.auto-param-promising-card strong {
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.auto-param-promising-card span,
+.auto-param-promising-card small {
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.auto-param-promising-list {
+  display: grid;
+  gap: 8px;
+}
+
+.auto-param-promising-item {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #dcfce7;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px;
+}
+
+.auto-param-promising-item > em {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: #dcfce7;
+  color: #166534;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.auto-param-promising-item > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.auto-param-promising-item code {
+  overflow: hidden;
+  color: #334155;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .auto-param-compare-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -8531,5 +8602,15 @@ a:focus-visible {
 
   .auto-param-compare-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .auto-param-promising-item {
+    grid-template-columns: 24px minmax(0, 1fr);
+  }
+
+  .auto-param-promising-item > .auto-param-verdict,
+  .auto-param-promising-item > .auto-param-apply-button {
+    justify-self: start;
+    grid-column: 2;
   }
 }

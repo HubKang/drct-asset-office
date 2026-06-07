@@ -327,6 +327,33 @@ function autoResultShortInterpretation(result: AutoParamResult, baselineSummary:
   return "차이 작음";
 }
 
+function autoResultVerdictRank(verdict: string): number {
+  const ranks: Record<string, number> = {
+    유망: 0,
+    검토: 1,
+    "효과 약함": 2,
+    "샘플 부족": 3,
+    "과최적화 주의": 3,
+    악화: 4,
+    오류: 5,
+  };
+  return ranks[verdict] ?? 9;
+}
+
+function sortAutoResultsByPromise(results: AutoParamResult[], baselineSummary: Record<string, any> | null | undefined): AutoParamResult[] {
+  return [...results]
+    .filter((result) => result.status === "success")
+    .sort((left, right) => {
+      const leftMetrics = autoResultMetrics(left, baselineSummary);
+      const rightMetrics = autoResultMetrics(right, baselineSummary);
+      const verdictDiff = autoResultVerdictRank(autoResultVerdictV2(left, baselineSummary)) - autoResultVerdictRank(autoResultVerdictV2(right, baselineSummary));
+      if (verdictDiff !== 0) return verdictDiff;
+      if (rightMetrics.rateDelta !== leftMetrics.rateDelta) return rightMetrics.rateDelta - leftMetrics.rateDelta;
+      if (rightMetrics.total !== leftMetrics.total) return rightMetrics.total - leftMetrics.total;
+      return leftMetrics.failure - rightMetrics.failure;
+    });
+}
+
 function autoValueKey(value: any): string {
   return Array.isArray(value) ? value.join("~") : String(value ?? "");
 }
@@ -774,14 +801,20 @@ function PatternResearchPage() {
       if (key) knownKeys.add(key);
     });
     const options = [
-      { key: "close_vs_ma20_pct", usage: "exclude", operator: ">=", values: [8, 10, 12, 15], label: "20일선 이격 과열 제외" },
-      { key: "ma5_vs_ma10_pct", usage: "include", operator: "between", values: [[-5, 5], [-3, 3], [-2, 2], [0, 3]], label: "5/10일선 근접 포함" },
-      { key: "trading_value_ratio_20", usage: "include", operator: ">=", values: [1.2, 1.3, 1.5, 2], label: "거래대금 배수 포함" },
-      { key: "recent_3d_return", usage: "exclude", operator: ">=", values: [10, 12, 15, 20], label: "최근 3일 급등 제외" },
-      { key: "recent_5d_return", usage: "exclude", operator: ">=", values: [10, 12, 15, 20], label: "최근 5일 급등 제외" },
+      { key: "close_vs_ma20_pct", usage: "exclude", operator: ">=", values: [10], label: "20일선 이격 과열 제외" },
+      { key: "max_return_1d_30d", usage: "exclude", operator: ">=", values: [20], label: "30일 내 과열 경험 제외" },
+      { key: "recent_5d_return", usage: "exclude", operator: ">=", values: [12], label: "최근 5일 급등 제외" },
+      { key: "ma5_vs_ma10_pct", usage: "include", operator: "between", values: [[-3, 3]], label: "5/10일선 근접 포함" },
+      { key: "trading_value_ratio_20", usage: "include", operator: ">=", values: [1.3], label: "거래대금 배수 포함" },
+      { key: "close_vs_ma20_pct", usage: "exclude", operator: ">=", values: [8, 12, 15], label: "20일선 이격 과열 제외" },
+      { key: "max_return_1d_30d", usage: "exclude", operator: ">=", values: [25, 15], label: "30일 내 과열 경험 제외" },
+      { key: "ma5_vs_ma10_pct", usage: "include", operator: "between", values: [[-2, 2], [-5, 5], [0, 3]], label: "5/10일선 근접 포함" },
+      { key: "trading_value_ratio_20", usage: "include", operator: ">=", values: [1.5, 1.2, 2], label: "거래대금 배수 포함" },
+      { key: "recent_3d_return", usage: "exclude", operator: ">=", values: [10, 20, 12, 15], label: "최근 3일 급등 제외" },
+      { key: "recent_5d_return", usage: "exclude", operator: ">=", values: [15, 10, 20], label: "최근 5일 급등 제외" },
+      { key: "ma60_slope_5d", usage: "include", operator: ">=", values: [0.3, 0, 0.1, 0.5], label: "60일선 기울기 포함" },
       { key: "max_return_1d_30d", usage: "include", operator: ">=", values: [10, 15], label: "30일 내 고점 경험 포함" },
-      { key: "max_return_1d_30d", usage: "exclude", operator: ">=", values: [20, 25], label: "30일 내 과열 경험 제외" },
-      { key: "ma60_slope_5d", usage: "include", operator: ">=", values: [0, 0.1, 0.3, 0.5], label: "60일선 기울기 포함" },
+      { key: "close_vs_ma20_pct", usage: "include", operator: "between", values: [[-5, 5], [-3, 5]], label: "20일선 눌림 범위 포함" },
     ] as Array<{ key: string; usage: "include" | "exclude"; operator: string; values: any[]; label: string }>;
     const candidates: AutoParamCandidate[] = [];
     const seen = new Set<string>([autoConditionHash(baseline), ...autoTestResults.map((item) => item.hash)]);
@@ -3660,6 +3693,10 @@ function AutoParamTestPanelV2({
   const reviewCount = results.filter((result) => autoResultVerdictV2(result, baselineSummary) === "검토").length;
   const lowSampleCount = results.filter((result) => ["샘플 부족", "과최적화 주의"].includes(autoResultVerdictV2(result, baselineSummary))).length;
   const worseCount = results.filter((result) => autoResultVerdictV2(result, baselineSummary) === "악화").length;
+  const topResults = sortAutoResultsByPromise(results, baselineSummary).slice(0, 3);
+  const bestSuccessRate = Math.max(0, ...results.filter((result) => result.status === "success").map((result) => Number(result.summary?.success_rate || 0)));
+  const bestRateDelta = Math.max(0, ...results.filter((result) => result.status === "success").map((result) => autoResultMetrics(result, baselineSummary).rateDelta));
+  const bestFailureReduction = Math.max(0, ...results.filter((result) => result.status === "success").map((result) => -autoResultMetrics(result, baselineSummary).failureDelta));
 
   return (
     <div className="auto-param-panel">
@@ -3679,7 +3716,7 @@ function AutoParamTestPanelV2({
 
       <div className="auto-param-test-explain">
         <strong>후보 생성 규칙</strong>
-        <span>비교용 지표를 포함/제외 조건으로 바꾸거나 기존 조건의 기준값을 조금씩 바꿔 테스트합니다. 한 번에 5개만 실행해 계산 부담을 줄입니다.</span>
+        <span>실패 샘플의 과열 가능성을 줄이는 제외 조건을 먼저 테스트한 뒤, 눌림 범위, 거래대금, 추세 강도, 급등 이력 포함 조건 순서로 후보를 만듭니다. 한 번에 5개만 실행해 계산 부담을 줄입니다.</span>
       </div>
 
       <div className="auto-param-baseline">
@@ -3709,8 +3746,13 @@ function AutoParamTestPanelV2({
         <span>검토 {fmtNumber(reviewCount, 0)}</span>
         <span className="auto-param-test-warning-badge">샘플/과최적화 주의 {fmtNumber(lowSampleCount, 0)}</span>
         <span>악화 {fmtNumber(worseCount, 0)}</span>
+        <span>최고 성공률 {bestSuccessRate ? fmtPercent(bestSuccessRate) : "-"}</span>
+        <span>최대 개선 {bestRateDelta ? `+${fmtPercent(bestRateDelta)}` : "-"}</span>
+        <span>실패 최대 감소 {bestFailureReduction ? `${fmtNumber(bestFailureReduction, 0)}개` : "-"}</span>
         <span>선택 {selectedResult ? `#${selectedResult.seq}` : "없음"}</span>
       </div>
+
+      <AutoParamPromisingCard results={topResults} baselineSummary={baselineSummary} onApplyToConditions={onApplyToConditions} />
 
       {selectedResult ? <AutoParamSelectedCompareCard baselineSummary={baselineSummary} result={selectedResult} onShowBaseline={onShowBaseline} onApplyToConditions={onApplyToConditions} /> : null}
 
@@ -3813,6 +3855,63 @@ function AutoParamSelectedCompareCard({
         <button className="btn btn-secondary" type="button" onClick={onShowBaseline}>기준 결과 보기</button>
         <button className="btn btn-primary auto-param-apply-button" type="button" onClick={() => onApplyToConditions(result)}>2단계 조건에 반영</button>
       </div>
+    </div>
+  );
+}
+
+function AutoParamPromisingCard({
+  results,
+  baselineSummary,
+  onApplyToConditions,
+}: {
+  results: AutoParamResult[];
+  baselineSummary: Record<string, any> | null | undefined;
+  onApplyToConditions: (result: AutoParamResult) => void;
+}) {
+  const promisingOrReview = results.filter((result) => ["유망", "검토"].includes(autoResultVerdictV2(result, baselineSummary)));
+  const displayResults = promisingOrReview.length ? promisingOrReview : results;
+  const hasResults = displayResults.length > 0;
+  const overheatedCount = displayResults.filter((result) => {
+    const key = String(result.changedCondition?.indicator_key || "");
+    return result.changedCondition?.exclude_when_true && (key.includes("return") || key.includes("ma20") || key.includes("max_return"));
+  }).length;
+  return (
+    <div className="auto-param-promising-card">
+      <div>
+        <strong>이번 자동 테스트의 유망 후보</strong>
+        <span>
+          {hasResults
+            ? overheatedCount
+              ? "이번 테스트에서는 과열 제외 조건이 상대적으로 좋은 결과를 보였습니다. 성공률 개선과 실패 샘플 감소를 함께 확인하세요."
+              : "이번 테스트에서 기준 결과를 개선할 가능성이 있는 조건을 우선 정렬했습니다."
+            : "아직 표시할 자동 테스트 결과가 없습니다. 첫 5개 테스트를 실행하면 유망 후보가 여기에 정리됩니다."}
+        </span>
+      </div>
+      {hasResults ? (
+        <div className="auto-param-promising-list">
+          {displayResults.map((result, index) => {
+            const metrics = autoResultMetrics(result, baselineSummary);
+            const verdict = autoResultVerdictV2(result, baselineSummary);
+            return (
+              <div className="auto-param-promising-item" key={`promising-${result.id}`}>
+                <em>{index + 1}</em>
+                <div>
+                  <strong>{result.label}</strong>
+                  <code>{result.description}</code>
+                  <span>성공률 {fmtPercent(metrics.successRate)} · 기준 대비 {metrics.rateDelta >= 0 ? "+" : ""}{fmtPercent(metrics.rateDelta)} · 후보 {fmtNumber(metrics.total, 0)}개 · 실패 {metrics.failureDelta <= 0 ? fmtNumber(Math.abs(metrics.failureDelta), 0) : `+${fmtNumber(metrics.failureDelta, 0)}`}개 변화</span>
+                </div>
+                <span className={`auto-param-verdict verdict-${verdict.replace(/\s/g, "-")}`}>{verdict}</span>
+                <button className="btn btn-secondary btn-xs auto-param-apply-button" type="button" onClick={() => onApplyToConditions(result)}>
+                  2단계 조건에 반영
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="pattern-empty-note">기준 결과를 뚜렷하게 개선한 후보가 아직 없습니다.</div>
+      )}
+      <small>이 카드는 매수 추천이 아니라 다음 조건 연구 후보를 정리한 것입니다.</small>
     </div>
   );
 }
