@@ -18,6 +18,19 @@ type SampleTab = "SUCCESS" | "FAILURE" | "NEUTRAL";
 type GptValidationStatus = "idle" | "validating" | "success" | "failed";
 type ConditionUsage = "include" | "exclude" | "reference" | "off";
 type FinalUsageMap = Record<string, ConditionUsage>;
+type NewIndicatorUsageStatus = "filter_supported" | "not_blocking" | "filter_engine_required";
+type SampleBlocker = {
+  rowId: string;
+  indicatorKey: string;
+  label: string;
+  sourceText: string;
+  expression: string;
+  finalUsage: ConditionUsage;
+  calculationType: string;
+  requiredIndicators: string[];
+  currentStatus: string;
+  message: string;
+};
 
 const DEFAULT_GOAL =
   "20일선 근처에서 눌림을 받고 거래대금이 다시 유입되며, 5거래일 안에 5% 이상 상승할 가능성이 높은 패턴을 찾고 싶다. 손절은 -5% 이내로 제한하고, 급등 직후 추격매수는 제외하고 싶다.";
@@ -200,6 +213,72 @@ function conditionIdentity(condition: Record<string, any>): string {
   return [indicator, operator, value, category, expression].join("|");
 }
 
+function isNewIndicatorCondition(condition: Record<string, any>, candidate?: Record<string, any>): boolean {
+  return Boolean(
+    candidate ||
+    condition.validation_status === "new_indicator_required" ||
+    condition.display_group === "formula_required" ||
+    condition.source === "rule_base_candidate" ||
+    condition.calculation_type ||
+    condition.execution_status,
+  );
+}
+
+function isSampleFilterExecutable(condition: Record<string, any>, candidate?: Record<string, any>): boolean {
+  if (condition.execution_supported === true || candidate?.execution_supported === true) return true;
+  const calculationType = String(condition.calculation_type || candidate?.calculation_type || "");
+  return ["distance_pct"].includes(calculationType);
+}
+
+function getNewIndicatorUsageStatus(condition: Record<string, any>, finalUsage: ConditionUsage, candidate?: Record<string, any>): NewIndicatorUsageStatus | null {
+  if (!isNewIndicatorCondition(condition, candidate)) return null;
+  if (isSampleFilterExecutable(condition, candidate)) return "filter_supported";
+  if (finalUsage === "reference" || finalUsage === "off") return "not_blocking";
+  return "filter_engine_required";
+}
+
+function newIndicatorStatusLabels(status: NewIndicatorUsageStatus | null): string[] {
+  if (status === "filter_supported") return ["새 지표 필요", "계산 가능"];
+  if (status === "not_blocking") return ["새 지표 필요", "비교 가능", "엔진 보완 필요"];
+  if (status === "filter_engine_required") return ["새 지표 필요", "엔진 보완 필요"];
+  return [];
+}
+
+function collectSampleBlockers(goal: Record<string, any> | null | undefined, finalUsageByRowId: FinalUsageMap): SampleBlocker[] {
+  if (!goal) return [];
+  const candidateByKey = new Map<string, Record<string, any>>();
+  ([...(goal.temporary_indicators || []), ...(goal.unsupported_items || []), ...(goal.new_indicator_candidates || [])] as Array<Record<string, any>>).forEach((item) => {
+    const key = String(item.indicator_key || item.suggested_indicator_key || "");
+    if (key && !candidateByKey.has(key)) candidateByKey.set(key, item);
+  });
+  const rows = [
+    ...((goal.entry_filters || []) as Array<Record<string, any>>).filter((condition) => condition.gpt_verify_selected !== false).map((condition, index) => ({ kind: "parsed_entry", condition, index, fallbackUsage: usageForCondition(condition, "entry_filters") })),
+    ...((goal.reference_conditions || []) as Array<Record<string, any>>).map((condition, index) => ({ kind: "reference_condition", condition, index, fallbackUsage: "reference" as ConditionUsage })),
+    ...((goal.exclude_filters || []) as Array<Record<string, any>>).filter((condition) => condition.gpt_verify_selected !== false).map((condition, index) => ({ kind: "parsed_exclude", condition, index, fallbackUsage: usageForCondition(condition, "exclude_filters") })),
+  ];
+  return rows.flatMap(({ kind, condition, index, fallbackUsage }) => {
+    const rowId = conditionRowId(kind, condition, index);
+    const finalUsage = finalUsageByRowId[rowId] || fallbackUsage;
+    const indicatorKey = String(condition.indicator_key || condition.indicator || "");
+    const candidate = candidateByKey.get(indicatorKey);
+    const status = getNewIndicatorUsageStatus(condition, finalUsage, candidate);
+    if (status !== "filter_engine_required") return [];
+    const calculationType = String(condition.calculation_type || candidate?.calculation_type || "-");
+    return [{
+      rowId,
+      indicatorKey,
+      label: String(condition.label || candidate?.indicator_name || condition.source_text || indicatorKey || "신규 지표"),
+      sourceText: String(condition.source_text || condition.natural_text || candidate?.source_text || "-"),
+      expression: formatConditionExpression(condition, finalUsage),
+      finalUsage,
+      calculationType,
+      requiredIndicators: (condition.required_indicators || candidate?.required_indicators || []) as string[],
+      currentStatus: status,
+      message: `${calculationType} 계산은 아직 샘플 필터 실행 엔진에서 지원되지 않습니다.`,
+    }];
+  });
+}
+
 function scrollToIndicatorCandidate(indicatorKey: string) {
   const target = document.getElementById(`gpt-candidate-${indicatorKey}`);
   target?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -228,6 +307,8 @@ function PatternResearchPage() {
   const [gptGoalValidationStatus, setGptGoalValidationStatus] = useState<GptValidationStatus>("idle");
   const [resolvedGptIndicatorKeys, setResolvedGptIndicatorKeys] = useState<string[]>([]);
   const [finalUsageByRowId, setFinalUsageByRowId] = useState<FinalUsageMap>({});
+  const [focusedConditionRowIds, setFocusedConditionRowIds] = useState<string[]>([]);
+  const [blockedBannerMessage, setBlockedBannerMessage] = useState("");
   const [currentRun, setCurrentRun] = useState<PatternResearchRun | null>(null);
   const [samples, setSamples] = useState<PatternResearchSample[]>([]);
   const [gptPackage, setGptPackage] = useState<PatternResearchGptPackage | null>(null);
@@ -250,7 +331,8 @@ function PatternResearchPage() {
     ...confirmedConditions.filter((condition) => condition.validation_status === "new_indicator_required"),
   ];
   const needsReviewCount = confirmedConditions.filter((condition) => condition.status === "needs_review" || condition.validation_status === "needs_review").length;
-  const canCreateSamples = Boolean(parsed) && newIndicatorRequiredConditions.length === 0;
+  const sampleBlockers = collectSampleBlockers(parsedGoal, finalUsageByRowId);
+  const canCreateSamples = Boolean(parsed) && sampleBlockers.length === 0;
   const stepItems = [
     { key: "setup" as TabKey, label: "1. 찾을 패턴 설정", status: parsed ? "완료" : activeTab === "setup" ? "진행 중" : "대기" },
     { key: "gptValidation" as TabKey, label: "2. 수식화 GPT 검증 및 확정", status: newIndicatorRequiredConditions.length || needsReviewCount ? "확인 필요" : gptValidationStatusLabel(gptGoalValidationStatus) },
@@ -418,7 +500,7 @@ function PatternResearchPage() {
     });
   };
 
-  const buildFinalParsedGoal = (goal: Record<string, any>): Record<string, any> => {
+  const buildFinalParsedGoal = (goal: Record<string, any>, usageOverrides: FinalUsageMap = finalUsageByRowId): Record<string, any> => {
     const next = { ...goal };
     const sourceEntries = ((goal.entry_filters || []) as Array<Record<string, any>>).filter((condition) => condition.gpt_verify_selected !== false);
     const sourceExcludes = ((goal.exclude_filters || []) as Array<Record<string, any>>).filter((condition) => condition.gpt_verify_selected !== false);
@@ -428,21 +510,21 @@ function PatternResearchPage() {
     const referenceConditions: Array<Record<string, any>> = [];
 
     sourceEntries.forEach((condition, index) => {
-      const usage = finalUsageByRowId[conditionRowId("parsed_entry", condition, index)] || usageForCondition(condition, "entry_filters");
+      const usage = usageOverrides[conditionRowId("parsed_entry", condition, index)] || usageForCondition(condition, "entry_filters");
       if (usage === "include") entryFilters.push({ ...condition, apply_to_samples: true, exclude_when_true: false, apply_mode_label: usageLabel("include") });
       else if (usage === "exclude") excludeFilters.push({ ...condition, apply_to_samples: true, exclude_when_true: true, apply_mode_label: usageLabel("exclude") });
       else if (usage === "reference") referenceConditions.push({ ...condition, apply_to_samples: false, exclude_when_true: false, apply_mode_label: usageLabel("reference") });
     });
 
     sourceReferences.forEach((condition, index) => {
-      const usage = finalUsageByRowId[conditionRowId("reference_condition", condition, index)] || "reference";
+      const usage = usageOverrides[conditionRowId("reference_condition", condition, index)] || "reference";
       if (usage === "include") entryFilters.push({ ...condition, apply_to_samples: true, exclude_when_true: false, apply_mode_label: usageLabel("include") });
       else if (usage === "exclude") excludeFilters.push({ ...condition, apply_to_samples: true, exclude_when_true: true, apply_mode_label: usageLabel("exclude") });
       else if (usage === "reference") referenceConditions.push({ ...condition, apply_to_samples: false, exclude_when_true: false, apply_mode_label: usageLabel("reference") });
     });
 
     sourceExcludes.forEach((condition, index) => {
-      const usage = finalUsageByRowId[conditionRowId("parsed_exclude", condition, index)] || usageForCondition(condition, "exclude_filters");
+      const usage = usageOverrides[conditionRowId("parsed_exclude", condition, index)] || usageForCondition(condition, "exclude_filters");
       if (usage === "include") entryFilters.push({ ...condition, apply_to_samples: true, exclude_when_true: false, apply_mode_label: usageLabel("include") });
       else if (usage === "exclude") excludeFilters.push({ ...condition, apply_to_samples: true, exclude_when_true: true, apply_mode_label: usageLabel("exclude") });
       else if (usage === "reference") referenceConditions.push({ ...condition, apply_to_samples: false, exclude_when_true: false, apply_mode_label: usageLabel("reference") });
@@ -707,7 +789,14 @@ function PatternResearchPage() {
     }
   };
 
-  const createRun = async () => {
+  const focusSampleBlockersInValidation = () => {
+    const rowIds = sampleBlockers.map((item) => item.rowId);
+    setFocusedConditionRowIds(rowIds);
+    setBlockedBannerMessage("샘플 생성이 보류된 신규 지표를 확인해 주세요. 포함/제외 조건으로 사용하려면 계산 엔진 지원이 필요합니다. 현재는 비교용으로만 사용하거나 사용안함으로 변경한 뒤 샘플을 생성할 수 있습니다.");
+    setActiveTab("gptValidation");
+  };
+
+  const createRun = async (usageOverrides: FinalUsageMap = finalUsageByRowId) => {
     if (!selectedStock) {
       setError("분석할 종목을 선택해 주세요.");
       return;
@@ -719,7 +808,7 @@ function PatternResearchPage() {
     setLoading(true);
     setError("");
     try {
-      const finalParsedGoal = buildFinalParsedGoal(parsed.parsed_goal);
+      const finalParsedGoal = buildFinalParsedGoal(parsed.parsed_goal, usageOverrides);
       const created = await repositories.patternResearch.createRun({
         research_name: `${selectedStock.stock_name} 패턴 연구`,
         stock_codes: [selectedStock.stock_code],
@@ -733,12 +822,24 @@ function PatternResearchPage() {
       setSamples((await repositories.patternResearch.fetchSamples(created.run_id, sampleTab)).items);
       setGptPackage(await repositories.patternResearch.fetchGptPackage(created.run_id));
       setActiveTab("samples");
+      setFocusedConditionRowIds([]);
+      setBlockedBannerMessage("");
       setMessage("성공/실패 샘플을 생성했습니다.");
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "성공/실패 샘플 생성에 실패했습니다.");
     } finally {
       setLoading(false);
     }
+  };
+
+  const resolveBlockersAndCreateRun = async (usage: ConditionUsage) => {
+    if (!sampleBlockers.length) {
+      await createRun();
+      return;
+    }
+    const nextUsage = sampleBlockers.reduce<FinalUsageMap>((acc, blocker) => ({ ...acc, [blocker.rowId]: usage }), { ...finalUsageByRowId });
+    setFinalUsageByRowId(nextUsage);
+    await createRun(nextUsage);
   };
 
   const loadSamples = async (label: SampleTab) => {
@@ -909,6 +1010,8 @@ function PatternResearchPage() {
               validationStatus={gptGoalValidationStatus}
               resultRef={gptValidationResultRef}
               finalUsageByRowId={finalUsageByRowId}
+              focusedRowIds={focusedConditionRowIds}
+              blockedBannerMessage={blockedBannerMessage}
               onFinalUsageChange={(rowId, usage) => setFinalUsageByRowId((prev) => ({ ...prev, [rowId]: usage }))}
               onTogglePrompt={() => setShowGptGoalPrompt((prev) => !prev)}
               onToggleResultInput={() => setShowGptResultInput((prev) => !prev)}
@@ -940,17 +1043,19 @@ function PatternResearchPage() {
               2단계에서 확정한 조건으로 과거 가격 데이터에서 성공/실패 샘플을 생성하고, GPT 연구 패키지로 넘기기 전 샘플 품질을 확인합니다.
             </p>
             <PatternFormulaSummary parsed={parsed} />
-            <SampleReadinessCard
+            <SampleReadinessCardV2
               parsed={parsed}
-              unresolvedConditions={newIndicatorRequiredConditions}
+              blockers={sampleBlockers}
               canCreateSamples={canCreateSamples}
-              onGoToGpt={() => setActiveTab("gptValidation")}
+              onUseAsReference={() => void resolveBlockersAndCreateRun("reference")}
+              onTurnOff={() => void resolveBlockersAndCreateRun("off")}
+              onGoToGpt={focusSampleBlockersInValidation}
             />
-            {newIndicatorRequiredConditions.length ? (
+            {sampleBlockers.length ? (
               <div className="alert warning">미해결 신규 지표 조건이 있어 포함/제외 조건으로 바로 쓰기 어렵습니다. 신규 지표 후보를 먼저 확인해 주세요.</div>
             ) : null}
             <div className="pattern-action-row">
-              <button className="btn btn-primary" type="button" disabled={loading || !parsed || !canCreateSamples} onClick={createRun}>
+              <button className="btn btn-primary" type="button" disabled={loading || !parsed || !canCreateSamples} onClick={() => void createRun()}>
                 확정 조건으로 성공/실패 샘플 생성
               </button>
             </div>
@@ -1036,7 +1141,7 @@ function PatternResearchPage() {
                 <span>LLM 보조 해석 사용</span>
               </label>
               <button className="btn btn-secondary" type="button" disabled={loading} onClick={parseGoal}>목표 해석하기</button>
-              <button className="btn btn-primary" type="button" disabled={loading || !parsed} onClick={createRun}>기준으로 샘플 생성</button>
+              <button className="btn btn-primary" type="button" disabled={loading || !parsed} onClick={() => void createRun()}>기준으로 샘플 생성</button>
             </div>
             <GoalInterpretation parsed={parsed} onUpdateCriteria={updateCriteria} onUpdateFilter={updateFilter} onChangeUsage={updateFilterUsage} />
             <LlmAssistPanel parsed={parsed} onApplyCandidate={addCandidateToGoal} />
@@ -1552,6 +1657,59 @@ function SampleReadinessCard({
   );
 }
 
+function SampleReadinessCardV2({
+  parsed,
+  blockers,
+  canCreateSamples,
+  onUseAsReference,
+  onTurnOff,
+  onGoToGpt,
+}: {
+  parsed: PatternGoalParseResponse | null;
+  blockers: SampleBlocker[];
+  canCreateSamples: boolean;
+  onUseAsReference: () => void;
+  onTurnOff: () => void;
+  onGoToGpt: () => void;
+}) {
+  const statusText = !parsed ? "목표 해석 필요" : canCreateSamples ? "샘플 생성 가능" : "샘플 생성 전 확인이 필요합니다";
+  return (
+    <div className={`sample-readiness-card ${canCreateSamples ? "is-ready" : "is-blocked"}`}>
+      <div>
+        <strong>{statusText}</strong>
+        <span>
+          {canCreateSamples
+            ? "확정한 조건으로 성공/실패 샘플을 생성할 수 있습니다."
+            : "일부 조건은 새로 계산해야 하는 지표입니다. 해당 지표가 포함 조건 또는 제외 조건으로 선택되어 있으면 샘플 생성 전에 처리 방식이 필요합니다."}
+        </span>
+      </div>
+      {blockers.length ? (
+        <div className="sample-readiness-reasons">
+          <em>미해결 조건 {blockers.length}개</em>
+          {blockers.slice(0, 4).map((blocker) => (
+            <div className="sample-readiness-blocker-card" key={blocker.rowId}>
+              <strong>{blocker.label}</strong>
+              <span>원문: {blocker.sourceText}</span>
+              <span>제안 수식: {blocker.expression}</span>
+              <span>현재 사용 방식: {usageLabel(blocker.finalUsage)}</span>
+              <span>계산 유형: {blocker.calculationType}</span>
+              <span>현재 상태: 엔진 보완 필요</span>
+              <span>필요한 처리: 비교용으로 전환하거나 사용안함으로 변경한 뒤 샘플을 생성할 수 있습니다.</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {!canCreateSamples ? (
+        <div className="sample-readiness-actions">
+          <button className="btn btn-primary next-step-action" type="button" onClick={onUseAsReference}>비교용으로 바꾸고 샘플 생성</button>
+          <button className="btn btn-secondary next-step-action" type="button" onClick={onTurnOff}>사용안함으로 바꾸고 샘플 생성</button>
+          <button className="btn btn-secondary next-step-action" type="button" onClick={onGoToGpt}>2단계에서 직접 수정</button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function PatternConfirmPanel({
   parsed,
   gptValidation,
@@ -1933,6 +2091,8 @@ function PatternVerifyDecisionPanel({
   validationStatus,
   resultRef,
   finalUsageByRowId,
+  focusedRowIds,
+  blockedBannerMessage,
   onFinalUsageChange,
   onTogglePrompt,
   onToggleResultInput,
@@ -1957,6 +2117,8 @@ function PatternVerifyDecisionPanel({
   validationStatus: GptValidationStatus;
   resultRef: { current: HTMLDivElement | null };
   finalUsageByRowId: FinalUsageMap;
+  focusedRowIds?: string[];
+  blockedBannerMessage?: string;
   onFinalUsageChange: (rowId: string, usage: ConditionUsage) => void;
   onTogglePrompt: () => void;
   onToggleResultInput: () => void;
@@ -2052,6 +2214,14 @@ function PatternVerifyDecisionPanel({
       linkedCandidate: candidateByKey.get(String(condition.indicator_key || "")),
     })),
   ];
+  const focusedRowIdSet = new Set(focusedRowIds || []);
+
+  useEffect(() => {
+    if (!focusedRowIds?.length) return;
+    window.setTimeout(() => {
+      document.querySelector(".pattern-new-indicator-focus")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 0);
+  }, [focusedRowIds?.join("|")]);
 
   const getEffectiveFinalUsage = (row: VerifyRow): ConditionUsage | "always" => {
     if (isAlwaysCriteriaRow(row)) return "always";
@@ -2115,6 +2285,7 @@ function PatternVerifyDecisionPanel({
       <p className="pattern-verify-description">
         GPT 검증 결과를 확인하고 각 조건의 최종 사용 방식을 정합니다. 사용 방식과 기준값을 확정하면 다음 단계에서 성공/실패 샘플을 생성합니다.
       </p>
+      {blockedBannerMessage ? <div className="pattern-blocked-banner">{blockedBannerMessage}</div> : null}
       <div className="pattern-verify-summary">
         <span>전체 {rows.length}개</span>
         <span>항상 적용 {usageCounts.always}개</span>
@@ -2183,15 +2354,17 @@ function PatternVerifyDecisionPanel({
               const isExpanded = Boolean(expandedRows[row.key]);
               const rowWarnings = row.warnings || relatedMessages(warnings, row.condition);
               const rowConflicts = row.conflicts || relatedMessages(conflicts, row.condition);
+              const newIndicatorUsageStatus = getNewIndicatorUsageStatus(row.condition, usage === "always" ? "reference" : usage, row.linkedCandidate);
               const statusBadges = [
                 row.kind === "always" ? "항상 적용" : row.condition.validation_status === "new_indicator_required" || row.linkedCandidate ? "새 지표 필요" : row.condition.status === "needs_review" ? "확인 필요" : "검증 완료",
                 row.linkedCandidate && (row.linkedCandidate.execution_supported || row.linkedCandidate.calculation_type === "distance_pct" || row.linkedCandidate.calculation_type === "rolling_high") ? "계산 가능" : "",
                 rowWarnings.length ? "경고 있음" : "",
                 rowConflicts.length ? "해석 충돌" : "",
               ].filter(Boolean);
+              const renderedStatusBadges = Array.from(new Set([...statusBadges.filter((badge) => !String(badge).includes("계산")), ...newIndicatorStatusLabels(newIndicatorUsageStatus)]));
               return (
                 <>
-                  <tr key={row.key}>
+                  <tr key={row.key} className={focusedRowIdSet.has(row.key) ? "pattern-row-needs-action pattern-new-indicator-focus" : undefined}>
                     <td title={String(row.condition.source_text || row.condition.natural_text || "")}>
                       <span className="pattern-verify-source">{row.condition.source_text || row.condition.natural_text || "-"}</span>
                     </td>
@@ -2201,7 +2374,7 @@ function PatternVerifyDecisionPanel({
                     </td>
                     <td>
                       <div className="pattern-verify-badges">
-                        {statusBadges.map((badge) => <span key={`${row.key}-${badge}`}>{badge}</span>)}
+                        {renderedStatusBadges.map((badge) => <span key={`${row.key}-${badge}`}>{badge}</span>)}
                       </div>
                     </td>
                     <td>

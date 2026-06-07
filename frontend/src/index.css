@@ -2277,8 +2277,48 @@ a:focus-visible {
   padding: 3px 7px;
 }
 
+.sample-readiness-blocker-card {
+  display: grid;
+  gap: 4px;
+  width: min(520px, 100%);
+  border: 1px solid #fbbf24;
+  border-radius: 8px;
+  background: #fff;
+  padding: 9px;
+}
+
+.sample-readiness-blocker-card strong {
+  font-size: 13px;
+}
+
+.sample-readiness-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .next-step-action {
   justify-self: end;
+}
+
+.pattern-blocked-banner {
+  border: 1px solid #fbbf24;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #92400e;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.pattern-row-needs-action {
+  background: #fff7ed;
+}
+
+.pattern-new-indicator-focus {
+  outline: 2px solid #f59e0b;
+  outline-offset: -2px;
 }
 
 .pattern-package-summary {
