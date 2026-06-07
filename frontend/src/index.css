@@ -8259,6 +8259,258 @@ a:focus-visible {
   font-size: 12px;
 }
 
+.auto-param-panel {
+  margin-top: 14px;
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.auto-param-head,
+.auto-param-actions,
+.auto-param-baseline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.auto-param-head {
+  justify-content: space-between;
+}
+
+.auto-param-head > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.auto-param-head strong {
+  color: #0f172a;
+  font-size: 15px;
+}
+
+.auto-param-head span,
+.auto-param-baseline span,
+.auto-param-table td span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.auto-param-baseline {
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.auto-param-baseline span {
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 999px;
+  background: #f8fafc;
+  padding: 5px 9px;
+}
+
+.auto-param-test-explain,
+.auto-param-test-selected-banner,
+.auto-param-test-compare-card {
+  margin-top: 12px;
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.auto-param-test-explain,
+.auto-param-test-selected-banner,
+.auto-param-test-interpretation,
+.auto-param-test-compare-card > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.auto-param-test-selected-banner {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.auto-param-test-selected-banner.is-baseline {
+  border-color: var(--color-hairline-cloud);
+  background: #f8fafc;
+}
+
+.auto-param-test-explain strong,
+.auto-param-test-selected-banner strong,
+.auto-param-test-compare-card strong,
+.auto-param-test-interpretation strong {
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.auto-param-test-explain span,
+.auto-param-test-selected-banner span,
+.auto-param-test-compare-card span,
+.auto-param-test-interpretation span,
+.auto-param-test-interpretation em {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.auto-param-test-summary {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.auto-param-test-summary span,
+.auto-param-test-warning-badge,
+.auto-param-test-promising-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #334155;
+  padding: 3px 9px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.auto-param-test-promising-badge {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.auto-param-test-warning-badge {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.auto-param-test-compare-card {
+  display: grid;
+  gap: 10px;
+  background: #ffffff;
+}
+
+.auto-param-compare-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.auto-param-table-shell {
+  margin-top: 12px;
+}
+
+.auto-param-table td:first-child {
+  width: 44px;
+}
+
+.auto-param-table td:nth-child(2) {
+  min-width: 220px;
+}
+
+.auto-param-table td:nth-child(2) strong {
+  display: block;
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.auto-param-table .positive {
+  color: #047857;
+  font-weight: 700;
+}
+
+.auto-param-table .negative {
+  color: #b91c1c;
+  font-weight: 700;
+}
+
+.selected-auto-result {
+  background: #eff6ff;
+}
+
+.auto-param-test-highlight-row {
+  box-shadow: inset 3px 0 0 #22c55e;
+}
+
+.auto-param-apply-button {
+  margin-left: 6px;
+}
+
+.auto-param-applied-badge {
+  background: #e0f2fe;
+  color: #075985;
+}
+
+.auto-param-apply-banner,
+.pattern-sample-stale-warning {
+  margin-top: 10px;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #92400e;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.pattern-row-auto-applied,
+.auto-param-applied-row {
+  background: #f0f9ff;
+  box-shadow: inset 3px 0 0 #38bdf8;
+}
+
+.auto-param-verdict {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #3730a3;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.verdict-우수 {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.verdict-유망 {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.verdict-검토 {
+  background: #fef9c3;
+  color: #854d0e;
+}
+
+.verdict-악화,
+.verdict-오류 {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.verdict-샘플-부족,
+.verdict-과최적화-주의 {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.verdict-효과-약함 {
+  background: #e2e8f0;
+  color: #334155;
+}
+
+.btn-xs {
+  min-height: 28px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
 @media (max-width: 900px) {
   .gpt-prompt-meta-grid {
     grid-template-columns: 1fr;
@@ -8266,5 +8518,18 @@ a:focus-visible {
 
   .gpt-prompt-editor-status {
     flex-wrap: wrap;
+  }
+
+  .auto-param-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .auto-param-actions {
+    flex-wrap: wrap;
+  }
+
+  .auto-param-compare-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

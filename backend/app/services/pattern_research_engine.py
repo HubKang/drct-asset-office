@@ -5,7 +5,7 @@ from statistics import mean
 from typing import Any
 
 
-SUPPORTED_DYNAMIC_EXECUTION_TYPES = {"distance_pct"}
+SUPPORTED_DYNAMIC_EXECUTION_TYPES = {"distance_pct", "rolling_high"}
 DEFAULT_OBSERVATION_INDICATORS = [
     "close_vs_ma20_pct",
     "close_vs_ma60_pct",
@@ -118,6 +118,12 @@ def _normalize_dynamic_indicator_definition(raw: dict[str, Any]) -> dict[str, An
         if not parameters.get("base_indicator") and len(required_indicators) >= 2:
             parameters["base_indicator"] = required_indicators[1]
         parameters.setdefault("unit", "%")
+    if calculation_type == "rolling_high":
+        if not parameters.get("target_indicator") and required_indicators:
+            parameters["target_indicator"] = required_indicators[0]
+        if not parameters.get("window"):
+            parameters["window"] = 30
+        parameters.setdefault("include_current_day", True)
     return {
         "indicator_key": key,
         "indicator_name": raw.get("indicator_name") or raw.get("suggested_indicator_name") or key,
@@ -167,10 +173,35 @@ def validate_dynamic_indicator_execution(
                 "execution_status": "missing_required_indicator",
                 "execution_message": f"필요 지표가 샘플 feature에 없습니다: {', '.join(missing)}",
             }
+    if calculation_type == "rolling_high":
+        parameters = definition.get("parameters") or {}
+        target_indicator = str(parameters.get("target_indicator") or "").strip()
+        try:
+            window = int(parameters.get("window") or 0)
+        except (TypeError, ValueError):
+            window = 0
+        if not target_indicator:
+            return {
+                "execution_supported": False,
+                "execution_status": "invalid_parameters",
+                "execution_message": "rolling_high에는 target_indicator가 필요합니다.",
+            }
+        if window < 1:
+            return {
+                "execution_supported": False,
+                "execution_status": "invalid_parameters",
+                "execution_message": "rolling_high에는 1 이상의 window가 필요합니다.",
+            }
+        if target_indicator not in available:
+            return {
+                "execution_supported": False,
+                "execution_status": "missing_required_indicator",
+                "execution_message": f"필요 지표가 샘플 feature에 없습니다: {target_indicator}",
+            }
     return {
         "execution_supported": True,
         "execution_status": "supported",
-        "execution_message": "distance_pct 계산 유형은 샘플 엔진에서 실행 가능합니다.",
+        "execution_message": f"{calculation_type} 계산 유형은 샘플 엔진에서 실행 가능합니다.",
     }
 
 
@@ -186,9 +217,40 @@ def compute_dynamic_indicator_for_features(features: dict[str, Any], indicator_d
     return ((target_value - base_value) / base_value) * 100
 
 
+def compute_dynamic_indicator_for_row(rows: list[dict[str, Any]], idx: int, features: dict[str, Any], indicator_definition: dict[str, Any]) -> Any:
+    definition = _normalize_dynamic_indicator_definition(indicator_definition)
+    calculation_type = definition.get("calculation_type")
+    if calculation_type == "distance_pct":
+        return compute_dynamic_indicator_for_features(features, definition)
+    if calculation_type != "rolling_high":
+        return None
+    parameters = definition.get("parameters") or {}
+    target_indicator = str(parameters.get("target_indicator") or "").strip()
+    try:
+        window = int(parameters.get("window") or 30)
+    except (TypeError, ValueError):
+        window = 30
+    if not target_indicator or window < 1:
+        return None
+    start = max(0, idx - window + 1)
+    values: list[float] = []
+    for cursor in range(start, idx + 1):
+        source_features = features if cursor == idx else _features(rows, cursor)
+        value = _num(source_features.get(target_indicator))
+        if value is not None:
+            values.append(value)
+    return max(values) if values else None
+
+
 def _dynamic_indicator_definitions(parsed_goal: dict[str, Any]) -> dict[str, dict[str, Any]]:
     definitions: dict[str, dict[str, Any]] = {}
-    for raw in list(parsed_goal.get("dynamic_indicators") or []) + list(parsed_goal.get("temporary_indicators") or []):
+    raw_items = (
+        list(parsed_goal.get("dynamic_indicators") or [])
+        + list(parsed_goal.get("temporary_indicators") or [])
+        + list(parsed_goal.get("unsupported_items") or [])
+        + list(parsed_goal.get("new_indicator_candidates") or [])
+    )
+    for raw in raw_items:
         if not isinstance(raw, dict):
             continue
         definition = _normalize_dynamic_indicator_definition(raw)
@@ -448,7 +510,7 @@ def build_pattern_samples(
         for indicator_key, definition in dynamic_definitions.items():
             execution = validate_dynamic_indicator_execution(definition, set(features.keys()) | BASE_FEATURE_KEYS)
             if execution.get("execution_supported"):
-                features[indicator_key] = compute_dynamic_indicator_for_features(features, definition)
+                features[indicator_key] = compute_dynamic_indicator_for_row(rows, idx, features, definition)
         matched_conditions: list[str] = []
         failed_conditions: list[str] = []
         for condition in entry_filters:

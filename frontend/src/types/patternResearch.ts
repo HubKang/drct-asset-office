@@ -29,6 +29,13 @@ export type PatternResearchRunCreateResponse = {
   summary: Record<string, any>;
 };
 
+export type PatternResearchRunSimulateResponse = {
+  summary: Record<string, any>;
+  samples: PatternResearchSample[];
+  gpt_package: PatternResearchGptPackage;
+  parsed_goal: Record<string, any>;
+};
+
 export type PatternResearchRun = {
   id: number;
   research_name?: string | null;

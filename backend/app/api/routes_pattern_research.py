@@ -17,6 +17,7 @@ from backend.app.schemas.pattern_research_schema import (
     PatternResearchRunDetailResponse,
     PatternResearchRunListResponse,
     PatternResearchRunRequest,
+    PatternResearchRunSimulateResponse,
     PatternResearchSampleListResponse,
 )
 from backend.app.services.pattern_research_service import PatternResearchService
@@ -77,6 +78,11 @@ def validate_gpt_goal_result(payload: PatternGptGoalResultValidateRequest, db: S
 @router.post("/runs", response_model=PatternResearchRunCreateResponse)
 def create_pattern_research_run(payload: PatternResearchRunRequest, db: Session = Depends(get_db)) -> dict:
     return PatternResearchService(db).create_run(payload)
+
+
+@router.post("/runs/simulate", response_model=PatternResearchRunSimulateResponse)
+def simulate_pattern_research_run(payload: PatternResearchRunRequest, db: Session = Depends(get_db)) -> dict:
+    return PatternResearchService(db).simulate_run(payload)
 
 
 @router.get("/runs", response_model=PatternResearchRunListResponse)

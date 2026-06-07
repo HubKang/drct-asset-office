@@ -175,8 +175,9 @@ class PatternResearchService:
             indicator_key = str(row.get("indicator_key") or "").strip()
             if not indicator_key or not calculation_type:
                 continue
-            execution_supported = int(row.get("execution_supported") or (1 if calculation_type == "distance_pct" else 0)) == 1
-            if not execution_supported and calculation_type != "distance_pct":
+            supported_types = {"distance_pct", "rolling_high"}
+            execution_supported = int(row.get("execution_supported") or (1 if calculation_type in supported_types else 0)) == 1
+            if not execution_supported and calculation_type not in supported_types:
                 continue
             if indicator_key in existing_keys:
                 continue
@@ -198,6 +199,45 @@ class PatternResearchService:
         return parsed
 
     def create_run(self, payload: PatternResearchRunRequest) -> dict[str, Any]:
+        artifacts = self._build_run_artifacts(payload)
+        run_id = self.repo.create_run_with_samples(
+            run_values={
+                "research_name": payload.research_name or f"{artifacts['stock'].get('stock_name') or artifacts['stock_code']} ?⑦꽩 ?곌뎄",
+                "stock_codes": payload.stock_codes,
+                "start_date": payload.start_date,
+                "end_date": payload.end_date,
+                "goal_text": payload.goal_text,
+                "target_return_pct": artifacts["target_return_pct"],
+                "target_days": artifacts["target_days"],
+                "stop_loss_pct": artifacts["stop_loss_pct"],
+                "max_holding_days": int(artifacts["parsed"].get("max_holding_days") or artifacts["target_days"]),
+            },
+            parsed_goal=artifacts["parsed"],
+            summary=artifacts["summary"],
+            gpt_prompt_text=artifacts["gpt_prompt"],
+            samples=artifacts["samples"],
+        )
+        return {"run_id": run_id, "summary": artifacts["summary"]}
+
+    def simulate_run(self, payload: PatternResearchRunRequest) -> dict[str, Any]:
+        artifacts = self._build_run_artifacts(payload)
+        summary = artifacts["summary"]
+        return {
+            "summary": summary,
+            "samples": artifacts["samples"],
+            "gpt_package": {
+                "gpt_prompt_text": artifacts["gpt_prompt"],
+                "summary": summary,
+                "sample_counts": {
+                    "SUCCESS": int(summary.get("success_count") or 0),
+                    "FAILURE": int(summary.get("failure_count") or 0),
+                    "NEUTRAL": int(summary.get("neutral_count") or 0),
+                },
+            },
+            "parsed_goal": artifacts["parsed"],
+        }
+
+    def _build_run_artifacts(self, payload: PatternResearchRunRequest) -> dict[str, Any]:
         stock_code = payload.stock_codes[0]
         stock = self.repo.get_stock_by_code(stock_code)
         if not stock:
@@ -229,6 +269,17 @@ class PatternResearchService:
         if not samples:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="성공/실패 샘플 수가 적습니다. 기간 또는 조건을 조정해 보세요.")
         gpt_prompt = self._build_gpt_prompt(payload.goal_text, stock, payload.start_date, payload.end_date, parsed, summary, samples)
+        return {
+            "stock_code": stock_code,
+            "stock": stock,
+            "parsed": parsed,
+            "target_return_pct": target_return_pct,
+            "target_days": target_days,
+            "stop_loss_pct": stop_loss_pct,
+            "samples": samples,
+            "summary": summary,
+            "gpt_prompt": gpt_prompt,
+        }
         run_id = self.repo.create_run_with_samples(
             run_values={
                 "research_name": payload.research_name or f"{stock.get('stock_name') or stock_code} 패턴 연구",

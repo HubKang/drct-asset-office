@@ -31,6 +31,22 @@ type SampleBlocker = {
   currentStatus: string;
   message: string;
 };
+type AutoParamCandidate = {
+  id: string;
+  label: string;
+  description: string;
+  parsedGoal: Record<string, any>;
+  changedCondition: Record<string, any>;
+  hash: string;
+};
+type AutoParamResult = AutoParamCandidate & {
+  seq: number;
+  status: "success" | "error";
+  summary?: Record<string, any>;
+  samples?: PatternResearchSample[];
+  gptPackage?: PatternResearchGptPackage;
+  error?: string;
+};
 
 const DEFAULT_GOAL =
   "20일선 근처에서 눌림을 받고 거래대금이 다시 유입되며, 5거래일 안에 5% 이상 상승할 가능성이 높은 패턴을 찾고 싶다. 손절은 -5% 이내로 제한하고, 급등 직후 추격매수는 제외하고 싶다.";
@@ -213,6 +229,184 @@ function conditionIdentity(condition: Record<string, any>): string {
   return [indicator, operator, value, category, expression].join("|");
 }
 
+function cloneGoal(goal: Record<string, any>): Record<string, any> {
+  return JSON.parse(JSON.stringify(goal || {}));
+}
+
+function autoConditionHash(goal: Record<string, any>): string {
+  const slim = {
+    entry_filters: (goal.entry_filters || []).map((item: Record<string, any>) => ({
+      indicator_key: item.indicator_key || item.indicator,
+      operator: item.operator,
+      value: item.value,
+      exclude_when_true: Boolean(item.exclude_when_true),
+    })),
+    exclude_filters: (goal.exclude_filters || []).map((item: Record<string, any>) => ({
+      indicator_key: item.indicator_key || item.indicator,
+      operator: item.operator,
+      value: item.value,
+      exclude_when_true: Boolean(item.exclude_when_true),
+    })),
+    reference_conditions: (goal.reference_conditions || []).map((item: Record<string, any>) => ({
+      indicator_key: item.indicator_key || item.indicator,
+      operator: item.operator,
+      value: item.value,
+    })),
+  };
+  return JSON.stringify(slim);
+}
+
+function resultSamplesForTab(samples: PatternResearchSample[], tab: SampleTab): PatternResearchSample[] {
+  return samples.filter((sample) => sample.result_label === tab);
+}
+
+function autoResultVerdict(result: AutoParamResult, baselineSummary: Record<string, any> | null | undefined): string {
+  if (result.status === "error") return "오류";
+  const summary = result.summary || {};
+  const total = Number(summary.total_samples || 0);
+  const success = Number(summary.success_count || 0);
+  const failure = Number(summary.failure_count || 0);
+  const delta = Number(summary.success_rate || 0) - Number(baselineSummary?.success_rate || 0);
+  if (total < 30 || success < 10 || failure < 10) return "샘플 부족";
+  if (delta >= 5) return "우수";
+  if (delta >= 2) return "검토";
+  if (delta <= -2) return "악화";
+  return "효과 약함";
+}
+
+function autoResultMetrics(result: AutoParamResult, baselineSummary: Record<string, any> | null | undefined) {
+  const summary = result.summary || {};
+  const baselineTotal = Number(baselineSummary?.total_samples || 0);
+  const total = Number(summary.total_samples || 0);
+  return {
+    baselineTotal,
+    total,
+    success: Number(summary.success_count || 0),
+    failure: Number(summary.failure_count || 0),
+    neutral: Number(summary.neutral_count || 0),
+    successRate: Number(summary.success_rate || 0),
+    baselineRate: Number(baselineSummary?.success_rate || 0),
+    rateDelta: Number(summary.success_rate || 0) - Number(baselineSummary?.success_rate || 0),
+    sampleDelta: total - baselineTotal,
+    successDelta: Number(summary.success_count || 0) - Number(baselineSummary?.success_count || 0),
+    failureDelta: Number(summary.failure_count || 0) - Number(baselineSummary?.failure_count || 0),
+  };
+}
+
+function autoResultVerdictV2(result: AutoParamResult, baselineSummary: Record<string, any> | null | undefined): string {
+  if (result.status === "error") return "오류";
+  const metrics = autoResultMetrics(result, baselineSummary);
+  if (metrics.total < 30 || metrics.success < 10 || metrics.failure < 10) return "샘플 부족";
+  if (metrics.baselineTotal > 0 && metrics.total <= metrics.baselineTotal * 0.3) return "과최적화 주의";
+  if (metrics.rateDelta >= 5) return "유망";
+  if (metrics.rateDelta >= 2) return "검토";
+  if (metrics.rateDelta <= -2) return "악화";
+  return "효과 약함";
+}
+
+function autoResultInterpretation(result: AutoParamResult, baselineSummary: Record<string, any> | null | undefined): string {
+  if (result.status === "error") return "이 조건 세트는 계산 중 오류가 발생했습니다. 조건식이나 지표 지원 여부를 확인해야 합니다.";
+  const metrics = autoResultMetrics(result, baselineSummary);
+  const verdict = autoResultVerdictV2(result, baselineSummary);
+  if (verdict === "유망") return `성공률이 기준 대비 ${fmtPercent(metrics.rateDelta)} 개선됐고 후보 ${fmtNumber(metrics.total, 0)}개가 유지되어 다음 테스트 후보로 검토할 만합니다.`;
+  if (verdict === "검토") return "성공률은 소폭 개선됐지만 변화 폭이 제한적입니다. 다른 조건과 조합해 추가 검토하는 편이 좋습니다.";
+  if (verdict === "샘플 부족") return `성공률은 좋아 보일 수 있지만 후보 수가 ${fmtNumber(metrics.total, 0)}개로 줄었습니다. 과최적화 가능성이 있어 추가 검증이 필요합니다.`;
+  if (verdict === "과최적화 주의") return "성공률 변화만 보면 좋아도 후보 수가 기준 대비 크게 감소했습니다. 한 종목/기간에 과하게 맞춰졌을 수 있습니다.";
+  if (verdict === "악화") return `성공률이 기준보다 ${fmtPercent(Math.abs(metrics.rateDelta))} 낮아졌습니다. 현재 조건 조합에서는 개선 효과가 약합니다.`;
+  return "기준 결과와 성공률 차이가 작습니다. 이 조건 하나만으로는 성공/실패 구분력이 충분하지 않을 수 있습니다.";
+}
+
+function autoResultShortInterpretation(result: AutoParamResult, baselineSummary: Record<string, any> | null | undefined): string {
+  const verdict = autoResultVerdictV2(result, baselineSummary);
+  if (verdict === "유망") return "성공률 개선 + 샘플 유지";
+  if (verdict === "검토") return "소폭 개선, 추가 조합 필요";
+  if (verdict === "샘플 부족") return "개선처럼 보이나 샘플 부족";
+  if (verdict === "과최적화 주의") return "샘플 급감 주의";
+  if (verdict === "악화") return "성공률 악화";
+  if (verdict === "오류") return "계산 오류";
+  return "차이 작음";
+}
+
+function autoValueKey(value: any): string {
+  return Array.isArray(value) ? value.join("~") : String(value ?? "");
+}
+
+function autoConditionRowKey(condition: Record<string, any>, usage: ConditionUsage): string {
+  const indicator = String(condition.indicator_key || condition.indicator || "");
+  const operator = String(condition.operator || "");
+  return `auto:${indicator}:${operator}:${autoValueKey(condition.value)}:${usage}`;
+}
+
+function buildConditionFromAutoResult(result: AutoParamResult): { condition: Record<string, any>; usage: ConditionUsage; targetKey: "entry_filters" | "exclude_filters"; rowKey: string } {
+  const source = result.changedCondition || {};
+  const usage: ConditionUsage = source.exclude_when_true ? "exclude" : "include";
+  const indicator = String(source.indicator_key || source.indicator || "");
+  const condition = {
+    ...source,
+    indicator_key: indicator,
+    label: result.label || source.label || indicator,
+    natural_text: result.label || source.natural_text || source.source_text || indicator,
+    source_text: `자동 수치변경 테스트 #${result.seq}: ${result.label}`,
+    expression: source.expression || expressionForCondition(source),
+    apply_to_samples: true,
+    exclude_when_true: usage === "exclude",
+    apply_mode_label: usageLabel(usage),
+    status: "needs_review",
+    source: "auto_param_test",
+    auto_test_result_id: result.id,
+    auto_test_seq: result.seq,
+  };
+  return {
+    condition,
+    usage,
+    targetKey: usage === "exclude" ? "exclude_filters" : "entry_filters",
+    rowKey: autoConditionRowKey(condition, usage),
+  };
+}
+
+function autoDynamicIndicatorDefinition(indicatorKey: string): Record<string, any> | null {
+  if (indicatorKey === "ma5_vs_ma10_pct") {
+    return {
+      indicator_key: "ma5_vs_ma10_pct",
+      indicator_name: "5일선-10일선 이격률",
+      calculation_type: "distance_pct",
+      parameters: { target_indicator: "ma5", base_indicator: "ma10", unit: "%" },
+      required_indicators: ["ma5", "ma10"],
+      execution_supported: true,
+      execution_status: "supported",
+      execution_message: "distance_pct 계산 유형은 샘플 엔진에서 실행 가능합니다.",
+      scope: "run_only",
+    };
+  }
+  const maxReturnMatch = indicatorKey.match(/^max_return_1d_(\d+)d$/);
+  if (maxReturnMatch) {
+    const windowSize = Number(maxReturnMatch[1] || 30);
+    return {
+      indicator_key: indicatorKey,
+      indicator_name: `최근 ${windowSize}일 최대 1일 수익률`,
+      calculation_type: "rolling_high",
+      parameters: { target_indicator: "return_1d", window: windowSize, unit: "%", include_current_day: true },
+      required_indicators: ["return_1d"],
+      execution_supported: true,
+      execution_status: "supported",
+      execution_message: "rolling_high 계산 유형은 샘플 엔진에서 실행 가능합니다.",
+      scope: "run_only",
+    };
+  }
+  return null;
+}
+
+function ensureAutoDynamicIndicator(goal: Record<string, any>, indicatorKey: string): Record<string, any> {
+  const definition = autoDynamicIndicatorDefinition(indicatorKey);
+  if (!definition) return goal;
+  const existing = [...(goal.temporary_indicators || []), ...(goal.dynamic_indicators || [])].some((item: Record<string, any>) => String(item.indicator_key || item.suggested_indicator_key || "") === indicatorKey);
+  if (existing) return goal;
+  return {
+    ...goal,
+    temporary_indicators: [...(goal.temporary_indicators || []), definition],
+  };
+}
+
 function isNewIndicatorCondition(condition: Record<string, any>, candidate?: Record<string, any>): boolean {
   return Boolean(
     candidate ||
@@ -227,7 +421,7 @@ function isNewIndicatorCondition(condition: Record<string, any>, candidate?: Rec
 function isSampleFilterExecutable(condition: Record<string, any>, candidate?: Record<string, any>): boolean {
   if (condition.execution_supported === true || candidate?.execution_supported === true) return true;
   const calculationType = String(condition.calculation_type || candidate?.calculation_type || "");
-  return ["distance_pct"].includes(calculationType);
+  return ["distance_pct", "rolling_high"].includes(calculationType);
 }
 
 function getNewIndicatorUsageStatus(condition: Record<string, any>, finalUsage: ConditionUsage, candidate?: Record<string, any>): NewIndicatorUsageStatus | null {
@@ -312,12 +506,21 @@ function PatternResearchPage() {
   const [currentRun, setCurrentRun] = useState<PatternResearchRun | null>(null);
   const [samples, setSamples] = useState<PatternResearchSample[]>([]);
   const [gptPackage, setGptPackage] = useState<PatternResearchGptPackage | null>(null);
+  const [autoTestCandidates, setAutoTestCandidates] = useState<AutoParamCandidate[]>([]);
+  const [autoTestCursor, setAutoTestCursor] = useState(0);
+  const [autoTestResults, setAutoTestResults] = useState<AutoParamResult[]>([]);
+  const [autoTesting, setAutoTesting] = useState(false);
+  const [autoTestProgress, setAutoTestProgress] = useState("");
+  const [selectedAutoTestResultId, setSelectedAutoTestResultId] = useState<string | null>(null);
+  const [conditionsDirty, setConditionsDirty] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const gptValidationResultRef = useRef<HTMLDivElement | null>(null);
 
-  const summary = currentRun?.summary || null;
+  const selectedAutoTestResult = autoTestResults.find((item) => item.id === selectedAutoTestResultId && item.status === "success") || null;
+  const activeGptPackage = selectedAutoTestResult?.gptPackage || gptPackage;
+  const summary = selectedAutoTestResult?.summary || currentRun?.summary || null;
   const parsedGoal = parsed?.parsed_goal || null;
   const confirmedConditions = [
     ...((parsedGoal?.success_criteria ? [parsedGoal.success_criteria] : []) as Array<Record<string, any>>),
@@ -400,6 +603,11 @@ function PatternResearchPage() {
       const response = await repositories.patternResearch.parseGoal(goalText, { use_llm: useLlmAssist, llm_mode: "assist" });
       setParsed(response);
       setFinalUsageByRowId({});
+      setAutoTestCandidates([]);
+      setAutoTestCursor(0);
+      setAutoTestResults([]);
+      setSelectedAutoTestResultId(null);
+      setConditionsDirty(false);
       setMessage("매매목표 해석 초안을 생성했습니다.");
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "매매목표를 해석하지 못했습니다.");
@@ -557,6 +765,206 @@ function PatternResearchPage() {
     return next;
   };
 
+  const buildAutoParamCandidates = (): AutoParamCandidate[] => {
+    if (!parsed?.parsed_goal) return [];
+    const baseline = buildFinalParsedGoal(parsed.parsed_goal);
+    const knownKeys = new Set<string>();
+    [...(baseline.entry_filters || []), ...(baseline.exclude_filters || []), ...(baseline.reference_conditions || [])].forEach((item: Record<string, any>) => {
+      const key = String(item.indicator_key || item.indicator || "");
+      if (key) knownKeys.add(key);
+    });
+    const options = [
+      { key: "close_vs_ma20_pct", usage: "exclude", operator: ">=", values: [8, 10, 12, 15], label: "20일선 이격 과열 제외" },
+      { key: "ma5_vs_ma10_pct", usage: "include", operator: "between", values: [[-5, 5], [-3, 3], [-2, 2], [0, 3]], label: "5/10일선 근접 포함" },
+      { key: "trading_value_ratio_20", usage: "include", operator: ">=", values: [1.2, 1.3, 1.5, 2], label: "거래대금 배수 포함" },
+      { key: "recent_3d_return", usage: "exclude", operator: ">=", values: [10, 12, 15, 20], label: "최근 3일 급등 제외" },
+      { key: "recent_5d_return", usage: "exclude", operator: ">=", values: [10, 12, 15, 20], label: "최근 5일 급등 제외" },
+      { key: "max_return_1d_30d", usage: "include", operator: ">=", values: [10, 15], label: "30일 내 고점 경험 포함" },
+      { key: "max_return_1d_30d", usage: "exclude", operator: ">=", values: [20, 25], label: "30일 내 과열 경험 제외" },
+      { key: "ma60_slope_5d", usage: "include", operator: ">=", values: [0, 0.1, 0.3, 0.5], label: "60일선 기울기 포함" },
+    ] as Array<{ key: string; usage: "include" | "exclude"; operator: string; values: any[]; label: string }>;
+    const candidates: AutoParamCandidate[] = [];
+    const seen = new Set<string>([autoConditionHash(baseline), ...autoTestResults.map((item) => item.hash)]);
+    options.forEach((option) => {
+      if (knownKeys.size && !knownKeys.has(option.key) && !["recent_5d_return", "max_return_1d_30d", "ma60_slope_5d"].includes(option.key)) return;
+      option.values.forEach((value) => {
+        const next = cloneGoal(baseline);
+        const condition = {
+          indicator_key: option.key,
+          operator: option.operator,
+          value,
+          apply_to_samples: true,
+          exclude_when_true: option.usage === "exclude",
+          apply_mode_label: usageLabel(option.usage),
+          source: "auto_parameter_test",
+          expression: option.operator === "between" && Array.isArray(value)
+            ? `${option.key} between ${value[0]} and ${value[1]}`
+            : `${option.key} ${option.operator} ${value}`,
+        };
+        const targetKey = option.usage === "exclude" ? "exclude_filters" : "entry_filters";
+        next.entry_filters = (next.entry_filters || []).filter((item: Record<string, any>) => String(item.indicator_key || item.indicator || "") !== option.key);
+        next.exclude_filters = (next.exclude_filters || []).filter((item: Record<string, any>) => String(item.indicator_key || item.indicator || "") !== option.key);
+        next.reference_conditions = (next.reference_conditions || []).filter((item: Record<string, any>) => String(item.indicator_key || item.indicator || "") !== option.key);
+        next[targetKey] = [...(next[targetKey] || []), condition];
+        next.hypothesis_conditions = [...(next.entry_filters || []), ...(next.exclude_filters || [])];
+        const executableGoal = ensureAutoDynamicIndicator(next, option.key);
+        const hash = autoConditionHash(executableGoal);
+        if (seen.has(hash)) return;
+        seen.add(hash);
+        const valueLabel = Array.isArray(value) ? `${value[0]}~${value[1]}` : String(value);
+        candidates.push({
+          id: `auto-${candidates.length + 1}-${option.key}-${option.usage}-${valueLabel}`,
+          label: `${option.label} ${valueLabel}`,
+          description: `${option.key} ${option.operator} ${valueLabel}`,
+          parsedGoal: executableGoal,
+          changedCondition: condition,
+          hash,
+        });
+      });
+    });
+    return candidates;
+  };
+
+  const clearAutoParamTests = () => {
+    if (!window.confirm("자동 수치변경 테스트 결과를 모두 초기화하시겠습니까? 기준 샘플 결과는 유지됩니다.")) return;
+    setAutoTestCandidates([]);
+    setAutoTestCursor(0);
+    setAutoTestResults([]);
+    setAutoTestProgress("");
+    setSelectedAutoTestResultId(null);
+    if (currentRun) void loadSamples(sampleTab, null);
+    setMessage("자동 테스트 결과를 초기화했습니다.");
+  };
+
+  const runAutoParamTests = async () => {
+    if (!selectedStock || !parsed || !currentRun || !summary) {
+      setError("먼저 기준 샘플을 생성한 뒤 자동 수치변경 테스트를 실행해 주세요.");
+      return;
+    }
+    const candidates = autoTestCandidates.length ? autoTestCandidates : buildAutoParamCandidates();
+    if (!candidates.length) {
+      setError("자동으로 변경할 수 있는 숫자 조건 후보가 없습니다.");
+      return;
+    }
+    const start = autoTestCandidates.length ? autoTestCursor : 0;
+    const batch = candidates.slice(start, start + 5);
+    setAutoTestCandidates(candidates);
+    setAutoTesting(true);
+    setAutoTestProgress(`0/${batch.length}`);
+    setError("");
+    const baselineRate = Number((currentRun.summary || {}).success_rate || 0);
+    const baselineTotal = Number((currentRun.summary || {}).total_samples || 0);
+    const nextResults: AutoParamResult[] = [];
+    for (let index = 0; index < batch.length; index += 1) {
+      const candidate = batch[index];
+      setAutoTestProgress(`${index + 1}/${batch.length}`);
+      try {
+        const simulated = await repositories.patternResearch.simulateRun({
+          research_name: `${selectedStock.stock_name} auto parameter test`,
+          stock_codes: [selectedStock.stock_code],
+          start_date: startDate,
+          end_date: endDate,
+          goal_text: goalText,
+          parsed_goal: candidate.parsedGoal,
+        });
+        const normalizedSamples = simulated.samples.map((sample, sampleIndex) => ({
+          ...sample,
+          id: Number(sample.id || sampleIndex + 1),
+          run_id: Number(sample.run_id || 0),
+          created_at: sample.created_at || "",
+        })) as PatternResearchSample[];
+        nextResults.push({
+          ...candidate,
+          seq: start + index + 1,
+          status: "success",
+          summary: simulated.summary,
+          samples: normalizedSamples,
+          gptPackage: simulated.gpt_package,
+        });
+        const delta = Number(simulated.summary?.success_rate || 0) - baselineRate;
+        if (delta >= 5 && Number(simulated.summary?.total_samples || 0) >= Math.max(30, baselineTotal * 0.4)) {
+          setSelectedAutoTestResultId(candidate.id);
+        }
+      } catch (nextError) {
+        nextResults.push({
+          ...candidate,
+          seq: start + index + 1,
+          status: "error",
+          error: nextError instanceof Error ? nextError.message : "시뮬레이션에 실패했습니다.",
+        });
+      }
+    }
+    setAutoTestResults((prev) => [...prev, ...nextResults]);
+    setAutoTestCursor(Math.min(start + batch.length, candidates.length));
+    setAutoTesting(false);
+    setAutoTestProgress("");
+    setMessage("자동 수치변경 테스트 배치를 완료했습니다.");
+  };
+
+  const applyAutoTestConditionToValidation = (result: AutoParamResult) => {
+    if (result.status === "error" || !parsed) return;
+    const { condition, usage, targetKey } = buildConditionFromAutoResult(result);
+    const nextGoal = cloneGoal(parsed.parsed_goal || {});
+    nextGoal.entry_filters = [...(nextGoal.entry_filters || [])];
+    nextGoal.exclude_filters = [...(nextGoal.exclude_filters || [])];
+    nextGoal.reference_conditions = [...(nextGoal.reference_conditions || [])];
+    const targetRows = nextGoal[targetKey] as Array<Record<string, any>>;
+    const rowKind = targetKey === "exclude_filters" ? "parsed_exclude" : "parsed_entry";
+    let focusedRowId = "";
+    let duplicate = false;
+    const sameAutoIndex = targetRows.findIndex((row) =>
+      row.source === "auto_param_test" &&
+      String(row.indicator_key || row.indicator || "") === String(condition.indicator_key || "") &&
+      Boolean(row.exclude_when_true) === (usage === "exclude")
+    );
+    const sameDirectIndex = targetRows.findIndex((row) =>
+      row.source !== "auto_param_test" &&
+      String(row.indicator_key || row.indicator || "") === String(condition.indicator_key || "")
+    );
+    const exactIndex = targetRows.findIndex((row) =>
+      row.source === "auto_param_test" &&
+      String(row.indicator_key || row.indicator || "") === String(condition.indicator_key || "") &&
+      String(row.operator || "") === String(condition.operator || "") &&
+      autoValueKey(row.value) === autoValueKey(condition.value)
+    );
+    if (exactIndex >= 0) {
+      duplicate = true;
+      focusedRowId = conditionRowId(rowKind, targetRows[exactIndex], exactIndex);
+    } else {
+      const targetIndex = sameAutoIndex >= 0 ? sameAutoIndex : sameDirectIndex;
+      if (targetIndex >= 0) {
+        targetRows[targetIndex] = { ...targetRows[targetIndex], ...condition };
+        focusedRowId = conditionRowId(rowKind, targetRows[targetIndex], targetIndex);
+      } else {
+        targetRows.push(condition);
+        focusedRowId = conditionRowId(rowKind, condition, targetRows.length - 1);
+      }
+      nextGoal[targetKey] = targetRows;
+      nextGoal.hypothesis_conditions = [...(nextGoal.entry_filters || []), ...(nextGoal.exclude_filters || [])];
+      const goalWithDynamicIndicator = ensureAutoDynamicIndicator(nextGoal, String(condition.indicator_key || ""));
+      setParsed({
+        ...parsed,
+        parsed_goal: goalWithDynamicIndicator,
+        entry_filters: goalWithDynamicIndicator.entry_filters || [],
+        exclude_filters: goalWithDynamicIndicator.exclude_filters || [],
+        needs_review_items: [...(goalWithDynamicIndicator.entry_filters || []), ...(goalWithDynamicIndicator.exclude_filters || [])].filter((item: Record<string, any>) => item.status === "needs_review"),
+        warnings: goalWithDynamicIndicator.warnings || parsed.warnings || [],
+      });
+    }
+    if (focusedRowId) {
+      setFinalUsageByRowId((prev) => ({ ...prev, [focusedRowId]: usage }));
+      setFocusedConditionRowIds([focusedRowId]);
+    }
+    setConditionsDirty(true);
+    setSelectedAutoTestResultId(null);
+    setBlockedBannerMessage("자동 테스트 조건을 2단계 조건표에 반영했습니다. 조건값과 사용 방식을 확인한 뒤 3단계에서 샘플을 다시 생성하세요.");
+    setActiveTab("gptValidation");
+    setMessage(duplicate ? "이미 반영된 자동 테스트 조건입니다. 해당 행으로 이동합니다." : "자동 테스트 조건을 2단계 조건표에 반영했습니다.");
+    window.setTimeout(() => {
+      document.querySelector(".pattern-new-indicator-focus")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 120);
+  };
+
   const addCandidateToGoal = (candidate: Record<string, any>, applyToSamples: boolean) => {
     const isGptCandidate = candidate.source === "gpt_candidate";
     if (candidate.validation_status === "new_indicator_required" && applyToSamples) {
@@ -626,7 +1034,7 @@ function PatternResearchPage() {
     const targetCandidate = typeof targetText === "object" ? (targetText as Record<string, any>) : null;
     const targetKey = targetCandidate ? String(targetCandidate.indicator_key || "") : String(targetText || "");
     if (decision === "one_time" && targetCandidate) {
-      const isExecutable = targetCandidate.execution_supported === true || targetCandidate.calculation_type === "distance_pct";
+      const isExecutable = targetCandidate.execution_supported === true || ["distance_pct", "rolling_high"].includes(String(targetCandidate.calculation_type || ""));
       if (!isExecutable) {
         setError(targetCandidate.execution_message || "아직 샘플 실행 엔진이 지원하지 않는 계산 유형입니다.");
         return;
@@ -648,7 +1056,7 @@ function PatternResearchPage() {
             required_indicators: required,
             execution_supported: true,
             execution_status: "supported",
-            execution_message: targetCandidate.execution_message || "distance_pct 계산 유형은 샘플 엔진에서 실행 가능합니다.",
+            execution_message: targetCandidate.execution_message || `${targetCandidate.calculation_type || "dynamic"} 계산 유형은 샘플 엔진에서 실행 가능합니다.`,
             scope: "run_only",
           });
         }
@@ -824,6 +1232,11 @@ function PatternResearchPage() {
       setActiveTab("samples");
       setFocusedConditionRowIds([]);
       setBlockedBannerMessage("");
+      setAutoTestCandidates([]);
+      setAutoTestCursor(0);
+      setAutoTestResults([]);
+      setSelectedAutoTestResultId(null);
+      setConditionsDirty(false);
       setMessage("성공/실패 샘플을 생성했습니다.");
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "성공/실패 샘플 생성에 실패했습니다.");
@@ -842,15 +1255,19 @@ function PatternResearchPage() {
     await createRun(nextUsage);
   };
 
-  const loadSamples = async (label: SampleTab) => {
+  const loadSamples = async (label: SampleTab, selectedResult: AutoParamResult | null = selectedAutoTestResult) => {
     if (!currentRun) return;
     setSampleTab(label);
+    if (selectedResult?.samples) {
+      setSamples(resultSamplesForTab(selectedResult.samples, label));
+      return;
+    }
     setSamples((await repositories.patternResearch.fetchSamples(currentRun.id, label)).items);
   };
 
   const copyPrompt = async () => {
-    if (!gptPackage?.gpt_prompt_text) return;
-    await navigator.clipboard.writeText(gptPackage.gpt_prompt_text);
+    if (!activeGptPackage?.gpt_prompt_text) return;
+    await navigator.clipboard.writeText(activeGptPackage.gpt_prompt_text);
     setMessage("GPT에 붙여넣을 연구 요청문을 복사했습니다.");
   };
 
@@ -1043,6 +1460,7 @@ function PatternResearchPage() {
               2단계에서 확정한 조건으로 과거 가격 데이터에서 성공/실패 샘플을 생성하고, GPT 연구 패키지로 넘기기 전 샘플 품질을 확인합니다.
             </p>
             <PatternFormulaSummary parsed={parsed} />
+            {conditionsDirty ? <div className="pattern-sample-stale-warning">조건이 변경되었습니다. 현재 샘플 결과는 이전 조건 기준입니다. 3단계에서 샘플을 다시 생성하세요.</div> : null}
             <SampleReadinessCardV2
               parsed={parsed}
               blockers={sampleBlockers}
@@ -1062,6 +1480,26 @@ function PatternResearchPage() {
             {!currentRun || !summary ? <EmptyState message="샘플 생성 후 결과 요약과 목록이 표시됩니다." /> : (
               <>
                 <SampleStepReview summary={summary} onNext={() => setActiveTab("package")} />
+                <AutoParamTestPanelV2
+                  baselineSummary={currentRun.summary}
+                  results={autoTestResults}
+                  totalCandidates={autoTestCandidates.length}
+                  cursor={autoTestCursor}
+                  running={autoTesting}
+                  progress={autoTestProgress}
+                  selectedId={selectedAutoTestResultId}
+                  onRunNext={() => void runAutoParamTests()}
+                  onClear={clearAutoParamTests}
+                  onSelect={(result) => {
+                    setSelectedAutoTestResultId(result.id);
+                    setSamples(resultSamplesForTab(result.samples || [], sampleTab));
+                  }}
+                  onApplyToConditions={applyAutoTestConditionToValidation}
+                  onShowBaseline={() => {
+                    setSelectedAutoTestResultId(null);
+                    void loadSamples(sampleTab, null);
+                  }}
+                />
                 {summary.sample_filter_warning ? <div className="alert warning">{summary.sample_filter_warning}</div> : null}
                 <SampleTable samples={samples} sampleTab={sampleTab} onChangeTab={loadSamples} summary={summary} />
               </>
@@ -1076,9 +1514,14 @@ function PatternResearchPage() {
             <p className="pattern-step-description">
               성공/실패 샘플과 확정 조건을 GPT 분석용 연구 패키지로 정리합니다. 복사 전에 포함 정보와 요청 목적을 확인하세요.
             </p>
-            {!gptPackage ? <EmptyState message="샘플 생성 후 GPT 연구 패키지를 만들 수 있습니다." /> : (
+            <div className={`auto-param-test-selected-banner ${selectedAutoTestResult ? "" : "is-baseline"}`}>
+              <strong>{selectedAutoTestResult ? `이 GPT 패키지는 자동 테스트 #${selectedAutoTestResult.seq} 결과를 기준으로 생성되었습니다.` : "이 GPT 패키지는 기준 샘플 결과를 기준으로 생성되었습니다."}</strong>
+              {selectedAutoTestResult ? <span>{autoResultInterpretation(selectedAutoTestResult, currentRun?.summary)}</span> : <span>자동 테스트 결과를 선택하면 4단계 패키지도 선택 결과 기준으로 전환됩니다.</span>}
+            </div>
+            {conditionsDirty ? <div className="pattern-sample-stale-warning">조건표가 변경되었습니다. GPT 패키지 생성 전 3단계에서 샘플을 다시 생성하는 것을 권장합니다.</div> : null}
+            {!activeGptPackage ? <EmptyState message="샘플 생성 후 GPT 연구 패키지를 만들 수 있습니다." /> : (
               <GptPackageReview
-                gptPackage={gptPackage}
+                gptPackage={activeGptPackage}
                 showPrompt={showGptPackagePrompt}
                 onTogglePrompt={() => setShowGptPackagePrompt((prev) => !prev)}
                 onCopyPrompt={copyPrompt}
@@ -2361,10 +2804,10 @@ function PatternVerifyDecisionPanel({
                 rowWarnings.length ? "경고 있음" : "",
                 rowConflicts.length ? "해석 충돌" : "",
               ].filter(Boolean);
-              const renderedStatusBadges = Array.from(new Set([...statusBadges.filter((badge) => !String(badge).includes("계산")), ...newIndicatorStatusLabels(newIndicatorUsageStatus)]));
+              const renderedStatusBadges = Array.from(new Set([...statusBadges.filter((badge) => !String(badge).includes("계산")), ...newIndicatorStatusLabels(newIndicatorUsageStatus), row.condition.source === "auto_param_test" ? "자동 테스트 반영" : ""])).filter(Boolean);
               return (
                 <>
-                  <tr key={row.key} className={focusedRowIdSet.has(row.key) ? "pattern-row-needs-action pattern-new-indicator-focus" : undefined}>
+                  <tr key={row.key} className={[focusedRowIdSet.has(row.key) ? "pattern-row-needs-action pattern-new-indicator-focus" : "", row.condition.source === "auto_param_test" ? "pattern-row-auto-applied auto-param-applied-row" : ""].filter(Boolean).join(" ") || undefined}>
                     <td title={String(row.condition.source_text || row.condition.natural_text || "")}>
                       <span className="pattern-verify-source">{row.condition.source_text || row.condition.natural_text || "-"}</span>
                     </td>
@@ -2614,14 +3057,14 @@ function GptGoalResultPanelV2({
                       <td>
                         <span className={`condition-status-badge is-${candidate.validation_status || "unknown"}`}>{friendlyStatusLabel(candidate.validation_status)}</span>
                         {candidate.validation_message ? <small className="disabled-action-help">{candidate.validation_message}</small> : null}
-                        <span className={`condition-status-badge ${candidate.execution_supported || candidate.calculation_type === "distance_pct" ? "is-calculatable" : "is-needs_engine"}`}>
-                          샘플 실행: {candidate.execution_supported || candidate.calculation_type === "distance_pct" ? "실행 가능" : "엔진 필요"}
+                        <span className={`condition-status-badge ${candidate.execution_supported || ["distance_pct", "rolling_high"].includes(String(candidate.calculation_type || "")) ? "is-calculatable" : "is-needs_engine"}`}>
+                          샘플 실행: {candidate.execution_supported || ["distance_pct", "rolling_high"].includes(String(candidate.calculation_type || "")) ? "실행 가능" : "엔진 필요"}
                         </span>
                         {candidate.execution_message ? <small className="disabled-action-help">{candidate.execution_message}</small> : null}
                       </td>
                       <td>
                         <div className="pattern-llm-actions">
-                          <button className="btn btn-secondary" type="button" disabled={candidate.execution_supported === false && candidate.calculation_type !== "distance_pct"} onClick={() => onMarkDecision("one_time", candidate)}>비교용으로만 사용</button>
+                          <button className="btn btn-secondary" type="button" disabled={candidate.execution_supported === false && !["distance_pct", "rolling_high"].includes(String(candidate.calculation_type || ""))} onClick={() => onMarkDecision("one_time", candidate)}>비교용으로만 사용</button>
                           <button className="btn btn-primary" type="button" onClick={() => void onSaveIndicatorCandidate(candidate)}>지표 기준정보 등록</button>
                           <button className="btn btn-secondary" type="button" onClick={() => onMarkDecision("reference", candidate.indicator_key)}>수식화 필요로 유지</button>
                           <button className="btn btn-secondary" type="button" onClick={() => onMarkDecision("exclude", candidate.indicator_key)}>사용안함</button>
@@ -3074,6 +3517,301 @@ function SampleStepReview({ summary, onNext }: { summary: Record<string, any>; o
         <span>적용 조건, 샘플 요약, 주요 지표 평균 비교, 조건 후보별 성과, 성공/실패 예시 샘플이 연구 패키지에 포함됩니다.</span>
         {quality.researchReady !== "가능" ? <em>성공 또는 실패 샘플이 너무 적습니다. 조건을 완화한 뒤 다시 생성하는 것을 권장합니다.</em> : null}
         <button className="btn btn-primary" type="button" onClick={onNext}>다음: GPT 연구 패키지 생성</button>
+      </div>
+    </div>
+  );
+}
+
+function AutoParamTestPanel({
+  baselineSummary,
+  results,
+  totalCandidates,
+  cursor,
+  running,
+  progress,
+  selectedId,
+  onRunNext,
+  onClear,
+  onSelect,
+  onApplyToConditions,
+  onShowBaseline,
+}: {
+  baselineSummary: Record<string, any> | null | undefined;
+  results: AutoParamResult[];
+  totalCandidates: number;
+  cursor: number;
+  running: boolean;
+  progress: string;
+  selectedId: string | null;
+  onRunNext: () => void;
+  onClear: () => void;
+  onSelect: (result: AutoParamResult) => void;
+  onApplyToConditions: (result: AutoParamResult) => void;
+  onShowBaseline: () => void;
+}) {
+  const baselineRate = Number(baselineSummary?.success_rate || 0);
+  const baselineTotal = Number(baselineSummary?.total_samples || 0);
+  const hasMore = !totalCandidates || cursor < totalCandidates;
+  return (
+    <div className="auto-param-panel">
+      <div className="auto-param-head">
+        <div>
+          <strong>자동 수치변경 테스트</strong>
+          <span>확정 조건의 숫자만 바꿔 5개씩 비교합니다. 결과는 저장하지 않고 현재 화면에서만 사용합니다.</span>
+        </div>
+        <div className="auto-param-actions">
+          <button className="btn btn-primary" type="button" disabled={running || !hasMore} onClick={onRunNext}>
+            {results.length ? "다음 5개 테스트" : "첫 5개 테스트"}
+          </button>
+          <button className="btn btn-secondary" type="button" disabled={running || !results.length} onClick={onClear}>결과 초기화</button>
+          <button className="btn btn-secondary" type="button" disabled={running || !selectedId} onClick={onShowBaseline}>기준 결과 보기</button>
+        </div>
+      </div>
+      <div className="auto-param-baseline">
+        <span>기준 성공률 <strong>{fmtPercent(baselineRate)}</strong></span>
+        <span>기준 샘플 <strong>{fmtNumber(baselineTotal, 0)}</strong></span>
+        <span>{running ? `진행 ${progress}` : totalCandidates ? `${Math.min(cursor, totalCandidates)}/${totalCandidates} 실행` : "후보 미생성"}</span>
+      </div>
+      {!results.length ? <div className="pattern-empty-note">아직 자동 수치변경 테스트 결과가 없습니다.</div> : (
+        <div className="table-shell auto-param-table-shell">
+          <table className="data-table compact-table auto-param-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>변경 조건</th>
+                <th className="numeric-cell">성공</th>
+                <th className="numeric-cell">실패</th>
+                <th className="numeric-cell">중립</th>
+                <th className="numeric-cell">성공률</th>
+                <th className="numeric-cell">차이</th>
+                <th>판정</th>
+                <th>사용</th>
+              </tr>
+            </thead>
+            <tbody>
+              {results.map((result) => {
+                const resultSummary = result.summary || {};
+                const delta = Number(resultSummary.success_rate || 0) - baselineRate;
+                const verdict = autoResultVerdict(result, baselineSummary);
+                return (
+                  <tr key={result.id} className={selectedId === result.id ? "selected-auto-result" : ""}>
+                    <td>{result.seq}</td>
+                    <td>
+                      <strong>{result.label}</strong>
+                      <span>{result.status === "error" ? result.error : result.description}</span>
+                    </td>
+                    <td className="numeric-cell">{result.status === "error" ? "-" : fmtNumber(resultSummary.success_count, 0)}</td>
+                    <td className="numeric-cell">{result.status === "error" ? "-" : fmtNumber(resultSummary.failure_count, 0)}</td>
+                    <td className="numeric-cell">{result.status === "error" ? "-" : fmtNumber(resultSummary.neutral_count, 0)}</td>
+                    <td className="numeric-cell">{result.status === "error" ? "-" : fmtPercent(resultSummary.success_rate)}</td>
+                    <td className={`numeric-cell ${delta >= 0 ? "positive" : "negative"}`}>{result.status === "error" ? "-" : `${delta >= 0 ? "+" : ""}${fmtPercent(delta)}`}</td>
+                    <td><span className={`auto-param-verdict verdict-${verdict.replace(/\s/g, "-")}`}>{verdict}</span></td>
+                    <td>
+                      <button className="btn btn-secondary btn-xs" type="button" disabled={result.status === "error"} onClick={() => onSelect(result)}>
+                        이 결과로 보기
+                      </button>
+                      <button className="btn btn-secondary btn-xs auto-param-apply-button" type="button" disabled={result.status === "error"} title="이 자동 테스트 조건을 2단계 조건 확정 목록에 추가하거나 기존 조건값으로 반영합니다." onClick={() => onApplyToConditions(result)}>
+                        2단계 조건에 반영
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AutoParamTestPanelV2({
+  baselineSummary,
+  results,
+  totalCandidates,
+  cursor,
+  running,
+  progress,
+  selectedId,
+  onRunNext,
+  onClear,
+  onSelect,
+  onApplyToConditions,
+  onShowBaseline,
+}: {
+  baselineSummary: Record<string, any> | null | undefined;
+  results: AutoParamResult[];
+  totalCandidates: number;
+  cursor: number;
+  running: boolean;
+  progress: string;
+  selectedId: string | null;
+  onRunNext: () => void;
+  onClear: () => void;
+  onSelect: (result: AutoParamResult) => void;
+  onApplyToConditions: (result: AutoParamResult) => void;
+  onShowBaseline: () => void;
+}) {
+  const baselineRate = Number(baselineSummary?.success_rate || 0);
+  const baselineTotal = Number(baselineSummary?.total_samples || 0);
+  const hasMore = !totalCandidates || cursor < totalCandidates;
+  const selectedResult = results.find((result) => result.id === selectedId && result.status === "success") || null;
+  const promisingCount = results.filter((result) => autoResultVerdictV2(result, baselineSummary) === "유망").length;
+  const reviewCount = results.filter((result) => autoResultVerdictV2(result, baselineSummary) === "검토").length;
+  const lowSampleCount = results.filter((result) => ["샘플 부족", "과최적화 주의"].includes(autoResultVerdictV2(result, baselineSummary))).length;
+  const worseCount = results.filter((result) => autoResultVerdictV2(result, baselineSummary) === "악화").length;
+
+  return (
+    <div className="auto-param-panel">
+      <div className="auto-param-head">
+        <div>
+          <strong>자동 수치변경 테스트</strong>
+          <span>성공률만 보지 않고 샘플 수, 실패 샘플 변화, 과최적화 위험까지 함께 비교합니다. 결과는 저장하지 않습니다.</span>
+        </div>
+        <div className="auto-param-actions">
+          <button className="btn btn-primary" type="button" disabled={running || !hasMore} onClick={onRunNext}>
+            {results.length ? "다음 5개 테스트" : "자동 수치변경 테스트 5개 실행"}
+          </button>
+          <button className="btn btn-secondary auto-param-test-reset" type="button" disabled={running || !results.length} onClick={onClear}>결과 초기화</button>
+          <button className="btn btn-secondary" type="button" disabled={running || !selectedId} onClick={onShowBaseline}>기준 결과 보기</button>
+        </div>
+      </div>
+
+      <div className="auto-param-test-explain">
+        <strong>후보 생성 규칙</strong>
+        <span>비교용 지표를 포함/제외 조건으로 바꾸거나 기존 조건의 기준값을 조금씩 바꿔 테스트합니다. 한 번에 5개만 실행해 계산 부담을 줄입니다.</span>
+      </div>
+
+      <div className="auto-param-baseline">
+        <span>기준 후보 <strong>{fmtNumber(baselineTotal, 0)}</strong></span>
+        <span>기준 성공 <strong>{fmtNumber(baselineSummary?.success_count, 0)}</strong></span>
+        <span>기준 실패 <strong>{fmtNumber(baselineSummary?.failure_count, 0)}</strong></span>
+        <span>기준 중립 <strong>{fmtNumber(baselineSummary?.neutral_count, 0)}</strong></span>
+        <span>기준 성공률 <strong>{fmtPercent(baselineRate)}</strong></span>
+        <span>{running ? `진행 ${progress}` : totalCandidates ? `${Math.min(cursor, totalCandidates)}/${totalCandidates} 실행` : "후보 미생성"}</span>
+      </div>
+
+      {selectedResult ? (
+        <div className="auto-param-test-selected-banner">
+          <strong>선택한 결과 적용 중: #{selectedResult.seq} {selectedResult.label}</strong>
+          <span>현재 3단계 KPI/샘플과 4단계 GPT 패키지는 이 자동 테스트 결과를 기준으로 표시됩니다.</span>
+        </div>
+      ) : (
+        <div className="auto-param-test-selected-banner is-baseline">
+          <strong>현재 화면은 기준 샘플 결과를 기준으로 표시 중입니다.</strong>
+          <span>자동 테스트 결과를 선택하면 선택 결과와 기준 결과 비교 카드가 표시됩니다.</span>
+        </div>
+      )}
+
+      <div className="auto-param-test-summary">
+        <span>실행 {fmtNumber(results.length, 0)}</span>
+        <span className="auto-param-test-promising-badge">유망 {fmtNumber(promisingCount, 0)}</span>
+        <span>검토 {fmtNumber(reviewCount, 0)}</span>
+        <span className="auto-param-test-warning-badge">샘플/과최적화 주의 {fmtNumber(lowSampleCount, 0)}</span>
+        <span>악화 {fmtNumber(worseCount, 0)}</span>
+        <span>선택 {selectedResult ? `#${selectedResult.seq}` : "없음"}</span>
+      </div>
+
+      {selectedResult ? <AutoParamSelectedCompareCard baselineSummary={baselineSummary} result={selectedResult} onShowBaseline={onShowBaseline} onApplyToConditions={onApplyToConditions} /> : null}
+
+      {!results.length ? <div className="pattern-empty-note">아직 자동 수치변경 테스트 결과가 없습니다.</div> : (
+        <div className="table-shell auto-param-table-shell">
+          <table className="data-table compact-table auto-param-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>변경 내용</th>
+                <th className="numeric-cell">후보</th>
+                <th className="numeric-cell">성공</th>
+                <th className="numeric-cell">실패</th>
+                <th className="numeric-cell">중립</th>
+                <th className="numeric-cell">성공률</th>
+                <th className="numeric-cell">기준 대비</th>
+                <th className="numeric-cell">샘플 변화</th>
+                <th>판정</th>
+                <th>해석</th>
+                <th>액션</th>
+              </tr>
+            </thead>
+            <tbody>
+              {results.map((result) => {
+                const resultSummary = result.summary || {};
+                const metrics = autoResultMetrics(result, baselineSummary);
+                const verdict = autoResultVerdictV2(result, baselineSummary);
+                const rowClassName = [
+                  selectedId === result.id ? "selected-auto-result" : "",
+                  verdict === "유망" ? "auto-param-test-highlight-row" : "",
+                ].filter(Boolean).join(" ");
+                return (
+                  <tr key={result.id} className={rowClassName}>
+                    <td>{result.seq}</td>
+                    <td>
+                      <strong>{result.label}</strong>
+                      <span>{result.status === "error" ? result.error : result.description}</span>
+                    </td>
+                    <td className="numeric-cell">{result.status === "error" ? "-" : fmtNumber(resultSummary.total_samples, 0)}</td>
+                    <td className="numeric-cell">{result.status === "error" ? "-" : fmtNumber(resultSummary.success_count, 0)}</td>
+                    <td className="numeric-cell">{result.status === "error" ? "-" : fmtNumber(resultSummary.failure_count, 0)}</td>
+                    <td className="numeric-cell">{result.status === "error" ? "-" : fmtNumber(resultSummary.neutral_count, 0)}</td>
+                    <td className="numeric-cell">{result.status === "error" ? "-" : fmtPercent(resultSummary.success_rate)}</td>
+                    <td className={`numeric-cell ${metrics.rateDelta >= 0 ? "positive" : "negative"}`}>{result.status === "error" ? "-" : `${metrics.rateDelta >= 0 ? "+" : ""}${fmtPercent(metrics.rateDelta)}`}</td>
+                    <td className={`numeric-cell ${metrics.sampleDelta >= 0 ? "positive" : "negative"}`}>{result.status === "error" ? "-" : `${metrics.sampleDelta >= 0 ? "+" : ""}${fmtNumber(metrics.sampleDelta, 0)}`}</td>
+                    <td><span className={`auto-param-verdict verdict-${verdict.replace(/\s/g, "-")}`}>{verdict}</span></td>
+                    <td className="auto-param-test-interpretation">
+                      <strong>{autoResultShortInterpretation(result, baselineSummary)}</strong>
+                      <span>{autoResultInterpretation(result, baselineSummary)}</span>
+                    </td>
+                    <td>
+                      <button className="btn btn-secondary btn-xs" type="button" disabled={result.status === "error"} onClick={() => onSelect(result)}>
+                        이 결과로 보기
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AutoParamSelectedCompareCard({
+  baselineSummary,
+  result,
+  onShowBaseline,
+  onApplyToConditions,
+}: {
+  baselineSummary: Record<string, any> | null | undefined;
+  result: AutoParamResult;
+  onShowBaseline: () => void;
+  onApplyToConditions: (result: AutoParamResult) => void;
+}) {
+  const metrics = autoResultMetrics(result, baselineSummary);
+  const verdict = autoResultVerdictV2(result, baselineSummary);
+  return (
+    <div className="auto-param-test-compare-card">
+      <div>
+        <strong>선택한 자동 테스트 결과 비교</strong>
+        <span>기준 결과와 선택 결과를 나란히 비교합니다.</span>
+      </div>
+      <div className="auto-param-compare-grid">
+        <Kpi label="기준 후보" value={fmtNumber(metrics.baselineTotal, 0)} />
+        <Kpi label="선택 후보" value={fmtNumber(metrics.total, 0)} />
+        <Kpi label="성공률 변화" value={`${metrics.rateDelta >= 0 ? "+" : ""}${fmtPercent(metrics.rateDelta)}`} />
+        <Kpi label="후보 변화" value={`${metrics.sampleDelta >= 0 ? "+" : ""}${fmtNumber(metrics.sampleDelta, 0)}`} />
+        <Kpi label="실패 변화" value={`${metrics.failureDelta >= 0 ? "+" : ""}${fmtNumber(metrics.failureDelta, 0)}`} />
+        <Kpi label="판정" value={verdict} />
+      </div>
+      <div className="auto-param-test-interpretation">
+        <strong>{result.label}</strong>
+        <span>{autoResultInterpretation(result, baselineSummary)}</span>
+        <em>2단계 조건 반영은 다음 단계에서 자동화할 예정입니다. 현재는 위 변경 조건을 참고해 2단계에서 직접 조정할 수 있습니다.</em>
+      </div>
+      <div className="auto-param-actions">
+        <button className="btn btn-secondary" type="button" onClick={onShowBaseline}>기준 결과 보기</button>
+        <button className="btn btn-primary auto-param-apply-button" type="button" onClick={() => onApplyToConditions(result)}>2단계 조건에 반영</button>
       </div>
     </div>
   );

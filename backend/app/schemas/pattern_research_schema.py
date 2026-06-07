@@ -54,6 +54,13 @@ class PatternResearchRunCreateResponse(BaseModel):
     summary: dict[str, Any]
 
 
+class PatternResearchRunSimulateResponse(BaseModel):
+    summary: dict[str, Any]
+    samples: list[dict[str, Any]] = Field(default_factory=list)
+    gpt_package: dict[str, Any]
+    parsed_goal: dict[str, Any]
+
+
 class PatternResearchRunListItem(BaseModel):
     id: int
     research_name: str | None = None

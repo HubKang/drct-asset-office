@@ -8,6 +8,7 @@ import type {
   PatternResearchRun,
   PatternResearchRunCreateResponse,
   PatternResearchRunRequest,
+  PatternResearchRunSimulateResponse,
   PatternResearchSample,
   PatternResearchStockListResponse,
 } from "@/types/patternResearch";
@@ -40,6 +41,12 @@ export const patternResearchApiRepository = {
     }),
   createRun: (payload: PatternResearchRunRequest) =>
     apiRequest<PatternResearchRunCreateResponse>("/pattern-research/runs", {
+      method: "POST",
+      body: JSON.stringify(payload),
+      timeoutMs: 90_000,
+    }),
+  simulateRun: (payload: PatternResearchRunRequest) =>
+    apiRequest<PatternResearchRunSimulateResponse>("/pattern-research/runs/simulate", {
       method: "POST",
       body: JSON.stringify(payload),
       timeoutMs: 90_000,
