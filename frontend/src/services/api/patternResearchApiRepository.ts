@@ -11,6 +11,10 @@ import type {
   PatternResearchRunSimulateResponse,
   PatternResearchSample,
   PatternResearchStockListResponse,
+  ScenarioSimulationRequest,
+  ScenarioSimulationResponse,
+  ScenarioValidationRequest,
+  ScenarioValidationResponse,
 } from "@/types/patternResearch";
 
 export const patternResearchApiRepository = {
@@ -50,6 +54,18 @@ export const patternResearchApiRepository = {
       method: "POST",
       body: JSON.stringify(payload),
       timeoutMs: 90_000,
+    }),
+  validateAiScenarioCandidates: (payload: ScenarioValidationRequest) =>
+    apiRequest<ScenarioValidationResponse>("/pattern-research/ai-scenarios/validate", {
+      method: "POST",
+      body: JSON.stringify(payload),
+      timeoutMs: 60_000,
+    }),
+  simulateAiScenarioCandidates: (payload: ScenarioSimulationRequest) =>
+    apiRequest<ScenarioSimulationResponse>("/pattern-research/ai-scenarios/simulate", {
+      method: "POST",
+      body: JSON.stringify(payload),
+      timeoutMs: 120_000,
     }),
   fetchRuns: (params?: { limit?: number }) => {
     const search = new URLSearchParams();

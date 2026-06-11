@@ -11,6 +11,11 @@ import type {
   PatternResearchRun,
   PatternResearchSample,
   PatternResearchStock,
+  ScenarioSimulationResponse,
+  ScenarioSimulationResult,
+  ScenarioValidationResponse,
+  ScenarioValidationSummary,
+  ValidatedScenarioCandidate,
 } from "@/types/patternResearch";
 
 type TabKey = "setup" | "gptValidation" | "confirm" | "samples" | "package" | "settings" | "analysis" | "gpt";
@@ -18,6 +23,39 @@ type SampleTab = "SUCCESS" | "FAILURE" | "NEUTRAL";
 type GptValidationStatus = "idle" | "validating" | "success" | "failed";
 type ConditionUsage = "include" | "exclude" | "reference" | "off";
 type FinalUsageMap = Record<string, ConditionUsage>;
+type ResearchMode = "rule_validation" | "ai_scenario_search";
+type ScenarioSearchStep = "setup" | "gpt_candidates" | "validation" | "results" | "training_guide";
+type ScenarioCandidateStatus = "included" | "excluded";
+type ScenarioGoalState = {
+  tradeType: "short" | "swing" | "mid" | "long";
+  targetReturnPct: number;
+  holdingDays: number;
+  stopLossPct: number;
+  minSampleCount: number;
+};
+type ScenarioRiskPlanState = {
+  addBuyEnabled: boolean;
+  maxAddBuyCount: number;
+  initialAmount: number;
+  addBuyAmountType: "same";
+  addBuyTriggerLossPct: number;
+  finalStopLossBasis: "initial_price" | "average_price";
+  finalStopLossPct: number;
+};
+type ScenarioCandidate = {
+  id: string;
+  name: string;
+  summary: string;
+  entryConditions: string[];
+  addBuyStrategy: string;
+  stopLossRule: string;
+  fundingNote: string;
+  status: ScenarioCandidateStatus;
+  raw: Record<string, any>;
+  stringConditionCount: number;
+  invalidStructureCount: number;
+  schemaWarnings: string[];
+};
 type NewIndicatorUsageStatus = "filter_supported" | "not_blocking" | "filter_engine_required";
 type SampleBlocker = {
   rowId: string;
@@ -46,6 +84,117 @@ type AutoParamResult = AutoParamCandidate & {
   samples?: PatternResearchSample[];
   gptPackage?: PatternResearchGptPackage;
   error?: string;
+};
+type ResearchStepStatus = "complete" | "active" | "pending" | "attention";
+type ResearchStepperItem = {
+  key: string;
+  label: string;
+  description: string;
+  status: ResearchStepStatus;
+  statusLabel: string;
+};
+
+const SCENARIO_SEARCH_STEPS: Array<{ key: ScenarioSearchStep; label: string }> = [
+  { key: "setup", label: "1. 탐색 설정" },
+  { key: "gpt_candidates", label: "2. GPT 후보" },
+  { key: "validation", label: "3. 검증/실행" },
+  { key: "results", label: "4. 결과 분석" },
+  { key: "training_guide", label: "5. 훈련가이드" },
+];
+
+const SCENARIO_STEP_DESCRIPTIONS: Record<ScenarioSearchStep, string> = {
+  setup: "목표 수익률, 대상 종목, 하락 대응전략을 정리해 GPT 후보 생성을 준비합니다.",
+  gpt_candidates: "DrCT 데이터 프로파일을 바탕으로 GPT 시나리오 후보를 생성하고 후보 포함 여부를 정합니다.",
+  validation: "GPT 후보 조건이 실제 지표와 연산자로 계산 가능한지 검증하고 시뮬레이션 대상을 확정합니다.",
+  results: "실제 가격 데이터 기반 결과를 비교해 성공률, 실패율, 추가매수 효과를 분석합니다.",
+  training_guide: "선택한 시나리오를 GPT 훈련가이드 요청문으로 정리하고 응답을 미리봅니다.",
+};
+
+const SCENARIO_AVAILABLE_INDICATORS = [
+  "ma20_slope_5d",
+  "ma60_slope_5d",
+  "close_vs_ma20_pct",
+  "close_vs_ma60_pct",
+  "ma5_vs_ma10_pct",
+  "recent_3d_return",
+  "recent_5d_return",
+  "recent_10d_return",
+  "max_return_1d_30d",
+  "trading_value_ratio_20",
+];
+
+const SCENARIO_INDICATOR_GROUPS = [
+  { title: "추세", indicators: ["ma20_slope_5d", "ma60_slope_5d"] },
+  { title: "눌림/이격", indicators: ["close_vs_ma20_pct", "close_vs_ma60_pct", "ma5_vs_ma10_pct"] },
+  { title: "단기 과열", indicators: ["recent_3d_return", "recent_5d_return", "recent_10d_return", "max_return_1d_30d"] },
+  { title: "거래대금", indicators: ["trading_value_ratio_20"] },
+];
+
+const TRADE_TYPE_LABELS: Record<ScenarioGoalState["tradeType"], string> = {
+  short: "단기",
+  swing: "스윙",
+  mid: "중기",
+  long: "장기",
+};
+
+const DRCT_SCENARIO_JSON_EXAMPLE = {
+  scenario_candidates: [
+    {
+      scenario_name: "상승추세 눌림 후 과열 해소 반등",
+      scenario_type: "swing_pullback",
+      intent: "60일선 상승 추세를 유지하면서 20일선 근처로 눌린 뒤 단기 과열이 해소된 구간을 찾습니다.",
+      entry_conditions: [
+        {
+          indicator_key: "ma60_slope_5d",
+          operator: ">",
+          value: 0,
+          role: "trend_filter",
+          description: "60일선 상승 추세",
+        },
+        {
+          indicator_key: "close_vs_ma20_pct",
+          operator: "between",
+          value: [-5, 5],
+          role: "pullback",
+          description: "20일선 근처 눌림",
+        },
+        {
+          indicator_key: "recent_5d_return",
+          operator: "<=",
+          value: 12,
+          role: "overheat_filter",
+          description: "최근 5거래일 단기 과열 제한",
+        },
+      ],
+      add_buy_plan: {
+        enabled: true,
+        max_count: 1,
+        trigger_basis: "entry_price",
+        trigger_loss_pct: -5,
+        amount_ratio: 1.0,
+        stop_loss_basis: "average_price",
+        final_stop_loss_pct: -5,
+      },
+      risk_filters: [
+        {
+          indicator_key: "close_vs_ma60_pct",
+          operator: "<",
+          value: 0,
+          action: "block_add_buy",
+          reason: "60일선 이탈 시 추가매수 차단",
+        },
+      ],
+      expected_risk: "추가매수 후에도 추세가 회복되지 않으면 총 투입금액 증가로 실제 손실금액이 커질 수 있습니다.",
+      simulation_priority: "high",
+    },
+  ],
+};
+
+const DRCT_SCENARIO_BAD_JSON_EXAMPLE = {
+  entry_conditions: [
+    "ma60_slope_5d > 0",
+    "close_vs_ma20_pct between -5 and 5",
+  ],
 };
 
 const DEFAULT_GOAL =
@@ -507,7 +656,208 @@ function scrollToIndicatorCandidate(indicatorKey: string) {
   window.setTimeout(() => target?.classList.remove("pattern-highlight-pulse"), 1400);
 }
 
+function normalizeScenarioCandidates(payload: Record<string, any>): ScenarioCandidate[] {
+  const source = Array.isArray(payload.scenario_candidates)
+    ? payload.scenario_candidates
+    : Array.isArray(payload.scenarios)
+      ? payload.scenarios
+      : [];
+
+  return source.map((item: Record<string, any>, index: number) => {
+    const entryConditions = item.entry_conditions || item.conditions || item.core_conditions || [];
+    const riskFilters = item.risk_filters || [];
+    const schemaCheck = inspectScenarioCandidateSchema(item);
+    return {
+      id: String(item.id || item.scenario_id || `scenario-${index + 1}`),
+      name: String(item.scenario_name || item.name || item.title || `시나리오 후보 ${index + 1}`),
+      summary: String(item.summary || item.intent || item.core || item.description || "핵심 조건 설명이 필요합니다."),
+      entryConditions: Array.isArray(entryConditions) ? entryConditions.map(formatScenarioCondition) : [String(entryConditions)],
+      addBuyStrategy: item.add_buy_plan ? formatAddBuyPlan(item.add_buy_plan) : String(item.add_buy_strategy || item.add_buy || item.scale_in_strategy || "추가매수 전략 검토 필요"),
+      stopLossRule: String(item.stop_loss_rule || item.stop_loss || item.risk_control || "손절 기준 검토 필요"),
+      fundingNote: String(item.funding_note || item.capital_efficiency || item.money_management || "자금 효율 관점 검토 필요"),
+      status: "included" as ScenarioCandidateStatus,
+      raw: {
+        ...item,
+        entry_conditions: Array.isArray(entryConditions) ? entryConditions : [],
+        risk_filters: Array.isArray(riskFilters) ? riskFilters : [],
+      },
+      stringConditionCount: schemaCheck.stringConditionCount,
+      invalidStructureCount: schemaCheck.invalidStructureCount,
+      schemaWarnings: schemaCheck.warnings,
+    };
+  });
+}
+
+function inspectScenarioCandidateSchema(candidate: Record<string, any>) {
+  const warnings: string[] = [];
+  const entryConditions = candidate.entry_conditions || candidate.conditions || candidate.core_conditions;
+  const riskFilters = candidate.risk_filters || [];
+  let stringConditionCount = 0;
+  let invalidStructureCount = 0;
+
+  if (!Array.isArray(entryConditions)) {
+    warnings.push("entry_conditions 배열이 필요합니다.");
+    invalidStructureCount += 1;
+  } else {
+    stringConditionCount += entryConditions.filter((condition) => typeof condition === "string").length;
+    invalidStructureCount += entryConditions.filter((condition) => typeof condition !== "string" && (typeof condition !== "object" || condition === null || Array.isArray(condition))).length;
+  }
+
+  if (Array.isArray(riskFilters)) {
+    stringConditionCount += riskFilters.filter((condition) => typeof condition === "string").length;
+    invalidStructureCount += riskFilters.filter((condition) => typeof condition !== "string" && (typeof condition !== "object" || condition === null || Array.isArray(condition))).length;
+  } else if (riskFilters) {
+    warnings.push("risk_filters는 배열이어야 합니다.");
+    invalidStructureCount += 1;
+  }
+
+  if (stringConditionCount > 0) {
+    warnings.push("GPT 응답에 문자열 조건이 포함되어 있습니다. DrCT는 객체형 조건을 권장하며, 지원 패턴은 자동 변환을 시도합니다.");
+  }
+  return { stringConditionCount, invalidStructureCount, warnings };
+}
+
+function scenarioJsonExampleText() {
+  return JSON.stringify(DRCT_SCENARIO_JSON_EXAMPLE, null, 2);
+}
+
+function formatScenarioCondition(condition: unknown): string {
+  if (typeof condition === "string") return condition;
+  if (!condition || typeof condition !== "object" || Array.isArray(condition)) return "-";
+  const item = condition as Record<string, any>;
+  const indicatorKey = item.indicator_key ?? item.indicatorKey ?? "-";
+  const operator = item.operator ?? "";
+  const value = Array.isArray(item.value) ? `[${item.value.join(", ")}]` : item.value ?? "";
+  const description = item.description ? ` · ${item.description}` : item.reason ? ` · ${item.reason}` : "";
+  const action = item.action ? ` → ${item.action}` : "";
+  return `${indicatorKey} ${operator} ${value}${action}${description}`.trim();
+}
+
+function formatScenarioConditionParts(condition: unknown): { expression: string; description: string } {
+  if (typeof condition === "string") return { expression: condition, description: "" };
+  if (!condition || typeof condition !== "object" || Array.isArray(condition)) return { expression: "-", description: "" };
+  const item = condition as Record<string, any>;
+  const indicatorKey = item.indicator_key ?? item.indicatorKey ?? "-";
+  const operator = item.operator ?? "";
+  const value = Array.isArray(item.value) ? `[${item.value.join(", ")}]` : item.value ?? "";
+  return {
+    expression: `${indicatorKey} ${operator} ${value}`.trim(),
+    description: String(item.description || item.reason || item.role || ""),
+  };
+}
+
+function formatAddBuyPlan(plan: unknown): string {
+  if (!plan || typeof plan !== "object" || Array.isArray(plan)) return "추가매수 전략 없음";
+  const item = plan as Record<string, any>;
+  if (item.enabled === false) return "추가매수 사용 안함";
+  const maxCount = item.max_count ?? item.maxCount ?? 0;
+  const triggerBasis = item.trigger_basis ?? item.triggerBasis ?? "entry_price";
+  const triggerLossPct = item.trigger_loss_pct ?? item.triggerLossPct ?? "-";
+  const amountRatio = item.amount_ratio ?? item.amountRatio ?? 1;
+  const stopLossBasis = item.stop_loss_basis ?? item.stopLossBasis ?? "average_price";
+  const finalStopLossPct = item.final_stop_loss_pct ?? item.finalStopLossPct ?? "-";
+  return `${triggerBasis === "average_price" ? "평균단가" : "최초 진입가"} 대비 ${triggerLossPct}% 하락 시 최대 ${maxCount}회, 1차 금액의 ${amountRatio}배 추가매수 · ${stopLossBasis === "average_price" ? "평균단가" : "진입가"} 기준 ${finalStopLossPct}% 손절`;
+}
+
+function scenarioPriorityLabel(priority: unknown): string {
+  const value = String(priority || "medium").toLowerCase();
+  if (value === "high") return "우선순위 높음";
+  if (value === "low") return "낮음";
+  return "보통";
+}
+
+function scenarioActionLabel(action: unknown): string {
+  return {
+    block_add_buy: "추가매수 차단",
+    force_stop: "강제 손절 후보",
+    exclude_entry: "진입 제외",
+    warning_only: "경고만 표시",
+  }[String(action || "")] || String(action || "경고만 표시");
+}
+
+function formatScenarioRiskFilter(filter: unknown): string {
+  if (!filter || typeof filter !== "object" || Array.isArray(filter)) return formatScenarioCondition(filter);
+  const item = filter as Record<string, any>;
+  const base = formatScenarioCondition({ ...item, action: undefined });
+  const reason = item.reason ? ` · ${item.reason}` : "";
+  return `${base} → ${scenarioActionLabel(item.action)}${reason}`;
+}
+
+function scenarioCandidateStateLabel(candidate: ScenarioCandidate): string {
+  if (candidate.status === "excluded") return "제외됨";
+  if (candidate.stringConditionCount) return "형식 보정 필요";
+  return "시뮬레이션 포함";
+}
+
+function ResearchStepper({
+  title,
+  steps,
+  currentStep,
+  onChangeStep,
+}: {
+  title: string;
+  steps: ResearchStepperItem[];
+  currentStep: string;
+  onChangeStep: (step: string) => void;
+}) {
+  const activeStep = steps.find((step) => step.key === currentStep) || steps.find((step) => step.status === "active") || steps[0];
+  return (
+    <section className="pattern-research-common-stepper" aria-label={title}>
+      <div className="pattern-research-stepper-head">
+        <strong>{title}</strong>
+        {activeStep ? <span>{activeStep.statusLabel}</span> : null}
+      </div>
+      <div className="pattern-research-stepper-track">
+        {steps.map((step, index) => (
+          <button
+            key={step.key}
+            className={`pattern-research-step-card pattern-research-step-card-${step.status}`}
+            type="button"
+            onClick={() => onChangeStep(step.key)}
+          >
+            <span className="pattern-research-step-number">{step.status === "complete" ? "✓" : index + 1}</span>
+            <span className="pattern-research-step-title">{step.label.replace(/^\d+\.\s*/, "")}</span>
+            <span className="pattern-research-step-status">{step.statusLabel}</span>
+          </button>
+        ))}
+      </div>
+      {activeStep ? <p className="pattern-research-step-description">{activeStep.description}</p> : null}
+    </section>
+  );
+}
+
 function PatternResearchPage() {
+  const [researchMode, setResearchMode] = useState<ResearchMode>("rule_validation");
+  const [scenarioStep, setScenarioStep] = useState<ScenarioSearchStep>("setup");
+  const [scenarioGoal, setScenarioGoal] = useState<ScenarioGoalState>({
+    tradeType: "swing",
+    targetReturnPct: 5,
+    holdingDays: 5,
+    stopLossPct: -5,
+    minSampleCount: 50,
+  });
+  const [scenarioRiskPlan, setScenarioRiskPlan] = useState<ScenarioRiskPlanState>({
+    addBuyEnabled: true,
+    maxAddBuyCount: 1,
+    initialAmount: 1000000,
+    addBuyAmountType: "same",
+    addBuyTriggerLossPct: -5,
+    finalStopLossBasis: "average_price",
+    finalStopLossPct: -5,
+  });
+  const [scenarioGptPrompt, setScenarioGptPrompt] = useState("");
+  const [showScenarioGptPrompt, setShowScenarioGptPrompt] = useState(false);
+  const [scenarioGptResponseText, setScenarioGptResponseText] = useState("");
+  const [scenarioCandidates, setScenarioCandidates] = useState<ScenarioCandidate[]>([]);
+  const [scenarioCandidateParseError, setScenarioCandidateParseError] = useState("");
+  const [scenarioParseMessage, setScenarioParseMessage] = useState("");
+  const [scenarioValidationResult, setScenarioValidationResult] = useState<ScenarioValidationResponse | null>(null);
+  const [scenarioValidationError, setScenarioValidationError] = useState("");
+  const [scenarioValidationLoading, setScenarioValidationLoading] = useState(false);
+  const [scenarioSimulationResult, setScenarioSimulationResult] = useState<ScenarioSimulationResponse | null>(null);
+  const [scenarioSimulationError, setScenarioSimulationError] = useState("");
+  const [scenarioSimulationLoading, setScenarioSimulationLoading] = useState(false);
+  const [selectedScenarioSimulationResult, setSelectedScenarioSimulationResult] = useState<ScenarioSimulationResult | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("setup");
   const [targetModalOpen, setTargetModalOpen] = useState(false);
   const [sampleTab, setSampleTab] = useState<SampleTab>("SUCCESS");
@@ -563,11 +913,35 @@ function PatternResearchPage() {
   const needsReviewCount = confirmedConditions.filter((condition) => condition.status === "needs_review" || condition.validation_status === "needs_review").length;
   const sampleBlockers = collectSampleBlockers(parsedGoal, finalUsageByRowId);
   const canCreateSamples = Boolean(parsed) && sampleBlockers.length === 0;
-  const stepItems = [
-    { key: "setup" as TabKey, label: "1. 찾을 패턴 설정", status: parsed ? "완료" : activeTab === "setup" ? "진행 중" : "대기" },
-    { key: "gptValidation" as TabKey, label: "2. 수식화 GPT 검증 및 확정", status: newIndicatorRequiredConditions.length || needsReviewCount ? "확인 필요" : gptValidationStatusLabel(gptGoalValidationStatus) },
-    { key: "samples" as TabKey, label: "3. 성공/실패 샘플 추출", status: currentRun ? "완료" : parsed ? "대기" : "대기" },
-    { key: "package" as TabKey, label: "4. GPT 연구 패키지", status: gptPackage ? "완료" : currentRun ? "진행 가능" : "대기" },
+  const ruleStepItems: ResearchStepperItem[] = [
+    {
+      key: "setup",
+      label: "1. 찾을 패턴 설정",
+      description: "자연어 매매규칙을 입력하고 DrCT가 수식 후보로 해석할 조건을 확인합니다.",
+      status: activeTab === "setup" ? "active" : parsed ? "complete" : "pending",
+      statusLabel: activeTab === "setup" ? "진행 중" : parsed ? "완료" : "대기",
+    },
+    {
+      key: "gptValidation",
+      label: "2. 수식화 GPT 검증 및 확정",
+      description: "수식 후보를 GPT 검증 결과와 비교해 포함 조건, 제외 조건, 비교용 조건을 확정합니다.",
+      status: activeTab === "gptValidation" ? "active" : newIndicatorRequiredConditions.length || needsReviewCount ? "attention" : gptGoalValidation ? "complete" : "pending",
+      statusLabel: activeTab === "gptValidation" ? "진행 중" : newIndicatorRequiredConditions.length || needsReviewCount ? "확인 필요" : gptGoalValidation ? "완료" : "대기",
+    },
+    {
+      key: "samples",
+      label: "3. 성공/실패 샘플 추출",
+      description: "확정 조건으로 과거 가격 데이터를 검증하고 성공/실패/중립 샘플을 분리합니다.",
+      status: activeTab === "samples" ? "active" : currentRun ? "complete" : "pending",
+      statusLabel: activeTab === "samples" ? "진행 중" : currentRun ? "완료" : parsed ? "진행 가능" : "대기",
+    },
+    {
+      key: "package",
+      label: "4. GPT 연구 패키지",
+      description: "성공/실패 샘플과 확정 조건을 GPT 연구 패키지로 정리해 복사합니다.",
+      status: activeTab === "package" ? "active" : gptPackage ? "complete" : "pending",
+      statusLabel: activeTab === "package" ? "진행 중" : gptPackage ? "완료" : currentRun ? "진행 가능" : "대기",
+    },
   ];
   const diffRows = useMemo(() => {
     const labels: Record<string, string> = {
@@ -1309,37 +1683,255 @@ function PatternResearchPage() {
     window.open(repositories.patternResearch.csvUrl(currentRun.id), "_blank", "noopener,noreferrer");
   };
 
+  const scenarioSelectedStocks = selectedStock ? [selectedStock] : [];
+  const scenarioMaxInputAmount = scenarioRiskPlan.initialAmount * (1 + (scenarioRiskPlan.addBuyEnabled ? scenarioRiskPlan.maxAddBuyCount : 0));
+  const scenarioSetupReady = Boolean(
+    scenarioGoal.targetReturnPct
+    && scenarioGoal.holdingDays
+    && scenarioGoal.stopLossPct
+    && scenarioSelectedStocks.length > 0,
+  );
+
+  const buildScenarioGptPrompt = () => {
+    const stockSummary = scenarioSelectedStocks.length
+      ? scenarioSelectedStocks.map((stock) => `${stock.stock_name}(${stock.stock_code})`).join(", ")
+      : "선택 종목 없음";
+    const prompt = [
+      "당신은 종목 추천자가 아니라 매매 시나리오 연구 설계자입니다.",
+      "",
+      "아래 DrCT 데이터 프로파일과 사용자의 목표를 바탕으로 실제 시뮬레이션 가능한 매매 시나리오 후보를 제안해 주세요.",
+      "",
+      "[중요 원칙]",
+      "- 매수/매도 추천을 하지 마세요.",
+      "- 결과는 투자 지시가 아니라 연구 후보와 훈련 후보로 표현하세요.",
+      "- DrCT가 제공한 사용 가능 지표를 우선 사용하세요.",
+      "- 지원되지 않는 지표가 필요하면 대체 수식 후보를 함께 제안하세요.",
+      "- 각 시나리오는 진입 조건, 추가매수 전략, 손절 기준, 자금 효율 관점으로 구성하세요.",
+      "- 출력은 반드시 JSON 형식으로 작성하세요.",
+      "",
+      "[탐색 목표]",
+      `- 투자 유형: ${TRADE_TYPE_LABELS[scenarioGoal.tradeType]}`,
+      `- 목표: 진입 후 ${scenarioGoal.holdingDays}거래일 안에 +${scenarioGoal.targetReturnPct}% 이상`,
+      `- 실패 기준: ${scenarioGoal.stopLossPct}% 이하 하락`,
+      `- 최소 후보 수: ${scenarioGoal.minSampleCount}개`,
+      "",
+      "[대상 종목]",
+      `- ${stockSummary}`,
+      "",
+      "[기본 대응전략]",
+      `- 추가매수 사용: ${scenarioRiskPlan.addBuyEnabled ? "사용" : "사용 안함"}`,
+      `- 최대 추가매수 횟수: ${scenarioRiskPlan.addBuyEnabled ? scenarioRiskPlan.maxAddBuyCount : 0}회`,
+      `- 1차 매수금액: ${fmtWon(scenarioRiskPlan.initialAmount)}`,
+      `- 최대 투입금액: ${fmtWon(scenarioMaxInputAmount)}`,
+      `- 추가매수 방식: 동일 금액`,
+      `- 최종 손절 기준: ${scenarioRiskPlan.finalStopLossBasis === "average_price" ? "평균단가 기준" : "최초가 기준"}`,
+      `- 최종 손절률: ${scenarioRiskPlan.finalStopLossPct}%`,
+      "",
+      "[사용 가능한 지표]",
+      ...SCENARIO_AVAILABLE_INDICATORS.map((indicator) => `- ${indicator}`),
+      "",
+      "[JSON 출력 형식]",
+      scenarioJsonExampleText(),
+      "",
+      "[JSON 작성 규칙]",
+      "entry_conditions와 risk_filters는 반드시 객체 배열로 작성하세요.",
+      "",
+      "잘못된 예:",
+      JSON.stringify(DRCT_SCENARIO_BAD_JSON_EXAMPLE, null, 2),
+      "",
+      "올바른 예:",
+      JSON.stringify({
+        entry_conditions: DRCT_SCENARIO_JSON_EXAMPLE.scenario_candidates[0].entry_conditions.slice(0, 2),
+      }, null, 2),
+      "",
+      "주의:",
+      "- entry_conditions 안에 문자열을 넣지 마세요.",
+      "- indicator_key는 반드시 DrCT 사용 가능 지표 목록 중 하나를 사용하세요.",
+      "- operator는 >, >=, <, <=, =, between 중 하나만 사용하세요.",
+      "- between의 value는 반드시 숫자 2개 배열로 작성하세요. 예: [-5, 5]",
+    ].join("\n");
+    setScenarioGptPrompt(prompt);
+    setShowScenarioGptPrompt(true);
+    setScenarioStep("gpt_candidates");
+    setMessage("GPT 시나리오 생성 요청문을 만들었습니다.");
+    return prompt;
+  };
+
+  const copyScenarioGptPrompt = async () => {
+    const prompt = scenarioGptPrompt || buildScenarioGptPrompt();
+    if (!prompt) return;
+    await navigator.clipboard.writeText(prompt);
+    setMessage("객체형 JSON 형식이 반영된 GPT 요청문을 복사했습니다.");
+  };
+
+  const validateScenarioGptResponse = () => {
+    setScenarioCandidateParseError("");
+    setScenarioParseMessage("");
+    try {
+      const payload = JSON.parse(scenarioGptResponseText);
+      const candidates = normalizeScenarioCandidates(payload);
+      if (!candidates.length) {
+        setScenarioCandidateParseError("scenario_candidates 또는 scenarios 배열을 찾지 못했습니다.");
+        setScenarioCandidates([]);
+        return;
+      }
+      setScenarioCandidates(candidates);
+      setScenarioValidationResult(null);
+      setScenarioValidationError("");
+      setScenarioSimulationResult(null);
+      setSelectedScenarioSimulationResult(null);
+      setScenarioParseMessage(`GPT 시나리오 후보 ${candidates.length}개를 읽었습니다.`);
+    } catch (nextError) {
+      setScenarioCandidateParseError(nextError instanceof Error ? `JSON 형식 오류: ${nextError.message}` : "JSON 형식 오류");
+      setScenarioCandidates([]);
+      setScenarioValidationResult(null);
+      setScenarioSimulationResult(null);
+      setSelectedScenarioSimulationResult(null);
+    }
+  };
+
+  const updateScenarioCandidateStatus = (id: string, status: ScenarioCandidateStatus) => {
+    setScenarioCandidates((prev) => prev.map((candidate) => candidate.id === id ? { ...candidate, status } : candidate));
+    setScenarioValidationResult(null);
+    setScenarioValidationError("");
+    setScenarioSimulationResult(null);
+    setSelectedScenarioSimulationResult(null);
+  };
+
+  const validateScenarioCandidates = async () => {
+    const included = scenarioCandidates.filter((candidate) => candidate.status === "included");
+    if (!included.length) {
+      setScenarioValidationError("검증할 포함 후보가 없습니다.");
+      return;
+    }
+    setScenarioValidationLoading(true);
+    setScenarioValidationError("");
+    try {
+      const response = await repositories.patternResearch.validateAiScenarioCandidates({
+        goal: {
+          trade_type: scenarioGoal.tradeType,
+          target_return_pct: scenarioGoal.targetReturnPct,
+          holding_days: scenarioGoal.holdingDays,
+          stop_loss_pct: scenarioGoal.stopLossPct,
+          min_sample_count: scenarioGoal.minSampleCount,
+        },
+        risk_plan: {
+          add_buy_enabled: scenarioRiskPlan.addBuyEnabled,
+          max_add_buy_count: scenarioRiskPlan.maxAddBuyCount,
+          initial_amount: scenarioRiskPlan.initialAmount,
+          add_buy_trigger_loss_pct: scenarioRiskPlan.addBuyTriggerLossPct,
+          final_stop_loss_basis: scenarioRiskPlan.finalStopLossBasis,
+          final_stop_loss_pct: scenarioRiskPlan.finalStopLossPct,
+        },
+        candidates: included.map((candidate) => ({
+          ...candidate.raw,
+          scenario_name: candidate.raw.scenario_name || candidate.name,
+          entry_conditions: candidate.raw.entry_conditions || candidate.raw.conditions || candidate.raw.core_conditions || [],
+          add_buy_plan: candidate.raw.add_buy_plan || {},
+          risk_filters: candidate.raw.risk_filters || [],
+        })),
+      });
+      setScenarioValidationResult(response);
+      setScenarioSimulationResult(null);
+      setSelectedScenarioSimulationResult(null);
+      setScenarioStep("validation");
+      if ((response.summary.simulation_ready || 0) > 0) {
+        setMessage("AI 시나리오 조건 검증을 완료했습니다. 시뮬레이션 가능한 후보가 있습니다.");
+      } else if ((response.summary.invalid || response.summary.structure_error || 0) > 0) {
+        setMessage("검증은 완료되었지만, 시뮬레이션 가능한 후보가 없습니다. GPT 응답 형식을 확인하세요.");
+      } else if ((response.summary.unsupported || 0) > 0) {
+        setMessage("검증은 완료되었지만, 지원하지 않는 지표가 포함되어 시뮬레이션 가능한 후보가 없습니다.");
+      } else {
+        setMessage("검증은 완료되었지만, 시뮬레이션 가능한 후보가 없습니다. 조건을 확인하세요.");
+      }
+    } catch (nextError) {
+      setScenarioValidationError(nextError instanceof Error ? nextError.message : "시나리오 조건 검증 중 오류가 발생했습니다. GPT 응답 JSON 구조와 네트워크 상태를 확인해 주세요.");
+    } finally {
+      setScenarioValidationLoading(false);
+    }
+  };
+
+  const simulateScenarioCandidates = async () => {
+    const readyCandidates = (scenarioValidationResult?.validated_candidates || []).filter((candidate) => candidate.is_simulation_ready);
+    if (!readyCandidates.length) {
+      setScenarioSimulationError("시뮬레이션 가능한 검증 후보가 없습니다.");
+      return;
+    }
+    if (!scenarioSelectedStocks.length) {
+      setScenarioSimulationError("시뮬레이션 대상 종목이 필요합니다.");
+      return;
+    }
+    setScenarioSimulationLoading(true);
+    setScenarioSimulationError("");
+    try {
+      const response = await repositories.patternResearch.simulateAiScenarioCandidates({
+        goal: {
+          trade_type: scenarioGoal.tradeType,
+          target_return_pct: scenarioGoal.targetReturnPct,
+          holding_days: scenarioGoal.holdingDays,
+          stop_loss_pct: scenarioGoal.stopLossPct,
+          min_sample_count: scenarioGoal.minSampleCount,
+        },
+        risk_plan: {
+          add_buy_enabled: scenarioRiskPlan.addBuyEnabled,
+          max_add_buy_count: scenarioRiskPlan.maxAddBuyCount,
+          initial_amount: scenarioRiskPlan.initialAmount,
+          add_buy_trigger_loss_pct: scenarioRiskPlan.addBuyTriggerLossPct,
+          final_stop_loss_basis: scenarioRiskPlan.finalStopLossBasis,
+          final_stop_loss_pct: scenarioRiskPlan.finalStopLossPct,
+        },
+        stocks: scenarioSelectedStocks.map((stock) => ({ stock_code: stock.stock_code, stock_name: stock.stock_name })),
+        candidates: readyCandidates.map((candidate) => candidate.normalized_candidate),
+      });
+      setScenarioSimulationResult(response);
+      setSelectedScenarioSimulationResult(response.scenario_results[0] || null);
+      setScenarioStep("results");
+      setMessage("AI 시나리오 시뮬레이션을 완료했습니다.");
+    } catch (nextError) {
+      setScenarioSimulationError(nextError instanceof Error ? nextError.message : "시나리오 시뮬레이션 중 오류가 발생했습니다. 검증 결과와 선택 종목의 가격 데이터 상태를 확인해 주세요.");
+    } finally {
+      setScenarioSimulationLoading(false);
+    }
+  };
+
   return (
     <div className="pattern-research-page space-y-4">
       <PageHeader
         title="매매패턴 AI연구"
-        description="자연어 매매목표를 데이터 기반 조건으로 해석하고 성공/실패 샘플과 GPT 연구 패키지를 생성합니다."
+        description="자연어 매매규칙 검증과 AI 시나리오 자동탐색을 통해 성공/실패 샘플을 분석하고, 훈련 가능한 매매 기준을 만듭니다."
       />
       {message ? <div className="alert success">{message}</div> : null}
       {error ? <div className="alert danger">{error}</div> : null}
 
-      <SectionCard title="연구 흐름">
-        <div className="pattern-stepper">
-          {stepItems.map((step) => (
-            <button
-              key={step.key}
-              className={`pattern-step-button ${activeTab === step.key ? "active" : ""} is-${step.status.replace(/\s/g, "-")}`}
-              type="button"
-              onClick={() => setActiveTab(step.key)}
-            >
-              <span>{step.label}</span>
-              <em>{step.status}</em>
-            </button>
-          ))}
-          <span className="active">① 연구 설정</span>
-          <span className={gptGoalValidation || parsed ? "active" : ""}>② 수식 확정</span>
-          <span className={currentRun ? "active" : ""}>③ 성공/실패 분석</span>
-          <span className={gptPackage ? "active" : ""}>④ GPT 연구 패키지</span>
-        </div>
-        <p className="pattern-help-text">
-          자연어 목표를 해석한 뒤 조건을 확인하고, 과거 가격 데이터에서 성공/실패 샘플을 분리합니다.
-        </p>
-      </SectionCard>
+      <section className="pattern-research-mode-switch" aria-label="연구 모드 선택">
+        <button
+          className={`pattern-research-mode-card ${researchMode === "rule_validation" ? "pattern-research-mode-card-active" : ""}`}
+          type="button"
+          onClick={() => setResearchMode("rule_validation")}
+        >
+          <span className="pattern-research-mode-badge">{researchMode === "rule_validation" ? "현재 모드" : "선택 가능"}</span>
+          <strong>내 규칙 검증</strong>
+          <span>내가 생각한 매매규칙을 자연어로 입력하고, 성공/실패 샘플로 검증합니다.</span>
+        </button>
+        <button
+          className={`pattern-research-mode-card ${researchMode === "ai_scenario_search" ? "pattern-research-mode-card-active" : ""}`}
+          type="button"
+          onClick={() => setResearchMode("ai_scenario_search")}
+        >
+          <span className="pattern-research-mode-badge">{researchMode === "ai_scenario_search" ? "현재 모드" : "선택 가능"}</span>
+          <strong>AI 시나리오 자동탐색</strong>
+          <span>목표 수익률과 대상 종목을 기준으로 GPT가 후보를 제안하고 DrCT가 검증합니다.</span>
+        </button>
+      </section>
+
+      {researchMode === "rule_validation" ? (
+        <>
+      <ResearchStepper
+        title="연구 흐름"
+        steps={ruleStepItems}
+        currentStep={activeTab}
+        onChangeStep={(step) => setActiveTab(step as TabKey)}
+      />
 
       <div className="pattern-research-tabs">
         {[
@@ -1696,12 +2288,1343 @@ function PatternResearchPage() {
           )}
         </SectionCard>
       ) : null}
+        </>
+      ) : (
+        <ScenarioSearchShell
+          step={scenarioStep}
+          goal={scenarioGoal}
+          riskPlan={scenarioRiskPlan}
+          stocks={scenarioSelectedStocks}
+          availableIndicators={SCENARIO_AVAILABLE_INDICATORS}
+          gptPrompt={scenarioGptPrompt}
+          showGptPrompt={showScenarioGptPrompt}
+          gptResponseText={scenarioGptResponseText}
+          candidates={scenarioCandidates}
+          validationResult={scenarioValidationResult}
+          validationError={scenarioValidationError}
+          validationLoading={scenarioValidationLoading}
+          simulationResult={scenarioSimulationResult}
+          simulationError={scenarioSimulationError}
+          simulationLoading={scenarioSimulationLoading}
+          selectedSimulationResult={selectedScenarioSimulationResult}
+          parseError={scenarioCandidateParseError}
+          parseMessage={scenarioParseMessage}
+          setupReady={scenarioSetupReady}
+          maxInputAmount={scenarioMaxInputAmount}
+          onChangeStep={setScenarioStep}
+          onChangeGoal={(updates) => setScenarioGoal((prev) => ({ ...prev, ...updates }))}
+          onChangeRiskPlan={(updates) => setScenarioRiskPlan((prev) => ({ ...prev, ...updates }))}
+          onBuildPrompt={buildScenarioGptPrompt}
+          onCopyPrompt={() => void copyScenarioGptPrompt()}
+          onTogglePrompt={() => setShowScenarioGptPrompt((prev) => !prev)}
+          onChangeResponseText={(value) => {
+            setScenarioGptResponseText(value);
+            setScenarioCandidateParseError("");
+            setScenarioParseMessage("");
+            setScenarioValidationResult(null);
+            setScenarioValidationError("");
+            setScenarioSimulationResult(null);
+            setSelectedScenarioSimulationResult(null);
+          }}
+          onValidateResponse={validateScenarioGptResponse}
+          onValidateScenarios={() => void validateScenarioCandidates()}
+          onSimulateScenarios={() => void simulateScenarioCandidates()}
+          onSelectSimulationResult={setSelectedScenarioSimulationResult}
+          onSendToTrainingGuide={(result) => {
+            setSelectedScenarioSimulationResult(result);
+            setScenarioStep("training_guide");
+          }}
+          onChangeCandidateStatus={updateScenarioCandidateStatus}
+        />
+      )}
     </div>
   );
 }
 
 function Kpi({ label, value }: { label: string; value: string }) {
   return <div className="pattern-kpi-card"><span>{label}</span><strong>{value}</strong></div>;
+}
+
+function ScenarioSearchShell({
+  step,
+  goal,
+  riskPlan,
+  stocks,
+  availableIndicators,
+  gptPrompt,
+  showGptPrompt,
+  gptResponseText,
+  candidates,
+  validationResult,
+  validationError,
+  validationLoading,
+  simulationResult,
+  simulationError,
+  simulationLoading,
+  selectedSimulationResult,
+  parseError,
+  parseMessage,
+  setupReady,
+  maxInputAmount,
+  onChangeStep,
+  onChangeGoal,
+  onChangeRiskPlan,
+  onBuildPrompt,
+  onCopyPrompt,
+  onTogglePrompt,
+  onChangeResponseText,
+  onValidateResponse,
+  onValidateScenarios,
+  onSimulateScenarios,
+  onSelectSimulationResult,
+  onSendToTrainingGuide,
+  onChangeCandidateStatus,
+}: {
+  step: ScenarioSearchStep;
+  goal: ScenarioGoalState;
+  riskPlan: ScenarioRiskPlanState;
+  stocks: PatternResearchStock[];
+  availableIndicators: string[];
+  gptPrompt: string;
+  showGptPrompt: boolean;
+  gptResponseText: string;
+  candidates: ScenarioCandidate[];
+  validationResult: ScenarioValidationResponse | null;
+  validationError: string;
+  validationLoading: boolean;
+  simulationResult: ScenarioSimulationResponse | null;
+  simulationError: string;
+  simulationLoading: boolean;
+  selectedSimulationResult: ScenarioSimulationResult | null;
+  parseError: string;
+  parseMessage: string;
+  setupReady: boolean;
+  maxInputAmount: number;
+  onChangeStep: (step: ScenarioSearchStep) => void;
+  onChangeGoal: (updates: Partial<ScenarioGoalState>) => void;
+  onChangeRiskPlan: (updates: Partial<ScenarioRiskPlanState>) => void;
+  onBuildPrompt: () => void;
+  onCopyPrompt: () => void;
+  onTogglePrompt: () => void;
+  onChangeResponseText: (value: string) => void;
+  onValidateResponse: () => void;
+  onValidateScenarios: () => void;
+  onSimulateScenarios: () => void;
+  onSelectSimulationResult: (result: ScenarioSimulationResult) => void;
+  onSendToTrainingGuide: (result: ScenarioSimulationResult) => void;
+  onChangeCandidateStatus: (id: string, status: ScenarioCandidateStatus) => void;
+}) {
+  const includedCandidates = candidates.filter((candidate) => candidate.status === "included");
+  const validationSummary = validationResult?.summary;
+  const simulationReadyCount = (validationResult?.validated_candidates || []).filter((candidate) => candidate.is_simulation_ready).length;
+  const [scenarioTrainingPrompt, setScenarioTrainingPrompt] = useState("");
+  const [showScenarioTrainingPrompt, setShowScenarioTrainingPrompt] = useState(false);
+  const [scenarioTrainingResponseText, setScenarioTrainingResponseText] = useState("");
+  const [scenarioTrainingPreviewText, setScenarioTrainingPreviewText] = useState("");
+  const [scenarioTrainingMessage, setScenarioTrainingMessage] = useState("");
+  const [showScenarioFormatExample, setShowScenarioFormatExample] = useState(false);
+  const selectedStockText = stocks.length
+    ? stocks.map((stock) => `${stock.stock_name} · ${stock.stock_code}`).join(", ")
+    : "선택 0개";
+  const readyValidationCandidates = (validationResult?.validated_candidates || []).filter((candidate) => candidate.is_simulation_ready);
+  const selectedTrainingCandidate = selectedSimulationResult
+    ? readyValidationCandidates[selectedSimulationResult.scenario_index]?.normalized_candidate || null
+    : null;
+  const parsedStringConditionCount = candidates.reduce((sum, candidate) => sum + candidate.stringConditionCount, 0);
+  const parsedStructureIssueCount = candidates.reduce((sum, candidate) => sum + candidate.invalidStructureCount, 0);
+  const currentScenarioStepIndex = SCENARIO_SEARCH_STEPS.findIndex((item) => item.key === step);
+  const scenarioStepItems: ResearchStepperItem[] = SCENARIO_SEARCH_STEPS.map((item, index) => {
+    const isActive = item.key === step;
+    const isComplete = index < currentScenarioStepIndex;
+    return {
+      key: item.key,
+      label: item.label,
+      description: SCENARIO_STEP_DESCRIPTIONS[item.key],
+      status: isActive ? "active" : isComplete ? "complete" : "pending",
+      statusLabel: isActive ? "진행 중" : isComplete ? "완료" : "대기",
+    };
+  });
+
+  return (
+    <div className="scenario-search-shell">
+      <ResearchStepper
+        title="연구 흐름"
+        steps={scenarioStepItems}
+        currentStep={step}
+        onChangeStep={(nextStep) => onChangeStep(nextStep as ScenarioSearchStep)}
+      />
+
+      {step === "setup" ? (
+        <div className="scenario-search-layout">
+          <div className="scenario-search-main">
+            <SectionCard title="1. 탐색 설정" className="scenario-setup-section">
+              <div className="scenario-search-card scenario-setup-section">
+                <h4>A. 어떤 수익 시나리오?</h4>
+                <div className="scenario-search-form-grid">
+                  <label>
+                    <span>투자 유형</span>
+                    <select className="input-control" value={goal.tradeType} onChange={(event) => onChangeGoal({ tradeType: event.target.value as ScenarioGoalState["tradeType"] })}>
+                      <option value="short">단기</option>
+                      <option value="swing">스윙</option>
+                      <option value="mid">중기</option>
+                      <option value="long">장기</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>목표 수익률</span>
+                    <select className="input-control" value={goal.targetReturnPct} onChange={(event) => onChangeGoal({ targetReturnPct: Number(event.target.value) })}>
+                      {[3, 5, 7, 10].map((value) => <option key={value} value={value}>{value}%</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    <span>목표 기간</span>
+                    <select className="input-control" value={goal.holdingDays} onChange={(event) => onChangeGoal({ holdingDays: Number(event.target.value) })}>
+                      {[3, 5, 10, 20, 60].map((value) => <option key={value} value={value}>{value}거래일</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    <span>허용 손실률</span>
+                    <select className="input-control" value={goal.stopLossPct} onChange={(event) => onChangeGoal({ stopLossPct: Number(event.target.value) })}>
+                      {[-3, -5, -7, -10].map((value) => <option key={value} value={value}>{value}%</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    <span>최소 후보 수</span>
+                    <select className="input-control" value={goal.minSampleCount} onChange={(event) => onChangeGoal({ minSampleCount: Number(event.target.value) })}>
+                      {[30, 50, 100].map((value) => <option key={value} value={value}>{value}개</option>)}
+                    </select>
+                  </label>
+                </div>
+                <p className="scenario-search-inline-summary">
+                  진입 후 {goal.holdingDays}거래일 안에 +{goal.targetReturnPct}% 이상 상승하면 성공, {goal.stopLossPct}% 이하로 하락하면 실패로 분류합니다.
+                </p>
+              </div>
+
+              <div className="scenario-search-card scenario-setup-section">
+                <h4>B. 어떤 종목 데이터?</h4>
+                <div className="scenario-search-segmented">
+                  <button className="active" type="button">관심종목에서 선택</button>
+                  <button type="button" disabled>테마별 선택</button>
+                  <button type="button" disabled>직접 검색</button>
+                </div>
+                {stocks.length ? (
+                  <div className="scenario-search-selected-stock">
+                    {stocks.map((stock) => (
+                      <span key={stock.stock_code}>{stock.stock_name} · {stock.stock_code} · {fmtNumber(stock.price_count, 0)}건</span>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="scenario-search-empty">대상 종목 선택은 기존 관심종목 데이터를 기준으로 연결 예정입니다. 이번 단계에서는 화면 구조만 먼저 구성합니다.</div>
+                )}
+              </div>
+
+              <div className="scenario-search-card scenario-setup-section">
+                <h4>C. 하락 시 대응전략</h4>
+                <div className="scenario-search-form-grid">
+                  <label>
+                    <span>추가매수 사용 여부</span>
+                    <select className="input-control" value={riskPlan.addBuyEnabled ? "on" : "off"} onChange={(event) => onChangeRiskPlan({ addBuyEnabled: event.target.value === "on", maxAddBuyCount: event.target.value === "on" ? Math.max(1, riskPlan.maxAddBuyCount) : 0 })}>
+                      <option value="off">사용 안함</option>
+                      <option value="on">사용</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>최대 추가매수 횟수</span>
+                    <select className="input-control" value={riskPlan.maxAddBuyCount} disabled={!riskPlan.addBuyEnabled} onChange={(event) => onChangeRiskPlan({ maxAddBuyCount: Number(event.target.value) })}>
+                      {[0, 1, 2].map((value) => <option key={value} value={value}>{value}회</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    <span>1차 매수금액</span>
+                    <input className="input-control" type="number" step={100000} value={riskPlan.initialAmount} onChange={(event) => onChangeRiskPlan({ initialAmount: Number(event.target.value) })} />
+                  </label>
+                  <label>
+                    <span>추가매수 방식</span>
+                    <select className="input-control" value={riskPlan.addBuyAmountType} disabled>
+                      <option value="same">동일 금액</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>최종 손절 기준</span>
+                    <select className="input-control" value={riskPlan.finalStopLossBasis} onChange={(event) => onChangeRiskPlan({ finalStopLossBasis: event.target.value as ScenarioRiskPlanState["finalStopLossBasis"] })}>
+                      <option value="initial_price">최초가 기준</option>
+                      <option value="average_price">평균단가 기준</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>최종 손절률</span>
+                    <input className="input-control" type="number" value={riskPlan.finalStopLossPct} onChange={(event) => onChangeRiskPlan({ finalStopLossPct: Number(event.target.value) })} />
+                  </label>
+                </div>
+                <div className="scenario-search-warning">
+                  추가매수는 평균단가를 낮출 수 있지만 총 투입금액과 실제 손실금액을 키울 수 있습니다. 반드시 최대 투입금액과 최종 손절 기준을 함께 확인하세요.
+                </div>
+              </div>
+            </SectionCard>
+          </div>
+
+          <aside className="scenario-search-side scenario-setup-side-panel">
+            <div className="scenario-search-summary-panel scenario-setup-side-panel">
+              <h4>분석 준비 상태</h4>
+              <div className="scenario-setup-summary-block">
+                <span>탐색 목표</span>
+                <strong>{TRADE_TYPE_LABELS[goal.tradeType]} / {goal.holdingDays}거래일 / +{goal.targetReturnPct}%</strong>
+              </div>
+              <div className="scenario-setup-summary-block">
+                <span>실패 기준</span>
+                <strong>{goal.stopLossPct}%</strong>
+              </div>
+              <div className="scenario-setup-summary-block">
+                <span>대상 종목</span>
+                <strong>{selectedStockText}</strong>
+              </div>
+              <div className="scenario-setup-summary-block">
+                <span>대응전략</span>
+                <strong>추가매수 최대 {riskPlan.addBuyEnabled ? riskPlan.maxAddBuyCount : 0}회</strong>
+                <em>최대 투입금액 {fmtWon(maxInputAmount)}</em>
+              </div>
+              <div className="scenario-setup-summary-block">
+                <span>손절 기준</span>
+                <strong>{riskPlan.finalStopLossBasis === "average_price" ? "평균단가 기준" : "최초가 기준"} {riskPlan.finalStopLossPct}%</strong>
+              </div>
+              <div className={`scenario-setup-status-message ${setupReady ? "is-ready" : "is-warning"}`}>
+                {setupReady ? "GPT 후보 생성 준비가 되었습니다." : "대상 종목을 1개 이상 선택하세요."}
+              </div>
+              <button className="btn btn-primary" type="button" disabled={!setupReady} onClick={onBuildPrompt}>
+                다음: GPT 후보 생성
+              </button>
+            </div>
+          </aside>
+        </div>
+      ) : null}
+
+      {step === "gpt_candidates" ? (
+        <SectionCard title="2. GPT 후보">
+          <div className="scenario-gpt-section scenario-gpt-panel">
+            <div className="scenario-gpt-section-header">
+              <div>
+                <h4 className="scenario-gpt-section-title">A. DrCT 데이터 프로파일 요약</h4>
+                <p className="scenario-gpt-section-description">GPT가 사용할 탐색 목표, 종목 수, 사용 가능 지표를 확인합니다.</p>
+              </div>
+            </div>
+            <div className="scenario-gpt-profile-kpi-grid">
+              <div className="scenario-gpt-profile-kpi-card"><span className="scenario-gpt-profile-kpi-label">탐색 목표</span><strong className="scenario-gpt-profile-kpi-value">{goal.holdingDays}일 / +{goal.targetReturnPct}%</strong></div>
+              <div className="scenario-gpt-profile-kpi-card"><span className="scenario-gpt-profile-kpi-label">허용 손실률</span><strong className="scenario-gpt-profile-kpi-value">{goal.stopLossPct}%</strong></div>
+              <div className="scenario-gpt-profile-kpi-card"><span className="scenario-gpt-profile-kpi-label">선택 종목</span><strong className="scenario-gpt-profile-kpi-value">{stocks.length}개</strong></div>
+              <div className="scenario-gpt-profile-kpi-card"><span className="scenario-gpt-profile-kpi-label">사용 가능 지표</span><strong className="scenario-gpt-profile-kpi-value">{availableIndicators.length}개</strong></div>
+            </div>
+            <div className="scenario-gpt-indicator-groups">
+              {SCENARIO_INDICATOR_GROUPS.map((group) => (
+                <div className="scenario-gpt-indicator-group" key={group.title}>
+                  <strong className="scenario-gpt-indicator-group-title">{group.title}</strong>
+                  <div className="scenario-gpt-indicator-chip-list">
+                    {group.indicators.filter((indicator) => availableIndicators.includes(indicator)).map((indicator) => (
+                      <code className="scenario-gpt-indicator-chip" key={indicator}>{indicator}</code>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="scenario-gpt-section scenario-gpt-panel scenario-gpt-prompt-card">
+            <div className="scenario-gpt-section-header">
+              <div>
+                <h4 className="scenario-gpt-section-title">B. GPT 시나리오 생성 요청문</h4>
+                <p className="scenario-gpt-section-description">아래 요청문을 GPT에 붙여넣어 시나리오 후보 JSON을 생성합니다.</p>
+              </div>
+            </div>
+            <div className="scenario-gpt-json-actions">
+              <button className="btn btn-secondary" type="button" onClick={onBuildPrompt}>GPT 시나리오 생성 요청문 만들기</button>
+              <button className="btn btn-primary" type="button" onClick={onCopyPrompt}><Clipboard size={15} /> GPT 후보 요청문 복사</button>
+              <button className="btn btn-secondary" type="button" disabled={!gptPrompt} onClick={onTogglePrompt}>{showGptPrompt ? "전체 요청문 접기" : "전체 요청문 보기"}</button>
+            </div>
+            {gptPrompt ? (
+              <div className="scenario-gpt-prompt-box">
+                {showGptPrompt
+                  ? <textarea className="pattern-gpt-prompt scenario-gpt-prompt-textarea" readOnly value={gptPrompt} />
+                  : <pre className="scenario-gpt-prompt-preview">{gptPrompt.split("\n").slice(0, 5).join("\n")}</pre>}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="scenario-gpt-section scenario-gpt-panel scenario-gpt-json-card">
+            <div className="scenario-gpt-section-header">
+              <div>
+                <h4 className="scenario-gpt-section-title">C. GPT JSON 응답 붙여넣기</h4>
+                <p className="scenario-gpt-section-description">GPT가 생성한 JSON 응답을 그대로 붙여넣고 검증합니다. scenario_candidates 배열이 포함되어야 합니다.</p>
+              </div>
+            </div>
+            <div className="scenario-gpt-json-input-wrap">
+              <textarea
+                className="scenario-search-json-input scenario-gpt-json-textarea"
+                placeholder="GPT 시나리오 후보 JSON을 붙여넣으세요."
+                value={gptResponseText}
+                onChange={(event) => onChangeResponseText(event.target.value)}
+              />
+            </div>
+            <div className="scenario-gpt-json-actions">
+              <button className="btn btn-primary" type="button" disabled={!gptResponseText.trim()} onClick={onValidateResponse}>GPT 응답 검증</button>
+              <button className="btn btn-secondary" type="button" disabled={!candidates.length} onClick={() => onChangeStep("validation")}>다음: 검증/실행</button>
+            </div>
+            {!parseMessage && !parseError ? <div className="scenario-gpt-parse-message">아직 GPT 응답을 검증하지 않았습니다.</div> : null}
+            {parseMessage ? <div className="scenario-gpt-parse-message is-success">{parseMessage}</div> : null}
+            {parseError ? <div className="scenario-gpt-parse-message is-error">JSON 형식을 해석하지 못했습니다. 괄호, 쉼표, scenario_candidates 배열을 확인하세요. {parseError}</div> : null}
+            {parsedStringConditionCount || parsedStructureIssueCount ? (
+              <div className="scenario-validation-diagnostic scenario-validation-diagnostic-error">
+                <strong>GPT 응답에 문자열 조건 또는 형식 문제가 포함되어 있습니다.</strong>
+                <span>DrCT 시뮬레이션 검증에는 indicator_key, operator, value가 분리된 객체형 조건이 필요합니다.</span>
+                <div className="scenario-validation-diagnostic-actions">
+                  <button className="btn btn-secondary" type="button" onClick={onValidateScenarios}>문자열 조건 자동 변환 시도</button>
+                  <button className="btn btn-secondary" type="button" onClick={onCopyPrompt}>올바른 GPT 요청문 다시 복사</button>
+                  <button className="btn btn-secondary" type="button" onClick={() => setShowScenarioFormatExample((prev) => !prev)}>객체형 JSON 예시 보기</button>
+                </div>
+              </div>
+            ) : null}
+            {showScenarioFormatExample ? <ScenarioJsonExamplePanel /> : null}
+          </div>
+
+          <div className="scenario-gpt-section scenario-gpt-panel">
+            <div className="scenario-gpt-section-header">
+              <div>
+                <h4 className="scenario-gpt-section-title">D. GPT 시나리오 후보</h4>
+                <p className="scenario-gpt-section-description">생성된 후보를 확인하고 시뮬레이션에 포함할 후보를 선택합니다.</p>
+              </div>
+            </div>
+            {candidates.length ? (
+              <div className="scenario-gpt-candidate-summary">
+                <strong>GPT 시나리오 후보 {candidates.length}개</strong>
+                <span>포함 {includedCandidates.length}개 · 제외 {candidates.length - includedCandidates.length}개 · high {candidates.filter((candidate) => String(candidate.raw.simulation_priority || "").toLowerCase() === "high").length}개 · medium {candidates.filter((candidate) => String(candidate.raw.simulation_priority || "medium").toLowerCase() === "medium").length}개</span>
+              </div>
+            ) : null}
+            <div className="scenario-search-candidate-grid scenario-gpt-candidate-grid">
+              {candidates.length ? candidates.map((candidate, index) => (
+              <div className={`scenario-search-candidate-card scenario-gpt-candidate-card is-${candidate.status}`} key={candidate.id}>
+                <div className="scenario-gpt-candidate-card-header">
+                  <div>
+                    <span>시나리오 후보 {index + 1}</span>
+                    <strong className="scenario-gpt-candidate-title">{candidate.name}</strong>
+                  </div>
+                  <div className="scenario-gpt-card-badges">
+                    <span className={`scenario-gpt-priority-badge is-${String(candidate.raw.simulation_priority || "medium").toLowerCase()}`}>{scenarioPriorityLabel(candidate.raw.simulation_priority)}</span>
+                    <span className={`scenario-gpt-state-badge is-${candidate.status}`}>{scenarioCandidateStateLabel(candidate)}</span>
+                  </div>
+                </div>
+                <p className="scenario-gpt-candidate-intent">{candidate.raw.intent || candidate.summary}</p>
+                <div className="scenario-gpt-card-section">
+                  <strong>진입 조건</strong>
+                  <div className="scenario-gpt-condition-list">
+                    {candidate.entryConditions.slice(0, 4).map((condition, conditionIndex) => (
+                      <div className="scenario-gpt-condition-item" key={`${candidate.id}-${conditionIndex}`}>
+                        <span className="scenario-gpt-condition-number">{conditionIndex + 1}</span>
+                        <div>
+                          <p className="scenario-gpt-condition-expression">{formatScenarioConditionParts(candidate.raw.entry_conditions?.[conditionIndex] ?? condition).expression}</p>
+                          {formatScenarioConditionParts(candidate.raw.entry_conditions?.[conditionIndex] ?? condition).description ? (
+                            <p className="scenario-gpt-condition-description">{formatScenarioConditionParts(candidate.raw.entry_conditions?.[conditionIndex] ?? condition).description}</p>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))}
+                    {candidate.entryConditions.length > 4 ? <em>외 {candidate.entryConditions.length - 4}개 조건</em> : null}
+                  </div>
+                </div>
+                <div className="scenario-gpt-card-section scenario-gpt-card-block">
+                  <strong className="scenario-gpt-card-block-title">추가매수</strong>
+                  <p className="scenario-gpt-card-block-body">{candidate.addBuyStrategy}</p>
+                </div>
+                <div className="scenario-gpt-card-section scenario-gpt-card-block">
+                  <strong className="scenario-gpt-card-block-title">위험 필터</strong>
+                  {Array.isArray(candidate.raw.risk_filters) && candidate.raw.risk_filters.length
+                    ? candidate.raw.risk_filters.map((filter: unknown, filterIndex: number) => <p className="scenario-gpt-risk-filter" key={`${candidate.id}-risk-${filterIndex}`}>{formatScenarioRiskFilter(filter)}</p>)
+                    : <p>위험 필터 없음</p>}
+                </div>
+                <div className="scenario-gpt-card-section scenario-gpt-card-block">
+                  <strong className="scenario-gpt-card-block-title">예상 리스크</strong>
+                  <p className="scenario-gpt-card-block-body">{candidate.raw.expected_risk || candidate.fundingNote}</p>
+                </div>
+                {candidate.schemaWarnings.length ? (
+                  <div className="scenario-validation-format-warning">
+                    {candidate.schemaWarnings.map((warning) => <span key={warning}>{warning}</span>)}
+                  </div>
+                ) : null}
+                <div className="scenario-gpt-card-actions">
+                  <button className={`btn btn-secondary btn-xs ${candidate.status === "included" ? "active" : ""}`} type="button" onClick={() => onChangeCandidateStatus(candidate.id, "included")}>포함</button>
+                  <button className={`btn btn-secondary btn-xs ${candidate.status === "excluded" ? "active" : ""}`} type="button" onClick={() => onChangeCandidateStatus(candidate.id, "excluded")}>제외</button>
+                  <button className="btn btn-secondary btn-xs" type="button">상세 보기</button>
+                </div>
+              </div>
+              )) : <div className="scenario-search-empty">GPT JSON 응답을 검증하면 시나리오 후보 카드가 표시됩니다.</div>}
+            </div>
+          </div>
+        </SectionCard>
+      ) : null}
+
+      {step === "validation" ? (
+        <SectionCard title="3. 검증 및 시뮬레이션">
+          <div className="scenario-validation-kpi-grid">
+            <Kpi label="GPT 후보" value={`${candidates.length}개`} />
+            <Kpi label="시뮬레이션 가능" value={`${validationSummary?.simulation_ready || 0}개`} />
+            <Kpi label="검토 필요" value={`${validationSummary?.needs_review || 0}개`} />
+            <Kpi label="지원 불가" value={`${validationSummary?.unsupported || 0}개`} />
+            <Kpi label="위험 조건" value={`${validationSummary?.risky || 0}개`} />
+            <Kpi label="형식 오류" value={`${validationSummary?.structure_error || validationSummary?.invalid || 0}개`} />
+            <Kpi label="자동 변환" value={`${validationSummary?.auto_converted || 0}개`} />
+          </div>
+          <div className="pattern-action-row">
+            <button className="btn btn-primary" type="button" disabled={!includedCandidates.length || validationLoading} onClick={onValidateScenarios}>
+              {validationLoading ? "검증 중..." : "계산 가능성 검증"}
+            </button>
+          </div>
+          {validationError ? <div className="alert danger">{validationError}</div> : null}
+          {validationResult && !simulationReadyCount ? (
+            <ScenarioValidationDiagnostic
+              summary={validationResult.summary}
+              onCopyPrompt={onCopyPrompt}
+              onRetryValidation={onValidateScenarios}
+              onToggleExample={() => setShowScenarioFormatExample((prev) => !prev)}
+            />
+          ) : null}
+          {showScenarioFormatExample ? <ScenarioJsonExamplePanel /> : null}
+          <div className="scenario-validation-card-list">
+            {validationResult?.validated_candidates.length ? validationResult.validated_candidates.map((candidate) => (
+              <ScenarioValidationCandidateCard key={`validated-${candidate.candidate_index}`} candidate={candidate} />
+            )) : includedCandidates.length ? includedCandidates.map((candidate) => (
+              <div className="scenario-validation-card" key={`validation-${candidate.id}`}>
+                <div className="scenario-validation-card-head">
+                  <strong>{candidate.name}</strong>
+                  <span className="scenario-validation-status scenario-validation-status-review">검증 전</span>
+                </div>
+                <p>{candidate.summary}</p>
+                <button className="btn btn-secondary" type="button" onClick={onValidateScenarios}>계산 가능성 검증</button>
+                <small>검증을 실행하면 DrCT 지표 카탈로그 기준으로 조건별 계산 가능 여부를 확인합니다.</small>
+              </div>
+            )) : <div className="scenario-search-empty">포함된 시나리오 후보가 없습니다.</div>}
+          </div>
+          <div className="scenario-search-card">
+            <h4>공통 시뮬레이션 설정</h4>
+            <div className="scenario-search-kpi-grid">
+              <Kpi label="1차 매수금액" value={fmtWon(riskPlan.initialAmount)} />
+              <Kpi label="추가매수 횟수" value={`${riskPlan.addBuyEnabled ? riskPlan.maxAddBuyCount : 0}회`} />
+              <Kpi label="최종 손절 기준" value={riskPlan.finalStopLossBasis === "average_price" ? "평균단가" : "최초가"} />
+              <Kpi label="최소 후보 수" value={`${goal.minSampleCount}개`} />
+            </div>
+            <button className="btn btn-primary" type="button" disabled={!simulationReadyCount || !stocks.length || simulationLoading} onClick={onSimulateScenarios}>
+              {simulationLoading ? "시뮬레이션 실행 중..." : "시뮬레이션 실행"}
+            </button>
+            {simulationError ? <div className="alert danger">{simulationError}</div> : null}
+            <div className="scenario-search-empty">
+              {validationResult
+                ? simulationReadyCount
+                  ? "검증을 통과한 시나리오를 실제 가격 데이터로 계산합니다. 결과는 저장하지 않습니다."
+                  : "시뮬레이션 가능한 후보가 없습니다. 검토 필요 또는 지원 불가 조건을 수정하세요."
+                : "먼저 계산 가능성 검증을 실행하세요."}
+            </div>
+          </div>
+        </SectionCard>
+      ) : null}
+
+      {step === "results" ? (
+        <SectionCard title="4. 결과 분석">
+          {!simulationResult ? (
+            <div className="scenario-search-empty">
+              조건 검증이 완료되었습니다. 시뮬레이션을 실행하면 실제 가격 데이터 기반 성공률, 실패율, 추가매수 효과, 자금 효율을 이곳에 표시합니다.
+            </div>
+          ) : (
+            <ScenarioSimulationResults
+              result={simulationResult}
+              selectedResult={selectedSimulationResult}
+              validationCandidates={readyValidationCandidates}
+              onSelect={onSelectSimulationResult}
+              onSendToTrainingGuide={onSendToTrainingGuide}
+            />
+          )}
+        </SectionCard>
+      ) : null}
+
+      {step === "training_guide" ? (
+        <SectionCard title="5. 훈련가이드">
+          <ScenarioTrainingGuide
+            goal={goal}
+            riskPlan={riskPlan}
+            scenarioResult={selectedSimulationResult}
+            normalizedCandidate={selectedTrainingCandidate}
+            promptText={scenarioTrainingPrompt}
+            showPrompt={showScenarioTrainingPrompt}
+            responseText={scenarioTrainingResponseText}
+            previewText={scenarioTrainingPreviewText}
+            message={scenarioTrainingMessage}
+            onBackToResults={() => onChangeStep("results")}
+            onBuildPrompt={() => {
+              if (!selectedSimulationResult) return;
+              const prompt = buildScenarioTrainingGuidePrompt(goal, riskPlan, selectedSimulationResult, selectedTrainingCandidate);
+              setScenarioTrainingPrompt(prompt);
+              setShowScenarioTrainingPrompt(true);
+              setScenarioTrainingMessage("GPT 훈련가이드 요청문을 만들었습니다.");
+            }}
+            onCopyPrompt={() => {
+              const prompt = scenarioTrainingPrompt || (selectedSimulationResult ? buildScenarioTrainingGuidePrompt(goal, riskPlan, selectedSimulationResult, selectedTrainingCandidate) : "");
+              if (!prompt) return;
+              setScenarioTrainingPrompt(prompt);
+              setShowScenarioTrainingPrompt(true);
+              void navigator.clipboard.writeText(prompt)
+                .then(() => setScenarioTrainingMessage("GPT에 붙여넣을 훈련가이드 요청문을 복사했습니다."))
+                .catch(() => setScenarioTrainingMessage("요청문 복사에 실패했습니다. 직접 선택하여 복사해 주세요."));
+            }}
+            onTogglePrompt={() => setShowScenarioTrainingPrompt((prev) => !prev)}
+            onChangeResponseText={(value) => {
+              setScenarioTrainingResponseText(value);
+              setScenarioTrainingPreviewText("");
+            }}
+            onPreviewResponse={() => setScenarioTrainingPreviewText(scenarioTrainingResponseText)}
+            onClearResponse={() => {
+              setScenarioTrainingResponseText("");
+              setScenarioTrainingPreviewText("");
+            }}
+          />
+        </SectionCard>
+      ) : null}
+    </div>
+  );
+}
+
+function ScenarioTrainingGuide({
+  goal,
+  riskPlan,
+  scenarioResult,
+  normalizedCandidate,
+  promptText,
+  showPrompt,
+  responseText,
+  previewText,
+  message,
+  onBackToResults,
+  onBuildPrompt,
+  onCopyPrompt,
+  onTogglePrompt,
+  onChangeResponseText,
+  onPreviewResponse,
+  onClearResponse,
+}: {
+  goal: ScenarioGoalState;
+  riskPlan: ScenarioRiskPlanState;
+  scenarioResult: ScenarioSimulationResult | null;
+  normalizedCandidate: Record<string, any> | null;
+  promptText: string;
+  showPrompt: boolean;
+  responseText: string;
+  previewText: string;
+  message: string;
+  onBackToResults: () => void;
+  onBuildPrompt: () => void;
+  onCopyPrompt: () => void;
+  onTogglePrompt: () => void;
+  onChangeResponseText: (value: string) => void;
+  onPreviewResponse: () => void;
+  onClearResponse: () => void;
+}) {
+  if (!scenarioResult) {
+    return (
+      <div className="scenario-training-empty">
+        <strong>훈련가이드를 생성할 시나리오가 선택되지 않았습니다.</strong>
+        <span>결과 분석 화면에서 시나리오를 선택한 뒤 [GPT 훈련가이드로 보내기]를 클릭하세요.</span>
+        <button className="btn btn-secondary" type="button" onClick={onBackToResults}>결과 분석으로 돌아가기</button>
+      </div>
+    );
+  }
+  const observations = scenarioTrainingObservations(scenarioResult, goal.minSampleCount);
+  const addBuyPlan = normalizedCandidate?.add_buy_plan || {};
+  return (
+    <div className="scenario-training-shell">
+      {message ? <div className="alert success">{message}</div> : null}
+
+      <div className="scenario-training-summary-card">
+        <div className="scenario-validation-card-head">
+          <div>
+            <span>선택 시나리오</span>
+            <strong>{scenarioResult.scenario_name}</strong>
+          </div>
+          <span className={`scenario-simulation-judgement scenario-simulation-judgement-${scenarioResult.judgement}`}>{scenarioResult.judgement_label}</span>
+        </div>
+        <div className="scenario-search-kpi-grid">
+          <Kpi label="후보일" value={`${fmtNumber(scenarioResult.candidate_count, 0)}개`} />
+          <Kpi label="1차 성공률" value={fmtPercent(scenarioResult.base_success_rate)} />
+          <Kpi label="전략 성공률" value={fmtPercent(scenarioResult.strategy_success_rate)} />
+          <Kpi label="실패율" value={fmtPercent(scenarioResult.failure_rate)} />
+          <Kpi label="추가매수 발생" value={`${fmtNumber(scenarioResult.add_buy_trigger_count, 0)}건`} />
+          <Kpi label="손실 회복률" value={fmtPercent(scenarioResult.recovery_rate_after_add_buy)} />
+          <Kpi label="평균 투입금액" value={fmtWon(scenarioResult.avg_capital_used)} />
+          <Kpi label="최대 투입금액" value={fmtWon(scenarioResult.max_capital_used)} />
+          <Kpi label="효율 점수" value={`${fmtNumber(scenarioResult.efficiency_score, 1)}점`} />
+        </div>
+        <div className="scenario-training-warning">
+          <strong>DrCT 관찰</strong>
+          {observations.map((item) => <span key={item}>{item}</span>)}
+          {scenarioResult.warnings.map((warning) => <span key={`warning-${warning}`}>{warning}</span>)}
+        </div>
+        <div className="scenario-training-checklist">
+          <span>추가매수: {addBuyPlan.enabled ? "사용" : "사용 안함"}</span>
+          <span>최대 추가매수: {addBuyPlan.max_count ?? (riskPlan.addBuyEnabled ? riskPlan.maxAddBuyCount : 0)}회</span>
+          <span>최종 손절: {addBuyPlan.stop_loss_basis === "entry_price" ? "최초가 기준" : "평균단가 기준"} {addBuyPlan.final_stop_loss_pct ?? riskPlan.finalStopLossPct}%</span>
+        </div>
+      </div>
+
+      <div className="scenario-training-prompt-card">
+        <h4>B. GPT 훈련가이드 요청문 생성/복사</h4>
+        <div className="scenario-training-prompt-actions">
+          <button className="btn btn-secondary" type="button" onClick={onBuildPrompt}>GPT 훈련가이드 요청문 만들기</button>
+          <button className="btn btn-primary" type="button" onClick={onCopyPrompt}><Clipboard size={15} /> 요청문 복사</button>
+          <button className="btn btn-secondary" type="button" disabled={!promptText} onClick={onTogglePrompt}>{showPrompt ? "전체 요청문 접기" : "전체 요청문 보기"}</button>
+        </div>
+        {showPrompt && promptText ? <textarea className="pattern-gpt-prompt" readOnly value={promptText} /> : null}
+      </div>
+
+      <div className="scenario-training-response-card">
+        <h4>C. GPT 응답 붙여넣기</h4>
+        <textarea
+          className="scenario-search-json-input"
+          placeholder="GPT 훈련가이드 응답을 붙여넣으세요."
+          value={responseText}
+          onChange={(event) => onChangeResponseText(event.target.value)}
+        />
+        <div className="pattern-action-row">
+          <button className="btn btn-primary" type="button" disabled={!responseText.trim()} onClick={onPreviewResponse}>훈련가이드 미리보기</button>
+          <button className="btn btn-secondary" type="button" disabled={!responseText.trim()} onClick={onClearResponse}>입력 초기화</button>
+        </div>
+      </div>
+
+      <div className="scenario-training-preview">
+        <h4>D. 훈련가이드 미리보기</h4>
+        {!previewText ? (
+          <div className="scenario-training-empty">GPT 훈련가이드 응답을 붙여넣으면 이곳에서 진입/추가매수/손절 체크리스트를 확인할 수 있습니다.</div>
+        ) : (
+          <>
+            <div className="scenario-search-empty">붙여넣은 GPT 응답을 훈련가이드로 미리보기합니다. 저장 및 매매훈련 연결은 후속 단계에서 지원할 예정입니다.</div>
+            <ScenarioTrainingPreview text={previewText} />
+          </>
+        )}
+      </div>
+
+      <div className="scenario-training-next-actions">
+        <h4>다음 행동</h4>
+        <ol>
+          <li>GPT가 제안한 추가매수 금지 조건을 다음 DrCT 시뮬레이션 후보로 반영하세요.</li>
+          <li>추가매수 효과가 낮다면 추가매수 없는 시나리오와 비교 테스트하세요.</li>
+          <li>손절 기준이 너무 늦거나 빠른지 다른 손절률로 재검증하세요.</li>
+          <li>훈련 체크리스트를 매매훈련 화면에 연결하는 기능은 후속 단계에서 지원 예정입니다.</li>
+        </ol>
+        <div className="pattern-action-row">
+          <button className="btn btn-secondary" type="button" disabled>다음 테스트 조건으로 반영</button>
+          <button className="btn btn-secondary" type="button" disabled>매매훈련으로 보내기</button>
+          <button className="btn btn-secondary" type="button" disabled>시나리오 저장</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ScenarioJsonExamplePanel() {
+  return (
+    <div className="scenario-validation-format-example">
+      <div className="scenario-validation-card-head">
+        <strong>DrCT가 읽을 수 있는 JSON 예시</strong>
+        <span className="scenario-validation-status scenario-validation-status-ready">객체형 조건</span>
+      </div>
+      <pre>{scenarioJsonExampleText()}</pre>
+    </div>
+  );
+}
+
+function ScenarioValidationDiagnostic({
+  summary,
+  onCopyPrompt,
+  onRetryValidation,
+  onToggleExample,
+}: {
+  summary: ScenarioValidationSummary;
+  onCopyPrompt: () => void;
+  onRetryValidation: () => void;
+  onToggleExample: () => void;
+}) {
+  const structureCount = summary.structure_error || summary.invalid || 0;
+  const unsupportedCount = summary.unsupported || 0;
+  const needsReviewCount = summary.needs_review || 0;
+  let causeTitle = "조건을 확인해야 합니다.";
+  let causeDetail = "일부 조건이 수식화 또는 값 확인이 필요합니다. 조건을 수정하거나 제외한 뒤 다시 검증하세요.";
+  if (structureCount >= Math.max(unsupportedCount, needsReviewCount)) {
+    causeTitle = "GPT가 entry_conditions를 문자열 또는 잘못된 구조로 작성했습니다.";
+    causeDetail = "DrCT는 indicator_key, operator, value가 분리된 객체형 조건이 필요합니다.";
+  } else if (unsupportedCount >= needsReviewCount) {
+    causeTitle = "GPT가 DrCT에서 지원하지 않는 지표를 사용했습니다.";
+    causeDetail = "사용 가능한 지표 목록 안에서 다시 생성해야 합니다.";
+  }
+
+  return (
+    <div className="scenario-validation-diagnostic scenario-validation-diagnostic-error">
+      <strong>시뮬레이션 가능한 후보가 없습니다.</strong>
+      <span>검증은 완료되었지만 현재 조건으로는 시뮬레이션을 실행할 수 없습니다. 주요 원인을 확인하고 GPT 요청문을 다시 생성하거나 조건 자동 변환을 시도하세요.</span>
+      <div className="scenario-validation-diagnostic-cause">
+        <b>주요 원인</b>
+        <span>{causeTitle}</span>
+        <em>{causeDetail}</em>
+      </div>
+      <div className="scenario-validation-diagnostic-actions">
+        <button className="btn btn-secondary" type="button" onClick={onCopyPrompt}>올바른 형식의 GPT 요청문 복사</button>
+        <button className="btn btn-secondary" type="button" onClick={onRetryValidation}>문자열 조건 자동 변환</button>
+        <button className="btn btn-secondary" type="button" onClick={onToggleExample}>객체형 JSON 예시 보기</button>
+      </div>
+    </div>
+  );
+}
+
+function ScenarioTrainingPreview({ text }: { text: string }) {
+  const sections = parseScenarioTrainingSections(text);
+  const hasNextTestJson = text.includes("next_test_candidates");
+  if (!sections.length) {
+    return (
+      <>
+        {hasNextTestJson ? <NextTestCandidateNotice /> : null}
+        <pre className="scenario-training-section">{text}</pre>
+      </>
+    );
+  }
+  return (
+    <>
+      {hasNextTestJson ? <NextTestCandidateNotice /> : null}
+      <div className="scenario-training-section-grid">
+        {sections.map((section) => (
+          <div className="scenario-training-section" key={section.title}>
+            <strong>{section.title}</strong>
+            <pre>{section.body}</pre>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function NextTestCandidateNotice() {
+  return (
+    <div className="scenario-training-next-test-json">
+      <strong>다음 DrCT 테스트 조건 JSON이 포함되어 있습니다.</strong>
+      <span>후속 단계에서 이 조건을 시뮬레이션 후보로 반영할 수 있습니다.</span>
+      <button className="btn btn-secondary" type="button" disabled>다음 테스트 조건으로 반영</button>
+    </div>
+  );
+}
+
+function buildScenarioTrainingGuidePrompt(
+  goal: ScenarioGoalState,
+  riskPlan: ScenarioRiskPlanState,
+  result: ScenarioSimulationResult,
+  candidate: Record<string, any> | null,
+): string {
+  const observations = scenarioTrainingObservations(result, goal.minSampleCount);
+  const addBuyPlan = candidate?.add_buy_plan || {};
+  const riskFilters = Array.isArray(candidate?.risk_filters) ? candidate?.risk_filters : [];
+  return [
+    "[역할]",
+    "당신은 종목 추천자가 아니라, 개인 투자자의 매매 시나리오를 분석하고 훈련 기준으로 정리하는 매매 훈련 코치입니다.",
+    "",
+    "아래 DrCT 시뮬레이션 결과를 바탕으로 특정 종목의 매수/매도 추천을 하지 말고,",
+    "시나리오의 구조, 성공/실패 차이, 추가매수 적절성, 손절 기준, 자금 효율, 훈련 체크리스트를 분석해 주세요.",
+    "",
+    "[분석 목적]",
+    "이 요청의 목적은 수익률이 높은 종목을 찾는 것이 아니라, 사용자가 반복 훈련할 수 있는 매매 시나리오를 만드는 것입니다.",
+    "특히 다음을 분석해 주세요.",
+    "1. 이 시나리오가 어떤 조건에서 작동했는가",
+    "2. 실패 샘플에서는 무엇이 달랐는가",
+    "3. 추가매수는 성공률 개선에 기여했는가",
+    "4. 추가매수를 하면 안 되는 조건은 무엇인가",
+    "5. 평균단가 회복 실패 시 어떤 기준으로 손절해야 하는가",
+    "6. 이 시나리오를 실제 훈련에 적용하려면 어떤 체크리스트가 필요한가",
+    "",
+    "[중요 원칙]",
+    "- 종목 추천을 하지 마세요.",
+    "- 매수/매도 지시를 하지 마세요.",
+    "- 시뮬레이션 결과를 근거로 매매 시나리오를 평가해 주세요.",
+    "- 성공률이 높아도 샘플 수가 부족하면 과최적화 위험을 지적해 주세요.",
+    "- 추가매수는 손실을 줄이는 만능 수단이 아닙니다.",
+    "- 추가매수로 성공률이 개선되지 않았다면 그 이유와 금지 조건을 제안해 주세요.",
+    "- 손실률뿐 아니라 총 투입금액과 실제 손실금액 증가 위험도 함께 평가해 주세요.",
+    "- 최종 답변은 훈련에 바로 사용할 수 있는 체크리스트 중심으로 작성해 주세요.",
+    "",
+    "[탐색 목표]",
+    `투자 유형: ${TRADE_TYPE_LABELS[goal.tradeType]}`,
+    `목표 수익률: 진입 후 ${goal.holdingDays}거래일 안에 +${goal.targetReturnPct}%`,
+    `허용 손실률: ${goal.stopLossPct}%`,
+    `최소 후보 수: ${goal.minSampleCount}개`,
+    "",
+    "[시나리오 정보]",
+    `시나리오명: ${result.scenario_name}`,
+    `시나리오 유형: ${result.scenario_type || candidate?.scenario_type || "-"}`,
+    `판정: ${result.judgement_label}`,
+    `효율 점수: ${fmtNumber(result.efficiency_score, 1)}`,
+    candidate?.intent ? `시나리오 의도: ${candidate.intent}` : "",
+    candidate?.expected_risk ? `예상 리스크: ${candidate.expected_risk}` : "",
+    "",
+    "[진입 조건]",
+    formatScenarioConditions(candidate?.entry_conditions),
+    "",
+    "[추가매수/손절 전략]",
+    `1차 매수금액: ${fmtWon(riskPlan.initialAmount)}`,
+    `추가매수 사용: ${(addBuyPlan.enabled ?? riskPlan.addBuyEnabled) ? "사용" : "사용 안함"}`,
+    `최대 추가매수 횟수: ${addBuyPlan.max_count ?? riskPlan.maxAddBuyCount}회`,
+    `추가매수 기준: ${addBuyPlan.trigger_basis === "average_price" ? "평균단가" : "최초 진입가"} 대비 ${addBuyPlan.trigger_loss_pct ?? riskPlan.addBuyTriggerLossPct}% 하락`,
+    `추가매수 금액: 1차 매수금액의 ${fmtNumber(addBuyPlan.amount_ratio ?? 1, 2)}배`,
+    `최종 손절 기준: ${addBuyPlan.stop_loss_basis === "entry_price" ? "최초가 기준" : "평균단가 기준"} ${addBuyPlan.final_stop_loss_pct ?? riskPlan.finalStopLossPct}%`,
+    "목표 회복 기준: 평균단가 기준 목표 수익률 도달",
+    "",
+    "[위험 필터]",
+    riskFilters.length ? riskFilters.map(formatRiskFilter).join("\n") : "위험 필터가 없습니다.",
+    "",
+    "[시뮬레이션 결과 요약]",
+    `후보일 수: ${fmtNumber(result.candidate_count, 0)}`,
+    `1차 매수 성공 수: ${fmtNumber(result.success_count, 0)}`,
+    `1차 매수 실패 수: ${fmtNumber(result.failure_count, 0)}`,
+    `1차 매수 중립 수: ${fmtNumber(result.neutral_count, 0)}`,
+    `1차 매수 성공률: ${fmtPercent(result.base_success_rate)}`,
+    "",
+    `전략 적용 성공 수: ${fmtNumber(result.strategy_success_count, 0)}`,
+    `전략 적용 실패 수: ${fmtNumber(result.strategy_failure_count, 0)}`,
+    `전략 적용 중립 수: ${fmtNumber(result.strategy_neutral_count, 0)}`,
+    `전략 적용 성공률: ${fmtPercent(result.strategy_success_rate)}`,
+    `실패율: ${fmtPercent(result.failure_rate)}`,
+    "",
+    `추가매수 발생 수: ${fmtNumber(result.add_buy_trigger_count, 0)}`,
+    `추가매수 후 회복 성공 수: ${fmtNumber(result.recovery_count_after_add_buy, 0)}`,
+    `손실 회복률: ${fmtPercent(result.recovery_rate_after_add_buy)}`,
+    `평균 추가매수 횟수: ${fmtNumber(result.avg_add_buy_count, 2)}회`,
+    "",
+    `평균 투입금액: ${fmtWon(result.avg_capital_used)}`,
+    `최대 투입금액: ${fmtWon(result.max_capital_used)}`,
+    `평균 최대수익률: ${fmtPercent(result.avg_max_return_pct)}`,
+    `평균 보유기간 최저수익률: ${fmtPercent(result.avg_max_drawdown_pct)}`,
+    `효율 점수: ${fmtNumber(result.efficiency_score, 1)}`,
+    `판정: ${result.judgement_label}`,
+    "보유기간 최저수익률은 진입 후 목표 기간 동안 관찰된 가장 낮은 수익률입니다. 손절 기준과 별도로, 손절을 지키지 않았을 때 확대될 수 있는 위험을 보여줍니다.",
+    "",
+    "[성공 샘플]",
+    formatScenarioSamples(result.success_samples),
+    "",
+    "[실패 샘플]",
+    formatScenarioSamples(result.failure_samples),
+    "",
+    "[추가매수 후 회복 성공 샘플]",
+    formatScenarioSamples(result.add_buy_success_samples || []),
+    "",
+    "[추가매수 후 회복 실패 샘플]",
+    formatScenarioSamples(result.add_buy_failure_samples || []),
+    "",
+    "[DrCT 관찰]",
+    observations.map((item) => `- ${item}`).join("\n"),
+    "",
+    "[GPT에게 요청할 분석]",
+    "1. 이 매매 시나리오의 핵심 구조를 설명해 주세요.",
+    "2. 성공 샘플과 실패 샘플의 가장 큰 차이를 한 문장으로 정리해 주세요.",
+    "3. 진입 조건 중 실제로 효과가 있었을 가능성이 높은 조건과 약한 조건을 구분해 주세요.",
+    "4. 추가매수는 성공률 개선에 기여했는지 평가해 주세요.",
+    "5. 추가매수를 허용해도 되는 조건과 금지해야 하는 조건을 구분해 주세요.",
+    "6. 추가매수 후 평균단가 회복에 실패한 경우 어떤 신호에서 손절해야 하는지 제안해 주세요.",
+    "7. 현재 손절 기준이 적절한지 평가해 주세요.",
+    "8. 자금 효율 관점에서 이 시나리오를 평가해 주세요.",
+    "9. 후보 수와 샘플 특성을 바탕으로 과최적화 위험을 평가해 주세요.",
+    "10. 다음 DrCT 시뮬레이션에서 테스트할 보완 조건을 3개 이상 제안해 주세요.",
+    "11. 이 시나리오를 매매훈련에 사용한다면 진입/추가매수/손절 체크리스트를 만들어 주세요.",
+    "12. 사용자가 반복해서 고쳐야 할 행동 습관을 제안해 주세요.",
+    "13. 추가매수 후 회복 성공 샘플과 실패 샘플을 비교해 추가매수 허용 조건과 금지 조건을 더 구체화해 주세요.",
+    "14. 추가매수 후 회복 실패 샘플에서 반복되는 위험 신호를 찾아 주세요.",
+    "",
+    "[출력 형식]",
+    "아래 형식으로 답변해 주세요.",
+    "1. 시나리오 핵심 요약",
+    "2. 성공/실패 샘플의 가장 큰 차이",
+    "3. 진입 조건 평가",
+    "4. 추가매수 전략 평가",
+    "5. 추가매수 허용 조건",
+    "6. 추가매수 금지 조건",
+    "7. 손절 기준 평가",
+    "8. 자금 효율 평가",
+    "9. 과최적화 위험",
+    "10. 다음 DrCT 테스트 조건",
+    "11. 매매훈련 체크리스트",
+    "   - 진입 전 체크리스트",
+    "   - 추가매수 체크리스트",
+    "   - 손절 체크리스트",
+    "   - 실패 회피 체크리스트",
+    "12. 반복 훈련 과제",
+    "",
+    "[구조화된 다음 테스트 조건]",
+    "마지막에 아래 JSON 형식으로 다음 DrCT 테스트 후보를 함께 제안해 주세요.",
+    JSON.stringify({
+      next_test_candidates: [
+        {
+          test_name: "거래대금 약화 시 추가매수 금지",
+          change_type: "add_risk_filter",
+          risk_filter: {
+            indicator_key: "trading_value_ratio_20",
+            operator: "<",
+            value: 0.8,
+            action: "block_add_buy",
+            reason: "거래대금 약화 시 추가매수 차단",
+          },
+          expected_effect: "추가매수 실패 샘플 감소와 평균 투입금액 감소 여부 확인",
+        },
+      ],
+    }, null, 2),
+    "지원 change_type: add_risk_filter, tighten_entry_condition, loosen_entry_condition, disable_add_buy, change_add_buy_trigger, change_stop_loss",
+  ].filter(Boolean).join("\n");
+}
+
+function scenarioTrainingObservations(result: ScenarioSimulationResult, minSampleCount: number): string[] {
+  const observations: string[] = [];
+  const delta = Number(result.strategy_success_rate || 0) - Number(result.base_success_rate || 0);
+  if (Number(result.add_buy_trigger_count || 0) === 0) {
+    observations.push("이번 시뮬레이션에서는 추가매수 조건에 도달한 사례가 없습니다. 추가매수 전략의 효과를 판단하기에는 샘플이 부족합니다.");
+  } else if (delta >= 3) {
+    observations.push("추가매수 전략 적용 후 성공률이 개선되었습니다. 다만 평균 투입금액 증가와 실패 거래의 손실 확대 가능성을 함께 평가해야 합니다.");
+  } else if (delta > 0) {
+    observations.push("추가매수 전략 적용 후 성공률 개선폭이 제한적입니다. 추가 투입금액 대비 효과가 충분한지 검토가 필요합니다.");
+  } else if (delta === 0) {
+    observations.push("추가매수가 발생했지만 전략 성공률은 개선되지 않았습니다. 추가매수 기준이 적절한지, 또는 추가매수를 금지해야 하는 조건이 있는지 분석이 필요합니다.");
+  } else {
+    observations.push("추가매수 전략 적용 후 성공률이 낮아졌습니다. 이 시나리오에서는 추가매수를 제거하거나 더 엄격한 추가매수 금지 조건을 두는 것이 적절한지 검토해야 합니다.");
+  }
+  if (result.candidate_count < minSampleCount) {
+    observations.push("후보 수가 최소 후보 수보다 적습니다. 이 결과는 과최적화 가능성이 있으므로 일반화에 주의해야 합니다.");
+  }
+  if (result.avg_capital_used > 0 && result.max_capital_used > result.avg_capital_used) {
+    observations.push(`평균 투입금액은 ${fmtWon(result.avg_capital_used)}이고 최대 투입금액은 ${fmtWon(result.max_capital_used)}입니다. 총 투입금액 증가 위험을 함께 평가해야 합니다.`);
+  }
+  return observations;
+}
+
+function formatScenarioConditions(rawConditions: unknown): string {
+  const conditions = Array.isArray(rawConditions) ? rawConditions : [];
+  if (!conditions.length) return "진입 조건 정보가 없습니다.";
+  return conditions.map((condition, index) => `${index + 1}. ${formatScenarioCondition(condition)}`).join("\n");
+}
+
+function formatRiskFilter(filter: Record<string, any>): string {
+  const value = Array.isArray(filter.value) ? `[${filter.value.join(", ")}]` : filter.value;
+  return `- ${filter.indicator_key || "-"} ${filter.operator || ""} ${value ?? ""}이면 ${filter.action || "warning_only"}\n  이유: ${filter.reason || "위험 필터로 검토"}`;
+}
+
+function formatScenarioSamples(samples: ScenarioSimulationResult["success_samples"]): string {
+  if (!samples.length) return "표시할 샘플이 없습니다.";
+  return samples.slice(0, 5).map((sample, index) => [
+    `${index + 1}. ${sample.stock_name || sample.stock_code || "-"} / ${sample.entry_date}`,
+    `   - 진입가: ${fmtWon(sample.entry_price)}`,
+    `   - 기본 결과: ${sample.base_result}`,
+    `   - 전략 결과: ${sample.strategy_result}`,
+    `   - 추가매수 횟수: ${fmtNumber(sample.add_buy_count, 0)}`,
+    `   - 추가매수가: ${sample.add_buy_price ? fmtWon(sample.add_buy_price) : "-"}`,
+    `   - 평균단가: ${sample.average_price ? fmtWon(sample.average_price) : "-"}`,
+    `   - 투입금액: ${fmtWon(sample.capital_used)}`,
+    `   - 최대수익률: ${fmtPercent(sample.max_return_pct)}`,
+    `   - 보유기간 최저수익률: ${fmtPercent(sample.max_drawdown_pct)}`,
+    `   - 종료 사유: ${sample.exit_reason}`,
+  ].join("\n")).join("\n\n");
+}
+
+function parseScenarioTrainingSections(text: string): Array<{ title: string; body: string }> {
+  const matches = [...text.matchAll(/(?:^|\n)(\d{1,2}\.\s*[^\n]+)\n/g)];
+  if (!matches.length) return [];
+  return matches.map((match, index) => {
+    const start = (match.index || 0) + (match[0].startsWith("\n") ? 1 : 0);
+    const bodyStart = start + match[1].length;
+    const nextStart = index + 1 < matches.length ? matches[index + 1].index || text.length : text.length;
+    return {
+      title: match[1].trim(),
+      body: text.slice(bodyStart, nextStart).trim(),
+    };
+  }).filter((section) => section.body);
+}
+
+function ScenarioValidationCandidateCard({ candidate }: { candidate: ValidatedScenarioCandidate }) {
+  const statusClass = {
+    simulation_ready: "ready",
+    needs_review: "review",
+    unsupported: "unsupported",
+    risky: "risky",
+    invalid: "invalid",
+  }[candidate.status] || "review";
+  const hasStructureError = Boolean(candidate.structure_error_count || candidate.condition_results.some((condition) => condition.status === "invalid_structure"));
+  const hasAutoConverted = Boolean(candidate.auto_converted_count || candidate.condition_results.some((condition) => condition.status === "auto_converted") || candidate.risk_filter_results.some((condition) => condition.status === "auto_converted"));
+  return (
+    <div className={`scenario-validation-card is-${statusClass}`}>
+      <div className="scenario-validation-card-head">
+        <strong>{candidate.scenario_name}</strong>
+        <span className={`scenario-validation-status scenario-validation-status-${statusClass}`}>{candidate.status_label}</span>
+      </div>
+      {hasStructureError ? (
+        <div className="scenario-validation-structure-error">
+          <strong>조건 형식 오류</strong>
+          <span>entry_conditions 또는 risk_filters에 문자열 조건이 포함되어 있습니다. 조건을 indicator_key/operator/value 객체 형식으로 변환해야 합니다.</span>
+        </div>
+      ) : null}
+      {hasAutoConverted ? (
+        <div className="scenario-validation-auto-converted">
+          <strong>자동 변환됨</strong>
+          <span>일부 문자열 조건이 객체형 조건으로 자동 변환되었습니다. 시뮬레이션 전 조건을 확인하세요.</span>
+        </div>
+      ) : null}
+      <div className="scenario-validation-ready-note">
+        {candidate.is_simulation_ready ? "조건 검증 기준으로 시뮬레이션 후보에 포함할 수 있습니다." : "현재 상태에서는 시뮬레이션 실행 대상에서 제외하는 것이 좋습니다."}
+      </div>
+
+      <div className="scenario-validation-section">
+        <h4>진입 조건 검증 결과</h4>
+        <div className="scenario-validation-condition-list">
+          {candidate.condition_results.map((condition, index) => (
+            <ScenarioValidationConditionRow key={`entry-${candidate.candidate_index}-${index}`} condition={condition} />
+          ))}
+        </div>
+      </div>
+
+      <div className="scenario-validation-section">
+        <h4>위험 필터 검증 결과</h4>
+        {candidate.risk_filter_results.length ? (
+          <div className="scenario-validation-condition-list">
+            {candidate.risk_filter_results.map((condition, index) => (
+              <ScenarioValidationConditionRow key={`risk-${candidate.candidate_index}-${index}`} condition={condition} />
+            ))}
+          </div>
+        ) : <div className="scenario-search-empty">위험 필터가 없습니다.</div>}
+      </div>
+
+      {candidate.add_buy_result ? (
+        <div className={`scenario-validation-add-buy is-${candidate.add_buy_result.status}`}>
+          <strong>추가매수 전략</strong>
+          <span>{candidate.add_buy_result.message}</span>
+          {(candidate.add_buy_result.warnings || []).map((warning) => <em key={warning}>{warning}</em>)}
+          {(candidate.add_buy_result.errors || []).map((error) => <b key={error}>{error}</b>)}
+        </div>
+      ) : null}
+
+      {candidate.warnings.length ? (
+        <div className="scenario-validation-warning">
+          {candidate.warnings.map((warning) => <span key={warning}>{warning}</span>)}
+        </div>
+      ) : null}
+      {candidate.errors.length ? (
+        <div className="scenario-validation-error">
+          {candidate.errors.map((error) => <span key={error}>{error}</span>)}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ScenarioSimulationResults({
+  result,
+  selectedResult,
+  validationCandidates,
+  onSelect,
+  onSendToTrainingGuide,
+}: {
+  result: ScenarioSimulationResponse;
+  selectedResult: ScenarioSimulationResult | null;
+  validationCandidates: ValidatedScenarioCandidate[];
+  onSelect: (result: ScenarioSimulationResult) => void;
+  onSendToTrainingGuide: (result: ScenarioSimulationResult) => void;
+}) {
+  const sortedResults = [...result.scenario_results].sort((a, b) => {
+    if (b.efficiency_score !== a.efficiency_score) return b.efficiency_score - a.efficiency_score;
+    if (b.strategy_success_rate !== a.strategy_success_rate) return b.strategy_success_rate - a.strategy_success_rate;
+    return b.candidate_count - a.candidate_count;
+  });
+  const topResults = sortedResults.slice(0, 3);
+  const active = selectedResult || sortedResults[0] || null;
+  const activeCandidate = active ? validationCandidates[active.scenario_index]?.normalized_candidate || null : null;
+  const addBuyInsight = active ? scenarioAddBuyInsight(active) : "";
+  return (
+    <div className="scenario-simulation-shell">
+      <div className="scenario-simulation-kpi-grid">
+        <Kpi label="실행 시나리오" value={`${fmtNumber(result.summary.executed_scenarios, 0)}개`} />
+        <Kpi label="전체 후보일" value={`${fmtNumber(result.summary.total_candidates, 0)}개`} />
+        <Kpi label="최고 전략 성공률" value={fmtPercent(result.summary.best_strategy_success_rate)} />
+        <Kpi label="최고 효율 점수" value={`${fmtNumber(result.summary.best_efficiency_score, 1)}점`} />
+        <Kpi label="추가매수 효과 있음" value={`${fmtNumber(result.summary.add_buy_effective_count, 0)}개`} />
+        <Kpi label="과최적화 주의" value={`${fmtNumber(result.summary.overfit_warning_count, 0)}개`} />
+      </div>
+
+      <div className="scenario-simulation-card-grid">
+        {topResults.map((item) => (
+          <button className="scenario-simulation-card" type="button" key={`top-${item.scenario_index}`} onClick={() => onSelect(item)}>
+            <div className="scenario-validation-card-head">
+              <strong>{item.scenario_name}</strong>
+              <span className={`scenario-simulation-judgement scenario-simulation-judgement-${item.judgement}`}>{item.judgement_label}</span>
+            </div>
+            <div className="scenario-simulation-metrics">
+              <span>후보일 {fmtNumber(item.candidate_count, 0)}개</span>
+              <span>1차 {fmtPercent(item.base_success_rate)}</span>
+              <span>전략 {fmtPercent(item.strategy_success_rate)}</span>
+              <span>실패율 {fmtPercent(item.failure_rate)}</span>
+              <span>회복률 {fmtPercent(item.recovery_rate_after_add_buy)}</span>
+              <span>효율 {fmtNumber(item.efficiency_score, 1)}점</span>
+            </div>
+            <p>
+              추가매수 적용 후 성공률이 {fmtPercent(item.base_success_rate)}에서 {fmtPercent(item.strategy_success_rate)}로 계산되었습니다.
+              평균 투입금액은 {fmtWon(item.avg_capital_used)}입니다.
+            </p>
+            {item.warnings[0] ? <em>{item.warnings[0]}</em> : null}
+          </button>
+        ))}
+      </div>
+
+      <div className="table-shell scenario-simulation-table">
+        <table className="data-table compact-table">
+          <thead>
+            <tr>
+              <th>순위</th>
+              <th>시나리오명</th>
+              <th>후보일</th>
+              <th>1차 성공률</th>
+              <th>전략 성공률</th>
+              <th>실패율</th>
+              <th>손실 회복률</th>
+              <th>평균 투입금액</th>
+              <th>효율 점수</th>
+              <th>판정</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sortedResults.map((item, index) => (
+              <tr key={`scenario-result-${item.scenario_index}`} onClick={() => onSelect(item)}>
+                <td>{index + 1}</td>
+                <td>{item.scenario_name}</td>
+                <td className="numeric-cell">{fmtNumber(item.candidate_count, 0)}</td>
+                <td className="numeric-cell">{fmtPercent(item.base_success_rate)}</td>
+                <td className="numeric-cell">{fmtPercent(item.strategy_success_rate)}</td>
+                <td className="numeric-cell">{fmtPercent(item.failure_rate)}</td>
+                <td className="numeric-cell">{fmtPercent(item.recovery_rate_after_add_buy)}</td>
+                <td className="numeric-cell">{fmtWon(item.avg_capital_used)}</td>
+                <td className="numeric-cell">{fmtNumber(item.efficiency_score, 1)}</td>
+                <td><span className={`scenario-simulation-judgement scenario-simulation-judgement-${item.judgement}`}>{item.judgement_label}</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {active ? (
+        <div className="scenario-simulation-detail">
+          <div className="scenario-validation-card-head">
+            <strong>{active.scenario_name}</strong>
+            <button className="btn btn-primary" type="button" onClick={() => onSendToTrainingGuide(active)}>GPT 훈련가이드로 보내기</button>
+          </div>
+          {activeCandidate ? (
+            <div className="scenario-simulation-condition-summary">
+              <strong>진입 조건 요약</strong>
+              {(Array.isArray(activeCandidate.entry_conditions) ? activeCandidate.entry_conditions : []).map((condition: unknown, index: number) => (
+                <span key={`active-condition-${index}`}>{formatScenarioCondition(condition)}</span>
+              ))}
+              <em>{formatAddBuyPlan(activeCandidate.add_buy_plan)}</em>
+            </div>
+          ) : null}
+          {addBuyInsight ? <div className="scenario-simulation-warning">{addBuyInsight}</div> : null}
+          {active.warnings.length ? (
+            <div className="scenario-simulation-warning">
+              {active.warnings.map((warning) => <span key={warning}>{warning}</span>)}
+            </div>
+          ) : null}
+          <div className="scenario-search-kpi-grid">
+            <Kpi label="성공/실패/중립" value={`${fmtNumber(active.strategy_success_count, 0)} / ${fmtNumber(active.strategy_failure_count, 0)} / ${fmtNumber(active.strategy_neutral_count, 0)}`} />
+            <Kpi label="추가매수 발생" value={`${fmtNumber(active.add_buy_trigger_count, 0)}건`} />
+            <Kpi label="평균 추가매수" value={`${fmtNumber(active.avg_add_buy_count, 2)}회`} />
+            <Kpi label="최대 투입금액" value={fmtWon(active.max_capital_used)} />
+          </div>
+          <div className="scenario-search-empty">
+            실패 판정은 손절 기준 도달 여부로 계산됩니다. 표의 보유기간 최저수익률은 목표 기간 동안 관찰된 최저가 기준 수익률로, 손절을 지키지 않았을 때 확대될 수 있는 위험을 보여줍니다.
+          </div>
+          <ScenarioSimulationSampleTable title="성공 샘플" samples={active.success_samples} mode="success" />
+          <ScenarioSimulationSampleTable title="실패 샘플" samples={active.failure_samples} mode="failure" />
+          {active.add_buy_trigger_count > 0 ? (
+            <>
+              <ScenarioSimulationSampleTable title="추가매수 후 회복 성공 샘플" samples={active.add_buy_success_samples || []} mode="add_buy_success" />
+              <ScenarioSimulationSampleTable title="추가매수 후 회복 실패 샘플" samples={active.add_buy_failure_samples || []} mode="add_buy_failure" />
+            </>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function scenarioAddBuyInsight(result: ScenarioSimulationResult): string {
+  const delta = Number(result.strategy_success_rate || 0) - Number(result.base_success_rate || 0);
+  if (!result.add_buy_trigger_count) {
+    return "이번 시뮬레이션에서는 추가매수 조건에 도달한 사례가 없습니다. 추가매수 전략의 효과를 판단하기 어렵습니다.";
+  }
+  if (delta > 0) {
+    return "추가매수 적용 후 성공률은 개선되었지만 평균 투입금액이 증가했습니다. 추가매수 후 회복 성공/실패 샘플을 함께 확인하세요.";
+  }
+  return "추가매수가 발생했지만 성공률 개선이 제한적입니다. 추가매수 금지 조건을 추가로 검증해야 합니다.";
+}
+
+function ScenarioSimulationSampleTable({ title, samples, mode }: { title: string; samples: ScenarioSimulationResult["success_samples"]; mode: "success" | "failure" | "add_buy_success" | "add_buy_failure" }) {
+  const isAddBuyMode = mode === "add_buy_success" || mode === "add_buy_failure";
+  return (
+    <div className="scenario-simulation-sample-table">
+      <h4>{title}</h4>
+      {!samples.length ? <div className="scenario-search-empty">표시할 샘플이 없습니다.</div> : (
+        <div className="table-shell">
+          <table className="data-table compact-table">
+            <thead>
+              <tr>
+                <th>종목</th>
+                <th>진입일</th>
+                <th>진입가</th>
+                <th>전략 결과</th>
+                <th>추가매수</th>
+                {isAddBuyMode ? <th>추가매수가</th> : null}
+                <th>평균단가</th>
+                <th>투입금액</th>
+                <th>최대수익률</th>
+                <th>보유기간 최저수익률</th>
+                {(mode === "failure" || isAddBuyMode) ? <th>종료 사유</th> : null}
+              </tr>
+            </thead>
+            <tbody>
+              {samples.map((sample) => (
+                <tr key={`${sample.stock_code}-${sample.entry_date}-${sample.strategy_result}`}>
+                  <td>{sample.stock_name || sample.stock_code || "-"}</td>
+                  <td>{sample.entry_date}</td>
+                  <td className="numeric-cell">{fmtWon(sample.entry_price)}</td>
+                  <td>{sample.strategy_result}</td>
+                  <td className="numeric-cell">{fmtNumber(sample.add_buy_count, 0)}회</td>
+                  {isAddBuyMode ? <td className="numeric-cell">{sample.add_buy_price ? fmtWon(sample.add_buy_price) : "-"}</td> : null}
+                  <td className="numeric-cell">{sample.average_price ? fmtWon(sample.average_price) : "-"}</td>
+                  <td className="numeric-cell">{fmtWon(sample.capital_used)}</td>
+                  <td className="numeric-cell">{fmtPercent(sample.max_return_pct)}</td>
+                  <td className="numeric-cell">{fmtPercent(sample.max_drawdown_pct)}</td>
+                  {(mode === "failure" || isAddBuyMode) ? <td>{sample.exit_reason}</td> : null}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ScenarioValidationConditionRow({ condition }: { condition: ValidatedScenarioCandidate["condition_results"][number] }) {
+  const isValid = condition.status === "valid" || condition.status === "auto_converted";
+  const isError = ["invalid_value", "invalid_structure", "missing_field", "unsupported_indicator", "unsupported_operator", "unsupported_action"].includes(String(condition.status));
+  const symbol = isValid ? "✓" : isError ? "✕" : "⚠";
+  const expression = condition.original && condition.status === "invalid_structure"
+    ? `"${String(condition.original)}"`
+    : `${condition.indicator_key || "-"} ${condition.operator || ""} ${Array.isArray(condition.value) ? `[${condition.value.join(", ")}]` : condition.value ?? ""}`.trim();
+  return (
+    <div className={`scenario-validation-condition-row is-${condition.status}`}>
+      <span>{symbol}</span>
+      <div>
+        <strong>{expression}</strong>
+        <em>{condition.message}</em>
+      </div>
+    </div>
+  );
 }
 
 function GptPackageReview({

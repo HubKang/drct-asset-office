@@ -16,6 +16,8 @@ from backend.app.services.pattern_goal_gpt_result_service import PatternGoalGptR
 from backend.app.services.pattern_goal_llm_service import PatternGoalLLMService, split_goal_text_into_sentences
 from backend.app.services.pattern_goal_parser import PatternGoalParser
 from backend.app.services.pattern_research_engine import DynamicIndicatorExecutionError, build_pattern_samples
+from backend.app.services.pattern_scenario_simulator import simulate_ai_scenarios
+from backend.app.services.pattern_scenario_validator import validate_scenario_candidates
 
 
 INDICATORS: list[dict[str, Any]] = [
@@ -50,6 +52,15 @@ class PatternResearchService:
 
     def list_indicators(self) -> dict[str, Any]:
         return {"items": INDICATORS}
+
+    def validate_ai_scenarios(self, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return validate_scenario_candidates(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    def simulate_ai_scenarios(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return simulate_ai_scenarios(self.db, payload)
 
     def list_stocks(self, keyword: str | None, limit: int) -> dict[str, Any]:
         return {"items": self.repo.list_stocks(keyword=keyword, limit=limit), "keyword": keyword, "limit": limit}

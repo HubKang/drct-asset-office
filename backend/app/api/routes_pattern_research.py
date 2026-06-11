@@ -19,6 +19,10 @@ from backend.app.schemas.pattern_research_schema import (
     PatternResearchRunRequest,
     PatternResearchRunSimulateResponse,
     PatternResearchSampleListResponse,
+    ScenarioSimulationRequest,
+    ScenarioSimulationResponse,
+    ScenarioValidationRequest,
+    ScenarioValidationResponse,
 )
 from backend.app.services.pattern_research_service import PatternResearchService
 
@@ -83,6 +87,18 @@ def create_pattern_research_run(payload: PatternResearchRunRequest, db: Session 
 @router.post("/runs/simulate", response_model=PatternResearchRunSimulateResponse)
 def simulate_pattern_research_run(payload: PatternResearchRunRequest, db: Session = Depends(get_db)) -> dict:
     return PatternResearchService(db).simulate_run(payload)
+
+
+@router.post("/ai-scenarios/validate", response_model=ScenarioValidationResponse)
+def validate_ai_scenario_candidates(payload: ScenarioValidationRequest, db: Session = Depends(get_db)) -> dict:
+    payload_dict = payload.model_dump() if hasattr(payload, "model_dump") else payload.dict()
+    return PatternResearchService(db).validate_ai_scenarios(payload_dict)
+
+
+@router.post("/ai-scenarios/simulate", response_model=ScenarioSimulationResponse)
+def simulate_ai_scenario_candidates(payload: ScenarioSimulationRequest, db: Session = Depends(get_db)) -> dict:
+    payload_dict = payload.model_dump() if hasattr(payload, "model_dump") else payload.dict()
+    return PatternResearchService(db).simulate_ai_scenarios(payload_dict)
 
 
 @router.get("/runs", response_model=PatternResearchRunListResponse)

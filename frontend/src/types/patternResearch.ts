@@ -114,3 +114,172 @@ export type PatternGptGoalResultValidateResponse = {
   validation_message?: string;
   parsed_json: Record<string, any>;
 };
+
+export type ScenarioValidationStatus =
+  | "simulation_ready"
+  | "needs_review"
+  | "unsupported"
+  | "risky"
+  | "invalid";
+
+export type ScenarioConditionValidationStatus =
+  | "valid"
+  | "auto_converted"
+  | "unsupported_indicator"
+  | "unsupported_operator"
+  | "unsupported_action"
+  | "invalid_value"
+  | "invalid_structure"
+  | "missing_field"
+  | "needs_review";
+
+export type ScenarioValidationRequest = {
+  goal: {
+    trade_type: string;
+    target_return_pct: number;
+    holding_days: number;
+    stop_loss_pct: number;
+    min_sample_count: number;
+  };
+  risk_plan: {
+    add_buy_enabled: boolean;
+    max_add_buy_count: number;
+    initial_amount: number;
+    add_buy_trigger_loss_pct: number;
+    final_stop_loss_basis: string;
+    final_stop_loss_pct: number;
+  };
+  candidates: Array<Record<string, any>>;
+};
+
+export type ScenarioValidationSummary = {
+  total_candidates: number;
+  simulation_ready: number;
+  needs_review: number;
+  unsupported: number;
+  risky: number;
+  invalid?: number;
+  structure_error?: number;
+  auto_converted?: number;
+};
+
+export type ScenarioConditionValidationResult = {
+  section: string;
+  indicator_key?: string | null;
+  operator?: string | null;
+  value?: unknown;
+  action?: string | null;
+  status: ScenarioConditionValidationStatus | string;
+  message: string;
+  original?: unknown;
+};
+
+export type ValidatedScenarioCandidate = {
+  candidate_index: number;
+  scenario_name: string;
+  status: ScenarioValidationStatus;
+  status_label: string;
+  is_simulation_ready: boolean;
+  condition_results: ScenarioConditionValidationResult[];
+  risk_filter_results: ScenarioConditionValidationResult[];
+  add_buy_result?: {
+    status: string;
+    message: string;
+    warnings: string[];
+    errors?: string[];
+  } | null;
+  warnings: string[];
+  errors: string[];
+  normalized_candidate: Record<string, any>;
+  auto_converted_count?: number;
+  structure_error_count?: number;
+};
+
+export type ScenarioValidationResponse = {
+  summary: ScenarioValidationSummary;
+  validated_candidates: ValidatedScenarioCandidate[];
+};
+
+export type ScenarioSimulationRequest = {
+  goal: ScenarioValidationRequest["goal"];
+  risk_plan: ScenarioValidationRequest["risk_plan"];
+  stocks: Array<{
+    stock_code: string;
+    stock_name?: string | null;
+  }>;
+  candidates: Array<Record<string, any>>;
+};
+
+export type ScenarioSimulationSummary = {
+  executed_scenarios: number;
+  total_candidates: number;
+  best_strategy_success_rate: number;
+  best_efficiency_score: number;
+  add_buy_effective_count: number;
+  overfit_warning_count: number;
+};
+
+export type ScenarioSimulationJudgement =
+  | "promising"
+  | "review"
+  | "overfit_warning"
+  | "capital_risk"
+  | "weak"
+  | "no_sample"
+  | "error";
+
+export type ScenarioTradeSample = {
+  stock_code?: string | null;
+  stock_name?: string | null;
+  entry_date: string;
+  entry_price: number;
+  base_result: string;
+  strategy_result: string;
+  add_buy_count: number;
+  add_buy_price?: number | null;
+  average_price?: number | null;
+  capital_used: number;
+  max_return_pct?: number | null;
+  max_drawdown_pct?: number | null;
+  exit_reason: string;
+  warnings?: string[];
+};
+
+export type ScenarioSimulationResult = {
+  scenario_index: number;
+  scenario_name: string;
+  scenario_type?: string | null;
+  status: string;
+  judgement: ScenarioSimulationJudgement;
+  judgement_label: string;
+  candidate_count: number;
+  success_count: number;
+  failure_count: number;
+  neutral_count: number;
+  base_success_rate: number;
+  strategy_success_count: number;
+  strategy_failure_count: number;
+  strategy_neutral_count: number;
+  strategy_success_rate: number;
+  failure_rate: number;
+  recovery_count_after_add_buy: number;
+  recovery_rate_after_add_buy: number;
+  add_buy_trigger_count: number;
+  avg_add_buy_count: number;
+  avg_capital_used: number;
+  max_capital_used: number;
+  avg_max_return_pct: number;
+  avg_max_drawdown_pct: number;
+  efficiency_score: number;
+  warnings: string[];
+  errors?: string[];
+  success_samples: ScenarioTradeSample[];
+  failure_samples: ScenarioTradeSample[];
+  add_buy_success_samples?: ScenarioTradeSample[];
+  add_buy_failure_samples?: ScenarioTradeSample[];
+};
+
+export type ScenarioSimulationResponse = {
+  summary: ScenarioSimulationSummary;
+  scenario_results: ScenarioSimulationResult[];
+};
