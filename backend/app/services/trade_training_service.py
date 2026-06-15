@@ -46,6 +46,200 @@ class TradeTrainingService:
         return round(numerator / denominator * 100, 4)
 
     @staticmethod
+    def _reason_quality(reason: Any) -> dict[str, str]:
+        text = str(reason or "").strip()
+        if not text:
+            return {"grade": "미작성", "guide": "매매 판단 사유가 기록되지 않았습니다."}
+
+        normalized = "".join(text.split()).lower()
+        weak_words = {
+            "익절",
+            "손절",
+            "매도",
+            "매수",
+            "불안",
+            "느낌",
+            "오를것같음",
+            "떨어질것같음",
+        }
+        if normalized in weak_words or (len(normalized) <= 4 and normalized in weak_words):
+            return {
+                "grade": "부족",
+                "guide": "결과나 감정 중심 표현입니다. 차트 기준, 가격 기준, 거래량 변화처럼 실제 판단 근거가 필요합니다.",
+            }
+
+        evidence_words = [
+            "20선",
+            "5선",
+            "10선",
+            "60선",
+            "이동평균",
+            "전고점",
+            "돌파",
+            "지지",
+            "저항",
+            "거래량",
+            "거래대금",
+            "이탈",
+            "눌림",
+            "반등",
+            "추세",
+        ]
+        plan_words = [
+            "실패",
+            "손절",
+            "목표",
+            "비중",
+            "계획",
+            "기준",
+            "예정",
+            "재이탈",
+            "분할",
+            "추가매수",
+            "추격매수",
+        ]
+        has_evidence = any(word in text for word in evidence_words)
+        has_plan = any(word in text for word in plan_words)
+        if has_evidence and has_plan:
+            return {"grade": "충분", "guide": "객관적 근거와 대응 기준이 함께 기록되어 있습니다."}
+        if has_evidence:
+            return {"grade": "보통", "guide": "객관적 근거가 있습니다. 실패 기준이나 손절 기준까지 적으면 더 좋습니다."}
+        if len(text) >= 12:
+            return {"grade": "보통", "guide": "사유가 기록되어 있습니다. 판단 근거가 더 구체적이면 복기 품질이 좋아집니다."}
+        return {
+            "grade": "부족",
+            "guide": "표현이 짧아 판단 근거를 재현하기 어렵습니다. 기준이 된 가격, 지표, 차트 상황을 함께 적어주세요.",
+        }
+
+    @staticmethod
+    def _quality_counts(pairs: list[dict[str, Any]], field: str) -> dict[str, int]:
+        counts = {"충분": 0, "보통": 0, "부족": 0, "미작성": 0}
+        for pair in pairs:
+            grade = str(pair.get(field) or "미작성")
+            counts[grade if grade in counts else "미작성"] += 1
+        return counts
+
+    @staticmethod
+    def _quality_summary_text(counts: dict[str, int]) -> str:
+        return " / ".join(f"{label} {counts.get(label, 0)}건" for label in ["충분", "보통", "부족", "미작성"])
+
+    @staticmethod
+    def _label_list(values: Any, labels: dict[str, str]) -> str:
+        if not isinstance(values, list) or not values:
+            return "기록 없음"
+        return ", ".join(labels.get(str(value), str(value)) for value in values)
+
+    @staticmethod
+    def _label_value(value: Any, labels: dict[str, str], empty: str = "기록 없음") -> str:
+        text = str(value or "").strip()
+        if not text:
+            return empty
+        return labels.get(text, text)
+
+    @staticmethod
+    def _has_text(value: Any) -> bool:
+        return bool(str(value or "").strip())
+
+    def _method_review_stats(self, pairs: list[dict[str, Any]]) -> dict[str, Any]:
+        total = len(pairs)
+        buy_reviews = [pair.get("buy_method_review") for pair in pairs if isinstance(pair.get("buy_method_review"), dict)]
+        sell_reviews = [pair.get("sell_method_review") for pair in pairs if isinstance(pair.get("sell_method_review"), dict)]
+        failure_count = sum(1 for review in buy_reviews if self._has_text(review.get("failure_criteria")))
+        stop_loss_count = sum(1 for review in buy_reviews if self._has_text(review.get("stop_loss_rule")))
+        target_exit_count = sum(1 for review in buy_reviews if self._has_text(review.get("target_exit_rule")))
+        add_buy_count = sum(
+            1
+            for review in buy_reviews
+            if self._has_text(review.get("add_buy_condition"))
+            or str(review.get("add_buy_plan_type") or "") not in {"", "none", "undecided"}
+        )
+        method_fit_count = sum(1 for review in buy_reviews if self._has_text(review.get("method_fit")))
+        plan_aligned_count = sum(1 for review in sell_reviews if str(review.get("plan_alignment") or "") in {"match", "partial"})
+        no_initial_plan_count = sum(1 for review in sell_reviews if str(review.get("plan_alignment") or "") == "none")
+        chase_buy_count = sum(1 for review in buy_reviews if "chase_risk" in list(review.get("entry_type_tags") or []))
+        emotion_sell_count = sum(1 for review in sell_reviews if "emotion_risk" in list(review.get("exit_type_tags") or []))
+        return {
+            "total_pairs": total,
+            "buy_review_count": len(buy_reviews),
+            "sell_review_count": len(sell_reviews),
+            "failure_criteria_count": failure_count,
+            "stop_loss_rule_count": stop_loss_count,
+            "target_exit_rule_count": target_exit_count,
+            "add_buy_plan_count": add_buy_count,
+            "method_fit_count": method_fit_count,
+            "plan_aligned_count": plan_aligned_count,
+            "no_initial_plan_count": no_initial_plan_count,
+            "chase_buy_count": chase_buy_count,
+            "emotion_sell_count": emotion_sell_count,
+        }
+
+    def _format_buy_method_review(self, review: Any) -> str:
+        review = review if isinstance(review, dict) else {}
+        entry_labels = {
+            "planned": "계획 매수",
+            "confirmation": "확인 매수",
+            "pullback": "눌림 매수",
+            "breakout": "돌파 매수",
+            "add_buy": "추가매수",
+            "early_entry": "조기 진입",
+            "chase_risk": "추격매수 가능성 있음",
+            "test": "테스트 매수",
+        }
+        fit_labels = {"fit": "충족", "partial": "일부 충족", "miss": "미충족", "hold": "판단 보류"}
+        add_buy_labels = {
+            "none": "추가매수 계획 없음",
+            "pullback": "눌림 시 추가매수",
+            "breakout": "돌파 확인 시 추가매수",
+            "loss": "손실 구간 추가매수",
+            "profit": "수익 구간 추가매수",
+            "undecided": "아직 정하지 않음",
+        }
+        return "\n".join(
+            [
+                "[매매기법 기준 복기 - 매수]",
+                f"- 매수 유형: {self._label_list(review.get('entry_type_tags'), entry_labels)}",
+                f"- 매매기법 기준 충족 여부: {self._label_value(review.get('method_fit'), fit_labels)}",
+                f"- 근거가 된 매수조건: {self._text(review.get('matched_entry_rules'), '기록 없음')}",
+                f"- 주의 또는 위반 조건: {self._text(review.get('risk_or_violation_notes'), '기록 없음')}",
+                f"- 실패 기준: {self._text(review.get('failure_criteria'), '기록 없음')}",
+                f"- 손절 기준: {self._text(review.get('stop_loss_rule'), '기록 없음')}",
+                f"- 목표 / 청산 기준: {self._text(review.get('target_exit_rule'), '기록 없음')}",
+                f"- 추가매수 기준: {self._label_value(review.get('add_buy_plan_type'), add_buy_labels)}",
+                f"- 추가매수 조건: {self._text(review.get('add_buy_condition'), '기록 없음')}",
+                f"- 총 비중 계획: {self._text(review.get('max_position_plan'), '기록 없음')}",
+                f"- 추가매수 후 손절 기준: {self._text(review.get('add_buy_stop_loss_rule'), '기록 없음')}",
+            ]
+        )
+
+    def _format_sell_method_review(self, review: Any) -> str:
+        review = review if isinstance(review, dict) else {}
+        exit_labels = {
+            "planned": "계획 매도",
+            "target_reached": "목표 도달",
+            "stop_loss": "손절",
+            "reduce": "비중 축소",
+            "profit_protection": "수익 보호",
+            "trend_break": "추세 이탈",
+            "resistance": "저항 도달",
+            "spike_burden": "급등 부담",
+            "emotion_risk": "감정 매도 가능성",
+            "other": "기타",
+        }
+        fit_labels = {"fit": "매매기법 기준에 따른 매도", "partial": "일부 기준에 따른 매도", "unrelated": "기준과 무관한 매도", "none": "최초 계획이 없었음"}
+        align_labels = {"match": "일치", "partial": "일부 일치", "mismatch": "불일치", "none": "최초 계획 없음"}
+        return "\n".join(
+            [
+                "[매매기법 기준 복기 - 매도]",
+                f"- 매도 유형: {self._label_list(review.get('exit_type_tags'), exit_labels)}",
+                f"- 매매기법 기준 매도 여부: {self._label_value(review.get('method_exit_fit'), fit_labels)}",
+                f"- 근거가 된 매도조건: {self._text(review.get('matched_exit_rules'), '기록 없음')}",
+                f"- 최초 계획과 일치 여부: {self._label_value(review.get('plan_alignment'), align_labels)}",
+                f"- 매도 사유 상세: {self._text(review.get('exit_reason_detail'), '기록 없음')}",
+                f"- 매도 후 복기 메모: {self._text(review.get('after_review_memo'), '기록 없음')}",
+            ]
+        )
+
+    @staticmethod
     def _clean_mas(values: list[int]) -> list[int]:
         cleaned = sorted({int(v) for v in values if int(v) > 0 and int(v) <= 240})
         return cleaned or [5, 20, 60]
@@ -279,6 +473,7 @@ class TradeTrainingService:
                 "amount": round(amount, 4),
                 "realized_profit": 0,
                 "reason": payload.reason,
+                "method_review": payload.method_review,
             }
         )
         self.repo.update_session(
@@ -316,6 +511,7 @@ class TradeTrainingService:
                 "amount": round(amount, 4),
                 "realized_profit": round(realized_profit, 4),
                 "reason": payload.reason,
+                "method_review": payload.method_review,
             }
         )
         self.repo.update_session(
@@ -381,6 +577,12 @@ class TradeTrainingService:
                         "profit_rate": self._safe_rate(profit_amount, buy_amount + buy_fee_part),
                         "buy_reason": lot.get("reason"),
                         "sell_reason": trade.get("reason"),
+                        "buy_reason_quality": self._reason_quality(lot.get("reason"))["grade"],
+                        "sell_reason_quality": self._reason_quality(trade.get("reason"))["grade"],
+                        "buy_reason_quality_guide": self._reason_quality(lot.get("reason"))["guide"],
+                        "sell_reason_quality_guide": self._reason_quality(trade.get("reason"))["guide"],
+                        "buy_method_review": lot.get("method_review"),
+                        "sell_method_review": trade.get("method_review"),
                     }
                 )
                 lot["remaining_quantity"] = int(lot["remaining_quantity"]) - matched_qty
@@ -404,6 +606,9 @@ class TradeTrainingService:
         evens = [pair for pair in pairs if float(pair["profit_amount"]) == 0]
         closed_count = len(wins) + len(losses)
         total_fees = round(sum(float(trade.get("fee") or 0) for trade in trades), 4)
+        buy_quality_counts = self._quality_counts(pairs, "buy_reason_quality")
+        sell_quality_counts = self._quality_counts(pairs, "sell_reason_quality")
+        method_review_stats = self._method_review_stats(pairs)
 
         snapshots = self.repo.list_snapshots(session_id, end_date=session.get("current_date"))
         curve_by_date: dict[str, dict[str, Any]] = {}
@@ -450,12 +655,17 @@ class TradeTrainingService:
             "win_rate": None if closed_count == 0 else round(len(wins) / closed_count * 100, 4),
             "average_profit_rate": None if not wins else round(sum(float(p["profit_rate"]) for p in wins) / len(wins), 4),
             "average_loss_rate": None if not losses else round(sum(float(p["profit_rate"]) for p in losses) / len(losses), 4),
-            "max_profit_amount": None if not pairs else round(max(float(p["profit_amount"]) for p in pairs), 4),
-            "max_loss_amount": None if not pairs else round(min(float(p["profit_amount"]) for p in pairs), 4),
+            "max_profit_amount": None if not wins else round(max(float(p["profit_amount"]) for p in wins), 4),
+            "max_loss_amount": None if not losses else round(min(float(p["profit_amount"]) for p in losses), 4),
             "average_holding_days": None if not pairs else round(sum(int(p["holding_days"]) for p in pairs) / len(pairs), 4),
             "total_fees": total_fees,
             "buy_reason_fill_rate": None if not buy_trades else round(sum(1 for t in buy_trades if str(t.get("reason") or "").strip()) / len(buy_trades) * 100, 4),
             "sell_reason_fill_rate": None if not sell_trades else round(sum(1 for t in sell_trades if str(t.get("reason") or "").strip()) / len(sell_trades) * 100, 4),
+            "buy_reason_quality_summary": buy_quality_counts,
+            "sell_reason_quality_summary": sell_quality_counts,
+            "weak_buy_reason_count": buy_quality_counts["부족"] + buy_quality_counts["미작성"],
+            "weak_sell_reason_count": sell_quality_counts["부족"] + sell_quality_counts["미작성"],
+            "method_review_stats": method_review_stats,
             "trade_pairs": pairs,
             "open_position": open_position,
             "equity_curve": equity_curve,
@@ -545,7 +755,14 @@ class TradeTrainingService:
                         f"- 손익: {self._money(pair['profit_amount'])}",
                         f"- 수익률: {self._pct(pair['profit_rate'])}",
                         f"- 매수 사유: {self._text(pair.get('buy_reason'))}",
+                        f"- 매수 사유 품질: {self._text(pair.get('buy_reason_quality'), '미작성')}",
                         f"- 매도 사유: {self._text(pair.get('sell_reason'))}",
+                        f"- 매도 사유 품질: {self._text(pair.get('sell_reason_quality'), '미작성')}",
+                        "- 손절 기준 작성 여부: 기록 없음",
+                        "- 실패 기준 작성 여부: 기록 없음",
+                        "- 추가매수/추격매수 구분 여부: 기록 없음",
+                        self._format_buy_method_review(pair.get("buy_method_review")),
+                        self._format_sell_method_review(pair.get("sell_method_review")),
                     ]
                 )
             )
@@ -579,6 +796,10 @@ class TradeTrainingService:
                 f"- 총 수수료: {self._money(result['total_fees'])}",
                 f"- 매수 사유 입력률: {self._pct(result.get('buy_reason_fill_rate'))}",
                 f"- 매도 사유 입력률: {self._pct(result.get('sell_reason_fill_rate'))}",
+                f"- 매수 사유 품질 요약: {self._quality_summary_text(result.get('buy_reason_quality_summary') or {})}",
+                f"- 매도 사유 품질 요약: {self._quality_summary_text(result.get('sell_reason_quality_summary') or {})}",
+                f"- 부족한 매수 사유 건수: {result.get('weak_buy_reason_count', 0)}건",
+                f"- 부족한 매도 사유 건수: {result.get('weak_sell_reason_count', 0)}건",
             ]
         )
         open_position = result["open_position"]
@@ -608,22 +829,107 @@ class TradeTrainingService:
                 f"- 원칙 준수 점수: {self._text(review.get('discipline_score'), '미입력')}",
             ]
         )
+        drct_analysis_lines = [
+            "- 이 분석은 투자 조언이 아니라 훈련 복기 보조 문구입니다.",
+            "- 수익률과 승률이 높아도 원칙 재현성은 별도로 평가해야 합니다.",
+            f"- 매수 사유 품질 요약: {self._quality_summary_text(result.get('buy_reason_quality_summary') or {})}",
+            f"- 매도 사유 품질 요약: {self._quality_summary_text(result.get('sell_reason_quality_summary') or {})}",
+            f"- 부족하거나 미작성된 매수 사유: {result.get('weak_buy_reason_count', 0)}건",
+            f"- 부족하거나 미작성된 매도 사유: {result.get('weak_sell_reason_count', 0)}건",
+            "- 손절 기준과 실패 기준은 현재 거래별 구조화 데이터로 기록되지 않았습니다.",
+            "- 추가 진입이 사전 계획된 추가매수인지, 상승 후 추격매수인지 구분되지 않았습니다.",
+            f"- 1회 매수 비중은 거래별 매수금액을 초기자금 {self._money(result['initial_cash'])} 대비로 별도 점검할 필요가 있습니다.",
+            f"- 최대 동시 노출 비중은 자산 흐름과 미청산 보유분 기준으로 별도 점검할 필요가 있습니다.",
+            "- 다음 훈련에서는 매수 전 실패 기준, 손절 기준, 매도 기준, 추가매수 기준을 사전에 기록하는 것이 필요합니다.",
+        ]
+        if result.get("losing_trade_count") == 0:
+            drct_analysis_lines.insert(1, "- 손실 거래가 없어 최대손실은 '-'로 정리되었습니다.")
+        if result.get("weak_sell_reason_count", 0) > 0:
+            drct_analysis_lines.append("- 매도 사유가 결과 중심 표현에 머물렀을 가능성이 있으므로 실제 매도 판단 근거를 확인해야 합니다.")
+        method_stats = result.get("method_review_stats") or {}
+        total_pairs = int(method_stats.get("total_pairs") or 0)
+        if total_pairs > 0:
+            drct_analysis_lines.extend(
+                [
+                    f"- 매매기법 기준 복기가 작성된 매수 거래는 {method_stats.get('buy_review_count', 0)}건 / {total_pairs}건입니다.",
+                    f"- 실패 기준 작성률: {method_stats.get('failure_criteria_count', 0)}건 / {total_pairs}건",
+                    f"- 손절 기준 작성률: {method_stats.get('stop_loss_rule_count', 0)}건 / {total_pairs}건",
+                    f"- 목표/청산 기준 작성률: {method_stats.get('target_exit_rule_count', 0)}건 / {total_pairs}건",
+                    f"- 추가매수 기준 작성률: {method_stats.get('add_buy_plan_count', 0)}건 / {total_pairs}건",
+                    f"- 매매기법 기준 충족 기록: {method_stats.get('method_fit_count', 0)}건 / {total_pairs}건",
+                    f"- 매도 계획 일치 기록: {method_stats.get('plan_aligned_count', 0)}건 / {total_pairs}건",
+                    f"- 최초 계획 없음 매도: {method_stats.get('no_initial_plan_count', 0)}건",
+                    f"- 추격매수 가능성 태그: {method_stats.get('chase_buy_count', 0)}건",
+                    f"- 감정 매도 가능성 태그: {method_stats.get('emotion_sell_count', 0)}건",
+                ]
+            )
+        drct_analysis = "\n".join(drct_analysis_lines)
         gpt_request = "\n".join(
             [
                 "1. 이번 훈련의 핵심을 요약해 주세요.",
-                "2. 수익/손실 결과보다 매매 판단 과정을 평가해 주세요.",
-                "3. 매수 사유의 구체성과 근거 수준을 평가해 주세요.",
-                "4. 매도 사유의 적절성과 일관성을 평가해 주세요.",
-                "5. 손실 거래에서 반복되는 문제를 찾아 주세요.",
-                "6. 수익 거래에서 잘한 점을 찾아 주세요.",
-                "7. 손절 지연, 조기 매도, 추격매수 가능성을 평가해 주세요.",
-                "8. 비중 조절과 리스크 관리 수준을 평가해 주세요.",
-                "9. 다음 훈련에서 반드시 고쳐야 할 행동 3가지를 제안해 주세요.",
-                "10. 다음 훈련 전 체크리스트를 제안해 주세요.",
-                "11. 원칙 준수 점수를 0~100점으로 평가해 주세요.",
-                "12. 이 훈련을 통해 사용자가 배워야 할 핵심 교훈을 정리해 주세요.",
+                "2. 수익률보다 원칙 재현성을 평가해 주세요.",
+                "3. 매수 사유와 매도 사유의 구체성을 별도로 평가해 주세요.",
+                "4. '익절', '손절'처럼 결과 중심 표현이 복기 품질에 어떤 한계가 있는지 평가해 주세요.",
+                "5. 손절 기준, 실패 기준, 추가매수 기준이 기록되지 않은 경우의 위험을 평가해 주세요.",
+                "6. 손실 거래에서 반복되는 문제를 찾아 주세요.",
+                "7. 수익 거래에서 잘한 점을 찾아 주세요.",
+                "8. 손절 지연, 조기 매도, 추격매수 가능성을 평가해 주세요.",
+                "9. 비중 조절과 리스크 관리 수준을 평가해 주세요.",
+                "10. 다음 훈련 목표를 구체적인 행동 문장으로 제안해 주세요.",
+                "11. 매매기법의 체크리스트, 매도조건, 실패패턴에 반영할 수 있는 후보를 제안해 주세요.",
+                "12. 이번 거래가 매매기법 기준에 맞게 실행되었는지 평가해 주세요.",
+                "13. 수익/손실 결과와 별개로 매수 기준, 실패 기준, 손절 기준, 매도 기준의 완성도를 평가해 주세요.",
+                "14. 최초 계획과 실제 매도 판단이 일치했는지 평가해 주세요.",
+                "15. 계획이 부족한 문제와 실행이 흔들린 문제를 구분해 주세요.",
+                "16. 이 훈련을 통해 사용자가 배워야 할 핵심 교훈을 정리해 주세요.",
             ]
         )
+        structured_json_request = """마지막에는 아래 JSON 형식으로 정리해 주세요.
+이 JSON은 DrCT에서 다음 훈련 목표와 매매기법 수정 후보로 활용됩니다.
+JSON은 설명 문장과 별도로 마지막에 제공해 주세요.
+
+{
+  "training_scores": {
+    "principle_adherence": 0,
+    "entry_quality": 0,
+    "exit_quality": 0,
+    "risk_management": 0,
+    "position_sizing": 0,
+    "record_quality": 0,
+    "method_completeness": 0
+  },
+  "detected_mistakes": [
+    {
+      "mistake_type": "missing_stop_rule",
+      "title": "손절 기준 미작성",
+      "evidence": "구체적인 근거",
+      "severity": "low|medium|high",
+      "next_action": "다음 훈련에서 실행할 행동"
+    }
+  ],
+  "success_lessons": [
+    {
+      "lesson": "성공 거래에서 재현 가능한 교훈",
+      "repeat_condition": "반복 가능한 조건"
+    }
+  ],
+  "failure_lessons": [
+    {
+      "lesson": "실패 또는 잠재 실패에서 얻을 교훈",
+      "preventive_rule": "예방 규칙"
+    }
+  ],
+  "next_training_rules": [
+    "다음 훈련에서 반드시 지킬 행동 기준"
+  ],
+  "method_adjustment_suggestions": [
+    {
+      "target_section": "entry_rules|exit_rules|failure_patterns|checklist",
+      "suggestion": "매매기법에 반영할 수정 후보",
+      "reason": "제안 이유"
+    }
+  ]
+}"""
         prompt = f"""[DrCT 매매훈련 복기 요청]
 
 당신은 투자 종목 추천자가 아니라, 개인 투자자의 매매 판단 습관을 교정하는 훈련 코치입니다.
@@ -658,15 +964,23 @@ class TradeTrainingService:
 [6. 사용자 훈련 회고]
 {self_review_summary}
 
-[7. 최종 요청]
+[7. DrCT 자동 분석]
+{drct_analysis}
+
+[8. 최종 요청]
 이 훈련 결과를 바탕으로 제가 반복하는 판단 실수와 다음 훈련에서 반드시 고쳐야 할 행동을 구체적으로 분석해 주세요.
+
+[9. 구조화 JSON 출력 요청]
+{structured_json_request}
 """
         sections = {
             "training_summary": training_summary,
             "performance_summary": performance_summary,
             "trade_pairs_summary": "\n\n".join(trade_lines),
             "reason_summary": self_review_summary,
+            "drct_analysis": drct_analysis,
             "gpt_request": gpt_request,
+            "structured_json_request": structured_json_request,
         }
         stock_name = self._text(result.get("stock_name"), result["stock_code"])
         return {

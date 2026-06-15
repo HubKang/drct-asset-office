@@ -36,6 +36,7 @@ class TrainingOrderRequest(BaseModel):
     price: float = Field(gt=0)
     quantity: int = Field(gt=0)
     reason: str | None = None
+    method_review: dict | None = None
 
 
 class TrainingSessionResponse(BaseModel):
@@ -93,6 +94,7 @@ class TrainingTradeResponse(BaseModel):
     amount: float
     realized_profit: float
     reason: str | None = None
+    method_review: dict | None = None
     created_at: str | None = None
 
 
@@ -122,6 +124,12 @@ class TrainingTradePairResponse(BaseModel):
     profit_rate: float
     buy_reason: str | None = None
     sell_reason: str | None = None
+    buy_reason_quality: str | None = None
+    sell_reason_quality: str | None = None
+    buy_reason_quality_guide: str | None = None
+    sell_reason_quality_guide: str | None = None
+    buy_method_review: dict | None = None
+    sell_method_review: dict | None = None
 
 
 class TrainingOpenPositionResponse(BaseModel):
@@ -169,6 +177,11 @@ class TrainingResultResponse(BaseModel):
     total_fees: float
     buy_reason_fill_rate: float | None = None
     sell_reason_fill_rate: float | None = None
+    buy_reason_quality_summary: dict[str, int] = Field(default_factory=dict)
+    sell_reason_quality_summary: dict[str, int] = Field(default_factory=dict)
+    weak_buy_reason_count: int = 0
+    weak_sell_reason_count: int = 0
+    method_review_stats: dict = Field(default_factory=dict)
     trade_pairs: list[TrainingTradePairResponse] = Field(default_factory=list)
     open_position: TrainingOpenPositionResponse
     equity_curve: list[TrainingEquityCurvePoint] = Field(default_factory=list)

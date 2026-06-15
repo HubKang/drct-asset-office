@@ -31,6 +31,7 @@ export type TrainingOrderRequest = {
   price: number;
   quantity: number;
   reason?: string | null;
+  method_review?: TrainingMethodReview | null;
 };
 
 export type TrainingSession = {
@@ -88,6 +89,7 @@ export type TrainingTrade = {
   amount: number;
   realized_profit: number;
   reason: string | null;
+  method_review?: TrainingMethodReview | null;
   created_at: string | null;
 };
 
@@ -117,6 +119,32 @@ export type TrainingTradePair = {
   profit_rate: number;
   buy_reason: string | null;
   sell_reason: string | null;
+  buy_reason_quality?: string | null;
+  sell_reason_quality?: string | null;
+  buy_reason_quality_guide?: string | null;
+  sell_reason_quality_guide?: string | null;
+  buy_method_review?: TrainingMethodReview | null;
+  sell_method_review?: TrainingMethodReview | null;
+};
+
+export type TrainingMethodReview = {
+  entry_type_tags?: string[];
+  method_fit?: string;
+  matched_entry_rules?: string;
+  risk_or_violation_notes?: string;
+  failure_criteria?: string;
+  stop_loss_rule?: string;
+  target_exit_rule?: string;
+  add_buy_plan_type?: string;
+  add_buy_condition?: string;
+  max_position_plan?: string;
+  add_buy_stop_loss_rule?: string;
+  exit_type_tags?: string[];
+  method_exit_fit?: string;
+  matched_exit_rules?: string;
+  plan_alignment?: string;
+  exit_reason_detail?: string;
+  after_review_memo?: string;
 };
 
 export type TrainingOpenPosition = {
@@ -164,6 +192,11 @@ export type TrainingResult = {
   total_fees: number;
   buy_reason_fill_rate: number | null;
   sell_reason_fill_rate: number | null;
+  buy_reason_quality_summary?: Record<string, number>;
+  sell_reason_quality_summary?: Record<string, number>;
+  weak_buy_reason_count?: number;
+  weak_sell_reason_count?: number;
+  method_review_stats?: Record<string, number>;
   trade_pairs: TrainingTradePair[];
   open_position: TrainingOpenPosition;
   equity_curve: TrainingEquityCurvePoint[];

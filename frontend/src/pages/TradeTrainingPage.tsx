@@ -1,4 +1,4 @@
-import { FormEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, FormEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { BarChart3, PauseCircle, Play, Search, Settings, ShoppingCart, StepForward, X } from "lucide-react";
 import EmptyState from "@/components/common/EmptyState";
 import PageHeader from "@/components/common/PageHeader";
@@ -10,6 +10,7 @@ import type {
   TrainingCandle,
   TrainingEquityCurvePoint,
   TrainingGptPackage,
+  TrainingMethodReview,
   TrainingOrderRequest,
   TrainingResult,
   TrainingSessionDetail,
@@ -55,9 +56,61 @@ type TradeLogRow = {
   tradeAmount: number;
   currentInvestedAmount: number;
 };
+type ReasonQualityGrade = "충분" | "보통" | "부족" | "미작성";
 
 const DEFAULT_MA_TEXT = "5,10,20,60,120";
 const STOCKS_PAGE_SIZE = 6;
+const BUY_REVIEW_TAGS = [
+  { value: "planned", label: "계획 매수" },
+  { value: "confirmation", label: "확인 매수" },
+  { value: "pullback", label: "눌림 매수" },
+  { value: "breakout", label: "돌파 매수" },
+  { value: "add_buy", label: "추가매수" },
+  { value: "early_entry", label: "조기 진입" },
+  { value: "chase_risk", label: "추격매수 가능성 있음" },
+  { value: "test", label: "테스트 매수" },
+];
+const SELL_REVIEW_TAGS = [
+  { value: "planned", label: "계획 매도" },
+  { value: "target_reached", label: "목표 도달" },
+  { value: "stop_loss", label: "손절" },
+  { value: "reduce", label: "비중 축소" },
+  { value: "profit_protection", label: "수익 보호" },
+  { value: "trend_break", label: "추세 이탈" },
+  { value: "resistance", label: "저항 도달" },
+  { value: "spike_burden", label: "급등 부담" },
+  { value: "emotion_risk", label: "감정 매도 가능성" },
+  { value: "other", label: "기타" },
+];
+const BUY_METHOD_FIT_OPTIONS = [
+  { value: "", label: "선택 안 함" },
+  { value: "fit", label: "충족" },
+  { value: "partial", label: "일부 충족" },
+  { value: "miss", label: "미충족" },
+  { value: "hold", label: "판단 보류" },
+];
+const SELL_METHOD_FIT_OPTIONS = [
+  { value: "", label: "선택 안 함" },
+  { value: "fit", label: "매매기법 기준에 따른 매도" },
+  { value: "partial", label: "일부 기준에 따른 매도" },
+  { value: "unrelated", label: "기준과 무관한 매도" },
+  { value: "none", label: "최초 계획이 없었음" },
+];
+const PLAN_ALIGNMENT_OPTIONS = [
+  { value: "", label: "선택 안 함" },
+  { value: "match", label: "일치" },
+  { value: "partial", label: "일부 일치" },
+  { value: "mismatch", label: "불일치" },
+  { value: "none", label: "최초 계획 없음" },
+];
+const ADD_BUY_PLAN_OPTIONS = [
+  { value: "none", label: "추가매수 계획 없음" },
+  { value: "pullback", label: "눌림 시 추가매수" },
+  { value: "breakout", label: "돌파 확인 시 추가매수" },
+  { value: "loss", label: "손실 구간 추가매수" },
+  { value: "profit", label: "수익 구간 추가매수" },
+  { value: "undecided", label: "아직 정하지 않음" },
+];
 
 function createDrawingId(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
@@ -690,6 +743,69 @@ function rulePreview(value?: string | null): string {
   return text;
 }
 
+function cleanRuleText(value?: string | null): string {
+  const text = (value || "").trim();
+  if (!text) return "등록된 내용이 없습니다.";
+  return text
+    .split("\n")
+    .map((line) => line.replace(/^\s{0,3}#{1,6}\s*/, "").replace(/^\s*[-*]\s+/, "• "))
+    .join("\n")
+    .trim();
+}
+
+function reasonQualityClass(grade?: string | null): string {
+  if (grade === "충분") return "quality-good";
+  if (grade === "보통") return "quality-normal";
+  if (grade === "부족") return "quality-weak";
+  return "quality-empty";
+}
+
+function reasonQualityGuide(grade?: string | null, guide?: string | null): string {
+  if (guide) return guide;
+  if (grade === "부족") return "'익절'은 결과입니다. 목표가 도달, 저항선 도달, 5일선 이탈, 거래량 둔화 등 실제 판단 근거를 적어주세요.";
+  if (grade === "미작성") return "사유가 없으면 다음 훈련에서 판단 과정을 재현하기 어렵습니다.";
+  return "복기 품질을 높이려면 판단 근거와 대응 기준을 함께 적어주세요.";
+}
+
+function ReasonQualityBadge({ grade, guide }: { grade?: string | null; guide?: string | null }) {
+  const safeGrade = (grade || "미작성") as ReasonQualityGrade;
+  return (
+    <span className={`reason-quality-badge ${reasonQualityClass(safeGrade)}`} title={reasonQualityGuide(safeGrade, guide)}>
+      {safeGrade}
+    </span>
+  );
+}
+
+function qualitySummaryText(summary?: Record<string, number>): string {
+  const data = summary || {};
+  return ["충분", "보통", "부족", "미작성"].map((label) => `${label} ${fmtNumber(data[label] || 0)}건`).join(" / ");
+}
+
+function optionLabel(options: Array<{ value: string; label: string }>, value?: string | null): string {
+  if (!value) return "기록 없음";
+  return options.find((option) => option.value === value)?.label || value;
+}
+
+function tagLabels(options: Array<{ value: string; label: string }>, values?: string[]): string {
+  if (!values?.length) return "기록 없음";
+  return values.map((value) => optionLabel(options, value)).join(", ");
+}
+
+function hasMethodReview(review?: TrainingMethodReview | null): boolean {
+  if (!review) return false;
+  return Object.entries(review).some(([key, value]) => {
+    if (Array.isArray(value)) return value.length > 0;
+    const text = String(value || "").trim();
+    if (!text) return false;
+    if (key === "add_buy_plan_type" && text === "none") return false;
+    return true;
+  });
+}
+
+function writtenFlag(value?: string | null): string {
+  return value?.trim() ? "작성" : "기록 없음";
+}
+
 function TrainingMethodPrinciples({
   method,
   compact = false,
@@ -1008,6 +1124,8 @@ function ResultModal({ result, onClose }: { result: TrainingResult; onClose: () 
     }
   };
 
+  const hasLossTrades = result.losing_trade_count > 0;
+
   const summaryItems = [
     { label: "초기자금", value: fmtWon(result.initial_cash) },
     { label: "최종자산", value: fmtWon(result.final_total_asset) },
@@ -1016,9 +1134,9 @@ function ResultModal({ result, onClose }: { result: TrainingResult; onClose: () 
     { label: "총 거래", value: `${fmtNumber(result.trade_count)}건` },
     { label: "승률", value: fmtPercent(result.win_rate) },
     { label: "평균수익", value: fmtPercent(result.average_profit_rate), className: "training-positive" },
-    { label: "평균손실", value: fmtPercent(result.average_loss_rate), className: "training-negative" },
+    { label: "평균손실", value: hasLossTrades ? fmtPercent(result.average_loss_rate) : "-", className: "training-negative" },
     { label: "최대수익", value: fmtSignedWon(result.max_profit_amount), className: profitClass(result.max_profit_amount) },
-    { label: "최대손실", value: fmtSignedWon(result.max_loss_amount), className: profitClass(result.max_loss_amount) },
+    { label: "최대손실", value: hasLossTrades ? fmtSignedWon(result.max_loss_amount) : "-", className: hasLossTrades ? profitClass(result.max_loss_amount) : "" },
     { label: "평균보유일", value: result.average_holding_days === null ? "-" : `${fmtNumber(result.average_holding_days, 1)}일` },
     { label: "총 수수료", value: fmtWon(result.total_fees) },
   ];
@@ -1048,8 +1166,12 @@ function ResultModal({ result, onClose }: { result: TrainingResult; onClose: () 
         <div className="training-result-grid training-result-small-grid">
           <div><span>매수 사유 입력률</span><strong>{fmtPercent(result.buy_reason_fill_rate)}</strong></div>
           <div><span>매도 사유 입력률</span><strong>{fmtPercent(result.sell_reason_fill_rate)}</strong></div>
+          <div><span>매수 사유 품질</span><strong>{qualitySummaryText(result.buy_reason_quality_summary)}</strong></div>
+          <div><span>매도 사유 품질</span><strong>{qualitySummaryText(result.sell_reason_quality_summary)}</strong></div>
           <div><span>매수/매도</span><strong>{fmtNumber(result.buy_count)} / {fmtNumber(result.sell_count)}</strong></div>
           <div><span>승/패/보합</span><strong>{fmtNumber(result.winning_trade_count)} / {fmtNumber(result.losing_trade_count)} / {fmtNumber(result.break_even_trade_count)}</strong></div>
+          <div><span>부족한 매수 사유</span><strong>{fmtNumber(result.weak_buy_reason_count || 0)}건</strong></div>
+          <div><span>부족한 매도 사유</span><strong>{fmtNumber(result.weak_sell_reason_count || 0)}건</strong></div>
         </div>
 
         <section className="training-result-section">
@@ -1073,24 +1195,56 @@ function ResultModal({ result, onClose }: { result: TrainingResult; onClose: () 
                     <th className="numeric-cell">손익</th>
                     <th className="numeric-cell">수익률</th>
                     <th>매수 사유</th>
+                    <th>매수 품질</th>
                     <th>매도 사유</th>
+                    <th>매도 품질</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {result.trade_pairs.map((pair, idx) => (
-                    <tr key={`${pair.buy_date}-${pair.sell_date}-${idx}`}>
-                      <td>{pair.buy_date}</td>
-                      <td>{pair.sell_date}</td>
-                      <td className="numeric-cell">{fmtNumber(pair.holding_days)}</td>
-                      <td className="numeric-cell">{fmtWon(pair.buy_price)}</td>
-                      <td className="numeric-cell">{fmtWon(pair.sell_price)}</td>
-                      <td className="numeric-cell">{fmtNumber(pair.quantity)}</td>
-                      <td className={`numeric-cell ${profitClass(pair.profit_amount)}`}>{fmtSignedWon(pair.profit_amount)}</td>
-                      <td className={`numeric-cell ${profitClass(pair.profit_rate)}`}>{fmtPercent(pair.profit_rate)}</td>
-                      <td>{pair.buy_reason || "-"}</td>
-                      <td>{pair.sell_reason || "-"}</td>
-                    </tr>
-                  ))}
+                  {result.trade_pairs.map((pair, idx) => {
+                    const buyReview = pair.buy_method_review || null;
+                    const sellReview = pair.sell_method_review || null;
+                    return (
+                      <Fragment key={`${pair.buy_date}-${pair.sell_date}-${idx}`}>
+                        <tr>
+                          <td>{pair.buy_date}</td>
+                          <td>{pair.sell_date}</td>
+                          <td className="numeric-cell">{fmtNumber(pair.holding_days)}</td>
+                          <td className="numeric-cell">{fmtWon(pair.buy_price)}</td>
+                          <td className="numeric-cell">{fmtWon(pair.sell_price)}</td>
+                          <td className="numeric-cell">{fmtNumber(pair.quantity)}</td>
+                          <td className={`numeric-cell ${profitClass(pair.profit_amount)}`}>{fmtSignedWon(pair.profit_amount)}</td>
+                          <td className={`numeric-cell ${profitClass(pair.profit_rate)}`}>{fmtPercent(pair.profit_rate)}</td>
+                          <td>{pair.buy_reason || "-"}</td>
+                          <td><ReasonQualityBadge grade={pair.buy_reason_quality} guide={pair.buy_reason_quality_guide} /></td>
+                          <td>{pair.sell_reason || "-"}</td>
+                          <td><ReasonQualityBadge grade={pair.sell_reason_quality} guide={pair.sell_reason_quality_guide} /></td>
+                        </tr>
+                        <tr className="training-method-review-result-row">
+                          <td colSpan={12}>
+                            <div className="training-method-review-result">
+                              <div>
+                                <strong>매수 기준 복기</strong>
+                                <span>매수 유형: {tagLabels(BUY_REVIEW_TAGS, buyReview?.entry_type_tags)}</span>
+                                <span>기법 기준: {optionLabel(BUY_METHOD_FIT_OPTIONS, buyReview?.method_fit)}</span>
+                                <span>실패 기준: {writtenFlag(buyReview?.failure_criteria)}</span>
+                                <span>손절 기준: {writtenFlag(buyReview?.stop_loss_rule)}</span>
+                                <span>목표/청산 기준: {writtenFlag(buyReview?.target_exit_rule)}</span>
+                                <span>추가매수 기준: {optionLabel(ADD_BUY_PLAN_OPTIONS, buyReview?.add_buy_plan_type)}</span>
+                              </div>
+                              <div>
+                                <strong>매도 기준 복기</strong>
+                                <span>매도 유형: {tagLabels(SELL_REVIEW_TAGS, sellReview?.exit_type_tags)}</span>
+                                <span>기법 기준 매도: {optionLabel(SELL_METHOD_FIT_OPTIONS, sellReview?.method_exit_fit)}</span>
+                                <span>최초 계획 일치: {optionLabel(PLAN_ALIGNMENT_OPTIONS, sellReview?.plan_alignment)}</span>
+                                <span>매도조건 근거: {writtenFlag(sellReview?.matched_exit_rules)}</span>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1099,7 +1253,7 @@ function ResultModal({ result, onClose }: { result: TrainingResult; onClose: () 
 
         <section className="training-result-section training-review-section">
           <h4>훈련 회고</h4>
-          <p className="training-result-help">먼저 자기 회고와 다음 훈련 목표를 적으면 GPT 복기 패키지가 더 좋아집니다.</p>
+          <p className="training-result-help">먼저 자기 회고와 다음 훈련 목표를 적으면 GPT 복기 패키지가 더 좋아집니다. GPT 복기에서 나온 핵심 교훈을 바탕으로 다음 훈련에서 반드시 지킬 행동 기준을 적어주세요.</p>
           {reviewLoading && !review ? <p className="text-sm text-muted">훈련 회고를 불러오는 중입니다.</p> : null}
           {reviewError ? <div className="inline-result inline-error">{reviewError}</div> : null}
           {review ? (
@@ -1141,7 +1295,15 @@ function ResultModal({ result, onClose }: { result: TrainingResult; onClose: () 
               <div className="training-review-text-grid">
                 <label><span>자기 회고</span><textarea className="textarea-control" value={review.self_review_text} onChange={(event) => updateReview("self_review_text", event.target.value)} /></label>
                 <label><span>개선할 점</span><textarea className="textarea-control" value={review.improvement_point} onChange={(event) => updateReview("improvement_point", event.target.value)} /></label>
-                <label><span>다음 훈련 목표</span><textarea className="textarea-control" value={review.next_training_goal} onChange={(event) => updateReview("next_training_goal", event.target.value)} /></label>
+                <label>
+                  <span>다음 훈련 목표</span>
+                  <textarea
+                    className="textarea-control"
+                    value={review.next_training_goal}
+                    onChange={(event) => updateReview("next_training_goal", event.target.value)}
+                    placeholder={"매수 전 실패 기준을 반드시 작성한다.\n매도 사유에 '익절'만 쓰지 않는다.\n추가매수는 사전 계획이 있을 때만 실행한다.\n손절 기준 없이 매수하지 않는다.\n1회 매수 비중을 10% 이하로 제한한다."}
+                  />
+                </label>
                 <label><span>GPT 복기 결과</span><textarea className="textarea-control" value={review.gpt_review_text} onChange={(event) => updateReview("gpt_review_text", event.target.value)} /></label>
               </div>
               <div className="training-result-actions">
@@ -1198,6 +1360,10 @@ function OrderModal({
   const [percent, setPercent] = useState(defaultPercent);
   const [quantity, setQuantity] = useState(1);
   const [reason, setReason] = useState("");
+  const [methodReviewOpen, setMethodReviewOpen] = useState(false);
+  const [methodReview, setMethodReview] = useState<TrainingMethodReview>(() => ({
+    add_buy_plan_type: "none",
+  }));
   const [submitting, setSubmitting] = useState(false);
   const feeRate = Number(detail.session.options?.fee_rate || 0);
   const amount = price * quantity;
@@ -1245,13 +1411,25 @@ function OrderModal({
     event.preventDefault();
     setSubmitting(true);
     try {
-      await onSubmit({ price, quantity, reason: reason.trim() || null });
+      await onSubmit({ price, quantity, reason: reason.trim() || null, method_review: hasMethodReview(methodReview) ? methodReview : null });
     } finally {
       setSubmitting(false);
     }
   };
 
   const quickPercents = mode === "BUY" ? [10, 20, 30, 50, 100] : [25, 50, 100];
+  const updateMethodReview = (field: keyof TrainingMethodReview, value: string | string[]) => {
+    setMethodReview((prev) => ({ ...prev, [field]: value }));
+  };
+  const toggleReviewTag = (field: "entry_type_tags" | "exit_type_tags", value: string) => {
+    setMethodReview((prev) => {
+      const current = Array.isArray(prev[field]) ? [...(prev[field] || [])] : [];
+      const next = current.includes(value) ? current.filter((item) => item !== value) : [...current, value];
+      return { ...prev, [field]: next };
+    });
+  };
+  const weakSellReason = mode === "SELL" && ["익절", "손절"].includes(reason.trim());
+  const missingBuyRiskRule = mode === "BUY" && methodReviewOpen && (!methodReview.failure_criteria?.trim() || !methodReview.stop_loss_rule?.trim());
 
   return (
     <div className="training-modal-backdrop" role="presentation">
@@ -1321,6 +1499,98 @@ function OrderModal({
           <span>{mode === "BUY" ? "매수 사유" : "매도 사유"}</span>
           <textarea className="textarea-control" value={reason} onChange={(event) => setReason(event.target.value)} />
         </label>
+
+        <div className="training-method-review-panel">
+          <button type="button" className="training-method-review-toggle" onClick={() => setMethodReviewOpen((prev) => !prev)}>
+            {methodReviewOpen ? "매매기법 기준 복기 접기" : "매매기법 기준 복기 펼치기"}
+          </button>
+          <p className="training-result-help">
+            {mode === "BUY"
+              ? "매매기법 기준 복기를 남기면 GPT가 결과가 아니라 원칙 준수 여부를 더 정확히 평가할 수 있습니다."
+              : "매도 기준을 구체적으로 남기면 조기매도, 손절 지연, 감정 매도 여부를 더 정확히 복기할 수 있습니다."}
+          </p>
+          {methodReviewOpen ? (
+            <div className="training-method-review-body">
+              {mode === "BUY" ? (
+                <>
+                  <div className="training-review-chip-section">
+                    <span>이번 매수 유형</span>
+                    <div className="training-review-chip-row">
+                      {BUY_REVIEW_TAGS.map((tag) => (
+                        <button
+                          type="button"
+                          key={tag.value}
+                          className={(methodReview.entry_type_tags || []).includes(tag.value) ? "selected" : ""}
+                          onClick={() => toggleReviewTag("entry_type_tags", tag.value)}
+                        >
+                          {tag.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <label>
+                    <span>매매기법 기준 충족 여부</span>
+                    <select className="select-control" value={methodReview.method_fit || ""} onChange={(event) => updateMethodReview("method_fit", event.target.value)}>
+                      {BUY_METHOD_FIT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                    </select>
+                    <small>현재 선택한 매매기법 기준으로 이번 매수가 어느 정도 적합했는지 기록합니다.</small>
+                  </label>
+                  <label><span>근거가 된 매수조건</span><textarea className="textarea-control" value={methodReview.matched_entry_rules || ""} onChange={(event) => updateMethodReview("matched_entry_rules", event.target.value)} placeholder="20일선 돌파, 전고점 돌파, 거래량 증가" /></label>
+                  <label><span>주의 또는 위반 조건</span><textarea className="textarea-control" value={methodReview.risk_or_violation_notes || ""} onChange={(event) => updateMethodReview("risk_or_violation_notes", event.target.value)} placeholder="예) 60일선 아래라 중기 추세는 아직 불안함" /></label>
+                  <label><span>실패 기준</span><textarea className="textarea-control" value={methodReview.failure_criteria || ""} onChange={(event) => updateMethodReview("failure_criteria", event.target.value)} placeholder="예) 20일선 재이탈 시 실패로 본다." /></label>
+                  <label><span>손절 기준</span><textarea className="textarea-control" value={methodReview.stop_loss_rule || ""} onChange={(event) => updateMethodReview("stop_loss_rule", event.target.value)} placeholder="예) -5% 도달 시 전량 손절" /></label>
+                  <label><span>목표 / 청산 기준</span><textarea className="textarea-control" value={methodReview.target_exit_rule || ""} onChange={(event) => updateMethodReview("target_exit_rule", event.target.value)} placeholder="예) +5% 도달 시 1차 매도" /></label>
+                  <label>
+                    <span>추가매수 기준</span>
+                    <select className="select-control" value={methodReview.add_buy_plan_type || "none"} onChange={(event) => updateMethodReview("add_buy_plan_type", event.target.value)}>
+                      {ADD_BUY_PLAN_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                    </select>
+                  </label>
+                  <label><span>추가매수 조건</span><textarea className="textarea-control" value={methodReview.add_buy_condition || ""} onChange={(event) => updateMethodReview("add_buy_condition", event.target.value)} placeholder="예) 전고점 돌파 후 안착 시 1회 추가매수" /></label>
+                  <div className="training-method-review-two-col">
+                    <label><span>추가매수 후 총 비중 한도</span><input className="input-control" value={methodReview.max_position_plan || ""} onChange={(event) => updateMethodReview("max_position_plan", event.target.value)} placeholder="예) 총 비중 20% 이하" /></label>
+                    <label><span>추가매수 후 손절 기준</span><input className="input-control" value={methodReview.add_buy_stop_loss_rule || ""} onChange={(event) => updateMethodReview("add_buy_stop_loss_rule", event.target.value)} placeholder="예) 평균단가 -5%" /></label>
+                  </div>
+                  {missingBuyRiskRule ? <div className="inline-result inline-warning">실패 기준 또는 손절 기준이 비어 있습니다. 매수는 가능하지만 GPT 복기에서 손실 관리 평가가 제한될 수 있습니다.</div> : null}
+                </>
+              ) : (
+                <>
+                  <div className="training-review-chip-section">
+                    <span>이번 매도 유형</span>
+                    <div className="training-review-chip-row">
+                      {SELL_REVIEW_TAGS.map((tag) => (
+                        <button
+                          type="button"
+                          key={tag.value}
+                          className={(methodReview.exit_type_tags || []).includes(tag.value) ? "selected" : ""}
+                          onClick={() => toggleReviewTag("exit_type_tags", tag.value)}
+                        >
+                          {tag.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <label>
+                    <span>매매기법 기준 매도 여부</span>
+                    <select className="select-control" value={methodReview.method_exit_fit || ""} onChange={(event) => updateMethodReview("method_exit_fit", event.target.value)}>
+                      {SELL_METHOD_FIT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                    </select>
+                  </label>
+                  <label><span>근거가 된 매도조건</span><textarea className="textarea-control" value={methodReview.matched_exit_rules || ""} onChange={(event) => updateMethodReview("matched_exit_rules", event.target.value)} placeholder="목표 수익률 도달, 전고점 저항 도달, 5일선 이탈" /></label>
+                  <label>
+                    <span>최초 매수 계획과 일치 여부</span>
+                    <select className="select-control" value={methodReview.plan_alignment || ""} onChange={(event) => updateMethodReview("plan_alignment", event.target.value)}>
+                      {PLAN_ALIGNMENT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                    </select>
+                  </label>
+                  {weakSellReason ? <div className="inline-result inline-warning">‘익절’ 또는 ‘손절’은 결과입니다. 복기 품질을 높이려면 왜 이 시점에서 매도했는지 적어주세요. 예: 목표가 도달, 저항선 도달, 5일선 이탈, 거래량 둔화, 급등 후 윗꼬리, 전고점 돌파 실패</div> : null}
+                  <label><span>매도 사유 상세</span><textarea className="textarea-control" value={methodReview.exit_reason_detail || ""} onChange={(event) => updateMethodReview("exit_reason_detail", event.target.value)} placeholder="예) 목표 수익률 초과 후 급등 부담으로 전량 매도" /></label>
+                  <label><span>매도 후 복기 메모</span><textarea className="textarea-control" value={methodReview.after_review_memo || ""} onChange={(event) => updateMethodReview("after_review_memo", event.target.value)} placeholder="예) 계획대로 매도했지만 분할매도 기준이 부족했다." /></label>
+                </>
+              )}
+            </div>
+          ) : null}
+        </div>
 
         <div className="training-modal-actions">
           <button type="button" className="btn btn-secondary" onClick={onClose}>취소</button>
@@ -1409,6 +1679,75 @@ function TrainingChartSummary({
       <button className="training-bottom-next-button" type="button" disabled={nextDisabled} onClick={onNext}>
         <StepForward size={15} /> 다음
       </button>
+    </div>
+  );
+}
+
+function TrainingMethodPrinciplesModal({
+  method,
+  onClose,
+}: {
+  method: TradeMethod;
+  onClose: () => void;
+}) {
+  const tabs = [
+    { key: "core", label: "핵심개념", value: tradeMethodValue(method, "core_concept", "description") },
+    { key: "buy", label: "매수조건", value: tradeMethodValue(method, "buy_condition", "entry_rule") },
+    { key: "sell", label: "매도조건", value: tradeMethodValue(method, "sell_condition", "exit_rule", "take_profit_rule") },
+    { key: "failure", label: "실패패턴", value: tradeMethodValue(method, "stop_loss_rule") },
+    { key: "checklist", label: "체크리스트", value: tradeMethodValue(method, "checklist") },
+    { key: "lessons", label: "최근 복기 교훈", value: "최근 GPT 복기에서 도출된 교훈이 여기에 표시됩니다." },
+  ];
+  const [activeTab, setActiveTab] = useState(tabs[0].key);
+  const active = tabs.find((tab) => tab.key === activeTab) || tabs[0];
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className="training-modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <div
+        className="training-modal training-principles-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="매매원칙 보기"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="training-modal-head">
+          <div>
+            <h3>매매원칙 보기</h3>
+            <p className="training-result-subtitle">{method.method_name}</p>
+          </div>
+          <button type="button" className="training-icon-button" onClick={onClose} aria-label="닫기">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="training-principles-tabs" role="tablist" aria-label="매매원칙 구분">
+          {tabs.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              className={activeTab === tab.key ? "active" : ""}
+              onClick={() => setActiveTab(tab.key)}
+              role="tab"
+              aria-selected={activeTab === tab.key}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="training-principles-content">
+          <h4>{active.label}</h4>
+          <pre>{cleanRuleText(active.value)}</pre>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1656,16 +1995,13 @@ function TradeTrainingPage() {
                 type="button"
                 className="btn btn-secondary"
                 disabled={!detail.trade_method}
-                onClick={() => setShowMethodPrinciples((prev) => !prev)}
+                onClick={() => setShowMethodPrinciples(true)}
               >
                 원칙 보기
               </button>
             </div>
           ) : null}
         </div>
-        {detail?.trade_method && showMethodPrinciples ? (
-          <TrainingMethodPrinciples method={detail.trade_method} compact />
-        ) : null}
 
         {!detail ? (
           <SectionCard title="훈련 화면">
@@ -1776,6 +2112,9 @@ function TradeTrainingPage() {
           onStart={startSession}
           onClose={() => setSettingsOpen(false)}
         />
+      ) : null}
+      {detail?.trade_method && showMethodPrinciples ? (
+        <TrainingMethodPrinciplesModal method={detail.trade_method} onClose={() => setShowMethodPrinciples(false)} />
       ) : null}
       {detail && orderMode ? <OrderModal mode={orderMode} detail={detail} onClose={() => setOrderMode(null)} onSubmit={submitOrder} /> : null}
       {result ? <ResultModal result={result} onClose={() => setResult(null)} /> : null}

@@ -1033,11 +1033,17 @@ def ensure_runtime_schema() -> None:
                 amount REAL NOT NULL,
                 realized_profit REAL DEFAULT 0,
                 reason TEXT,
+                method_review_json TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (session_id) REFERENCES simulation_sessions(id)
             )
             """
         )
+        simulation_trade_columns = {
+            str(row[1]) for row in conn.exec_driver_sql("PRAGMA table_info(simulation_trades)").fetchall()
+        }
+        if "method_review_json" not in simulation_trade_columns:
+            conn.exec_driver_sql("ALTER TABLE simulation_trades ADD COLUMN method_review_json TEXT")
         conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_simulation_trades_session_id ON simulation_trades(session_id)"
         )

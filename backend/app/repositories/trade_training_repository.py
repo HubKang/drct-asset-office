@@ -12,6 +12,31 @@ from backend.app.core.config import now_kst
 class TradeTrainingRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
+        self._simulation_trade_review_column_checked = False
+
+    def _ensure_trade_method_review_column(self) -> None:
+        if self._simulation_trade_review_column_checked:
+            return
+        rows = self.db.execute(text("PRAGMA table_info(simulation_trades)")).mappings().all()
+        column_names = {str(row["name"]) for row in rows}
+        if rows and "method_review_json" not in column_names:
+            self.db.execute(text("ALTER TABLE simulation_trades ADD COLUMN method_review_json TEXT"))
+            self.db.commit()
+        self._simulation_trade_review_column_checked = True
+
+    @staticmethod
+    def _decode_trade(row: dict[str, Any]) -> dict[str, Any]:
+        raw = row.get("method_review_json")
+        if raw:
+            try:
+                data = json.loads(str(raw))
+                row["method_review"] = data if isinstance(data, dict) else None
+            except json.JSONDecodeError:
+                row["method_review"] = None
+        else:
+            row["method_review"] = None
+        row.pop("method_review_json", None)
+        return row
 
     def list_training_stocks(self, q: str | None, limit: int) -> list[dict[str, Any]]:
         params: dict[str, Any] = {"limit": limit}
@@ -238,29 +263,35 @@ class TradeTrainingRepository:
         return self.get_session(session_id) or {}
 
     def insert_trade(self, values: dict[str, Any]) -> dict[str, Any]:
+        self._ensure_trade_method_review_column()
         cursor = self.db.execute(
             text(
                 """
                 INSERT INTO simulation_trades (
                     session_id, trade_date, side, price, quantity, fee, amount,
-                    realized_profit, reason, created_at
+                    realized_profit, reason, method_review_json, created_at
                 )
                 VALUES (
                     :session_id, :trade_date, :side, :price, :quantity, :fee, :amount,
-                    :realized_profit, :reason, :created_at
+                    :realized_profit, :reason, :method_review_json, :created_at
                 )
                 """
             ),
-            {**values, "created_at": now_kst()},
+            {
+                **values,
+                "method_review_json": json.dumps(values.get("method_review") or {}, ensure_ascii=False) if values.get("method_review") else None,
+                "created_at": now_kst(),
+            },
         )
         self.db.commit()
         row = self.db.execute(
             text("SELECT * FROM simulation_trades WHERE id = :id"),
             {"id": int(cursor.lastrowid)},  # type: ignore[arg-type]
         ).mappings().one()
-        return dict(row)
+        return self._decode_trade(dict(row))
 
     def list_trades(self, session_id: int) -> list[dict[str, Any]]:
+        self._ensure_trade_method_review_column()
         rows = self.db.execute(
             text(
                 """
@@ -272,7 +303,7 @@ class TradeTrainingRepository:
             ),
             {"session_id": session_id},
         ).mappings().all()
-        return [dict(row) for row in rows]
+        return [self._decode_trade(dict(row)) for row in rows]
 
     def list_snapshots(self, session_id: int, end_date: str | None = None) -> list[dict[str, Any]]:
         clauses = ["session_id = :session_id"]

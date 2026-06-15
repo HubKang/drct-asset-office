@@ -4479,6 +4479,13 @@ a:focus-visible {
   width: min(1120px, 100%);
 }
 
+.training-principles-modal {
+  width: min(820px, 100%);
+  max-height: min(760px, calc(100vh - 36px));
+  overflow: hidden;
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
 .training-modal-head {
   display: flex;
   align-items: center;
@@ -4603,7 +4610,7 @@ a:focus-visible {
 }
 
 .training-result-table {
-  min-width: 1080px;
+  min-width: 1240px;
 }
 
 .training-result-table th,
@@ -4688,6 +4695,209 @@ a:focus-visible {
   font-size: 12px;
   line-height: 1.55;
   white-space: pre;
+}
+
+.training-method-review-panel {
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #f8fbff;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.training-method-review-toggle {
+  width: fit-content;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.training-method-review-body {
+  border-top: 1px solid #dbeafe;
+  padding-top: 10px;
+  display: grid;
+  gap: 10px;
+}
+
+.training-method-review-body label {
+  display: grid;
+  gap: 5px;
+}
+
+.training-method-review-body label > span,
+.training-review-chip-section > span {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.training-method-review-body small {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.training-review-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.training-review-chip-row button {
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 999px;
+  background: #fff;
+  color: #475569;
+  padding: 5px 9px;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.training-review-chip-row button.selected {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.training-method-review-two-col {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.training-method-review-result-row td {
+  background: #f8fafc;
+  border-top: 0;
+}
+
+.training-method-review-result {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.training-method-review-result div {
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 8px;
+  background: #fff;
+  padding: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+}
+
+.training-method-review-result strong {
+  width: 100%;
+  color: #0f172a;
+  font-size: 12px;
+}
+
+.training-method-review-result span {
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.reason-quality-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.reason-quality-badge.quality-good {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.reason-quality-badge.quality-normal {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.reason-quality-badge.quality-weak {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.reason-quality-badge.quality-empty {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+  color: #64748b;
+}
+
+.training-principles-tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--color-hairline-cloud);
+  padding-bottom: 8px;
+}
+
+.training-principles-tabs button {
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 8px;
+  background: #fff;
+  color: #475569;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.training-principles-tabs button.active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+  box-shadow: inset 0 -2px 0 #2563eb;
+}
+
+.training-principles-content {
+  min-height: 260px;
+  max-height: calc(100vh - 220px);
+  overflow: auto;
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 14px;
+}
+
+.training-principles-content h4 {
+  margin: 0 0 10px;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.training-principles-content pre {
+  margin: 0;
+  color: #334155;
+  font-family: "Noto Sans KR", Pretendard, sans-serif;
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: keep-all;
 }
 
 .training-main-focused {
