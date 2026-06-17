@@ -111,6 +111,145 @@ const ADD_BUY_PLAN_OPTIONS = [
   { value: "profit", label: "수익 구간 추가매수" },
   { value: "undecided", label: "아직 정하지 않음" },
 ];
+const BUY_REVIEW_TEMPLATES: Array<{ title: string; description: string; review: TrainingMethodReview }> = [
+  {
+    title: "20일선 눌림 확인",
+    description: "20일선 부근 지지와 반등 확인을 기록",
+    review: {
+      selected_template: "20일선 눌림 확인",
+      entry_type_tags: ["pullback", "confirmation"],
+      method_fit: "partial",
+      matched_entry_rules: "20일선 부근 눌림 후 지지 확인",
+      failure_criteria: "20일선 이탈 또는 직전 저점 이탈 시 실패로 본다.",
+      stop_loss_rule: "20일선 종가 이탈 또는 -5% 도달 시 손절 검토",
+      target_exit_rule: "+5% 또는 전고점 부근에서 1차 청산 검토",
+      add_buy_plan_type: "none",
+    },
+  },
+  {
+    title: "20일선 돌파",
+    description: "20일선 회복 또는 돌파 확인을 기록",
+    review: {
+      selected_template: "20일선 돌파",
+      entry_type_tags: ["breakout", "confirmation"],
+      method_fit: "partial",
+      matched_entry_rules: "20일선 돌파",
+      failure_criteria: "20일선 재이탈 시 실패로 본다.",
+      stop_loss_rule: "20일선 종가 이탈 또는 -5% 도달 시 손절 검토",
+      target_exit_rule: "+5% 또는 직전 저항 구간에서 청산 검토",
+      add_buy_plan_type: "undecided",
+      add_buy_condition: "안착 확인 전 추가매수는 보류",
+    },
+  },
+  {
+    title: "전고점 돌파",
+    description: "전고점 돌파와 추격 위험을 함께 기록",
+    review: {
+      selected_template: "전고점 돌파",
+      entry_type_tags: ["breakout"],
+      method_fit: "partial",
+      matched_entry_rules: "전고점 돌파",
+      risk_or_violation_notes: "단기 급등 후 추격매수 위험 여부 확인 필요",
+      failure_criteria: "돌파한 전고점 아래로 재하락하면 실패로 본다.",
+      stop_loss_rule: "전고점 재이탈 또는 -5% 도달 시 손절 검토",
+      target_exit_rule: "돌파 후 탄력 둔화 또는 목표 수익률 도달 시 청산 검토",
+      add_buy_plan_type: "breakout",
+      add_buy_condition: "추가매수는 돌파 후 안착 확인 시에만 검토",
+    },
+  },
+  {
+    title: "5일선/10일선 회복",
+    description: "단기 이동평균 회복 확인을 기록",
+    review: {
+      selected_template: "5일선/10일선 회복",
+      entry_type_tags: ["confirmation"],
+      method_fit: "partial",
+      matched_entry_rules: "5일선 또는 10일선 회복",
+      risk_or_violation_notes: "20일선 지지 여부와 거래량 확인 필요",
+      failure_criteria: "회복한 단기 이동평균선을 다시 이탈하면 실패로 본다.",
+      stop_loss_rule: "단기 이동평균선 재이탈 또는 -5% 도달 시 손절 검토",
+      target_exit_rule: "전고점 또는 목표 수익률 도달 시 청산 검토",
+      add_buy_plan_type: "none",
+    },
+  },
+  {
+    title: "추가매수",
+    description: "계획된 추가 진입인지 구분해 기록",
+    review: {
+      selected_template: "추가매수",
+      entry_type_tags: ["add_buy"],
+      method_fit: "partial",
+      matched_entry_rules: "기존 매수 근거 유지 후 추가 확인 신호 발생",
+      risk_or_violation_notes: "계획된 추가매수인지 추격매수인지 구분 필요",
+      failure_criteria: "기존 매수 근거가 훼손되면 실패로 본다.",
+      stop_loss_rule: "평균단가 기준 손절 또는 기준선 이탈 시 축소 검토",
+      target_exit_rule: "총 보유 비중 기준으로 분할 청산 검토",
+      add_buy_plan_type: "undecided",
+      add_buy_condition: "추가매수 후 총 비중 한도를 확인한다.",
+      max_position_plan: "총 비중 한도 확인 필요",
+    },
+  },
+  {
+    title: "추격매수 위험",
+    description: "뒤늦은 진입 가능성을 명시해 기록",
+    review: {
+      selected_template: "추격매수 위험",
+      entry_type_tags: ["chase_risk"],
+      method_fit: "hold",
+      risk_or_violation_notes: "이미 상승한 뒤 뒤늦게 진입하는 추격매수 가능성이 있음",
+      failure_criteria: "돌파 기준선 재이탈 또는 단기 급등 후 음봉 전환 시 실패로 본다.",
+      stop_loss_rule: "매수가 대비 -5% 또는 기준선 이탈 시 손절 검토",
+      target_exit_rule: "짧은 보유와 빠른 리스크 관리 필요",
+      add_buy_plan_type: "none",
+      add_buy_condition: "추가매수 금지",
+      max_position_plan: "비중 확대 금지",
+    },
+  },
+  { title: "직접 입력", description: "템플릿 없이 직접 판단 기준을 기록", review: { selected_template: "직접 입력", add_buy_plan_type: "none" } },
+];
+const SELL_REVIEW_TEMPLATES: Array<{ title: string; description: string; review: TrainingMethodReview }> = [
+  {
+    title: "목표 수익 도달",
+    description: "목표 수익률 또는 목표가 도달 청산 기록",
+    review: { selected_template: "목표 수익 도달", exit_type_tags: ["planned", "target_reached"], method_exit_fit: "fit", matched_exit_rules: "목표 수익률 또는 목표가 도달", plan_alignment: "match", exit_reason_detail: "목표 수익 구간에 도달하여 계획에 따라 청산" },
+  },
+  {
+    title: "5일선 이탈",
+    description: "단기 추세 약화와 수익 보호 기록",
+    review: { selected_template: "5일선 이탈", exit_type_tags: ["profit_protection", "trend_break"], method_exit_fit: "partial", matched_exit_rules: "5일선 이탈", plan_alignment: "partial", exit_reason_detail: "단기 상승 흐름 약화로 수익 보호 목적 청산" },
+  },
+  {
+    title: "20일선 이탈",
+    description: "기준선 훼손에 따른 정리 기록",
+    review: { selected_template: "20일선 이탈", exit_type_tags: ["trend_break"], method_exit_fit: "fit", matched_exit_rules: "20일선 이탈", plan_alignment: "match", exit_reason_detail: "매수 근거였던 20일선 기준이 훼손되어 정리" },
+  },
+  {
+    title: "저항선/전고점 도달",
+    description: "저항 구간 도달과 수익 보호 기록",
+    review: { selected_template: "저항선/전고점 도달", exit_type_tags: ["resistance", "profit_protection"], method_exit_fit: "partial", matched_exit_rules: "저항선 또는 전고점 부근 도달", plan_alignment: "partial", exit_reason_detail: "저항 구간 도달로 수익 보호 또는 일부 청산" },
+  },
+  {
+    title: "급등 후 윗꼬리",
+    description: "단기 과열 후 매물 출회 가능성 기록",
+    review: { selected_template: "급등 후 윗꼬리", exit_type_tags: ["spike_burden", "profit_protection"], method_exit_fit: "partial", matched_exit_rules: "급등 후 윗꼬리 또는 매물 출회 가능성", plan_alignment: "partial", exit_reason_detail: "단기 급등 후 매물 출회 가능성이 있어 수익 보호" },
+  },
+  {
+    title: "손절 기준 도달",
+    description: "사전에 정한 실패 기준 도달 기록",
+    review: { selected_template: "손절 기준 도달", exit_type_tags: ["stop_loss"], method_exit_fit: "fit", matched_exit_rules: "사전 손절 기준 또는 실패 기준 도달", plan_alignment: "match", exit_reason_detail: "사전에 정한 실패 기준에 도달하여 손실 제한" },
+  },
+  {
+    title: "비중 축소",
+    description: "노출 비중 조절과 위험 관리 기록",
+    review: { selected_template: "비중 축소", exit_type_tags: ["reduce"], method_exit_fit: "partial", matched_exit_rules: "위험 관리 또는 노출 비중 조절", plan_alignment: "partial", exit_reason_detail: "보유 비중 조절과 리스크 관리를 위해 일부 또는 전량 축소" },
+  },
+  {
+    title: "감정 매도 위험",
+    description: "불안감에 따른 매도 가능성 기록",
+    review: { selected_template: "감정 매도 위험", exit_type_tags: ["emotion_risk"], method_exit_fit: "unrelated", plan_alignment: "mismatch", exit_reason_detail: "불안감 또는 수익 반납 우려로 인한 감정 매도 가능성", after_review_memo: "계획된 매도 기준이 있었는지 복기 필요" },
+  },
+  { title: "직접 입력", description: "템플릿 없이 직접 청산 기준을 기록", review: { selected_template: "직접 입력" } },
+];
 
 function createDrawingId(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
@@ -806,6 +945,19 @@ function writtenFlag(value?: string | null): string {
   return value?.trim() ? "작성" : "기록 없음";
 }
 
+function methodReviewSummary(mode: OrderMode, review?: TrainingMethodReview | null): string {
+  if (!hasMethodReview(review)) return "기법 복기: 미작성";
+  const template = review?.selected_template || "직접 입력";
+  if (mode === "BUY") {
+    const fit = optionLabel(BUY_METHOD_FIT_OPTIONS, review?.method_fit);
+    const failure = review?.failure_criteria?.trim() ? "실패 기준 작성" : "실패 기준 없음";
+    return `기법 복기: ${template} / ${fit} / ${failure}`;
+  }
+  const fit = optionLabel(SELL_METHOD_FIT_OPTIONS, review?.method_exit_fit);
+  const alignment = optionLabel(PLAN_ALIGNMENT_OPTIONS, review?.plan_alignment);
+  return `기법 복기: ${template} / ${fit} / ${alignment}`;
+}
+
 function TrainingMethodPrinciples({
   method,
   compact = false,
@@ -1225,6 +1377,7 @@ function ResultModal({ result, onClose }: { result: TrainingResult; onClose: () 
                             <div className="training-method-review-result">
                               <div>
                                 <strong>매수 기준 복기</strong>
+                                <span>선택 카드: {buyReview?.selected_template || "미작성"}</span>
                                 <span>매수 유형: {tagLabels(BUY_REVIEW_TAGS, buyReview?.entry_type_tags)}</span>
                                 <span>기법 기준: {optionLabel(BUY_METHOD_FIT_OPTIONS, buyReview?.method_fit)}</span>
                                 <span>실패 기준: {writtenFlag(buyReview?.failure_criteria)}</span>
@@ -1234,6 +1387,7 @@ function ResultModal({ result, onClose }: { result: TrainingResult; onClose: () 
                               </div>
                               <div>
                                 <strong>매도 기준 복기</strong>
+                                <span>선택 카드: {sellReview?.selected_template || "미작성"}</span>
                                 <span>매도 유형: {tagLabels(SELL_REVIEW_TAGS, sellReview?.exit_type_tags)}</span>
                                 <span>기법 기준 매도: {optionLabel(SELL_METHOD_FIT_OPTIONS, sellReview?.method_exit_fit)}</span>
                                 <span>최초 계획 일치: {optionLabel(PLAN_ALIGNMENT_OPTIONS, sellReview?.plan_alignment)}</span>
@@ -1360,7 +1514,8 @@ function OrderModal({
   const [percent, setPercent] = useState(defaultPercent);
   const [quantity, setQuantity] = useState(1);
   const [reason, setReason] = useState("");
-  const [methodReviewOpen, setMethodReviewOpen] = useState(false);
+  const [activeOrderTab, setActiveOrderTab] = useState<"order" | "review">("order");
+  const [templateMessage, setTemplateMessage] = useState("");
   const [methodReview, setMethodReview] = useState<TrainingMethodReview>(() => ({
     add_buy_plan_type: "none",
   }));
@@ -1429,11 +1584,26 @@ function OrderModal({
     });
   };
   const weakSellReason = mode === "SELL" && ["익절", "손절"].includes(reason.trim());
-  const missingBuyRiskRule = mode === "BUY" && methodReviewOpen && (!methodReview.failure_criteria?.trim() || !methodReview.stop_loss_rule?.trim());
+  const missingBuyRiskRule = mode === "BUY" && activeOrderTab === "review" && (!methodReview.failure_criteria?.trim() || !methodReview.stop_loss_rule?.trim());
+  const applyReviewTemplate = (template: { title: string; review: TrainingMethodReview }) => {
+    setMethodReview((prev) => {
+      if (template.title === "직접 입력") {
+        return mode === "BUY"
+          ? { selected_template: "직접 입력", entry_type_tags: [], method_fit: "", add_buy_plan_type: "none" }
+          : { selected_template: "직접 입력", exit_type_tags: [], method_exit_fit: "", plan_alignment: "" };
+      }
+      return { ...template.review };
+    });
+    setTemplateMessage(
+      template.title === "직접 입력"
+        ? "직접 입력 카드가 선택되었습니다. 필요한 기준을 자유롭게 작성해 주세요."
+        : "선택한 카드의 기본 복기 문구가 입력되었습니다. 실제 판단과 다르면 수정해 주세요."
+    );
+  };
 
   return (
     <div className="training-modal-backdrop" role="presentation">
-      <form className="training-modal" onSubmit={submit}>
+      <form className="training-modal training-order-modal" onSubmit={submit}>
         <div className="training-modal-head">
           <h3>{mode === "BUY" ? "매수 주문" : "매도 주문"}</h3>
           <button type="button" className="training-icon-button" onClick={onClose} aria-label="닫기">
@@ -1446,70 +1616,90 @@ function OrderModal({
           <span>시가 {fmtWon(candle?.open)} · 고가 {fmtWon(candle?.high)} · 저가 {fmtWon(candle?.low)} · 종가 {fmtWon(candle?.close)}</span>
         </div>
 
-        {mode === "SELL" ? (
-          <div className="training-order-summary">
-            <div><span>보유수량</span><strong>{fmtNumber(detail.session.position_qty)}주</strong></div>
-            <div><span>평균단가</span><strong>{fmtWon(detail.session.avg_price)}</strong></div>
-          </div>
-        ) : null}
-
-        <div className="training-order-grid">
-          <label>
-            <span>주문가격</span>
-            <input className="input-control" type="number" min={1} value={price} onChange={(event) => setPrice(Number(event.target.value) || 0)} />
-          </label>
-          <label>
-            <span>주문수량</span>
-            <input className="input-control" type="number" min={0} max={maxAffordableQuantity} value={quantity} onChange={(event) => onQuantityChange(Number(event.target.value) || 0)} />
-          </label>
+        <div className="training-order-tabs" role="tablist" aria-label="주문 입력 구분">
+          <button type="button" className={activeOrderTab === "order" ? "active" : ""} onClick={() => setActiveOrderTab("order")}>주문 입력</button>
+          <button type="button" className={activeOrderTab === "review" ? "active" : ""} onClick={() => setActiveOrderTab("review")}>기법 기준 복기</button>
         </div>
 
-        <div className="training-slider-block">
-          <div className="training-slider-head">
-            <span>{mode === "BUY" ? `초기자금 기준 ${percent}%` : `보유수량 기준 ${percent}%`}</span>
-            <strong>{fmtNumber(quantity)}주</strong>
+        {activeOrderTab === "order" ? (
+          <div className="training-order-tab-panel">
+            {mode === "SELL" ? (
+              <div className="training-order-summary">
+                <div><span>보유수량</span><strong>{fmtNumber(detail.session.position_qty)}주</strong></div>
+                <div><span>평균단가</span><strong>{fmtWon(detail.session.avg_price)}</strong></div>
+              </div>
+            ) : null}
+
+            <div className="training-order-grid">
+              <label>
+                <span>주문가격</span>
+                <input className="input-control" type="number" min={1} value={price} onChange={(event) => setPrice(Number(event.target.value) || 0)} />
+              </label>
+              <label>
+                <span>주문수량</span>
+                <input className="input-control" type="number" min={0} max={maxAffordableQuantity} value={quantity} onChange={(event) => onQuantityChange(Number(event.target.value) || 0)} />
+              </label>
+            </div>
+
+            <div className="training-slider-block">
+              <div className="training-slider-head">
+                <span>{mode === "BUY" ? `초기자금 기준 ${percent}%` : `보유수량 기준 ${percent}%`}</span>
+                <strong>{fmtNumber(quantity)}주</strong>
+              </div>
+              <input className="training-order-slider" type="range" min={0} max={100} step={1} value={percent} onChange={(event) => setPercent(Number(event.target.value))} />
+              <div className="training-quick-percent-row">
+                {quickPercents.map((value) => (
+                  <button type="button" className={value === percent ? "selected" : ""} key={value} onClick={() => setPercent(value)}>
+                    {value}%
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="training-order-summary">
+              <div><span>{mode === "BUY" ? "주문금액" : "예상 매도금액"}</span><strong>{fmtWon(amount)}</strong></div>
+              <div><span>수수료</span><strong>{fmtWon(fee)}</strong></div>
+              {mode === "BUY" ? <div><span>총 필요금액</span><strong>{fmtWon(totalCost)}</strong></div> : null}
+              {mode === "BUY" ? <div><span>주문 후 예상 현금</span><strong className={profitClass(remainingCash)}>{fmtWon(remainingCash)}</strong></div> : null}
+              {mode === "SELL" ? <div><span>예상 실현손익</span><strong className={profitClass(expectedProfit)}>{fmtSignedWon(expectedProfit)}</strong></div> : null}
+              {mode === "SELL" ? <div><span>예상 실현수익률</span><strong className={profitClass(expectedProfitRate)}>{fmtPercent(expectedProfitRate)}</strong></div> : null}
+            </div>
+
+            {mode === "BUY" && totalCost > detail.session.cash ? (
+              <div className="inline-result inline-error">수수료를 포함한 총 필요금액이 현재 현금을 초과합니다.</div>
+            ) : null}
+            {mode === "SELL" && quantity > detail.session.position_qty ? (
+              <div className="inline-result inline-error">매도 수량이 현재 보유수량을 초과합니다.</div>
+            ) : null}
+
+            <label className="training-reason-field">
+              <span>{mode === "BUY" ? "매수 사유" : "매도 사유"}</span>
+              <textarea className="textarea-control" value={reason} onChange={(event) => setReason(event.target.value)} />
+            </label>
+
+            <div className="training-method-review-summary-badge">{methodReviewSummary(mode, methodReview)}</div>
           </div>
-          <input className="training-order-slider" type="range" min={0} max={100} step={1} value={percent} onChange={(event) => setPercent(Number(event.target.value))} />
-          <div className="training-quick-percent-row">
-            {quickPercents.map((value) => (
-              <button type="button" className={value === percent ? "selected" : ""} key={value} onClick={() => setPercent(value)}>
-                {value}%
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="training-order-summary">
-          <div><span>{mode === "BUY" ? "주문금액" : "예상 매도금액"}</span><strong>{fmtWon(amount)}</strong></div>
-          <div><span>수수료</span><strong>{fmtWon(fee)}</strong></div>
-          {mode === "BUY" ? <div><span>총 필요금액</span><strong>{fmtWon(totalCost)}</strong></div> : null}
-          {mode === "BUY" ? <div><span>주문 후 예상 현금</span><strong className={profitClass(remainingCash)}>{fmtWon(remainingCash)}</strong></div> : null}
-          {mode === "SELL" ? <div><span>예상 실현손익</span><strong className={profitClass(expectedProfit)}>{fmtSignedWon(expectedProfit)}</strong></div> : null}
-          {mode === "SELL" ? <div><span>예상 실현수익률</span><strong className={profitClass(expectedProfitRate)}>{fmtPercent(expectedProfitRate)}</strong></div> : null}
-        </div>
-
-        {mode === "BUY" && totalCost > detail.session.cash ? (
-          <div className="inline-result inline-error">수수료를 포함한 총 필요금액이 현재 현금을 초과합니다.</div>
-        ) : null}
-        {mode === "SELL" && quantity > detail.session.position_qty ? (
-          <div className="inline-result inline-error">매도 수량이 현재 보유수량을 초과합니다.</div>
-        ) : null}
-
-        <label className="training-reason-field">
-          <span>{mode === "BUY" ? "매수 사유" : "매도 사유"}</span>
-          <textarea className="textarea-control" value={reason} onChange={(event) => setReason(event.target.value)} />
-        </label>
-
-        <div className="training-method-review-panel">
-          <button type="button" className="training-method-review-toggle" onClick={() => setMethodReviewOpen((prev) => !prev)}>
-            {methodReviewOpen ? "매매기법 기준 복기 접기" : "매매기법 기준 복기 펼치기"}
-          </button>
-          <p className="training-result-help">
-            {mode === "BUY"
-              ? "매매기법 기준 복기를 남기면 GPT가 결과가 아니라 원칙 준수 여부를 더 정확히 평가할 수 있습니다."
-              : "매도 기준을 구체적으로 남기면 조기매도, 손절 지연, 감정 매도 여부를 더 정확히 복기할 수 있습니다."}
-          </p>
-          {methodReviewOpen ? (
+        ) : (
+          <div className="training-method-review-panel training-method-review-tab-panel">
+            <p className="training-result-help">
+              {mode === "BUY"
+                ? "카드는 매수 판단 기록을 빠르게 남기기 위한 템플릿입니다. 실제 판단과 다르면 선택 후 수정하세요."
+                : "카드는 매도 판단 기록을 빠르게 남기기 위한 템플릿입니다. 실제 판단과 다르면 선택 후 수정하세요."}
+            </p>
+            <div className="training-review-template-grid">
+              {(mode === "BUY" ? BUY_REVIEW_TEMPLATES : SELL_REVIEW_TEMPLATES).map((template) => (
+                <button
+                  type="button"
+                  key={template.title}
+                  className={methodReview.selected_template === template.title ? "active" : ""}
+                  onClick={() => applyReviewTemplate(template)}
+                >
+                  <strong>{template.title}</strong>
+                  <span>{template.description}</span>
+                </button>
+              ))}
+            </div>
+            {templateMessage ? <div className="inline-result inline-warning">{templateMessage}</div> : null}
             <div className="training-method-review-body">
               {mode === "BUY" ? (
                 <>
@@ -1589,8 +1779,8 @@ function OrderModal({
                 </>
               )}
             </div>
-          ) : null}
-        </div>
+          </div>
+        )}
 
         <div className="training-modal-actions">
           <button type="button" className="btn btn-secondary" onClick={onClose}>취소</button>

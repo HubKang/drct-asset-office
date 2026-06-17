@@ -197,6 +197,7 @@ class TradeTrainingService:
         return "\n".join(
             [
                 "[매매기법 기준 복기 - 매수]",
+                f"- 선택한 복기 카드: {self._text(review.get('selected_template'), '기록 없음')}",
                 f"- 매수 유형: {self._label_list(review.get('entry_type_tags'), entry_labels)}",
                 f"- 매매기법 기준 충족 여부: {self._label_value(review.get('method_fit'), fit_labels)}",
                 f"- 근거가 된 매수조건: {self._text(review.get('matched_entry_rules'), '기록 없음')}",
@@ -230,6 +231,7 @@ class TradeTrainingService:
         return "\n".join(
             [
                 "[매매기법 기준 복기 - 매도]",
+                f"- 선택한 복기 카드: {self._text(review.get('selected_template'), '기록 없음')}",
                 f"- 매도 유형: {self._label_list(review.get('exit_type_tags'), exit_labels)}",
                 f"- 매매기법 기준 매도 여부: {self._label_value(review.get('method_exit_fit'), fit_labels)}",
                 f"- 근거가 된 매도조건: {self._text(review.get('matched_exit_rules'), '기록 없음')}",
@@ -881,7 +883,9 @@ class TradeTrainingService:
                 "13. 수익/손실 결과와 별개로 매수 기준, 실패 기준, 손절 기준, 매도 기준의 완성도를 평가해 주세요.",
                 "14. 최초 계획과 실제 매도 판단이 일치했는지 평가해 주세요.",
                 "15. 계획이 부족한 문제와 실행이 흔들린 문제를 구분해 주세요.",
-                "16. 이 훈련을 통해 사용자가 배워야 할 핵심 교훈을 정리해 주세요.",
+                "16. 선택한 복기 카드와 실제 입력 내용을 함께 보고, 사용자의 판단이 매매기법 기준에 맞았는지 평가해 주세요.",
+                "17. 카드 선택은 사용자의 자기 판단 기록이므로, 결과가 좋았다고 해서 무조건 적절한 판단으로 보지 말고 원칙 준수 여부를 중심으로 평가해 주세요.",
+                "18. 이 훈련을 통해 사용자가 배워야 할 핵심 교훈을 정리해 주세요.",
             ]
         )
         structured_json_request = """마지막에는 아래 JSON 형식으로 정리해 주세요.

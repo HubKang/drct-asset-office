@@ -128,6 +128,7 @@ export type TrainingTradePair = {
 };
 
 export type TrainingMethodReview = {
+  selected_template?: string;
   entry_type_tags?: string[];
   method_fit?: string;
   matched_entry_rules?: string;

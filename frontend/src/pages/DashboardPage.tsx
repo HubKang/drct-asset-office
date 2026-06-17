@@ -1,4 +1,5 @@
-﻿import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import type { CSSProperties } from "react";
 import { useNavigate } from "react-router-dom";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
@@ -7,12 +8,14 @@ import { dataSourceLabel, repositories } from "@/services";
 import type { CollectionRun } from "@/types/collectionRun";
 import type { Disclosure } from "@/types/disclosure";
 import type { BriefingVideo } from "@/types/economicBriefing";
+import type { MonthlyThemeFlowTrendResponse } from "@/types/marketTrend";
 import type { NewsItem } from "@/types/news";
 import type { TelegramItem } from "@/types/telegram";
+import type { TradeReviewListItem } from "@/types/tradeReview";
 
 type SourceKey = "news" | "disclosure" | "youtube" | "telegram";
-type SourceStatus = "normal" | "warning" | "failed" | "idle";
-type FeedTab = SourceKey;
+type SourceStatus = "normal" | "warning" | "idle";
+type DetailFilter = "all" | "summarized" | "pending" | "issue";
 
 type SourceSummary = {
   source: SourceKey;
@@ -23,6 +26,7 @@ type SourceSummary = {
   failed_count: number;
   last_collected_at: string | null;
   status: SourceStatus;
+  top_keywords: string[];
 };
 
 type CalendarDay = {
@@ -35,30 +39,61 @@ type CalendarDay = {
 };
 
 type FeedItem = {
+  id: string;
   source: SourceKey;
   title: string;
   collected_at: string;
   ai_status: string;
-  score?: number | null;
-  event_type?: string | null;
+  status_group: "summarized" | "pending" | "issue";
+  related_stock?: string | null;
+  keywords: string[];
+  summary_text?: string | null;
+  original_url?: string | null;
   target_url: string;
 };
 
-type CandidateItem = {
-  source: SourceKey;
-  title: string;
-  score: number;
-  tag: string;
-  event_type: string;
-  reason: string;
-  collected_at: string;
-  target_url: string;
-};
-
-type CrossKeywordItem = {
+type KeywordIssueItem = {
   keyword: string;
   total: number;
   sourceCounts: Partial<Record<SourceKey, number>>;
+  relatedStocks: string[];
+  summarized_count: number;
+  pending_count: number;
+  recent_title: string;
+};
+
+type ThemeTreemapItem = {
+  marketThemeId: number;
+  themeName: string;
+  scoreSum: number;
+  stockCount: number;
+  eventCount: number;
+  relatedStocks: string[];
+  rank: number;
+  sourceDates: string[];
+  latestDate: string | null;
+  supplyValueSum: number;
+  latestFinalRank: number | null;
+};
+
+type TrainingStatus = {
+  total_trades: number;
+  reviewed_count: number;
+  unreviewed_count: number;
+  review_rate: number;
+  recent_completed: number;
+  recent_return_rate: number | null;
+  discipline_score: number | null;
+  gpt_review_ready_count: number;
+  next_training_goal: string;
+};
+
+type AttentionItem = {
+  id: string;
+  label: string;
+  detail: string;
+  tone: "amber" | "rose" | "blue" | "slate";
+  target_url: string;
 };
 
 type DashboardData = {
@@ -66,8 +101,11 @@ type DashboardData = {
   source_summaries: SourceSummary[];
   weekly_calendar: CalendarDay[];
   feed_by_source: Record<SourceKey, FeedItem[]>;
-  candidates_top5: CandidateItem[];
-  cross_keywords: CrossKeywordItem[];
+  issue_keywords: KeywordIssueItem[];
+  cross_keywords: KeywordIssueItem[];
+  theme_treemap: ThemeTreemapItem[];
+  training_status: TrainingStatus;
+  attention_items: AttentionItem[];
 };
 
 const SOURCE_LABEL: Record<SourceKey, string> = {
@@ -91,10 +129,42 @@ const SOURCE_RUN_KEYWORDS: Record<SourceKey, string[]> = {
   telegram: ["telegram"],
 };
 
-const HIGH_IMPACT_EVENTS = new Set(["실적", "수주", "투자", "정책", "공급계약", "테마확산", "수급"]);
+const DETAIL_TABS: Array<{ key: DetailFilter; label: string }> = [
+  { key: "all", label: "전체" },
+  { key: "summarized", label: "요약완료" },
+  { key: "pending", label: "요약대기" },
+  { key: "issue", label: "오류·스킵" },
+];
 
 const todayInKst = () =>
   new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Seoul" }).format(new Date());
+
+const shiftDate = (baseDate: string, days: number) => {
+  const date = new Date(`${baseDate}T00:00:00+09:00`);
+  date.setDate(date.getDate() + days);
+  return new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Seoul" }).format(date);
+};
+
+const subtractOneMonth = (baseDate: string) => {
+  const [year, month, day] = baseDate.split("-").map(Number);
+  const date = new Date(Date.UTC(year, (month ?? 1) - 1, day ?? 1));
+  date.setUTCMonth(date.getUTCMonth() - 1);
+  return new Intl.DateTimeFormat("sv-SE", { timeZone: "UTC" }).format(date);
+};
+
+const getMonthKey = (date: string) => date.slice(0, 7);
+
+const getMonthKeysBetween = (startDate: string, endDate: string) => {
+  const start = new Date(`${getMonthKey(startDate)}-01T00:00:00Z`);
+  const end = new Date(`${getMonthKey(endDate)}-01T00:00:00Z`);
+  const keys: string[] = [];
+  const cursor = new Date(start);
+  while (cursor <= end) {
+    keys.push(`${cursor.getUTCFullYear()}-${String(cursor.getUTCMonth() + 1).padStart(2, "0")}`);
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+  return keys;
+};
 
 const getDatePart = (value?: string | null) => {
   if (!value) return "";
@@ -125,30 +195,41 @@ const formatDateTime = (value?: string | null) => {
 const maxDate = (values: Array<string | null | undefined>) => {
   const filtered = values.filter((v): v is string => Boolean(v && v.trim()));
   if (!filtered.length) return null;
-  const sorted = filtered.sort();
-  return sorted[sorted.length - 1] ?? null;
-};
-
-const toneByStatus = (status: SourceStatus): "emerald" | "amber" | "rose" | "slate" => {
-  if (status === "normal") return "emerald";
-  if (status === "warning") return "amber";
-  if (status === "failed") return "rose";
-  return "slate";
+  return filtered.sort()[filtered.length - 1] ?? null;
 };
 
 const statusLabel = (status: SourceStatus) => {
   if (status === "normal") return "정상";
-  if (status === "warning") return "주의";
-  if (status === "failed") return "실패";
+  if (status === "warning") return "확인 필요";
   return "미수집";
+};
+
+const toneByStatus = (status: SourceStatus): "emerald" | "amber" | "slate" => {
+  if (status === "normal") return "emerald";
+  if (status === "warning") return "amber";
+  return "slate";
+};
+
+const sourceTone = (source: SourceKey): "emerald" | "amber" | "blue" | "slate" => {
+  if (source === "telegram") return "emerald";
+  if (source === "youtube") return "amber";
+  if (source === "news") return "blue";
+  return "slate";
 };
 
 const summarizeStatusLabel = (value: string) => {
   const key = (value || "").toLowerCase();
   if (["summarized", "success", "completed"].includes(key)) return "요약완료";
-  if (["failed", "error"].includes(key)) return "요약실패";
+  if (["failed", "error"].includes(key)) return "오류·스킵";
   if (["pending", "running", "queued"].includes(key)) return "요약대기";
   return value || "미확인";
+};
+
+const inferStatusGroup = (value: string): FeedItem["status_group"] => {
+  const key = (value || "").toLowerCase();
+  if (["summarized", "success", "completed"].includes(key)) return "summarized";
+  if (["failed", "error", "skipped"].includes(key)) return "issue";
+  return "pending";
 };
 
 const inferSourceFromRun = (run: CollectionRun): SourceKey | null => {
@@ -161,39 +242,149 @@ const inferSourceFromRun = (run: CollectionRun): SourceKey | null => {
 
 const splitKeywords = (value?: string | null): string[] =>
   (value || "")
-    .split(/[\s,|/]+/g)
+    .split(/[\s,|/#·]+/g)
     .map((v) => v.trim())
-    .filter((v) => v.length >= 2);
+    .filter((v) => v.length >= 2 && v.length <= 18);
+
+const uniqueCompact = (values: Array<string | null | undefined>, limit: number) =>
+  Array.from(new Set(values.map((v) => (v || "").trim()).filter(Boolean))).slice(0, limit);
+
+const getTopKeywords = (items: FeedItem[], limit = 3) => {
+  const counts = new Map<string, number>();
+  items.forEach((item) => item.keywords.forEach((keyword) => counts.set(keyword, (counts.get(keyword) ?? 0) + 1)));
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([keyword]) => keyword);
+};
+
+const buildKeywordIssues = (items: FeedItem[], requireMultiSource: boolean, limit: number): KeywordIssueItem[] => {
+  const map = new Map<string, KeywordIssueItem>();
+  items.forEach((item) => {
+    item.keywords.forEach((keyword) => {
+      const row =
+        map.get(keyword) ??
+        {
+          keyword,
+          total: 0,
+          sourceCounts: {},
+          relatedStocks: [],
+          summarized_count: 0,
+          pending_count: 0,
+          recent_title: item.title,
+        };
+      row.total += 1;
+      row.sourceCounts[item.source] = (row.sourceCounts[item.source] ?? 0) + 1;
+      if (item.related_stock && !row.relatedStocks.includes(item.related_stock)) row.relatedStocks.push(item.related_stock);
+      if (item.status_group === "summarized") row.summarized_count += 1;
+      if (item.status_group === "pending") row.pending_count += 1;
+      if (item.collected_at >= (items.find((x) => x.title === row.recent_title)?.collected_at ?? "")) {
+        row.recent_title = item.title;
+      }
+      map.set(keyword, row);
+    });
+  });
+  return Array.from(map.values())
+    .filter((row) => !requireMultiSource || Object.keys(row.sourceCounts).length >= 2)
+    .sort((a, b) => b.total - a.total)
+    .slice(0, limit)
+    .map((row) => ({ ...row, relatedStocks: row.relatedStocks.slice(0, 4) }));
+};
+
+const buildThemeSupplyTreemapItems = (
+  monthlyResponses: MonthlyThemeFlowTrendResponse[],
+  startDate: string,
+  endDate: string,
+): ThemeTreemapItem[] => {
+  const map = new Map<number, Omit<ThemeTreemapItem, "rank">>();
+  monthlyResponses.forEach((response) => {
+    (response.themes ?? []).forEach((theme) => {
+      const current =
+        map.get(theme.market_theme_id) ??
+        {
+          marketThemeId: theme.market_theme_id,
+          themeName: theme.theme_name,
+          scoreSum: 0,
+          stockCount: 0,
+          eventCount: 0,
+          relatedStocks: [],
+          sourceDates: [],
+          latestDate: null,
+          supplyValueSum: 0,
+          latestFinalRank: null,
+        };
+      theme.series
+        .filter((point) => point.trade_date >= startDate && point.trade_date <= endDate)
+        .forEach((point) => {
+          const dailyScore = Number(point.daily_score || 0);
+          if (dailyScore <= 0) return;
+          current.scoreSum += dailyScore;
+          current.stockCount = Math.max(current.stockCount, Number(point.stock_count || 0));
+          current.eventCount += Number(point.event_count || 0);
+          current.supplyValueSum += Number(point.estimated_trading_value_sum || 0);
+          current.sourceDates.push(point.trade_date);
+          if (!current.latestDate || point.trade_date > current.latestDate) {
+            current.latestDate = point.trade_date;
+            current.latestFinalRank = point.final_rank;
+          }
+        });
+      map.set(theme.market_theme_id, current);
+    });
+  });
+
+  return Array.from(map.values())
+    .filter((item) => item.scoreSum > 0)
+    .sort((a, b) => b.scoreSum - a.scoreSum || a.themeName.localeCompare(b.themeName))
+    .slice(0, 15)
+    .map((item, idx) => ({
+      ...item,
+      sourceDates: Array.from(new Set(item.sourceDates)).sort(),
+      rank: idx + 1,
+    }));
+};
+
+const getThemeTreemapSizeClass = (item: ThemeTreemapItem, maxScore: number) => {
+  const ratio = maxScore > 0 ? item.scoreSum / maxScore : 0;
+  if (item.rank === 1 || ratio >= 0.72) return "large";
+  if (item.rank <= 5 || ratio >= 0.36) return "medium";
+  return "small";
+};
 
 function DashboardPage() {
   const navigate = useNavigate();
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  const [feedTab, setFeedTab] = useState<FeedTab>("news");
+  const [detailSource, setDetailSource] = useState<SourceKey | null>(null);
+  const [detailFilter, setDetailFilter] = useState<DetailFilter>("all");
+  const [selectedThemeId, setSelectedThemeId] = useState<number | null>(null);
 
   const loadDashboard = useCallback(async () => {
     setIsLoading(true);
     setErrorMessage("");
     const today = todayInKst();
+    const from30 = shiftDate(today, -29);
+    const themePeriodStartDate = subtractOneMonth(today);
+    const themeMonthKeys = getMonthKeysBetween(themePeriodStartDate, today);
     try {
-      const [runsRes, newsItems, disclosures, videosRes, telegramItemsRes] = await Promise.all([
+      const [runsRes, newsItems, disclosures, videosRes, telegramItemsRes, reviewSummary, recentReviews, monthlyThemeFlowResponses] = await Promise.all([
         repositories.collectionRuns.listCollectionRuns({ limit: 500, offset: 0 }),
         repositories.news.listNews({ limit: 300, offset: 0 }),
         repositories.disclosures.listDisclosures({ limit: 300, offset: 0 }),
         repositories.economicBriefing.getBriefingVideos({ limit: 300 }),
-        repositories.telegram.listItems({ date_from: today, date_to: today, limit: 300, offset: 0 }),
+        repositories.telegram.listItems({ date_from: from30, date_to: today, limit: 500, offset: 0 }),
+        repositories.tradeReviews.fetchTradeReviewSummary({ from_date: from30, to_date: today }),
+        repositories.tradeReviews.fetchTradeReviews({ from_date: from30, to_date: today, limit: 20, offset: 0 }),
+        Promise.all(themeMonthKeys.map((month) => repositories.marketTrends.getExternalMonthlyThemeFlowTrend(month))),
       ]);
 
       const videos = videosRes.items ?? [];
       const runs = runsRes.items ?? [];
-      const todaysNews = newsItems.filter((item) => getDatePart(item.collected_at || item.created_at) === today);
-      const todaysDisclosures = disclosures.filter((item) => getDatePart(item.created_at || item.disclosed_at) === today);
-      const todaysVideos = videos.filter((item) => getDatePart(item.created_at || item.updated_at || item.published_at) === today);
-      const todaysTelegram = telegramItemsRes.items ?? [];
-
-      const todaysRuns = runs.filter((run) => getDatePart(run.started_at || run.created_at) === today);
-      const runFailuresBySource = todaysRuns.reduce<Record<SourceKey, number>>(
+      const telegramItems = telegramItemsRes.items ?? [];
+      const todayFilter = (value?: string | null) => getDatePart(value) === today;
+      const recentFilter = (value?: string | null) => getDatePart(value) >= from30 && getDatePart(value) <= today;
+      const todaysRuns = runs.filter((run) => todayFilter(run.started_at || run.created_at));
+      const runIssuesBySource = todaysRuns.reduce<Record<SourceKey, number>>(
         (acc, run) => {
           const source = inferSourceFromRun(run);
           if (!source) return acc;
@@ -203,231 +394,191 @@ function DashboardPage() {
         { news: 0, disclosure: 0, youtube: 0, telegram: 0 },
       );
 
-      const baseSummaries: SourceSummary[] = [
-        {
-          source: "news",
-          label: SOURCE_LABEL.news,
-          collected_count: todaysNews.length,
-          summarized_count: todaysNews.filter((n) => !!n.ai_processed_at && !!n.ai_summary).length,
-          pending_count: todaysNews.filter((n) => !n.ai_processed_at && !n.ai_summary_error).length,
-          failed_count: todaysNews.filter((n) => !!n.ai_summary_error).length + runFailuresBySource.news,
-          last_collected_at: maxDate(todaysNews.map((n) => n.collected_at || n.created_at)),
-          status: "idle",
-        },
-        {
-          source: "disclosure",
-          label: SOURCE_LABEL.disclosure,
-          collected_count: todaysDisclosures.length,
-          summarized_count: todaysDisclosures.filter((d) => !!d.ai_processed_at && !!d.ai_summary).length,
-          pending_count: todaysDisclosures.filter((d) => !d.ai_processed_at && !d.ai_summary_error).length,
-          failed_count: todaysDisclosures.filter((d) => !!d.ai_summary_error).length + runFailuresBySource.disclosure,
-          last_collected_at: maxDate(todaysDisclosures.map((d) => d.created_at || d.disclosed_at)),
-          status: "idle",
-        },
-        {
-          source: "youtube",
-          label: SOURCE_LABEL.youtube,
-          collected_count: todaysVideos.length,
-          summarized_count: todaysVideos.filter((v) => (v.analysis_status || "").toLowerCase().includes("success")).length,
-          pending_count: todaysVideos.filter((v) => !["success", "completed", "failed", "error"].includes((v.analysis_status || "").toLowerCase())).length,
-          failed_count: todaysVideos.filter((v) => ["failed", "error"].includes((v.analysis_status || "").toLowerCase())).length + runFailuresBySource.youtube,
-          last_collected_at: maxDate(todaysVideos.map((v) => v.updated_at || v.created_at || v.published_at)),
-          status: "idle",
-        },
-        {
-          source: "telegram",
-          label: SOURCE_LABEL.telegram,
-          collected_count: todaysTelegram.length,
-          summarized_count: todaysTelegram.filter((t) => t.summary_status === "summarized" && t.summary_has_content === 1).length,
-          pending_count: todaysTelegram.filter((t) => t.summary_status === "pending").length,
-          failed_count: todaysTelegram.filter((t) => t.summary_status === "failed").length + runFailuresBySource.telegram,
-          last_collected_at: maxDate(todaysTelegram.map((t) => t.updated_at || t.message_date)),
-          status: "idle",
-        },
-      ];
+      const newsFeed: FeedItem[] = newsItems
+        .filter((item: NewsItem) => recentFilter(item.collected_at || item.created_at))
+        .map((item: NewsItem) => {
+          const status = item.ai_summary_error ? "failed" : item.ai_processed_at && item.ai_summary ? "summarized" : "pending";
+          const keywords = uniqueCompact([...splitKeywords(item.ai_tags), ...splitKeywords(item.title).slice(0, 2)], 6);
+          return {
+            id: `news-${item.id}`,
+            source: "news",
+            title: item.title || "제목 없음",
+            collected_at: item.collected_at || item.created_at,
+            ai_status: status,
+            status_group: inferStatusGroup(status),
+            related_stock: item.stock_name || item.stock_code || null,
+            keywords,
+            summary_text: item.ai_summary || item.summary,
+            original_url: item.url,
+            target_url: SOURCE_ROUTE.news,
+          };
+        });
 
-      const sourceSummaries: SourceSummary[] = baseSummaries.map((row) => {
-        let status: SourceStatus = "normal";
-        if (row.collected_count === 0) status = "idle";
-        else if (runFailuresBySource[row.source] > 0) status = "failed";
-        else if (row.failed_count > 0 || row.pending_count > 5) status = "warning";
-        return { ...row, status };
+      const disclosureFeed: FeedItem[] = disclosures
+        .filter((item: Disclosure) => recentFilter(item.created_at || item.disclosed_at))
+        .map((item: Disclosure) => {
+          const status = item.ai_summary_error ? "failed" : item.ai_processed_at && item.ai_summary ? "summarized" : "pending";
+          const keywords = uniqueCompact([item.ai_event_type, ...splitKeywords(item.ai_tags), ...splitKeywords(item.disclosure_title).slice(0, 2)], 6);
+          return {
+            id: `disclosure-${item.id}`,
+            source: "disclosure",
+            title: item.disclosure_title || "공시 제목 없음",
+            collected_at: item.created_at || item.disclosed_at || "",
+            ai_status: status,
+            status_group: inferStatusGroup(status),
+            related_stock: item.stock_name || item.stock_code || null,
+            keywords,
+            summary_text: item.ai_summary || item.summary,
+            original_url: item.url,
+            target_url: SOURCE_ROUTE.disclosure,
+          };
+        });
+
+      const youtubeFeed: FeedItem[] = videos
+        .filter((item: BriefingVideo) => recentFilter(item.created_at || item.updated_at || item.published_at))
+        .map((item: BriefingVideo) => {
+          const status = item.analysis_status || "pending";
+          return {
+            id: `youtube-${item.id}`,
+            source: "youtube",
+            title: item.title || "영상 제목 없음",
+            collected_at: item.updated_at || item.created_at || item.published_at || "",
+            ai_status: status,
+            status_group: inferStatusGroup(status),
+            related_stock: item.channel_name,
+            keywords: uniqueCompact(splitKeywords(item.title).slice(0, 5), 5),
+            summary_text: item.description_summary,
+            original_url: item.video_url,
+            target_url: SOURCE_ROUTE.youtube,
+          };
+        });
+
+      const telegramFeed: FeedItem[] = telegramItems.map((item: TelegramItem) => ({
+        id: `telegram-${item.id}`,
+        source: "telegram",
+        title: item.item_title || item.message_text || "메시지 제목 없음",
+        collected_at: item.updated_at || item.message_date,
+        ai_status: item.summary_status,
+        status_group: inferStatusGroup(item.summary_status),
+        related_stock: item.related_stock_name || item.related_stock_code || null,
+        keywords: uniqueCompact([item.tag, item.event_type, item.related_theme, ...splitKeywords(item.item_title || item.message_text).slice(0, 2)], 6),
+        summary_text: item.summary_text,
+        original_url: item.item_url || item.normalized_url,
+        target_url: SOURCE_ROUTE.telegram,
+      }));
+
+      const allFeed = [...newsFeed, ...disclosureFeed, ...youtubeFeed, ...telegramFeed].sort((a, b) =>
+        a.collected_at < b.collected_at ? 1 : -1,
+      );
+      const feedBySource: Record<SourceKey, FeedItem[]> = {
+        news: newsFeed.filter((item) => getDatePart(item.collected_at) === today).sort((a, b) => (a.collected_at < b.collected_at ? 1 : -1)),
+        disclosure: disclosureFeed.filter((item) => getDatePart(item.collected_at) === today).sort((a, b) => (a.collected_at < b.collected_at ? 1 : -1)),
+        youtube: youtubeFeed.filter((item) => getDatePart(item.collected_at) === today).sort((a, b) => (a.collected_at < b.collected_at ? 1 : -1)),
+        telegram: telegramFeed.filter((item) => getDatePart(item.collected_at) === today).sort((a, b) => (a.collected_at < b.collected_at ? 1 : -1)),
+      };
+
+      const sourceSummaries = (Object.keys(SOURCE_LABEL) as SourceKey[]).map((source) => {
+        const items = feedBySource[source];
+        const summarized = items.filter((item) => item.status_group === "summarized").length;
+        const pending = items.filter((item) => item.status_group === "pending").length;
+        const failed = items.filter((item) => item.status_group === "issue").length + runIssuesBySource[source];
+        const status: SourceStatus = items.length === 0 ? "idle" : failed > 0 || pending > 0 ? "warning" : "normal";
+        return {
+          source,
+          label: SOURCE_LABEL[source],
+          collected_count: items.length,
+          summarized_count: summarized,
+          pending_count: pending,
+          failed_count: failed,
+          last_collected_at: maxDate(items.map((item) => item.collected_at)),
+          status,
+          top_keywords: getTopKeywords(items, 3),
+        };
       });
 
       const weeklyCalendar = Array.from({ length: 7 }, (_, idx) => {
-        const target = new Date();
-        target.setDate(target.getDate() - idx);
-        const date = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Seoul" }).format(target);
-        const failedCount = runs.filter((r) => getDatePart(r.started_at || r.created_at) === date && (r.status === "failed" || r.status === "partial")).length;
+        const date = shiftDate(today, idx - 6);
         return {
           date,
-          news_count: newsItems.filter((n) => getDatePart(n.collected_at || n.created_at) === date).length,
-          disclosure_count: disclosures.filter((d) => getDatePart(d.created_at || d.disclosed_at) === date).length,
-          youtube_count: videos.filter((v) => getDatePart(v.created_at || v.updated_at || v.published_at) === date).length,
-          telegram_count: runs.filter((r) => getDatePart(r.started_at || r.created_at) === date && inferSourceFromRun(r) === "telegram").length,
-          failed_count: failedCount,
+          news_count: newsFeed.filter((item) => getDatePart(item.collected_at) === date).length,
+          disclosure_count: disclosureFeed.filter((item) => getDatePart(item.collected_at) === date).length,
+          youtube_count: youtubeFeed.filter((item) => getDatePart(item.collected_at) === date).length,
+          telegram_count: telegramFeed.filter((item) => getDatePart(item.collected_at) === date).length,
+          failed_count: runs.filter((run) => getDatePart(run.started_at || run.created_at) === date && (run.status === "failed" || run.status === "partial")).length,
         };
-      }).reverse();
+      });
 
-      const feedBySource: Record<SourceKey, FeedItem[]> = {
-        news: todaysNews
-          .map((n: NewsItem) => ({
-            source: "news" as const,
-            title: n.title || "제목 없음",
-            collected_at: n.collected_at || n.created_at,
-            ai_status: n.ai_summary_error ? "failed" : n.ai_processed_at ? "summarized" : "pending",
-            score: n.ai_importance_score ?? n.importance_score,
-            event_type: null,
-            target_url: SOURCE_ROUTE.news,
-          }))
-          .sort((a, b) => (a.collected_at < b.collected_at ? 1 : -1))
-          .slice(0, 10),
-        disclosure: todaysDisclosures
-          .map((d: Disclosure) => ({
-            source: "disclosure" as const,
-            title: d.disclosure_title || "공시 제목 없음",
-            collected_at: d.created_at || d.disclosed_at || "",
-            ai_status: d.ai_summary_error ? "failed" : d.ai_processed_at ? "summarized" : "pending",
-            score: d.ai_importance_score ?? d.importance_score,
-            event_type: d.ai_event_type || null,
-            target_url: SOURCE_ROUTE.disclosure,
-          }))
-          .sort((a, b) => (a.collected_at < b.collected_at ? 1 : -1))
-          .slice(0, 10),
-        youtube: todaysVideos
-          .map((v: BriefingVideo) => ({
-            source: "youtube" as const,
-            title: v.title || "영상 제목 없음",
-            collected_at: v.updated_at || v.created_at || "",
-            ai_status: v.analysis_status || "pending",
-            score: null,
-            event_type: null,
-            target_url: SOURCE_ROUTE.youtube,
-          }))
-          .sort((a, b) => (a.collected_at < b.collected_at ? 1 : -1))
-          .slice(0, 10),
-        telegram: todaysTelegram
-          .map((t: TelegramItem) => ({
-            source: "telegram" as const,
-            title: t.item_title || t.message_text || "메시지 제목 없음",
-            collected_at: t.updated_at || t.message_date,
-            ai_status: t.summary_status,
-            score: t.score,
-            event_type: t.event_type || null,
-            target_url: SOURCE_ROUTE.telegram,
-          }))
-          .sort((a, b) => (a.collected_at < b.collected_at ? 1 : -1))
-          .slice(0, 10),
+      const issueKeywords = buildKeywordIssues(allFeed.filter((item) => getDatePart(item.collected_at) === today), false, 8);
+      const crossKeywords = buildKeywordIssues(allFeed.filter((item) => getDatePart(item.collected_at) === today), true, 8);
+      const themeTreemap = buildThemeSupplyTreemapItems(monthlyThemeFlowResponses, themePeriodStartDate, today);
+      const reviews = recentReviews.items ?? [];
+      const completedReviews = reviews.filter((item: TradeReviewListItem) => item.review_status === "복기완료");
+      const trainingStatus: TrainingStatus = {
+        total_trades: reviewSummary.total_trades,
+        reviewed_count: reviewSummary.reviewed_count,
+        unreviewed_count: reviewSummary.unreviewed_count,
+        review_rate: reviewSummary.review_rate,
+        recent_completed: completedReviews.length,
+        recent_return_rate:
+          reviews.length > 0
+            ? reviews.reduce((sum: number, item: TradeReviewListItem) => sum + (item.profit_rate ?? 0), 0) / reviews.length
+            : null,
+        discipline_score: null,
+        gpt_review_ready_count: reviews.filter((item: TradeReviewListItem) => item.review_status !== "복기완료").length,
+        next_training_goal: reviewSummary.unreviewed_count > 0 ? "미복기 거래를 먼저 정리" : "최근 복기 기준 유지",
       };
 
-      const keywordSourceMap = new Map<string, Partial<Record<SourceKey, number>>>();
-      const addKeywordCount = (source: SourceKey, keyword: string) => {
-        const key = keyword.trim();
-        if (!key || key.length < 2) return;
-        const prev = keywordSourceMap.get(key) ?? {};
-        prev[source] = (prev[source] ?? 0) + 1;
-        keywordSourceMap.set(key, prev);
-      };
-
-      todaysNews.forEach((n) => splitKeywords(n.ai_tags).forEach((k) => addKeywordCount("news", k)));
-      todaysDisclosures.forEach((d) => {
-        addKeywordCount("disclosure", d.ai_event_type || "");
-        splitKeywords(d.ai_tags).forEach((k) => addKeywordCount("disclosure", k));
-      });
-      todaysTelegram.forEach((t) => {
-        addKeywordCount("telegram", t.tag || "");
-        addKeywordCount("telegram", t.event_type || "");
-      });
-      todaysVideos.forEach((v) => splitKeywords(v.title).slice(0, 3).forEach((k) => addKeywordCount("youtube", k)));
-
-      const crossKeywords = Array.from(keywordSourceMap.entries())
-        .map(([keyword, sourceCounts]) => {
-          const total = Object.values(sourceCounts).reduce((sum, count) => sum + (count ?? 0), 0);
-          return { keyword, total, sourceCounts };
-        })
-        .filter((row) => Object.keys(row.sourceCounts).length >= 2)
-        .sort((a, b) => b.total - a.total)
-        .slice(0, 10);
-
-      const multiSourceKeywordSet = new Set(crossKeywords.map((k) => k.keyword));
-      const disclosureStockSet = new Set(todaysDisclosures.map((d) => d.stock_code).filter(Boolean));
-
-      const candidatePool: CandidateItem[] = [
-        ...todaysNews.map((n) => {
-          const score = n.ai_importance_score ?? n.importance_score ?? 0;
-          const tags = splitKeywords(n.ai_tags);
-          const hotTag = tags.find((t) => multiSourceKeywordSet.has(t)) || tags[0] || "뉴스";
-          const reasonParts: string[] = [];
-          if (score >= 80) reasonParts.push("고점수");
-          if ((n.ai_sentiment || "").toLowerCase() === "positive" || (n.ai_sentiment || "").toLowerCase() === "negative") reasonParts.push("감성 신호");
-          if (tags.some((t) => multiSourceKeywordSet.has(t))) reasonParts.push("교차 키워드");
-          if (n.stock_code && disclosureStockSet.has(n.stock_code)) reasonParts.push("공시 동시 포착");
-          return {
-            source: "news" as const,
-            title: n.title || "제목 없음",
-            score,
-            tag: hotTag,
-            event_type: "뉴스",
-            reason: reasonParts.join(" · ") || "오늘 수집 핵심 뉴스",
-            collected_at: n.collected_at || n.created_at,
-            target_url: SOURCE_ROUTE.news,
-          };
-        }),
-        ...todaysDisclosures.map((d) => {
-          const score = d.ai_importance_score ?? d.importance_score ?? 0;
-          const event = d.ai_event_type || "공시";
-          const reasonParts: string[] = [];
-          if (score >= 80) reasonParts.push("고점수");
-          if ((d.ai_risk_level || "").toLowerCase() === "high") reasonParts.push("고위험");
-          if (HIGH_IMPACT_EVENTS.has(event)) reasonParts.push("중요 이벤트");
-          if (d.stock_code && todaysNews.some((n) => n.stock_code === d.stock_code)) reasonParts.push("뉴스 동시 포착");
-          return {
-            source: "disclosure" as const,
-            title: d.disclosure_title || "공시 제목 없음",
-            score,
-            tag: d.ai_tags || "공시",
-            event_type: event,
-            reason: reasonParts.join(" · ") || "오늘 수집 핵심 공시",
-            collected_at: d.created_at || d.disclosed_at || "",
-            target_url: SOURCE_ROUTE.disclosure,
-          };
-        }),
-        ...todaysTelegram.map((t) => {
-          const score = t.score ?? 0;
-          const event = t.event_type || "기타";
-          const reasonParts: string[] = [];
-          if (score >= 80) reasonParts.push("고점수");
-          if ((t.risk_level || "").toLowerCase() === "high") reasonParts.push("고위험");
-          if (HIGH_IMPACT_EVENTS.has(event)) reasonParts.push("중요 이벤트");
-          if (t.tag && multiSourceKeywordSet.has(t.tag)) reasonParts.push("교차 키워드");
-          return {
-            source: "telegram" as const,
-            title: t.item_title || t.message_text || "메시지 제목 없음",
-            score,
-            tag: t.tag || "텔레그램",
-            event_type: event,
-            reason: reasonParts.join(" · ") || "오늘 수집 핵심 텔레그램",
-            collected_at: t.updated_at || t.message_date,
-            target_url: SOURCE_ROUTE.telegram,
-          };
-        }),
-      ];
-
-      const candidatesTop5 = candidatePool
-        .filter((c) => c.score >= 80 || c.reason.includes("고위험") || c.reason.includes("교차 키워드") || c.reason.includes("동시 포착"))
-        .sort((a, b) => {
-          if (b.score !== a.score) return b.score - a.score;
-          return a.collected_at < b.collected_at ? 1 : -1;
-        })
-        .slice(0, 5);
+      const attentionItems: AttentionItem[] = [
+        ...sourceSummaries
+          .filter((summary) => summary.pending_count > 0)
+          .map((summary) => ({
+            id: `${summary.source}-pending`,
+            label: `${summary.label} 요약대기`,
+            detail: `${summary.pending_count}건의 요약 상태 확인이 필요합니다.`,
+            tone: "amber" as const,
+            target_url: SOURCE_ROUTE[summary.source],
+          })),
+        ...sourceSummaries
+          .filter((summary) => summary.failed_count > 0)
+          .map((summary) => ({
+            id: `${summary.source}-issue`,
+            label: `${summary.label} 오류·스킵`,
+            detail: `${summary.failed_count}건의 처리 이력을 확인하세요.`,
+            tone: "rose" as const,
+            target_url: SOURCE_ROUTE[summary.source],
+          })),
+        ...sourceSummaries
+          .filter((summary) => summary.collected_count === 0)
+          .map((summary) => ({
+            id: `${summary.source}-empty`,
+            label: `${summary.label} 미수집`,
+            detail: "오늘 기준 수집 데이터가 없습니다.",
+            tone: "slate" as const,
+            target_url: SOURCE_ROUTE[summary.source],
+          })),
+        ...(trainingStatus.unreviewed_count > 0
+          ? [
+              {
+                id: "training-review",
+                label: "최근 복기 미완료",
+                detail: `${trainingStatus.unreviewed_count}건의 매매 복기가 남아 있습니다.`,
+                tone: "blue" as const,
+                target_url: "/trade-reviews",
+              },
+            ]
+          : []),
+      ].slice(0, 8);
 
       setDashboard({
         today,
         source_summaries: sourceSummaries,
         weekly_calendar: weeklyCalendar,
         feed_by_source: feedBySource,
-        candidates_top5: candidatesTop5,
+        issue_keywords: issueKeywords,
         cross_keywords: crossKeywords,
+        theme_treemap: themeTreemap,
+        training_status: trainingStatus,
+        attention_items: attentionItems,
       });
     } catch (error) {
       console.error("[Dashboard] load failed", error);
@@ -441,25 +592,52 @@ function DashboardPage() {
     void loadDashboard();
   }, [loadDashboard]);
 
-  const summaryCards = useMemo(() => dashboard?.source_summaries ?? [], [dashboard]);
-  const calendar = useMemo(() => dashboard?.weekly_calendar ?? [], [dashboard]);
-  const feedItems = dashboard?.feed_by_source?.[feedTab] ?? [];
+  useEffect(() => {
+    if (!detailSource) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDetailSource(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [detailSource]);
+
+  const summaryCards = dashboard?.source_summaries ?? [];
+  const todayCollected = summaryCards.reduce((sum, item) => sum + item.collected_count, 0);
+  const summarizedCount = summaryCards.reduce((sum, item) => sum + item.summarized_count, 0);
+  const attentionCount = summaryCards.reduce((sum, item) => sum + item.pending_count + item.failed_count, 0);
+  const recentReviewCount = dashboard?.training_status.reviewed_count ?? 0;
+  const detailSummary = detailSource ? summaryCards.find((item) => item.source === detailSource) : null;
+  const detailItems = detailSource ? dashboard?.feed_by_source[detailSource] ?? [] : [];
+  const filteredDetailItems = detailItems.filter((item) => detailFilter === "all" || item.status_group === detailFilter);
+  const themeItems = dashboard?.theme_treemap ?? [];
+  const selectedTheme = themeItems.find((item) => item.marketThemeId === selectedThemeId) ?? themeItems[0] ?? null;
+  const themePeriodStart = subtractOneMonth(dashboard?.today ?? todayInKst());
+  const themePeriodEnd = dashboard?.today ?? todayInKst();
+  const maxThemeScore = Math.max(...themeItems.map((item) => item.scoreSum), 1);
+  const topThemeSummary = themeItems.length
+    ? `최근 1개월 기준 점수 합산 상위 테마는 ${themeItems
+        .slice(0, 3)
+        .map((item) => item.themeName)
+        .join(", ")}입니다.`
+    : "최근 1개월 테마 수급 점수 데이터가 부족하여 요약을 생성하지 않았습니다.";
+
+  const kpiCards = [
+    { label: "오늘 수집", value: `${todayCollected}건`, tone: "blue" as const, help: "4개 정보 소스 합산" },
+    { label: "요약 완료", value: `${summarizedCount}건`, tone: "emerald" as const, help: "AI 요약 또는 분석 완료" },
+    { label: "확인 필요", value: `${attentionCount}건`, tone: "amber" as const, help: "대기, 오류, 스킵 포함" },
+    { label: "최근 복기", value: `${recentReviewCount}건`, tone: "slate" as const, help: "최근 30일 복기 완료" },
+  ];
 
   return (
     <div className="space-y-4">
       <PageHeader
-        title="투자 정보 수집 대시보드"
-        description="뉴스·공시·유튜브·텔레그램 수집 및 AI 처리 현황"
+        title="DrCT 정보 파악 대시보드"
+        description="수집된 투자 정보, 추출 키워드, 테마 흐름, 매매훈련 상태를 한눈에 확인합니다."
         action={(
-          <div className="flex items-center gap-2">
-            <StatusBadge label={`데이터 소스: ${dataSourceLabel.toUpperCase()}`} tone="blue" />
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <span className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-500">{dataSourceLabel.toUpperCase()}</span>
             <StatusBadge label={`기준일 ${dashboard?.today ?? todayInKst()}`} tone="slate" />
-            <button
-              type="button"
-              className="btn btn-secondary transition-all duration-150 active:scale-[0.98]"
-              onClick={() => void loadDashboard()}
-              disabled={isLoading}
-            >
+            <button type="button" className="btn btn-secondary transition-all duration-150 active:scale-[0.98]" onClick={() => void loadDashboard()} disabled={isLoading}>
               {isLoading ? "새로고침 중..." : "새로고침"}
             </button>
           </div>
@@ -472,7 +650,19 @@ function DashboardPage() {
         </SectionCard>
       ) : null}
 
-      <SectionCard title="오늘의 수집 요약">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {kpiCards.map((card) => (
+          <div key={card.label} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-sm font-semibold text-slate-600">{card.label}</p>
+              <StatusBadge label={card.help} tone={card.tone} />
+            </div>
+            <p className="text-3xl font-bold text-slate-950">{card.value}</p>
+          </div>
+        ))}
+      </div>
+
+      <SectionCard title="오늘 소스별 수집 현황">
         {summaryCards.length === 0 ? (
           <p className="text-sm text-slate-500">오늘 수집된 데이터가 없습니다.</p>
         ) : (
@@ -482,151 +672,86 @@ function DashboardPage() {
                 key={item.source}
                 type="button"
                 className="rounded-lg border border-slate-200 bg-white p-4 text-left transition-colors hover:bg-slate-50"
-                onClick={() => navigate(SOURCE_ROUTE[item.source])}
+                onClick={() => {
+                  setDetailSource(item.source);
+                  setDetailFilter("all");
+                }}
               >
-                <div className="mb-2 flex items-center justify-between">
-                  <h3 className="text-sm font-semibold text-slate-900">{item.label}</h3>
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className="text-base font-semibold text-slate-900">{item.label}</h3>
                   <StatusBadge label={statusLabel(item.status)} tone={toneByStatus(item.status)} />
                 </div>
-                <div className="space-y-1 text-xs text-slate-600">
-                  <div>수집 {item.collected_count}건</div>
-                  <div>요약완료 {item.summarized_count}건</div>
-                  <div>요약대기 {item.pending_count}건</div>
-                  <div>실패/주의 {item.failed_count}건</div>
-                  <div className="pt-1 text-[11px] text-slate-500">마지막 수집: {formatDateTime(item.last_collected_at)}</div>
+                <div className="grid grid-cols-2 gap-2 text-xs text-slate-600">
+                  <span>수집 {item.collected_count}건</span>
+                  <span>요약완료 {item.summarized_count}건</span>
+                  <span>요약대기 {item.pending_count}건</span>
+                  <span>오류·스킵 {item.failed_count}건</span>
                 </div>
+                <p className="mt-3 text-xs text-slate-500">마지막 수집: {formatDateTime(item.last_collected_at)}</p>
+                <div className="mt-3 flex min-h-[24px] flex-wrap gap-1">
+                  {item.top_keywords.length ? (
+                    item.top_keywords.map((keyword) => <StatusBadge key={`${item.source}-${keyword}`} label={keyword} tone={sourceTone(item.source)} />)
+                  ) : (
+                    <span className="text-xs text-slate-400">추출 키워드 없음</span>
+                  )}
+                </div>
+                <span className="mt-3 inline-flex text-sm font-semibold text-blue-700">상세 보기</span>
               </button>
             ))}
           </div>
         )}
       </SectionCard>
 
-      <SectionCard title="최근 7일 수집 캘린더">
-          {calendar.length === 0 ? (
-            <p className="text-sm text-slate-500">최근 7일 수집 이력이 없습니다.</p>
-          ) : (
-            <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-7">
-              {calendar.map((day) => (
-                <button
-                  type="button"
-                  key={day.date}
-                  onClick={() => navigate("/collection-runs")}
-                  className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-left transition-colors hover:bg-white"
-                >
-                  <div className="text-xs font-semibold text-slate-800">{day.date}</div>
-                  <div className="mt-2 flex flex-wrap gap-1 text-[11px]">
-                    <StatusBadge label={`뉴 ${day.news_count}`} tone="blue" />
-                    <StatusBadge label={`공 ${day.disclosure_count}`} tone="slate" />
-                    <StatusBadge label={`유 ${day.youtube_count}`} tone="amber" />
-                    <StatusBadge label={`텔 ${day.telegram_count}`} tone="emerald" />
-                    {day.failed_count > 0 ? <StatusBadge label={`실패 ${day.failed_count}`} tone="rose" /> : null}
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-      </SectionCard>
-
-      <SectionCard title="오늘의 투자 검토 후보 Top 5">
-          {!dashboard?.candidates_top5?.length ? (
-            <p className="text-sm text-slate-500">오늘 검토 우선 후보가 없습니다.</p>
-          ) : (
-            <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-5">
-              {dashboard.candidates_top5.map((item, idx) => (
-                <button
-                  key={`${item.source}-${idx}-${item.collected_at}`}
-                  type="button"
-                  className="h-full min-h-[148px] rounded-md border border-slate-200 px-3 py-2 text-left transition-colors hover:bg-slate-50"
-                  onClick={() => navigate(item.target_url)}
-                >
-                  <div className="mb-1 flex items-center gap-2">
-                    <span className="text-xs font-semibold text-slate-500">{idx + 1}</span>
-                    <StatusBadge label={SOURCE_LABEL[item.source]} tone={item.source === "telegram" ? "emerald" : item.source === "news" ? "blue" : "slate"} />
-                    <span className="text-xs text-slate-500">점수 {item.score}</span>
-                  </div>
-                  <p className="line-clamp-2 text-sm font-medium text-slate-900">{item.title}</p>
-                  <p className="mt-1 text-xs text-slate-600">태그: {item.tag || "-"} · 이벤트: {item.event_type || "-"}</p>
-                  <p className="text-xs text-slate-500">사유: {item.reason}</p>
-                </button>
-              ))}
-            </div>
-          )}
-      </SectionCard>
-
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-        <SectionCard title="최근 수집 피드" className="xl:col-span-2">
-          <div className="border-b border-slate-200">
-            <nav className="flex flex-wrap items-center gap-6">
-              {(["news", "disclosure", "youtube", "telegram"] as FeedTab[]).map((tab) => (
-                <button
-                  key={tab}
-                  type="button"
-                  className={`border-b-2 bg-transparent pb-3 text-sm transition-colors duration-150 ${
-                    feedTab === tab
-                      ? "border-slate-900 font-semibold text-slate-900"
-                      : "border-transparent font-medium text-slate-500 hover:text-slate-900"
-                  }`}
-                  onClick={() => setFeedTab(tab)}
-                >
-                  {SOURCE_LABEL[tab]}
-                </button>
-              ))}
-            </nav>
-          </div>
-
-          <div className="mt-3">
-            {feedItems.length === 0 ? (
-              <p className="text-sm text-slate-500">오늘 수집된 {SOURCE_LABEL[feedTab]}가 없습니다.</p>
-            ) : (
-              <div className="space-y-2">
-                {feedItems.map((item, idx) => (
-                  <button
-                    key={`${item.source}-${idx}-${item.collected_at}`}
-                    type="button"
-                    className="flex w-full items-start gap-3 rounded-lg border border-slate-200 px-3 py-2 text-left transition-colors hover:bg-slate-50"
-                    onClick={() => navigate(item.target_url)}
-                  >
-                    <StatusBadge label={SOURCE_LABEL[item.source]} tone={item.source === "telegram" ? "emerald" : item.source === "news" ? "blue" : item.source === "disclosure" ? "slate" : "amber"} />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium text-slate-900">{item.title}</div>
-                      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                        <span>{formatDateTime(item.collected_at)}</span>
-                        <span>·</span>
-                        <span>{summarizeStatusLabel(item.ai_status)}</span>
-                        {item.score != null ? <><span>·</span><span>점수 {item.score}</span></> : null}
-                        {item.event_type ? <><span>·</span><span>{item.event_type}</span></> : null}
-                      </div>
+        <SectionCard title="오늘 추출 이슈·키워드" className="xl:col-span-2">
+          {!dashboard?.issue_keywords.length ? (
+            <p className="text-sm text-slate-500">오늘 추출된 키워드가 없습니다.</p>
+          ) : (
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              {dashboard.issue_keywords.map((row) => (
+                <div key={row.keyword} className="rounded-lg border border-slate-200 bg-white p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-950">{row.keyword}</p>
+                      <p className="mt-1 line-clamp-1 text-xs text-slate-500">{row.recent_title}</p>
                     </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+                    <StatusBadge label={`${row.total}건`} tone="blue" />
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-1">
+                    {(Object.keys(SOURCE_LABEL) as SourceKey[]).map((src) =>
+                      row.sourceCounts[src] ? <StatusBadge key={`${row.keyword}-${src}`} label={`${SOURCE_LABEL[src]} ${row.sourceCounts[src]}`} tone={sourceTone(src)} /> : null,
+                    )}
+                  </div>
+                  <p className="mt-2 text-xs text-slate-600">
+                    요약완료 {row.summarized_count}건 · 요약대기 {row.pending_count}건
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">관련 종목: {row.relatedStocks.length ? row.relatedStocks.join(", ") : "-"}</p>
+                </div>
+              ))}
+            </div>
+          )}
         </SectionCard>
 
         <SectionCard title="소스 교차 등장 키워드">
-          {!dashboard?.cross_keywords?.length ? (
+          {!dashboard?.cross_keywords.length ? (
             <p className="text-sm text-slate-500">오늘 2개 이상 소스에서 반복된 키워드가 없습니다.</p>
           ) : (
             <div className="space-y-3">
               {dashboard.cross_keywords.map((row) => {
                 const max = Math.max(...dashboard.cross_keywords.map((x) => x.total), 1);
                 const width = Math.max(12, Math.round((row.total / max) * 100));
-                const sourceCount = Object.keys(row.sourceCounts).length;
                 return (
                   <div key={row.keyword} className="space-y-1">
                     <div className="flex items-center justify-between">
                       <p className="text-sm font-semibold text-slate-900">{row.keyword}</p>
-                      <span className="text-xs text-slate-500">총 {row.total}건 / {sourceCount}개 소스</span>
+                      <span className="text-xs text-slate-500">총 {row.total}건</span>
                     </div>
                     <div className="h-2 w-full rounded bg-slate-100">
                       <div className="h-2 rounded bg-slate-700" style={{ width: `${width}%` }} />
                     </div>
                     <div className="flex flex-wrap gap-1 text-[11px]">
-                      {(["news", "disclosure", "youtube", "telegram"] as SourceKey[]).map((src) =>
-                        row.sourceCounts[src] ? (
-                          <StatusBadge key={`${row.keyword}-${src}`} label={`${SOURCE_LABEL[src]} ${row.sourceCounts[src]}`} tone={src === "telegram" ? "emerald" : src === "news" ? "blue" : src === "youtube" ? "amber" : "slate"} />
-                        ) : null,
+                      {(Object.keys(SOURCE_LABEL) as SourceKey[]).map((src) =>
+                        row.sourceCounts[src] ? <StatusBadge key={`${row.keyword}-${src}`} label={`${SOURCE_LABEL[src]} ${row.sourceCounts[src]}`} tone={sourceTone(src)} /> : null,
                       )}
                     </div>
                   </div>
@@ -636,6 +761,231 @@ function DashboardPage() {
           )}
         </SectionCard>
       </div>
+
+      <SectionCard title="최근 1개월 테마 수급 트리맵">
+        <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <p className="text-sm text-slate-600">시장트렌드분석의 월간 테마 누적 흐름 점수를 최근 1개월 기준으로 합산하여, 테마별 수급 집중도를 면적으로 표현합니다.</p>
+          <StatusBadge label={`기간 ${themePeriodStart} ~ ${themePeriodEnd}`} tone="slate" />
+        </div>
+        {!themeItems.length ? (
+          <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4">
+            <p className="text-sm font-semibold text-slate-700">최근 1개월 테마 수급 점수 데이터가 없습니다.</p>
+            <p className="mt-1 text-sm text-slate-500">시장트렌드분석 데이터가 생성되면 테마 수급 트리맵이 표시됩니다.</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">{topThemeSummary}</p>
+            <div className="theme-treemap">
+              {themeItems.map((item, idx) => {
+                const sizeClass = getThemeTreemapSizeClass(item, maxThemeScore);
+                const intensity = Math.max(0.22, Math.min(1, item.scoreSum / maxThemeScore));
+                return (
+                  <button
+                    key={item.marketThemeId}
+                    type="button"
+                    title={`${item.themeName} · 점수 합산 ${item.scoreSum}점 · ${item.stockCount}종목`}
+                    className={`theme-treemap-tile ${sizeClass} ${selectedTheme?.marketThemeId === item.marketThemeId ? "selected" : ""}`}
+                    style={{ "--theme-intensity": intensity } as CSSProperties}
+                    onClick={() => setSelectedThemeId(item.marketThemeId)}
+                  >
+                    <span className="theme-treemap-title">{item.themeName}</span>
+                    <span className="theme-treemap-stock-count">{item.stockCount}종목</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {selectedTheme ? (
+              <div className="theme-detail-panel">
+                <div className="theme-detail-header">
+                  <div>
+                    <h3 className="theme-detail-title">{selectedTheme.themeName} 상세</h3>
+                    <p className="theme-detail-period">기간 {themePeriodStart} ~ {themePeriodEnd}</p>
+                  </div>
+                  <div className="theme-detail-actions">
+                    <StatusBadge label={`${selectedTheme.rank}위`} tone="blue" />
+                    <button type="button" className="btn btn-secondary theme-detail-link-btn" onClick={() => navigate("/market-trends")}>시장트렌드분석으로 이동</button>
+                  </div>
+                </div>
+                <div className="theme-detail-kpis">
+                  <div className="theme-detail-kpi">
+                    <p className="theme-detail-kpi-label">점수 합산</p>
+                    <p className="theme-detail-kpi-value">{selectedTheme.scoreSum}점</p>
+                  </div>
+                  <div className="theme-detail-kpi">
+                    <p className="theme-detail-kpi-label">종목수</p>
+                    <p className="theme-detail-kpi-value">{selectedTheme.stockCount}종목</p>
+                  </div>
+                  <div className="theme-detail-kpi">
+                    <p className="theme-detail-kpi-label">이벤트</p>
+                    <p className="theme-detail-kpi-value">{selectedTheme.eventCount}건</p>
+                  </div>
+                  <div className="theme-detail-kpi">
+                    <p className="theme-detail-kpi-label">마지막 순위</p>
+                    <p className="theme-detail-kpi-value">{selectedTheme.latestFinalRank ? `${selectedTheme.latestFinalRank}위` : "-"}</p>
+                  </div>
+                </div>
+                <div className="theme-detail-info-row">
+                  <div className="theme-detail-info-box">
+                    <span className="theme-detail-info-label">등장 날짜</span>
+                    <span className="theme-detail-info-value">
+                      {selectedTheme.sourceDates.length ? selectedTheme.sourceDates.join(", ") : "-"} · 마지막 등장일: {selectedTheme.latestDate ?? "-"}
+                    </span>
+                  </div>
+                  <div className="theme-detail-info-box">
+                    <span className="theme-detail-info-label">관련 종목</span>
+                    <span className="theme-detail-info-value">
+                      {selectedTheme.relatedStocks.length ? selectedTheme.relatedStocks.join(", ") : "월간 테마 누적 흐름 그래프 데이터에 포함되지 않음"}
+                    </span>
+                  </div>
+                </div>
+                <p className="theme-score-note">
+                  <b>점수 기준:</b> 시장트렌드분석 월간 테마 누적 흐름 그래프의 daily_score를 최근 1개월 기준으로 합산하며, 타일 면적은 종목수가 아니라 점수 합산값 기준입니다.
+                </p>
+              </div>
+            ) : null}
+          </div>
+        )}
+      </SectionCard>
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <SectionCard title="매매훈련 현황">
+          {!dashboard?.training_status.total_trades ? (
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <p className="text-sm text-slate-500">최근 30일 기준 매매 복기 데이터가 없습니다.</p>
+              <button type="button" className="btn btn-primary" onClick={() => navigate("/trading/training")}>매매훈련 시작하기</button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                <div className="rounded-lg border border-slate-200 p-3">
+                  <p className="text-xs text-slate-500">최근 거래</p>
+                  <p className="mt-1 text-xl font-bold text-slate-950">{dashboard.training_status.total_trades}건</p>
+                </div>
+                <div className="rounded-lg border border-slate-200 p-3">
+                  <p className="text-xs text-slate-500">최근 완료</p>
+                  <p className="mt-1 text-xl font-bold text-slate-950">{dashboard.training_status.recent_completed}건</p>
+                </div>
+                <div className="rounded-lg border border-slate-200 p-3">
+                  <p className="text-xs text-slate-500">최근 수익률</p>
+                  <p className="mt-1 text-xl font-bold text-slate-950">
+                    {dashboard.training_status.recent_return_rate == null ? "-" : `${dashboard.training_status.recent_return_rate.toFixed(2)}%`}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-slate-200 p-3">
+                  <p className="text-xs text-slate-500">GPT 복기 상태</p>
+                  <p className="mt-1 text-xl font-bold text-slate-950">{dashboard.training_status.gpt_review_ready_count}건</p>
+                </div>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <p className="text-xs font-semibold text-slate-500">다음 훈련 목표</p>
+                <p className="mt-1 text-sm text-slate-800">{dashboard.training_status.next_training_goal}</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" className="btn btn-primary" onClick={() => navigate("/trading/training")}>훈련 이어가기</button>
+                <button type="button" className="btn btn-secondary" onClick={() => navigate("/trade-reviews")}>최근 복기 보기</button>
+              </div>
+            </div>
+          )}
+        </SectionCard>
+
+        <SectionCard title="오늘 확인 필요">
+          {!dashboard?.attention_items.length ? (
+            <p className="text-sm text-slate-500">오늘 바로 확인할 항목이 없습니다.</p>
+          ) : (
+            <div className="space-y-2">
+              {dashboard.attention_items.map((item) => (
+                <button key={item.id} type="button" className="flex w-full items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 text-left hover:bg-slate-50" onClick={() => navigate(item.target_url)}>
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">{item.label}</p>
+                    <p className="text-xs text-slate-500">{item.detail}</p>
+                  </div>
+                  <StatusBadge label="확인" tone={item.tone} />
+                </button>
+              ))}
+            </div>
+          )}
+        </SectionCard>
+      </div>
+
+      <SectionCard title="최근 7일 수집 캘린더">
+        {!dashboard?.weekly_calendar.length ? (
+          <p className="text-sm text-slate-500">최근 7일 수집 이력이 없습니다.</p>
+        ) : (
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-7">
+            {dashboard.weekly_calendar.map((day) => (
+              <button type="button" key={day.date} onClick={() => navigate("/collection-runs")} className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-left transition-colors hover:bg-white">
+                <div className="text-xs font-semibold text-slate-800">{day.date}</div>
+                <div className="mt-2 flex flex-wrap gap-1 text-[11px]">
+                  <StatusBadge label={`뉴스 ${day.news_count}`} tone="blue" />
+                  <StatusBadge label={`공시 ${day.disclosure_count}`} tone="slate" />
+                  <StatusBadge label={`유튜브 ${day.youtube_count}`} tone="amber" />
+                  <StatusBadge label={`텔레그램 ${day.telegram_count}`} tone="emerald" />
+                  {day.failed_count > 0 ? <StatusBadge label={`확인 ${day.failed_count}`} tone="rose" /> : null}
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </SectionCard>
+
+      {detailSource && detailSummary ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4 py-6" onClick={() => setDetailSource(null)}>
+          <div className="max-h-[88vh] w-full max-w-4xl overflow-hidden rounded-xl bg-white shadow-xl" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-5 py-4">
+              <div>
+                <h2 className="text-lg font-bold text-slate-950">{detailSummary.label} 수집 상세</h2>
+                <p className="mt-1 text-sm text-slate-500">기준일 {dashboard?.today} · 수집 {detailSummary.collected_count}건 · 요약완료 {detailSummary.summarized_count}건 · 확인 필요 {detailSummary.pending_count + detailSummary.failed_count}건</p>
+              </div>
+              <button type="button" className="rounded-lg border border-slate-200 px-3 py-1 text-sm font-semibold text-slate-700 hover:bg-slate-50" onClick={() => setDetailSource(null)}>닫기</button>
+            </div>
+            <div className="border-b border-slate-200 px-5 pt-3">
+              <div className="flex flex-wrap gap-2">
+                {DETAIL_TABS.map((tab) => (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    className={`rounded-full border px-3 py-1 text-sm font-semibold ${detailFilter === tab.key ? "border-blue-600 bg-blue-50 text-blue-700" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}
+                    onClick={() => setDetailFilter(tab.key)}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+                <button type="button" className="ml-auto rounded-full border border-slate-200 px-3 py-1 text-sm font-semibold text-slate-700 hover:bg-slate-50" onClick={() => navigate(SOURCE_ROUTE[detailSource])}>관리 화면으로 이동</button>
+              </div>
+            </div>
+            <div className="max-h-[58vh] overflow-y-auto px-5 py-4">
+              {!filteredDetailItems.length ? (
+                <p className="text-sm text-slate-500">해당 조건의 수집 항목이 없습니다.</p>
+              ) : (
+                <div className="space-y-2">
+                  {filteredDetailItems.map((item) => (
+                    <div key={item.id} className="rounded-lg border border-slate-200 p-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <StatusBadge label={SOURCE_LABEL[item.source]} tone={sourceTone(item.source)} />
+                        <StatusBadge label={summarizeStatusLabel(item.ai_status)} tone={item.status_group === "summarized" ? "emerald" : item.status_group === "issue" ? "rose" : "amber"} />
+                        <span className="text-xs text-slate-500">{formatDateTime(item.collected_at)}</span>
+                        {item.related_stock ? <span className="text-xs text-slate-500">· {item.related_stock}</span> : null}
+                      </div>
+                      <p className="mt-2 text-sm font-semibold text-slate-950">{item.title}</p>
+                      {item.summary_text ? <p className="mt-1 line-clamp-2 text-xs text-slate-600">{item.summary_text}</p> : null}
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {item.keywords.map((keyword) => <StatusBadge key={`${item.id}-${keyword}`} label={keyword} tone={sourceTone(item.source)} />)}
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {item.original_url ? (
+                          <a href={item.original_url} target="_blank" rel="noreferrer" className="text-sm font-semibold text-blue-700 hover:underline">원문/상세 링크</a>
+                        ) : null}
+                        <button type="button" className="text-sm font-semibold text-slate-700 hover:underline" onClick={() => navigate(item.target_url)}>관리 화면</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
