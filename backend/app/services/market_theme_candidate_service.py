@@ -146,6 +146,9 @@ class MarketThemeCandidateService:
         themes = self.theme_repo.list_with_stock_count(
             is_active=1,
             theme_type=None,
+            theme_level="THEME",
+            parent_theme_id=None,
+            is_supply_theme=None,
             keyword=None,
             limit=2000,
             offset=0,

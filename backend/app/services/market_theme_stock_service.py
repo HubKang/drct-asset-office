@@ -54,6 +54,8 @@ class MarketThemeStockService:
         theme = self.theme_repo.get_by_id(theme_id)
         if not theme:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="market theme not found")
+        if (theme.theme_level or "THEME") == "THEME_GROUP":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="종목은 테마에만 연결할 수 있습니다.")
         stock = self.stock_repo.get_by_id(payload.stock_id)
         if not stock:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="stock not found")

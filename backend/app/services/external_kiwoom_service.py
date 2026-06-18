@@ -571,6 +571,15 @@ class ExternalKiwoomService:
         rows = self.db.execute(
             text(
                 """
+                WITH event_theme_pairs AS (
+                    SELECT l.event_id, l.market_theme_id
+                    FROM market_trend_event_theme_links l
+                    WHERE COALESCE(l.is_active, 1) = 1
+                    UNION
+                    SELECT id AS event_id, theme_id AS market_theme_id
+                    FROM market_trend_events
+                    WHERE theme_id IS NOT NULL
+                )
                 SELECT
                     mt.id AS market_theme_id,
                     mt.theme_name AS theme_name,
@@ -580,12 +589,11 @@ class ExternalKiwoomService:
                     MAX(mte.change_rate) AS max_change_rate,
                     SUM(COALESCE(mte.trading_value, 0)) AS estimated_trading_value_sum
                 FROM market_trend_events mte
-                JOIN market_trend_event_theme_links l ON l.event_id = mte.id
-                JOIN market_themes mt ON mt.id = l.market_theme_id
+                JOIN event_theme_pairs etp ON etp.event_id = mte.id
+                JOIN market_themes mt ON mt.id = etp.market_theme_id
                 WHERE mte.trade_date = :trade_date
                   AND mte.detection_source IN ('kiwoom_condition', 'manual')
                   AND COALESCE(mte.is_active, 1) = 1
-                  AND COALESCE(l.is_active, 1) = 1
                   AND COALESCE(mt.is_active, 1) = 1
                 GROUP BY mt.id, mt.theme_name
                 ORDER BY stock_count DESC, avg_change_rate DESC, mt.theme_name ASC
@@ -597,6 +605,15 @@ class ExternalKiwoomService:
         rep_rows = self.db.execute(
             text(
                 """
+                WITH event_theme_pairs AS (
+                    SELECT l.event_id, l.market_theme_id
+                    FROM market_trend_event_theme_links l
+                    WHERE COALESCE(l.is_active, 1) = 1
+                    UNION
+                    SELECT id AS event_id, theme_id AS market_theme_id
+                    FROM market_trend_events
+                    WHERE theme_id IS NOT NULL
+                )
                 SELECT
                     mt.id AS market_theme_id,
                     mte.stock_name,
@@ -606,12 +623,11 @@ class ExternalKiwoomService:
                         ORDER BY mte.change_rate DESC, mte.stock_name ASC
                     ) AS rn
                 FROM market_trend_events mte
-                JOIN market_trend_event_theme_links l ON l.event_id = mte.id
-                JOIN market_themes mt ON mt.id = l.market_theme_id
+                JOIN event_theme_pairs etp ON etp.event_id = mte.id
+                JOIN market_themes mt ON mt.id = etp.market_theme_id
                 WHERE mte.trade_date = :trade_date
                   AND mte.detection_source IN ('kiwoom_condition', 'manual')
                   AND COALESCE(mte.is_active, 1) = 1
-                  AND COALESCE(l.is_active, 1) = 1
                   AND COALESCE(mt.is_active, 1) = 1
                   AND mte.stock_name IS NOT NULL
                 """
@@ -820,6 +836,15 @@ class ExternalKiwoomService:
         rows = self.db.execute(
             text(
                 """
+                WITH event_theme_pairs AS (
+                    SELECT l.event_id, l.market_theme_id
+                    FROM market_trend_event_theme_links l
+                    WHERE COALESCE(l.is_active, 1) = 1
+                    UNION
+                    SELECT id AS event_id, theme_id AS market_theme_id
+                    FROM market_trend_events
+                    WHERE theme_id IS NOT NULL
+                )
                 SELECT
                     mte.id AS event_id,
                     mt.id AS market_theme_id,
@@ -832,14 +857,13 @@ class ExternalKiwoomService:
                     mte.user_memo AS user_memo,
                     mte.trading_value AS trading_value
                 FROM market_trend_events mte
-                JOIN market_trend_event_theme_links l ON l.event_id = mte.id
-                JOIN market_themes mt ON mt.id = l.market_theme_id
+                JOIN event_theme_pairs etp ON etp.event_id = mte.id
+                JOIN market_themes mt ON mt.id = etp.market_theme_id
                 LEFT JOIN stocks s ON s.id = mte.stock_id
                 WHERE mte.trade_date = :trade_date
                   AND mt.id = :market_theme_id
                   AND mte.detection_source IN ('kiwoom_condition', 'manual')
                   AND COALESCE(mte.is_active, 1) = 1
-                  AND COALESCE(l.is_active, 1) = 1
                   AND COALESCE(mt.is_active, 1) = 1
                 ORDER BY mte.change_rate DESC, mte.stock_code ASC, mte.id DESC
                 """
@@ -966,15 +990,34 @@ class ExternalKiwoomService:
             days=days,
         )
 
-    def get_monthly_theme_flow_trend(self, month: str) -> MonthlyThemeFlowTrendResponse:
+    def get_monthly_theme_flow_trend(
+        self,
+        month: str,
+        view_mode: str = "THEME_GROUP",
+        theme_group_id: int | None = None,
+    ) -> MonthlyThemeFlowTrendResponse:
         month_start, month_end = self._resolve_month_window(month)
+        normalized_view_mode = (view_mode or "THEME_GROUP").strip().upper()
+        if normalized_view_mode not in {"THEME_GROUP", "THEME"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="view_mode는 THEME_GROUP 또는 THEME이어야 합니다.")
+        theme_filter_sql = ""
+        params: dict[str, object] = {"start_date": month_start.isoformat(), "end_date": month_end.isoformat()}
+        if theme_group_id is not None:
+            params["theme_group_id"] = theme_group_id
+            if normalized_view_mode == "THEME":
+                theme_filter_sql = "AND mt.parent_theme_id = :theme_group_id"
+            else:
+                theme_filter_sql = "AND COALESCE(parent_mt.id, mt.id) = :theme_group_id"
+
+        id_sql = "COALESCE(parent_mt.id, mt.id)" if normalized_view_mode == "THEME_GROUP" else "mt.id"
+        name_sql = "COALESCE(parent_mt.theme_name, mt.theme_name)" if normalized_view_mode == "THEME_GROUP" else "mt.theme_name"
         rows = self.db.execute(
             text(
-                """
+                f"""
                 SELECT
                     mte.trade_date AS trade_date,
-                    mt.id AS market_theme_id,
-                    mt.theme_name AS theme_name,
+                    {id_sql} AS market_theme_id,
+                    {name_sql} AS theme_name,
                     COUNT(*) AS event_count,
                     COUNT(DISTINCT mte.stock_code) AS stock_count,
                     AVG(mte.change_rate) AS avg_change_rate,
@@ -988,6 +1031,7 @@ class ExternalKiwoomService:
                 FROM market_trend_events mte
                 JOIN market_trend_event_theme_links l ON l.event_id = mte.id
                 JOIN market_themes mt ON mt.id = l.market_theme_id
+                LEFT JOIN market_themes parent_mt ON parent_mt.id = mt.parent_theme_id
                 WHERE mte.trade_date BETWEEN :start_date AND :end_date
                   AND mte.detection_source IN ('kiwoom_condition', 'kiwoom_rest', 'manual')
                   AND COALESCE(mte.is_active, 1) = 1
@@ -995,10 +1039,11 @@ class ExternalKiwoomService:
                   AND COALESCE(mt.is_active, 1) = 1
                   AND COALESCE(mte.deleted_at, '') = ''
                   AND COALESCE(l.deleted_at, '') = ''
-                GROUP BY mte.trade_date, mt.id, mt.theme_name
+                  {theme_filter_sql}
+                GROUP BY mte.trade_date, {id_sql}, {name_sql}
                 """
             ),
-            {"start_date": month_start.isoformat(), "end_date": month_end.isoformat()},
+            params,
         ).mappings().all()
 
         date_keys: list[str] = []
@@ -1221,7 +1266,15 @@ class ExternalKiwoomService:
         if not event_row:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="수급 이벤트 후보를 찾을 수 없습니다.")
         theme_row = self.db.execute(
-            text("SELECT id, theme_name FROM market_themes WHERE id=:theme_id AND is_active=1"),
+            text(
+                """
+                SELECT id, theme_name
+                FROM market_themes
+                WHERE id=:theme_id
+                  AND is_active=1
+                  AND COALESCE(theme_level, 'THEME')='THEME'
+                """
+            ),
             {"theme_id": payload.market_theme_id},
         ).mappings().first()
         if not theme_row:

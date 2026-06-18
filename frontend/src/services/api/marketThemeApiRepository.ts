@@ -20,6 +20,9 @@ export const marketThemeApiRepository = {
     const search = new URLSearchParams();
     if (params?.is_active !== undefined) search.set("is_active", String(params.is_active));
     if (params?.theme_type) search.set("theme_type", params.theme_type);
+    if (params?.theme_level) search.set("theme_level", params.theme_level);
+    if (params?.parent_theme_id !== undefined) search.set("parent_theme_id", String(params.parent_theme_id));
+    if (params?.is_supply_theme !== undefined) search.set("is_supply_theme", String(params.is_supply_theme));
     if (params?.keyword) search.set("keyword", params.keyword);
     if (params?.limit !== undefined) search.set("limit", String(params.limit));
     if (params?.offset !== undefined) search.set("offset", String(params.offset));

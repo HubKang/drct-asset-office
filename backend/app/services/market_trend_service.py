@@ -890,8 +890,6 @@ class MarketTrendService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="감지일을 입력해 주세요.")
 
         memo = (payload.memo or "").strip()
-        if not memo:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="메모를 입력해 주세요.")
 
         stock = None
         if payload.stock_id is not None:
@@ -948,7 +946,16 @@ class MarketTrendService:
 
         if payload.theme_id is not None:
             theme = self.db.execute(
-                text("SELECT id FROM market_themes WHERE id = :theme_id AND COALESCE(is_active, 1) = 1 LIMIT 1"),
+                text(
+                    """
+                    SELECT id
+                    FROM market_themes
+                    WHERE id = :theme_id
+                      AND COALESCE(is_active, 1) = 1
+                      AND COALESCE(theme_level, 'THEME') = 'THEME'
+                    LIMIT 1
+                    """
+                ),
                 {"theme_id": payload.theme_id},
             ).mappings().first()
             if not theme:
@@ -1033,7 +1040,15 @@ class MarketTrendService:
         if not event:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="market trend event not found")
         theme = self.db.execute(
-            text("SELECT id, theme_name FROM market_themes WHERE id = :id"),
+            text(
+                """
+                SELECT id, theme_name
+                FROM market_themes
+                WHERE id = :id
+                  AND COALESCE(is_active, 1) = 1
+                  AND COALESCE(theme_level, 'THEME') = 'THEME'
+                """
+            ),
             {"id": payload.theme_id},
         ).mappings().first()
         if not theme:

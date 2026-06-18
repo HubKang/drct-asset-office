@@ -364,7 +364,7 @@ function MarketTrendsPage() {
 
   const loadMarketThemes = async () => {
     try {
-      const items = await repositories.marketThemes.list({ is_active: 1, limit: 500 });
+      const items = await repositories.marketThemes.list({ is_active: 1, theme_level: "THEME", limit: 500 });
       setMarketThemes(items.map((x) => ({ id: x.id, theme_name: x.theme_name })));
     } catch {
       setMarketThemes([]);
@@ -413,10 +413,6 @@ function MarketTrendsPage() {
     }
     if (!manualForm.trade_date) {
       setError("감지일을 선택해 주세요.");
-      return;
-    }
-    if (!manualForm.memo.trim()) {
-      setError("직접등록 사유 또는 메모를 입력해 주세요.");
       return;
     }
     const toOptionalNumber = (value: string) => {
@@ -490,6 +486,7 @@ function MarketTrendsPage() {
       await repositories.marketTrends.addKiwoomMarketEventTheme(eventId, payload);
       const links = await repositories.marketTrends.getKiwoomMarketEventThemes(eventId);
       setEventThemeLinksMap((prev) => ({ ...prev, [eventId]: links.items }));
+      await loadFlow();
       setMessage("테마를 추가 연결했습니다.");
     } catch (e) {
       setError(toErr(e, "테마 추가 연결에 실패했습니다."));
@@ -503,6 +500,7 @@ function MarketTrendsPage() {
       await repositories.marketTrends.removeKiwoomMarketEventTheme(eventId, linkId);
       const links = await repositories.marketTrends.getKiwoomMarketEventThemes(eventId);
       setEventThemeLinksMap((prev) => ({ ...prev, [eventId]: links.items }));
+      await loadFlow();
       setMessage("테마 연결을 해제했습니다.");
     } catch (e) {
       setError(toErr(e, "테마 연결 해제에 실패했습니다."));
@@ -517,7 +515,7 @@ function MarketTrendsPage() {
     try {
       await repositories.marketTrends.deleteKiwoomMarketEvent(eventId);
       setMessage(`삭제 완료: event_id=${eventId}`);
-      await loadEvents();
+      await Promise.all([loadEvents(), loadFlow()]);
     } catch (e) {
       setError(toErr(e, "수급 이벤트 후보 삭제에 실패했습니다."));
     }
@@ -659,6 +657,13 @@ function MarketTrendsPage() {
     if (activeTab === "monthly" && monthlyCalendarDays.length === 0 && !monthlyLoading) {
       void loadMonthlyFlow();
     }
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== "flow") return;
+    const today = new Date().toISOString().slice(0, 10);
+    if (tradeDate !== today) setTradeDate(today);
+    void Promise.all([loadEvents(today), loadFlow(today)]);
   }, [activeTab]);
 
   useEffect(() => {
@@ -1076,7 +1081,7 @@ function MarketTrendsPage() {
               <span>메모</span>
               <textarea
                 className="input-control manual-candidate-memo"
-                placeholder="직접등록 사유를 입력해 주세요."
+                placeholder="메모를 입력해 주세요. (선택)"
                 value={manualForm.memo}
                 onChange={(e) => setManualForm((prev) => ({ ...prev, memo: e.target.value }))}
               />
@@ -1096,7 +1101,7 @@ function MarketTrendsPage() {
 
       {activeTab === "flow" ? (
         <div className="space-y-4">
-          <SectionCard title="">
+          <SectionCard title="" className="daily-theme-flow-section">
             <div className="watchlist-card-title-wrap">
               <h3 className="section-title m-0">일별 테마 수급 흐름</h3>
               <span className="hint-icon" title="선택한 날짜의 저장된 수급 이벤트 후보를 테마별로 집계합니다. 날짜를 선택하면 즉시 조회됩니다.">i</span>

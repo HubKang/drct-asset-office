@@ -36,6 +36,9 @@ class MarketThemeRepository:
         *,
         is_active: int | None,
         theme_type: str | None,
+        theme_level: str | None,
+        parent_theme_id: int | None,
+        is_supply_theme: int | None,
         keyword: str | None,
         limit: int,
         offset: int,
@@ -66,6 +69,12 @@ class MarketThemeRepository:
             stmt = stmt.where(MarketTheme.is_active == is_active)
         if theme_type:
             stmt = stmt.where(MarketTheme.theme_type == theme_type)
+        if theme_level:
+            stmt = stmt.where(MarketTheme.theme_level == theme_level)
+        if parent_theme_id is not None:
+            stmt = stmt.where(MarketTheme.parent_theme_id == parent_theme_id)
+        if is_supply_theme is not None:
+            stmt = stmt.where(MarketTheme.is_supply_theme == is_supply_theme)
         if keyword:
             keyword_like = f"%{keyword}%"
             stmt = stmt.where(
@@ -76,6 +85,18 @@ class MarketThemeRepository:
             )
         stmt = stmt.limit(limit).offset(offset)
         return list(self.db.execute(stmt).all())
+
+    def list_all_with_stock_count(self) -> list[tuple[MarketTheme, int]]:
+        return self.list_with_stock_count(
+            is_active=None,
+            theme_type=None,
+            theme_level=None,
+            parent_theme_id=None,
+            is_supply_theme=None,
+            keyword=None,
+            limit=10000,
+            offset=0,
+        )
 
     def get_stock_count(self, theme_id: int) -> int:
         stmt = select(func.count(MarketThemeStock.id)).where(

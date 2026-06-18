@@ -174,6 +174,7 @@ def ensure_runtime_schema() -> None:
                 theme_name TEXT NOT NULL,
                 theme_code TEXT NOT NULL UNIQUE,
                 theme_type TEXT NOT NULL,
+                theme_level TEXT NOT NULL DEFAULT 'THEME',
                 description TEXT,
                 keywords TEXT NOT NULL DEFAULT '[]',
                 parent_theme_id INTEGER,
@@ -192,6 +193,10 @@ def ensure_runtime_schema() -> None:
         if "is_supply_theme" not in market_theme_columns:
             conn.exec_driver_sql(
                 "ALTER TABLE market_themes ADD COLUMN is_supply_theme INTEGER NOT NULL DEFAULT 0"
+            )
+        if "theme_level" not in market_theme_columns:
+            conn.exec_driver_sql(
+                "ALTER TABLE market_themes ADD COLUMN theme_level TEXT NOT NULL DEFAULT 'THEME'"
             )
         conn.exec_driver_sql(
             """
@@ -240,6 +245,9 @@ def ensure_runtime_schema() -> None:
             "CREATE INDEX IF NOT EXISTS idx_market_themes_type ON market_themes(theme_type)"
         )
         conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_themes_level_parent ON market_themes(theme_level, parent_theme_id)"
+        )
+        conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_market_themes_supply_active_sort "
             "ON market_themes(is_supply_theme, is_active, sort_order)"
         )
@@ -259,8 +267,8 @@ def ensure_runtime_schema() -> None:
             conn.exec_driver_sql(
                 """
                 INSERT OR IGNORE INTO market_themes
-                (theme_name, theme_code, theme_type, description, keywords, parent_theme_id, is_supply_theme, is_active, sort_order, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, NULL, 0, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                (theme_name, theme_code, theme_type, theme_level, description, keywords, parent_theme_id, is_supply_theme, is_active, sort_order, created_at, updated_at)
+                VALUES (?, ?, ?, 'THEME', ?, ?, NULL, 0, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """,
                 (
                     str(row["theme_name"]),

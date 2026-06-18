@@ -25,6 +25,9 @@ router = APIRouter()
 def list_market_themes(
     is_active: int | None = Query(default=None),
     theme_type: str | None = Query(default=None),
+    theme_level: str | None = Query(default=None),
+    parent_theme_id: int | None = Query(default=None),
+    is_supply_theme: int | None = Query(default=None),
     keyword: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
@@ -33,6 +36,9 @@ def list_market_themes(
     return MarketThemeService(db).list_themes(
         is_active=is_active,
         theme_type=theme_type,
+        theme_level=theme_level,
+        parent_theme_id=parent_theme_id,
+        is_supply_theme=is_supply_theme,
         keyword=keyword,
         limit=limit,
         offset=offset,

@@ -130,7 +130,7 @@ class ManualSupplyEventCandidateRequest(BaseModel):
     trading_value: int | None = Field(default=None, ge=0)
     volume: int | None = Field(default=None, ge=0)
     theme_id: int | None = None
-    memo: str = Field(min_length=1, max_length=1000)
+    memo: str = Field(default="", max_length=1000)
 
 
 class ManualSupplyEventCandidateResponse(BaseModel):

@@ -1,17 +1,24 @@
 export type MarketThemeType = "industry" | "theme" | "custom" | "telegram";
+export type MarketThemeLevel = "THEME_GROUP" | "THEME";
 
 export type MarketTheme = {
   id: number;
   theme_name: string;
   theme_code: string;
   theme_type: MarketThemeType;
+  theme_level: MarketThemeLevel;
   description: string | null;
   keywords: string[];
   parent_theme_id: number | null;
+  parent_theme_name?: string | null;
   is_supply_theme: number;
   is_active: number;
   sort_order: number;
   stock_count: number;
+  linked_stock_count?: number;
+  keyword_count?: number;
+  child_theme_count?: number;
+  supply_child_theme_count?: number;
   created_at: string;
   updated_at: string;
 };
@@ -20,6 +27,7 @@ export type MarketThemeCreateInput = {
   theme_name: string;
   theme_code?: string;
   theme_type: MarketThemeType;
+  theme_level?: MarketThemeLevel;
   description?: string | null;
   keywords: string[];
   parent_theme_id?: number | null;
@@ -31,6 +39,7 @@ export type MarketThemeCreateInput = {
 export type MarketThemeUpdateInput = {
   theme_name: string;
   theme_type: MarketThemeType;
+  theme_level?: MarketThemeLevel;
   description?: string | null;
   keywords: string[];
   parent_theme_id?: number | null;
@@ -42,6 +51,9 @@ export type MarketThemeUpdateInput = {
 export type MarketThemeListParams = {
   is_active?: number;
   theme_type?: string;
+  theme_level?: MarketThemeLevel;
+  parent_theme_id?: number;
+  is_supply_theme?: number;
   keyword?: string;
   limit?: number;
   offset?: number;

@@ -183,6 +183,10 @@ export const marketTrendApiRepository = {
     ),
   getExternalMonthlyThemeFlowCalendar: (month: string) =>
     apiRequest<MonthlyThemeFlowCalendarResponse>(`/external/kiwoom/theme-flow/monthly/calendar?month=${month}`),
-  getExternalMonthlyThemeFlowTrend: (month: string) =>
-    apiRequest<MonthlyThemeFlowTrendResponse>(`/external/kiwoom/theme-flow/monthly/trend?month=${month}`),
+  getExternalMonthlyThemeFlowTrend: (month: string, params?: { view_mode?: "THEME_GROUP" | "THEME"; theme_group_id?: number }) => {
+    const search = new URLSearchParams({ month });
+    if (params?.view_mode) search.set("view_mode", params.view_mode);
+    if (params?.theme_group_id !== undefined) search.set("theme_group_id", String(params.theme_group_id));
+    return apiRequest<MonthlyThemeFlowTrendResponse>(`/external/kiwoom/theme-flow/monthly/trend?${search.toString()}`);
+  },
 };

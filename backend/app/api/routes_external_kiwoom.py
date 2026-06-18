@@ -174,6 +174,12 @@ def get_monthly_theme_flow_calendar(
 @router.get("/external/kiwoom/theme-flow/monthly/trend", response_model=MonthlyThemeFlowTrendResponse)
 def get_monthly_theme_flow_trend(
     month: str = Query(..., description="YYYY-MM"),
+    view_mode: str = Query(default="THEME_GROUP", description="THEME_GROUP 또는 THEME"),
+    theme_group_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> MonthlyThemeFlowTrendResponse:
-    return ExternalKiwoomService(db).get_monthly_theme_flow_trend(month=month)
+    return ExternalKiwoomService(db).get_monthly_theme_flow_trend(
+        month=month,
+        view_mode=view_mode,
+        theme_group_id=theme_group_id,
+    )
