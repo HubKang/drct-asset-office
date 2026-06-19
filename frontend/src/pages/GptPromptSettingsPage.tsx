@@ -7,7 +7,7 @@ import type { GptPromptTemplate } from "@/types/gptPromptTemplate";
 
 const DOMAIN_TABS = [
   { key: "investment_advisory", label: "투자자문" },
-  { key: "trade_review", label: "매매복기" },
+  { key: "trade_review", label: "매매일지 복기" },
   { key: "economic_briefing", label: "경제브리핑" },
   { key: "news_disclosure", label: "뉴스/공시" },
   { key: "common", label: "공통 설정" },
@@ -15,7 +15,7 @@ const DOMAIN_TABS = [
 
 const DOMAIN_HELP_TEXT: Record<string, string> = {
   investment_advisory: "관심종목 Data분석과 GPT 자문 패키지에서 사용하는 분석 프롬프트를 관리합니다.",
-  trade_review: "매매일지, 매매달력, 매매기법 화면에서 사용하는 복기/실패패턴 분석 프롬프트를 관리합니다.",
+  trade_review: "매매일지, 매매일지 캘린더, 매매기법 화면에서 사용하는 복기/실패패턴 분석 프롬프트를 관리합니다.",
   economic_briefing: "경제 유튜브 영상을 요약하고 시장 흐름을 정리하는 프롬프트를 관리합니다.",
   news_disclosure: "뉴스, 공시, 텔레그램 메시지를 요약/분류하는 프롬프트를 관리합니다.",
   common: "모든 GPT 분석에 공통으로 적용되는 지침과 금지 표현을 관리합니다.",
@@ -24,7 +24,7 @@ const DOMAIN_HELP_TEXT: Record<string, string> = {
 const PROMPT_SURFACE_MAP: Record<string, string> = {
   stock_advisory_analysis: "관심종목 Data분석",
   trade_single_review: "매매일지",
-  trade_monthly_review: "매매달력",
+  trade_monthly_review: "매매일지 캘린더",
   strategy_performance_review: "매매기법",
   failure_pattern_review: "매매일지 실패패턴 분석",
   economic_video_summary: "경제브리핑",

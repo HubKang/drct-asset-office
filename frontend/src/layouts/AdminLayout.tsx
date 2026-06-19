@@ -5,6 +5,20 @@ import topMenus from "@/data/json/topMenus.json";
 import sideMenus from "@/data/json/sideMenus.json";
 import { routeRegistryMap } from "@/router/routeRegistry";
 
+type SideMenuChild = {
+  title: string;
+  routeKey: string;
+};
+
+type SideMenuItem = {
+  menuKey: string;
+  title: string;
+  routeKey: string;
+  children?: SideMenuChild[];
+};
+
+const menus = sideMenus as SideMenuItem[];
+
 function AdminLayout() {
   const location = useLocation();
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
@@ -12,17 +26,30 @@ function AdminLayout() {
   const grouped = useMemo(() => {
     return topMenus.map((top) => ({
       ...top,
-      items: sideMenus.filter((menu) => menu.menuKey === top.menuKey),
+      items: menus.filter((menu) => menu.menuKey === top.menuKey),
     }));
   }, []);
 
   const currentRoute = useMemo(() => {
-    const found = sideMenus.find((menu) => {
+    const found = menus.find((menu) => {
       const route = routeRegistryMap[menu.routeKey];
-      return route && location.pathname === route.path;
+      if (route && location.pathname === route.path) return true;
+      return (menu.children ?? []).some((child) => {
+        const childRoute = routeRegistryMap[child.routeKey];
+        return childRoute && location.pathname === childRoute.path;
+      });
     });
     return found ?? null;
   }, [location.pathname]);
+
+  const isMenuActive = (menu: SideMenuItem) => {
+    const route = routeRegistryMap[menu.routeKey];
+    if (route && location.pathname === route.path) return true;
+    return (menu.children ?? []).some((child) => {
+      const childRoute = routeRegistryMap[child.routeKey];
+      return childRoute && location.pathname === childRoute.path;
+    });
+  };
 
   const activeGroupKey = currentRoute?.menuKey ?? null;
 
@@ -77,12 +104,36 @@ function AdminLayout() {
                 {group.items.map((menu) => {
                   const route = routeRegistryMap[menu.routeKey];
                   if (!route) return null;
+                  const children = menu.children ?? [];
+                  const hasChildren = children.length > 0;
+                  const parentActive = isMenuActive(menu);
 
                   return (
                     <li key={menu.routeKey}>
-                      <NavLink to={route.path} className={({ isActive }) => clsx("side-menu-link", isActive && "side-menu-link-active")}>
+                      <NavLink
+                        to={route.path}
+                        className={({ isActive }) => clsx("side-menu-link", (isActive || parentActive) && "side-menu-link-active")}
+                      >
                         <span>{menu.title}</span>
                       </NavLink>
+                      {hasChildren ? (
+                        <ul className="side-sub-menu-list">
+                          {children.map((child) => {
+                            const childRoute = routeRegistryMap[child.routeKey];
+                            if (!childRoute) return null;
+                            return (
+                              <li key={child.routeKey}>
+                                <NavLink
+                                  to={childRoute.path}
+                                  className={({ isActive }) => clsx("side-sub-menu-link", isActive && "side-sub-menu-link-active")}
+                                >
+                                  <span>{child.title}</span>
+                                </NavLink>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      ) : null}
                     </li>
                   );
                 })}

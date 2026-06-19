@@ -118,7 +118,7 @@ export default function TradeCalendarPage() {
       try {
         await Promise.all([loadMonthlySummary(monthKey), loadDailyItems(selectedDate), loadMonthlyStats(1)]);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "매매달력 데이터를 불러오지 못했습니다.");
+        setError(e instanceof Error ? e.message : "매매일지 캘린더 데이터를 불러오지 못했습니다.");
       } finally {
         setLoading(false);
       }
@@ -221,14 +221,14 @@ export default function TradeCalendarPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="매매달력"
-        description="월간 매매 현황"
+        title="매매일지 캘린더"
+        description="매매일지의 매수·매도 기록을 달력으로 확인합니다."
       />
       {error ? <p className="inline-result inline-error">{error}</p> : null}
       {message ? <p className="inline-result inline-success">{message}</p> : null}
 
       <div className="trade-calendar-top">
-        <SectionCard title="월간 매매달력">
+        <SectionCard title="월간 매매일지 캘린더">
           <div className="trade-calendar-toolbar">
             <button type="button" className="btn btn-secondary" onClick={() => void handleMoveMonth(-1)}>이전</button>
             <strong>{selectedMonth.getFullYear()}년 {selectedMonth.getMonth() + 1}월</strong>

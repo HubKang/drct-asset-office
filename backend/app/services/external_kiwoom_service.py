@@ -20,6 +20,7 @@ from backend.app.schemas.external_kiwoom_schema import (
     DailyThemeFlowSummaryResponse,
     MonthlyThemeFlowCalendarDayItem,
     MonthlyThemeFlowCalendarResponse,
+    MonthlyThemeFlowStockItem,
     MonthlyThemeFlowCalendarThemeItem,
     MonthlyThemeFlowTrendPoint,
     MonthlyThemeFlowTrendResponse,
@@ -910,6 +911,11 @@ class ExternalKiwoomService:
                 """
                 SELECT
                     mte.trade_date AS trade_date,
+                    CASE WHEN mt.theme_level = 'THEME_GROUP' THEN mt.id ELSE parent_mt.id END AS theme_group_id,
+                    COALESCE(
+                      CASE WHEN mt.theme_level = 'THEME_GROUP' THEN mt.theme_name ELSE parent_mt.theme_name END,
+                      '미지정 테마그룹'
+                    ) AS theme_group_name,
                     mt.id AS market_theme_id,
                     mt.theme_name AS theme_name,
                     COUNT(*) AS event_count,
@@ -925,6 +931,7 @@ class ExternalKiwoomService:
                 FROM market_trend_events mte
                 JOIN market_trend_event_theme_links l ON l.event_id = mte.id
                 JOIN market_themes mt ON mt.id = l.market_theme_id
+                LEFT JOIN market_themes parent_mt ON parent_mt.id = mt.parent_theme_id
                 WHERE mte.trade_date BETWEEN :start_date AND :end_date
                   AND mte.detection_source IN ('kiwoom_condition', 'kiwoom_rest', 'manual')
                   AND COALESCE(mte.is_active, 1) = 1
@@ -932,19 +939,69 @@ class ExternalKiwoomService:
                   AND COALESCE(mt.is_active, 1) = 1
                   AND COALESCE(mte.deleted_at, '') = ''
                   AND COALESCE(l.deleted_at, '') = ''
-                GROUP BY mte.trade_date, mt.id, mt.theme_name
+                GROUP BY mte.trade_date, theme_group_id, theme_group_name, mt.id, mt.theme_name
                 ORDER BY mte.trade_date ASC, stock_count DESC, event_count DESC, estimated_trading_value_sum DESC, avg_change_rate DESC, mt.theme_name ASC
                 """
             ),
             {"start_date": month_start.isoformat(), "end_date": month_end.isoformat()},
         ).mappings().all()
 
+        stock_rows = self.db.execute(
+            text(
+                """
+                SELECT DISTINCT
+                    mte.trade_date AS trade_date,
+                    mt.id AS market_theme_id,
+                    mte.stock_id AS stock_id,
+                    mte.stock_code AS stock_code,
+                    COALESCE(mte.stock_name, s.stock_name, mte.stock_code, '-') AS stock_name
+                FROM market_trend_events mte
+                JOIN market_trend_event_theme_links l ON l.event_id = mte.id
+                JOIN market_themes mt ON mt.id = l.market_theme_id
+                LEFT JOIN stocks s ON s.id = mte.stock_id
+                WHERE mte.trade_date BETWEEN :start_date AND :end_date
+                  AND mte.detection_source IN ('kiwoom_condition', 'kiwoom_rest', 'manual')
+                  AND COALESCE(mte.is_active, 1) = 1
+                  AND COALESCE(l.is_active, 1) = 1
+                  AND COALESCE(mt.is_active, 1) = 1
+                  AND COALESCE(mte.deleted_at, '') = ''
+                  AND COALESCE(l.deleted_at, '') = ''
+                ORDER BY mte.trade_date ASC, mt.id ASC, stock_name ASC, stock_code ASC
+                """
+            ),
+            {"start_date": month_start.isoformat(), "end_date": month_end.isoformat()},
+        ).mappings().all()
+        stocks_by_date_theme: dict[tuple[str, int], list[MonthlyThemeFlowStockItem]] = {}
+        seen_stocks: set[tuple[str, int, str]] = set()
+        for row in stock_rows:
+            trade_date = str(row["trade_date"])
+            theme_id = int(row["market_theme_id"])
+            stock_code = str(row["stock_code"] or "")
+            stock_key = stock_code or str(row["stock_id"] or row["stock_name"] or "")
+            seen_key = (trade_date, theme_id, stock_key)
+            if seen_key in seen_stocks:
+                continue
+            seen_stocks.add(seen_key)
+            stocks_by_date_theme.setdefault((trade_date, theme_id), []).append(
+                MonthlyThemeFlowStockItem(
+                    stock_id=int(row["stock_id"]) if row["stock_id"] is not None else None,
+                    stock_code=stock_code or None,
+                    stock_name=str(row["stock_name"] or stock_code or "-"),
+                )
+            )
+
         grouped: dict[str, list[DailyThemeFlowSummaryItem]] = {}
+        theme_group_meta: dict[tuple[str, int], dict[str, object]] = {}
         for row in rows:
             trade_date = str(row["trade_date"])
+            theme_id = int(row["market_theme_id"])
+            theme_group_meta[(trade_date, theme_id)] = {
+                "theme_group_id": int(row["theme_group_id"]) if row["theme_group_id"] is not None else None,
+                "theme_group_name": str(row["theme_group_name"] or "미지정 테마그룹"),
+            }
             grouped.setdefault(trade_date, []).append(
                 DailyThemeFlowSummaryItem(
-                    market_theme_id=int(row["market_theme_id"]),
+                    market_theme_id=theme_id,
                     theme_name=str(row["theme_name"]),
                     stock_count=int(row["stock_count"] or 0),
                     event_count=int(row["event_count"] or 0),
@@ -954,6 +1011,36 @@ class ExternalKiwoomService:
                     representative_stocks=[],
                 )
             )
+
+        day_total_rows = self.db.execute(
+            text(
+                """
+                SELECT
+                    mte.trade_date AS trade_date,
+                    COUNT(DISTINCT mte.id) AS event_count,
+                    COUNT(DISTINCT mte.stock_code) AS related_stock_count
+                FROM market_trend_events mte
+                JOIN market_trend_event_theme_links l ON l.event_id = mte.id
+                JOIN market_themes mt ON mt.id = l.market_theme_id
+                WHERE mte.trade_date BETWEEN :start_date AND :end_date
+                  AND mte.detection_source IN ('kiwoom_condition', 'kiwoom_rest', 'manual')
+                  AND COALESCE(mte.is_active, 1) = 1
+                  AND COALESCE(l.is_active, 1) = 1
+                  AND COALESCE(mt.is_active, 1) = 1
+                  AND COALESCE(mte.deleted_at, '') = ''
+                  AND COALESCE(l.deleted_at, '') = ''
+                GROUP BY mte.trade_date
+                """
+            ),
+            {"start_date": month_start.isoformat(), "end_date": month_end.isoformat()},
+        ).mappings().all()
+        day_totals = {
+            str(row["trade_date"]): {
+                "event_count": int(row["event_count"] or 0),
+                "related_stock_count": int(row["related_stock_count"] or 0),
+            }
+            for row in day_total_rows
+        }
 
         days: list[MonthlyThemeFlowCalendarDayItem] = []
         cursor = month_start
@@ -976,10 +1063,21 @@ class ExternalKiwoomService:
                     final_rank=item.final_rank,
                     rank_score=float(item.rank_score),
                     rank_basis=item.rank_basis,
+                    theme_group_id=theme_group_meta.get((key, item.market_theme_id), {}).get("theme_group_id"),
+                    theme_group_name=str(theme_group_meta.get((key, item.market_theme_id), {}).get("theme_group_name") or "미지정 테마그룹"),
+                    stocks=stocks_by_date_theme.get((key, item.market_theme_id), []),
                 )
                 for idx, item in enumerate(ranked_day)
             ]
-            days.append(MonthlyThemeFlowCalendarDayItem(trade_date=key, themes=ranked))
+            totals = day_totals.get(key, {"event_count": 0, "related_stock_count": 0})
+            days.append(
+                MonthlyThemeFlowCalendarDayItem(
+                    trade_date=key,
+                    event_count=totals["event_count"],
+                    related_stock_count=totals["related_stock_count"],
+                    themes=ranked,
+                )
+            )
             cursor += timedelta(days=1)
 
         return MonthlyThemeFlowCalendarResponse(
@@ -993,13 +1091,15 @@ class ExternalKiwoomService:
     def get_monthly_theme_flow_trend(
         self,
         month: str,
-        view_mode: str = "THEME_GROUP",
+        view_mode: str = "THEME",
         theme_group_id: int | None = None,
+        limit: int | None = None,
     ) -> MonthlyThemeFlowTrendResponse:
         month_start, month_end = self._resolve_month_window(month)
-        normalized_view_mode = (view_mode or "THEME_GROUP").strip().upper()
+        normalized_view_mode = (view_mode or "THEME").strip().upper()
         if normalized_view_mode not in {"THEME_GROUP", "THEME"}:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="view_mode는 THEME_GROUP 또는 THEME이어야 합니다.")
+        normalized_limit = max(1, min(int(limit), 500)) if limit is not None else None
         theme_filter_sql = ""
         params: dict[str, object] = {"start_date": month_start.isoformat(), "end_date": month_end.isoformat()}
         if theme_group_id is not None:
@@ -1018,6 +1118,11 @@ class ExternalKiwoomService:
                     mte.trade_date AS trade_date,
                     {id_sql} AS market_theme_id,
                     {name_sql} AS theme_name,
+                    CASE WHEN mt.theme_level = 'THEME_GROUP' THEN mt.id ELSE parent_mt.id END AS theme_group_id,
+                    COALESCE(
+                      CASE WHEN mt.theme_level = 'THEME_GROUP' THEN mt.theme_name ELSE parent_mt.theme_name END,
+                      '미지정 테마그룹'
+                    ) AS theme_group_name,
                     COUNT(*) AS event_count,
                     COUNT(DISTINCT mte.stock_code) AS stock_count,
                     AVG(mte.change_rate) AS avg_change_rate,
@@ -1040,11 +1145,88 @@ class ExternalKiwoomService:
                   AND COALESCE(mte.deleted_at, '') = ''
                   AND COALESCE(l.deleted_at, '') = ''
                   {theme_filter_sql}
-                GROUP BY mte.trade_date, {id_sql}, {name_sql}
+                GROUP BY mte.trade_date, {id_sql}, {name_sql}, theme_group_id, theme_group_name
                 """
             ),
             params,
         ).mappings().all()
+
+        child_rows = self.db.execute(
+            text(
+                f"""
+                SELECT
+                    CASE WHEN mt.theme_level = 'THEME_GROUP' THEN mt.id ELSE parent_mt.id END AS theme_group_id,
+                    COALESCE(
+                      CASE WHEN mt.theme_level = 'THEME_GROUP' THEN mt.theme_name ELSE parent_mt.theme_name END,
+                      '미지정 테마그룹'
+                    ) AS theme_group_name,
+                    mt.id AS market_theme_id,
+                    mt.theme_name AS theme_name,
+                    COUNT(*) AS event_count,
+                    COUNT(DISTINCT mte.stock_code) AS stock_count
+                FROM market_trend_events mte
+                JOIN market_trend_event_theme_links l ON l.event_id = mte.id
+                JOIN market_themes mt ON mt.id = l.market_theme_id
+                LEFT JOIN market_themes parent_mt ON parent_mt.id = mt.parent_theme_id
+                WHERE mte.trade_date BETWEEN :start_date AND :end_date
+                  AND mte.detection_source IN ('kiwoom_condition', 'kiwoom_rest', 'manual')
+                  AND COALESCE(mte.is_active, 1) = 1
+                  AND COALESCE(l.is_active, 1) = 1
+                  AND COALESCE(mt.is_active, 1) = 1
+                  AND COALESCE(mte.deleted_at, '') = ''
+                  AND COALESCE(l.deleted_at, '') = ''
+                  {theme_filter_sql}
+                GROUP BY theme_group_id, theme_group_name, mt.id, mt.theme_name
+                """
+            ),
+            params,
+        ).mappings().all()
+        child_theme_map: dict[int, list[dict[str, object]]] = {}
+        for row in child_rows:
+            group_id = int(row["theme_group_id"]) if row["theme_group_id"] is not None else int(row["market_theme_id"])
+            child_theme_map.setdefault(group_id, []).append(
+                {
+                    "theme_name": str(row["theme_name"]),
+                    "event_count": int(row["event_count"] or 0),
+                    "stock_count": int(row["stock_count"] or 0),
+                }
+            )
+
+        stock_rows = self.db.execute(
+            text(
+                f"""
+                SELECT
+                    {id_sql} AS market_theme_id,
+                    COALESCE(mte.stock_name, s.stock_name, mte.stock_code, '-') AS stock_display_name,
+                    MAX(mte.trade_date) AS latest_date
+                FROM market_trend_events mte
+                JOIN market_trend_event_theme_links l ON l.event_id = mte.id
+                JOIN market_themes mt ON mt.id = l.market_theme_id
+                LEFT JOIN market_themes parent_mt ON parent_mt.id = mt.parent_theme_id
+                LEFT JOIN stocks s ON s.id = mte.stock_id
+                WHERE mte.trade_date BETWEEN :start_date AND :end_date
+                  AND mte.detection_source IN ('kiwoom_condition', 'kiwoom_rest', 'manual')
+                  AND COALESCE(mte.is_active, 1) = 1
+                  AND COALESCE(l.is_active, 1) = 1
+                  AND COALESCE(mt.is_active, 1) = 1
+                  AND COALESCE(mte.deleted_at, '') = ''
+                  AND COALESCE(l.deleted_at, '') = ''
+                  {theme_filter_sql}
+                GROUP BY {id_sql}, COALESCE(mte.stock_name, s.stock_name, mte.stock_code, '-')
+                ORDER BY latest_date DESC, stock_display_name ASC
+                """
+            ),
+            params,
+        ).mappings().all()
+        related_stock_map: dict[int, list[str]] = {}
+        for row in stock_rows:
+            entity_id = int(row["market_theme_id"])
+            stock_name = str(row["stock_display_name"] or "").strip()
+            if not stock_name or stock_name == "-":
+                continue
+            current = related_stock_map.setdefault(entity_id, [])
+            if stock_name not in current and len(current) < 8:
+                current.append(stock_name)
 
         date_keys: list[str] = []
         cursor = month_start
@@ -1070,6 +1252,7 @@ class ExternalKiwoomService:
         day_ranked: dict[str, list[DailyThemeFlowSummaryItem]] = {}
         total_score_map: dict[int, int] = {}
         theme_name_map: dict[int, str] = {}
+        theme_group_meta_map: dict[int, dict[str, object]] = {}
         for key in date_keys:
             ranked = self._apply_rank_overrides(trade_date=key, items=by_date.get(key, []))
             day_ranked[key] = ranked
@@ -1077,11 +1260,24 @@ class ExternalKiwoomService:
                 score = int(item.rank_score or 0)
                 total_score_map[item.market_theme_id] = total_score_map.get(item.market_theme_id, 0) + score
                 theme_name_map[item.market_theme_id] = item.theme_name
+        for row in rows:
+            entity_id = int(row["market_theme_id"])
+            if normalized_view_mode == "THEME_GROUP":
+                group_id = entity_id
+                group_name = str(row["theme_name"])
+            else:
+                group_id = int(row["theme_group_id"]) if row["theme_group_id"] is not None else None
+                group_name = str(row["theme_group_name"] or "미지정 테마그룹")
+            theme_group_meta_map[entity_id] = {
+                "theme_group_id": group_id,
+                "theme_group_name": group_name,
+            }
 
         sorted_theme_ids = sorted(total_score_map.keys(), key=lambda tid: (total_score_map.get(tid, 0), theme_name_map.get(tid, "")), reverse=True)
 
         themes: list[MonthlyThemeFlowTrendTheme] = []
-        for theme_id in sorted_theme_ids:
+        target_theme_ids = sorted_theme_ids[:normalized_limit] if normalized_limit is not None else sorted_theme_ids
+        for theme_id in target_theme_ids:
             cumulative = 0
             series: list[MonthlyThemeFlowTrendPoint] = []
             for key in date_keys:
@@ -1119,10 +1315,23 @@ class ExternalKiwoomService:
                             estimated_trading_value_sum=0,
                         )
                     )
+            group_meta = theme_group_meta_map.get(theme_id, {})
+            group_id = group_meta.get("theme_group_id")
+            child_themes = child_theme_map.get(int(group_id), []) if group_id is not None else []
+            child_theme_names = [
+                str(row["theme_name"])
+                for row in sorted(child_themes, key=lambda x: (int(x["event_count"]), int(x["stock_count"]), str(x["theme_name"])), reverse=True)
+            ]
             themes.append(
                 MonthlyThemeFlowTrendTheme(
                     market_theme_id=theme_id,
                     theme_name=theme_name_map.get(theme_id, str(theme_id)),
+                    view_mode=normalized_view_mode,
+                    theme_group_id=int(group_id) if group_id is not None else None,
+                    theme_group_name=str(group_meta.get("theme_group_name") or ""),
+                    child_theme_count=len(child_theme_names) if normalized_view_mode == "THEME_GROUP" else 0,
+                    top_child_themes=child_theme_names[:3] if normalized_view_mode == "THEME_GROUP" else [],
+                    related_stocks=related_stock_map.get(theme_id, []),
                     series=series,
                 )
             )

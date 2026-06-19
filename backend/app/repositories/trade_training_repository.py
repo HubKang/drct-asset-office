@@ -413,3 +413,49 @@ class TradeTrainingRepository:
             )
         self.db.commit()
         return self.get_review(session_id) or {}
+
+    def list_calendar_sessions(self, month: str) -> list[dict[str, Any]]:
+        month_start = f"{month}-01"
+        rows = self.db.execute(
+            text(
+                """
+                WITH calendar_rows AS (
+                    SELECT
+                        s.id,
+                        s.stock_code,
+                        s.stock_name,
+                        s.method_id,
+                        COALESCE(m.method_name, '자유훈련') AS trade_method_name,
+                        s.current_date,
+                        s.start_date,
+                        s.end_date,
+                        s.initial_cash,
+                        s.cash,
+                        s.realized_profit,
+                        s.status,
+                        s.created_at AS session_created_at,
+                        s.updated_at AS session_updated_at,
+                        r.id AS review_id,
+                        r.review_status,
+                        r.reviewed_at,
+                        r.created_at AS review_created_at,
+                        r.updated_at AS review_updated_at,
+                        COALESCE(r.updated_at, r.created_at, r.reviewed_at, s.updated_at, s.created_at) AS activity_at
+                    FROM simulation_sessions s
+                    LEFT JOIN trade_methods m ON m.id = s.method_id
+                    LEFT JOIN simulation_reviews r ON r.session_id = s.id
+                    WHERE s.status = '완료'
+                       OR r.id IS NOT NULL
+                )
+                SELECT
+                    *,
+                    date(activity_at) AS activity_date
+                FROM calendar_rows
+                WHERE date(activity_at) >= date(:month_start)
+                  AND date(activity_at) < date(:month_start, '+1 month')
+                ORDER BY activity_date ASC, id ASC
+                """
+            ),
+            {"month_start": month_start},
+        ).mappings().all()
+        return [dict(row) for row in rows]

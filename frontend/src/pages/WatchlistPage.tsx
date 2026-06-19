@@ -103,7 +103,7 @@ function WatchlistPage() {
   };
 
   const loadThemeMap = async (): Promise<ThemeMapPayload> => {
-    const themes: MarketTheme[] = await repositories.marketThemes.list({ is_active: 1, limit: 200, offset: 0 });
+    const themes: MarketTheme[] = await repositories.marketThemes.list({ is_active: 1, theme_level: "THEME", limit: 200, offset: 0 });
     const entries = await Promise.all(
       themes.map(async (theme) => {
         const stocks = await repositories.marketThemes.listThemeStocks(theme.id);
@@ -344,7 +344,7 @@ function WatchlistPage() {
     setThemeModalOpen(true);
     try {
       if (themeModalThemes.length === 0) {
-        const themes = await repositories.marketThemes.list({ is_active: 1, limit: 500, offset: 0 });
+        const themes = await repositories.marketThemes.list({ is_active: 1, theme_level: "THEME", limit: 500, offset: 0 });
         setThemeModalThemes(themes);
       }
     } catch (error) {
@@ -354,8 +354,9 @@ function WatchlistPage() {
 
   const filteredThemeModalThemes = useMemo(() => {
     const keyword = themeModalKeyword.trim().toLowerCase();
-    if (!keyword) return themeModalThemes;
-    return themeModalThemes.filter((x) => x.theme_name.toLowerCase().includes(keyword));
+    const selectableThemes = themeModalThemes.filter((x) => x.theme_level !== "THEME_GROUP");
+    if (!keyword) return selectableThemes;
+    return selectableThemes.filter((x) => x.theme_name.toLowerCase().includes(keyword));
   }, [themeModalKeyword, themeModalThemes]);
 
   const onSavePrimaryTheme = async () => {
@@ -364,7 +365,8 @@ function WatchlistPage() {
     setActionError("");
     setActionMessage("");
     try {
-      const themes = themeModalThemes.length > 0 ? themeModalThemes : await repositories.marketThemes.list({ is_active: 1, limit: 500, offset: 0 });
+      const themes = (themeModalThemes.length > 0 ? themeModalThemes : await repositories.marketThemes.list({ is_active: 1, theme_level: "THEME", limit: 500, offset: 0 }))
+        .filter((theme) => theme.theme_level !== "THEME_GROUP");
       const stocksByTheme = await Promise.all(
         themes.map(async (theme) => ({ themeId: theme.id, rows: await repositories.marketThemes.listThemeStocks(theme.id) })),
       );

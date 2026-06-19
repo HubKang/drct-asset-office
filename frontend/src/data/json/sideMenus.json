@@ -16,10 +16,23 @@
   { "menuKey": "collection", "title": "수집 이력", "routeKey": "collection-runs" },
 
   { "menuKey": "trade", "title": "매매기법", "routeKey": "trade-methods" },
-  { "menuKey": "trade", "title": "매매일지", "routeKey": "trade-journals" },
-  { "menuKey": "trade", "title": "매매달력", "routeKey": "trade-calendar" },
-  { "menuKey": "trade", "title": "매매복기", "routeKey": "trade-reviews" },
-  { "menuKey": "trade", "title": "매매훈련", "routeKey": "trade-training" },
+  {
+    "menuKey": "trade",
+    "title": "매매일지",
+    "routeKey": "trade-journals",
+    "children": [
+      { "title": "매매일지 캘린더", "routeKey": "trade-calendar" },
+      { "title": "매매일지 복기", "routeKey": "trade-reviews" }
+    ]
+  },
+  {
+    "menuKey": "trade",
+    "title": "매매훈련",
+    "routeKey": "trade-training",
+    "children": [
+      { "title": "매매훈련 캘린더", "routeKey": "trade-training-calendar" }
+    ]
+  },
   { "menuKey": "trade", "title": "매매기준 백테스트", "routeKey": "backtest" },
   { "menuKey": "trade", "title": "매매패턴 AI연구", "routeKey": "pattern-research" },
 

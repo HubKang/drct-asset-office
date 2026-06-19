@@ -7,6 +7,8 @@ import type {
   TradeMonthlyStatisticsResponse,
   TradeJournalSaveRequest,
   TradeMethod,
+  TradeMethodImage,
+  TradeMethodImageType,
   TradeMethodSaveRequest,
   TradeJournalGptReviewPackage,
   TradeJournalMonthlyGptReviewPackage,
@@ -26,6 +28,32 @@ export const tradeJournalApiRepository = {
     apiRequest<TradeMethod>("/trade-methods", { method: "POST", body: JSON.stringify(payload) }),
   updateTradeMethod: (methodId: number, payload: Partial<TradeMethodSaveRequest>) =>
     apiRequest<TradeMethod>(`/trade-methods/${methodId}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  fetchTradeMethodImages: (methodId: number) => apiRequest<TradeMethodImage[]>(`/trade-methods/${methodId}/images`),
+  uploadTradeMethodImage: (
+    methodId: number,
+    payload: { image_type: TradeMethodImageType; image_memo?: string; sort_order?: number; file: File }
+  ) => {
+    const formData = new FormData();
+    formData.set("image_type", payload.image_type);
+    if (payload.image_memo) formData.set("image_memo", payload.image_memo);
+    if (typeof payload.sort_order === "number") formData.set("sort_order", String(payload.sort_order));
+    formData.set("file", payload.file);
+    return apiRequest<TradeMethodImage>(`/trade-methods/${methodId}/images`, {
+      method: "POST",
+      body: formData,
+    });
+  },
+  updateTradeMethodImage: (
+    methodId: number,
+    imageId: number,
+    payload: { image_memo?: string; image_type?: TradeMethodImageType; sort_order?: number }
+  ) =>
+    apiRequest<TradeMethodImage>(`/trade-methods/${methodId}/images/${imageId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  deleteTradeMethodImage: (methodId: number, imageId: number) =>
+    apiRequest<{ success: boolean }>(`/trade-methods/${methodId}/images/${imageId}`, { method: "DELETE" }),
   fetchTradeJournals: (params: {
     start_date?: string;
     end_date?: string;

@@ -237,3 +237,47 @@ export type SimulationReviewSaveRequest = {
   main_mistake?: string | null;
   discipline_score?: number | null;
 };
+
+export type TrainingCalendarStock = {
+  stock_code?: string | null;
+  stock_name: string;
+  training_count: number;
+  total_return_rate: number;
+  avg_return_rate: number;
+  review_saved_count: number;
+};
+
+export type TrainingCalendarMethodGroup = {
+  trade_method_id?: number | null;
+  trade_method_name: string;
+  training_count: number;
+  total_return_rate: number;
+  avg_return_rate: number;
+  review_saved_count: number;
+  stocks: TrainingCalendarStock[];
+};
+
+export type TrainingCalendarDay = {
+  date: string;
+  training_count: number;
+  total_return_rate: number;
+  avg_return_rate: number;
+  training_score: number;
+  review_saved_count: number;
+  review_required_count: number;
+  method_groups: TrainingCalendarMethodGroup[];
+};
+
+export type TrainingCalendarSummary = {
+  total_sessions: number;
+  training_days: number;
+  avg_training_score: number;
+  avg_return_rate: number;
+  review_completion_rate: number;
+};
+
+export type TrainingCalendarResponse = {
+  month: string;
+  summary: TrainingCalendarSummary;
+  days: TrainingCalendarDay[];
+};

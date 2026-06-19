@@ -6,12 +6,15 @@ import type {
   TrainingResult,
   SimulationReview,
   SimulationReviewSaveRequest,
+  TrainingCalendarResponse,
   TrainingSessionCreate,
   TrainingSessionDetail,
   TrainingStockListResponse,
 } from "@/types/tradeTraining";
 
 export const tradeTrainingApiRepository = {
+  getCalendar: (month: string) =>
+    apiRequest<TrainingCalendarResponse>(`/trade-training/calendar?month=${encodeURIComponent(month)}`),
   listStocks: (params?: { q?: string; limit?: number }) => {
     const search = new URLSearchParams();
     if (params?.q) search.set("q", params.q);

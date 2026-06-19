@@ -174,6 +174,26 @@ class TradeJournalImageResponse(BaseModel):
     created_at: str
 
 
+class TradeMethodImageUpdate(BaseModel):
+    image_memo: str | None = None
+    image_type: str | None = Field(default=None, min_length=1, max_length=40)
+    sort_order: int | None = None
+
+
+class TradeMethodImageResponse(BaseModel):
+    id: int
+    trade_method_id: int
+    image_type: str
+    image_type_label: str
+    image_path: str
+    image_url: str | None = None
+    image_memo: str | None
+    original_filename: str | None
+    sort_order: int
+    created_at: str
+    updated_at: str | None
+
+
 class TradeJournalDeleteResponse(BaseModel):
     success: bool
 

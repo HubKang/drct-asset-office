@@ -13,11 +13,17 @@ from backend.app.schemas.trade_training_schema import (
     TrainingResultResponse,
     SimulationReviewResponse,
     SimulationReviewSaveRequest,
+    TrainingCalendarResponse,
     TrainingStockListResponse,
 )
 from backend.app.services.trade_training_service import TradeTrainingService
 
 router = APIRouter(tags=["trade-training"])
+
+
+@router.get("/trade-training/calendar", response_model=TrainingCalendarResponse)
+def get_training_calendar(month: str = Query(..., pattern=r"^\d{4}-\d{2}$"), db: Session = Depends(get_db)) -> dict:
+    return TradeTrainingService(db).get_training_calendar(month=month)
 
 
 @router.get("/trade-training/stocks", response_model=TrainingStockListResponse)

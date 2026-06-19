@@ -1,5 +1,4 @@
 ﻿import { useEffect, useMemo, useState } from "react";
-import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import { repositories } from "@/services";
 import { appConfig } from "@/services/config/appConfig";
@@ -331,24 +330,34 @@ function TradeJournalsPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="매매일지" description="매매일지 관리 · GPT 매매복기" />
+      <div className="journal-hero-row">
+        <section className="journal-hero-panel">
+          <h1>매매일지</h1>
+          <p>매매일지 관리 · GPT 매매일지 복기</p>
+        </section>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-        <SectionCard title="총 거래">
-          <p className="text-2xl font-semibold text-slate-900">{summaryStats.total}건</p>
-        </SectionCard>
-        <SectionCard title="승리">
-          <p className="text-2xl font-semibold text-emerald-700">{summaryStats.wins}건</p>
-        </SectionCard>
-        <SectionCard title="손실">
-          <p className="text-2xl font-semibold text-rose-700">{summaryStats.losses}건</p>
-        </SectionCard>
-        <SectionCard title="평균 수익률">
-          <p className="text-2xl font-semibold text-slate-900">{formatRate(summaryStats.avgProfitRate)}</p>
-        </SectionCard>
-        <SectionCard title="실현손익 합계">
-          <p className="text-2xl font-semibold text-slate-900">{formatWon(summaryStats.realizedSum)}</p>
-        </SectionCard>
+        <section className="journal-summary-compact" aria-label="매매일지 요약">
+          <div className="journal-summary-mini-card">
+            <span className="journal-summary-label">총 거래</span>
+            <strong className="journal-summary-value">{summaryStats.total}건</strong>
+          </div>
+          <div className="journal-summary-mini-card">
+            <span className="journal-summary-label">승리</span>
+            <strong className="journal-summary-value journal-summary-value-win">{summaryStats.wins}건</strong>
+          </div>
+          <div className="journal-summary-mini-card">
+            <span className="journal-summary-label">손실</span>
+            <strong className="journal-summary-value journal-summary-value-loss">{summaryStats.losses}건</strong>
+          </div>
+          <div className="journal-summary-mini-card">
+            <span className="journal-summary-label">평균 수익률</span>
+            <strong className="journal-summary-value">{formatRate(summaryStats.avgProfitRate)}</strong>
+          </div>
+          <div className="journal-summary-mini-card">
+            <span className="journal-summary-label">실현손익 합계</span>
+            <strong className="journal-summary-value journal-summary-value-money" title={formatWon(summaryStats.realizedSum)}>{formatWon(summaryStats.realizedSum)}</strong>
+          </div>
+        </section>
       </div>
 
       <SectionCard title="조회 기간">

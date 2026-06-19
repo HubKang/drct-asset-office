@@ -50,23 +50,22 @@ from backend.app.services.analysis_classifier import AnalysisClassifier
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_NEWS_ITEM_SUMMARY_TEMPLATE = """당신은 국내 주식 뉴스를 투자 관점으로 짧게 요약하는 보조 AI입니다.
-아래 뉴스 1건을 읽고, 단순 요약이 아니라 투자 판단에 참고할 구조화 메모를 작성하세요.
+DEFAULT_NEWS_ITEM_SUMMARY_TEMPLATE = """당신은 국내 주식 뉴스 요약 보조 AI입니다.
+아래 뉴스 1건을 읽고 기사 요약, 관련 키워드, 중요도만 간결하게 정리하세요.
 
 반드시 JSON 객체만 출력하세요. 설명문/마크다운/코드블록은 금지합니다.
 
 {
-  "summary": "핵심 내용 2~4문장",
-  "investment_view": "종목/테마/수급 관점 해석 2~4문장",
-  "positive_factors": ["긍정 요인"],
-  "risk_factors": ["리스크 요인"],
-  "follow_up_points": ["추가 확인 포인트"],
-  "sentiment": "positive | neutral | negative",
-  "importance_score": 0,
-  "risk_level": "low | medium | high | unknown",
-  "event_type": "earnings | contract | investment | regulation | lawsuit | product | market | supply | policy | other",
-  "tags": ["태그"]
+  "summary": "기사 핵심 내용 2~3문장으로 요약",
+  "keywords": ["관련 키워드 3~7개"],
+  "importance_score": 0
 }
+
+규칙:
+- summary는 기사 제목과 본문에 있는 사실만 사용하세요.
+- keywords는 종목명, 산업, 제품, 정책, 이슈를 중심으로 3~7개만 작성하세요.
+- importance_score는 0~100 정수로 작성하세요. 낮음 0~39, 보통 40~69, 높음 70~100 기준입니다.
+- 감성, 리스크, 이벤트 유형, 투자 의견, 후속 확인 항목은 출력하지 마세요.
 
 종목명: {{stock_name}}
 종목코드: {{stock_code}}
@@ -416,12 +415,10 @@ class AnalysisService:
         success_count = 0
         failed_count = 0
         skipped_count = 0
-        rules = self.classification_rule_repo.list_active_by_target("news")
-        self._warn_if_no_active_rules(target_type="news", active_rule_count=len(rules))
         item_system_prompt = (
-            "너는 투자 뉴스를 구조화 메모로 정리하는 보조 AI이다. "
+            "너는 국내 주식 뉴스 요약 보조 AI이다. "
             "내부 사고 과정, Thinking Process, Analysis, Reasoning을 절대 출력하지 마라. "
-            "지정한 JSON 객체만 출력하라."
+            "summary, keywords, importance_score만 포함한 JSON 객체만 출력하라."
         )
 
         for item in items:
@@ -443,10 +440,7 @@ class AnalysisService:
             for attempt in range(attempts):
                 prompt = base_prompt
                 if attempt > 0:
-                    prompt += (
-                        "\n\n이전 응답이 형식 또는 품질 기준을 충족하지 못했습니다. "
-                        "JSON 객체만 출력하고, summary/key_facts/keywords/follow_up_points를 더 명확히 작성하세요."
-                    )
+                    prompt += "\n\n이전 응답이 형식 기준을 충족하지 못했습니다. summary, keywords, importance_score만 담은 JSON 객체만 출력하세요."
                 try:
                     raw = self.llm_client.generate_text(
                         prompt=prompt,
@@ -464,36 +458,23 @@ class AnalysisService:
                         (raw or "")[:400],
                     )
                     cleaned = self._clean_item_summary_text(raw)
-                    structured = self._parse_news_summary_payload(cleaned)
+                    structured = self._parse_simple_news_summary_payload(cleaned, item)
                     if not structured:
                         last_error = "json_parse_failed"
                         logger.warning("[news_ai_summary] news_id=%s attempt=%s parse_success=False quality=0 reason=%s", item.id, attempt + 1, last_error)
                         continue
-                    if not self._is_valid_structured_summary(structured) and attempt + 1 < attempts:
+                    if not self._is_valid_simple_news_summary(structured) and attempt + 1 < attempts:
                         last_error = "quality_too_low"
                         continue
 
-                    title_text = self._normalize_news_text(getattr(item, "title", ""))
-                    content_text = self._normalize_news_text(getattr(item, "summary", ""))
-                    detected_numbers = structured.get("key_numbers") or self._extract_key_numbers(f"{title_text} {content_text}")
-                    structured["key_numbers"] = detected_numbers
-                    structured["risk_level"] = self._infer_risk_level(title_text, content_text, structured.get("risk_level", "unknown"))
-                    structured["event_type"] = self._infer_event_type(title_text, content_text, structured.get("event_type", "other"))
-                    structured["importance_score"] = self._normalize_importance_with_context(
-                        structured.get("importance_score"),
-                        structured["event_type"],
-                        structured["risk_level"],
-                        detected_numbers,
-                    )
-                    quality_score = self._score_structured_summary(structured, raw)
+                    quality_score = self._score_simple_news_summary(structured, raw)
                     logger.info(
-                        "[news_ai_summary] news_id=%s attempt=%s parse_success=True quality=%s importance=%s risk=%s event=%s",
+                        "[news_ai_summary] news_id=%s attempt=%s parse_success=True quality=%s importance=%s keywords=%s",
                         item.id,
                         attempt + 1,
                         quality_score,
                         structured["importance_score"],
-                        structured["risk_level"],
-                        structured["event_type"],
+                        len(structured.get("keywords") or []),
                     )
                     candidate = {
                         "structured": structured,
@@ -506,28 +487,17 @@ class AnalysisService:
                         last_error = "quality_too_low"
                         continue
 
-                    cleaned = self._format_structured_news_summary(structured)
-                    sentiment_value = self._normalize_sentiment(structured.get("sentiment"))
+                    cleaned = self._format_simple_news_summary(structured)
                     importance_value = int(structured.get("importance_score") or 50)
-                    raw_tags = self._normalize_string_list(structured.get("tags"))
-                    raw_tags.extend([f"risk:{structured['risk_level']}", f"event:{structured['event_type']}"])
-                    raw_tags.append(f"relevance:{structured.get('relevance_level', 'medium')}")
-                    tags_value = self._normalize_tags(raw_tags)
-
-                    classified = self.classifier.classify_news(
-                        title=item.title,
-                        summary=item.summary,
-                        ai_summary=cleaned,
-                        rules=rules,
-                    )
+                    tags_value = self._normalize_tags(structured.get("keywords") or [])
                     self.news_repo.update_ai_summary(
                         news_id=item.id,
                         ai_summary=cleaned,
-                        ai_sentiment=sentiment_value or str(classified.get("ai_sentiment", "neutral")),
-                        ai_importance_score=importance_value if importance_value is not None else int(classified.get("ai_importance_score", 50)),
-                        ai_tags=tags_value or str(classified.get("ai_tags", "뉴스")),
+                        ai_sentiment=None,
+                        ai_importance_score=importance_value,
+                        ai_tags=tags_value,
                         ai_processed_at=processed_at,
-                        ai_summary_error=None if quality_score >= 70 else f"partial:quality={quality_score}",
+                        ai_summary_error=None,
                     )
                     success_count += 1
                     saved = True
@@ -538,43 +508,31 @@ class AnalysisService:
 
             if not saved and best_result is not None and best_result.get("quality_score", 0) >= 50:
                 chosen = best_result["structured"]
-                cleaned = self._format_structured_news_summary(chosen)
-                sentiment_value = self._normalize_sentiment(chosen.get("sentiment"))
+                cleaned = self._format_simple_news_summary(chosen)
                 importance_value = int(chosen.get("importance_score") or 50)
-                raw_tags = self._normalize_string_list(chosen.get("tags"))
-                raw_tags.extend([f"risk:{chosen['risk_level']}", f"event:{chosen['event_type']}"])
-                raw_tags.append(f"relevance:{chosen.get('relevance_level', 'medium')}")
-                tags_value = self._normalize_tags(raw_tags)
+                tags_value = self._normalize_tags(chosen.get("keywords") or [])
                 self.news_repo.update_ai_summary(
                     news_id=item.id,
                     ai_summary=cleaned,
-                    ai_sentiment=sentiment_value or "neutral",
+                    ai_sentiment=None,
                     ai_importance_score=importance_value,
                     ai_tags=tags_value,
                     ai_processed_at=processed_at,
-                    ai_summary_error=f"partial:quality={best_result['quality_score']}",
+                    ai_summary_error=None,
                 )
-                logger.info("[news_ai_summary] news_id=%s selected_result_attempt=best partial quality=%s", item.id, best_result["quality_score"])
+                logger.info("[news_ai_summary] news_id=%s selected_result_attempt=best quality=%s", item.id, best_result["quality_score"])
                 success_count += 1
                 saved = True
 
             if not saved:
-                fallback_payload = self._build_news_summary_fallback(item, last_error or "invalid or empty summary response")
-                title_text = self._normalize_news_text(getattr(item, "title", ""))
-                content_text = self._normalize_news_text(getattr(item, "summary", ""))
-                fallback_payload["key_numbers"] = self._extract_key_numbers(f"{title_text} {content_text}")
-                fallback_summary = self._format_structured_news_summary(fallback_payload)
+                fallback_payload = self._build_simple_news_summary_fallback(item, last_error or "invalid or empty summary response")
+                fallback_summary = self._format_simple_news_summary(fallback_payload)
                 self.news_repo.update_ai_summary(
                     news_id=item.id,
                     ai_summary=fallback_summary,
-                    ai_sentiment=self._normalize_sentiment(fallback_payload.get("sentiment")) or "neutral",
-                    ai_importance_score=self._normalize_importance_with_context(
-                        fallback_payload.get("importance_score"),
-                        "other",
-                        "unknown",
-                        fallback_payload.get("key_numbers") or [],
-                    ),
-                    ai_tags=self._normalize_tags((fallback_payload.get("tags") or []) + ["risk:unknown", "event:other"]),
+                    ai_sentiment=None,
+                    ai_importance_score=int(fallback_payload.get("importance_score") or 30),
+                    ai_tags=self._normalize_tags(fallback_payload.get("keywords") or []),
                     ai_processed_at=processed_at,
                     ai_summary_error=f"fallback:{last_error or 'applied'}",
                 )
@@ -588,7 +546,7 @@ class AnalysisService:
             success_count=success_count,
             failed_count=failed_count,
             skipped_count=skipped_count,
-            message=self._message_with_active_rules("news ai summary completed", len(rules)),
+            message="news ai summary completed",
         )
 
     def summarize_disclosures(
@@ -1080,6 +1038,143 @@ class AnalysisService:
             if cleaned.startswith(prefix):
                 cleaned = cleaned[len(prefix) :].strip()
         return cleaned
+
+    def _parse_simple_news_summary_payload(self, text: str, item: Any | None = None) -> dict[str, Any] | None:
+        payload = self._extract_json_object(text)
+        if not payload:
+            repaired = self._repair_json_like_text(text)
+            payload = self._extract_json_object(repaired)
+        if not payload:
+            logger.warning("news_ai_summary simple parse failed after repair")
+            return None
+
+        title_text = self._normalize_news_text(getattr(item, "title", "")) if item is not None else ""
+        content_text = self._normalize_news_text(getattr(item, "summary", "")) if item is not None else ""
+        summary = self._normalize_news_text(payload.get("summary"))
+        if not summary:
+            summary = self._fallback_simple_news_summary_text(title_text, content_text)
+
+        keywords = self._normalize_string_list(payload.get("keywords"))
+        keywords = self._normalize_simple_news_keywords(keywords)
+        if not keywords:
+            keywords = self._fallback_news_keywords(f"{title_text} {content_text}")
+
+        importance_score = self._normalize_importance_score(payload.get("importance_score"))
+        if importance_score is None:
+            importance_score = self._normalize_importance_score(getattr(item, "importance_score", None)) if item is not None else None
+        if importance_score is None:
+            importance_score = 30
+
+        return {
+            "summary": summary,
+            "keywords": keywords,
+            "importance_score": importance_score,
+        }
+
+    def _is_valid_simple_news_summary(self, payload: dict[str, Any]) -> bool:
+        summary = self._normalize_news_text(payload.get("summary"))
+        keywords = payload.get("keywords") or []
+        return len(summary) >= 12 and bool(keywords) and self._normalize_importance_score(payload.get("importance_score")) is not None
+
+    def _score_simple_news_summary(self, payload: dict[str, Any], raw_response: str | None = None) -> int:
+        score = 0
+        summary_len = len(self._normalize_news_text(payload.get("summary")))
+        keywords = payload.get("keywords") or []
+        if summary_len >= 40:
+            score += 55
+        elif summary_len >= 20:
+            score += 40
+        elif summary_len >= 12:
+            score += 25
+        if 3 <= len(keywords) <= 7:
+            score += 30
+        elif keywords:
+            score += 15
+        if self._normalize_importance_score(payload.get("importance_score")) is not None:
+            score += 15
+        raw = (raw_response or "").lower()
+        if any(term in raw for term in ["thinking", "reasoning", "analysis:", "cannot", "unable"]):
+            score -= 30
+        return max(0, min(100, score))
+
+    def _format_simple_news_summary(self, payload: dict[str, Any]) -> str:
+        summary = self._normalize_news_text(payload.get("summary")) or "-"
+        keywords = self._normalize_simple_news_keywords(payload.get("keywords") or [])
+        score = self._normalize_importance_score(payload.get("importance_score"))
+        return "\n\n".join(
+            [
+                "[기사 요약]\n" + summary,
+                "[관련 키워드]\n" + (", ".join(keywords) if keywords else "-"),
+                f"[중요도]\n{30 if score is None else score}",
+            ]
+        )
+
+    def _build_simple_news_summary_fallback(self, item: Any, reason: str) -> dict[str, Any]:
+        title = self._normalize_news_text(getattr(item, "title", "")) or "제목 정보 없음"
+        content = self._normalize_news_text(getattr(item, "summary", ""))
+        summary = self._fallback_simple_news_summary_text(title, content)
+        keywords = self._fallback_news_keywords(f"{title} {content}")
+        score = self._normalize_importance_score(getattr(item, "importance_score", None)) or 30
+        return {
+            "summary": summary,
+            "keywords": keywords,
+            "importance_score": score,
+            "error_reason": reason,
+        }
+
+    def _fallback_simple_news_summary_text(self, title: str, content: str) -> str:
+        title_text = self._truncate_text(self._normalize_news_text(title), 120)
+        content_text = self._normalize_news_text(content)
+        if content_text:
+            sentences = re.split(r"(?<=[.!?。！？])\s+|(?<=다\.)\s+", content_text)
+            summary = " ".join(sentence.strip() for sentence in sentences if sentence.strip())[:260].strip()
+            if summary:
+                return summary
+        return f"{title_text or '뉴스'} 관련 기사입니다. 제목과 수집된 설명을 기준으로 핵심 내용을 간단히 정리했습니다."
+
+    def _normalize_simple_news_keywords(self, keywords: Any) -> list[str]:
+        raw_keywords = self._normalize_string_list(keywords)
+        filtered: list[str] = []
+        blocked_prefixes = ("risk:", "event:", "relevance:")
+        for keyword in raw_keywords:
+            value = self._normalize_news_text(keyword).strip(" ,.#")
+            if not value or value.lower().startswith(blocked_prefixes):
+                continue
+            if value not in filtered:
+                filtered.append(value)
+            if len(filtered) >= 7:
+                break
+        return filtered
+
+    def _fallback_news_keywords(self, text: str) -> list[str]:
+        normalized = self._normalize_news_text(text)
+        tokens = re.findall(r"[가-힣A-Za-z0-9][가-힣A-Za-z0-9·\-/]{1,24}", normalized)
+        stopwords = {
+            "뉴스",
+            "기사",
+            "관련",
+            "오늘",
+            "기준",
+            "대한",
+            "이번",
+            "지난",
+            "있는",
+            "없는",
+            "으로",
+            "에서",
+            "투자",
+            "시장",
+        }
+        keywords: list[str] = []
+        for token in tokens:
+            value = token.strip(" ,.")
+            if len(value) < 2 or value in stopwords:
+                continue
+            if value not in keywords:
+                keywords.append(value)
+            if len(keywords) >= 5:
+                break
+        return keywords or ["뉴스"]
 
     def _parse_news_summary_payload(self, text: str) -> dict[str, Any] | None:
         payload = self._extract_json_object(text)

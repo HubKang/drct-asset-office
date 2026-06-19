@@ -253,8 +253,16 @@ class DailyThemeFlowStocksResponse(BaseModel):
     items: list[DailyThemeFlowStockItem] = Field(default_factory=list)
 
 
+class MonthlyThemeFlowStockItem(BaseModel):
+    stock_id: int | None = None
+    stock_code: str | None = None
+    stock_name: str
+
+
 class MonthlyThemeFlowCalendarThemeItem(BaseModel):
     rank: int
+    theme_group_id: int | None = None
+    theme_group_name: str = "미지정 테마그룹"
     market_theme_id: int
     theme_name: str
     stock_count: int
@@ -267,10 +275,13 @@ class MonthlyThemeFlowCalendarThemeItem(BaseModel):
     final_rank: int | None = None
     rank_score: float = 0
     rank_basis: str = "auto"
+    stocks: list[MonthlyThemeFlowStockItem] = Field(default_factory=list)
 
 
 class MonthlyThemeFlowCalendarDayItem(BaseModel):
     trade_date: str
+    event_count: int = 0
+    related_stock_count: int = 0
     themes: list[MonthlyThemeFlowCalendarThemeItem] = Field(default_factory=list)
 
 
@@ -298,6 +309,12 @@ class MonthlyThemeFlowTrendPoint(BaseModel):
 class MonthlyThemeFlowTrendTheme(BaseModel):
     market_theme_id: int
     theme_name: str
+    view_mode: str = "THEME"
+    theme_group_id: int | None = None
+    theme_group_name: str | None = None
+    child_theme_count: int = 0
+    top_child_themes: list[str] = Field(default_factory=list)
+    related_stocks: list[str] = Field(default_factory=list)
     series: list[MonthlyThemeFlowTrendPoint] = Field(default_factory=list)
 
 

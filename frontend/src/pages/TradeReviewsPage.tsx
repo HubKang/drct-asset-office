@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import { repositories } from "@/services";
 import type { TradeMethod } from "@/types/tradeJournal";
@@ -171,7 +170,7 @@ function TradeReviewsPage() {
       setItems(listResponse.items ?? []);
       setSummary(summaryResponse ?? emptySummary);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "매매복기 데이터를 불러오지 못했습니다.");
+      setError(e instanceof Error ? e.message : "매매일지 복기 데이터를 불러오지 못했습니다.");
     } finally {
       setLoading(false);
     }
@@ -226,10 +225,10 @@ function TradeReviewsPage() {
       setDetail(saved);
       setForm(toForm(saved));
       setCheckItems(saved.check_items ?? []);
-      setMessage("매매복기가 저장되었습니다.");
+      setMessage("매매일지 복기가 저장되었습니다.");
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "매매복기 저장에 실패했습니다.");
+      setError(e instanceof Error ? e.message : "매매일지 복기 저장에 실패했습니다.");
     } finally {
       setSaving(false);
     }
@@ -277,24 +276,29 @@ function TradeReviewsPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="매매복기" description="수익률보다 원칙 준수, 충동매매, 반복 실수를 중심으로 매매 습관을 점검합니다." />
+      <div className="journal-hero-row review-hero-row">
+        <section className="journal-hero-panel">
+          <h1>매매일지 복기</h1>
+          <p>매매일지 데이터를 기반으로 원칙 준수, 충동매매, 반복 실수를 점검합니다.</p>
+        </section>
 
-      <div className="review-kpi-bar">
-        {[
-          ["총 매매", `${summary.total_trades}건`, ""],
-          ["복기완료", `${summary.reviewed_count}건`, "success"],
-          ["미복기", `${summary.unreviewed_count}건`, "warning"],
-          ["완료율", `${summary.review_rate.toFixed(1)}%`, ""],
-          ["원칙위반", `${summary.principle_violation_count}건`, "danger"],
-          ["원칙미확인", `${principleUnknownCount}건`, "warning"],
-          ["충동매매", `${summary.impulse_trade_count}건`, "danger"],
-          ["반복실수", topMistake, "muted"],
-        ].map(([label, value, tone]) => (
-          <div key={label} className={`review-kpi-pill ${tone ? `is-${tone}` : ""}`}>
-            <span>{label}</span>
-            <strong>{value}</strong>
-          </div>
-        ))}
+        <section className="review-kpi-bar review-kpi-hero" aria-label="매매일지 복기 요약">
+          {[
+            ["총 매매", `${summary.total_trades}건`, ""],
+            ["복기완료", `${summary.reviewed_count}건`, "success"],
+            ["미복기", `${summary.unreviewed_count}건`, "warning"],
+            ["완료율", `${summary.review_rate.toFixed(1)}%`, ""],
+            ["원칙위반", `${summary.principle_violation_count}건`, "danger"],
+            ["원칙미확인", `${principleUnknownCount}건`, "warning"],
+            ["충동매매", `${summary.impulse_trade_count}건`, "danger"],
+            ["반복실수", topMistake, "muted"],
+          ].map(([label, value, tone]) => (
+            <div key={label} className={`review-kpi-pill ${tone ? `is-${tone}` : ""}`}>
+              <span>{label}</span>
+              <strong>{value}</strong>
+            </div>
+          ))}
+        </section>
       </div>
 
       {(message || error) ? (
@@ -463,7 +467,7 @@ function TradeReviewsPage() {
           <aside className="trade-journal-detail-drawer">
             <div className="trade-journal-detail-drawer-header">
               <div>
-                <h3>매매복기</h3>
+                <h3>매매일지 복기</h3>
                 <p className="mt-1 text-xs text-slate-500">손실이어도 원칙을 지켰다면 B급 매매일 수 있습니다.</p>
               </div>
               <button type="button" className="btn btn-secondary" onClick={closeDetail}>

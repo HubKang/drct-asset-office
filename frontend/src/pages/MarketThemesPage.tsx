@@ -1,5 +1,4 @@
 ﻿import { useEffect, useMemo, useState } from "react";
-import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import StatusBadge from "@/components/common/StatusBadge";
 import { repositories } from "@/services";
@@ -457,15 +456,38 @@ function MarketThemesPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="시장 테마 관리" description="이슈·수급 흐름, 뉴스·공시 키워드 기반으로 테마와 연결 종목을 관리합니다." />
+      <div className="journal-hero-row market-theme-hero-row">
+        <section className="journal-hero-panel">
+          <h1>시장 테마 관리</h1>
+          <p>이슈·수급 흐름, 뉴스·공시 키워드 기반으로 테마와 연결 종목을 관리합니다.</p>
+        </section>
 
-      <div className="watchlist-top-stats">
-        <div className="watchlist-top-stat-card"><p className="watchlist-top-stat-label">테마그룹</p><strong className="watchlist-top-stat-value">{themeGroupCount}</strong></div>
-        <div className="watchlist-top-stat-card"><p className="watchlist-top-stat-label">전체 테마</p><strong className="watchlist-top-stat-value">{manageableThemes.length}</strong></div>
-        <div className="watchlist-top-stat-card"><p className="watchlist-top-stat-label">활성 테마</p><strong className="watchlist-top-stat-value">{activeThemesCount}</strong></div>
-        <div className="watchlist-top-stat-card"><p className="watchlist-top-stat-label">수급 테마</p><strong className="watchlist-top-stat-value">{supplyThemesCount}</strong></div>
-        <div className="watchlist-top-stat-card"><p className="watchlist-top-stat-label">연결 종목 있음</p><strong className="watchlist-top-stat-value">{linkedThemesCount}</strong></div>
-        <div className="watchlist-top-stat-card"><p className="watchlist-top-stat-label">추천 후보</p><strong className="watchlist-top-stat-value">{pendingCandidatesCount}</strong></div>
+        <section className="journal-summary-compact market-theme-hero-summary" aria-label="시장 테마 요약">
+          <div className="journal-summary-mini-card">
+            <span className="journal-summary-label">테마그룹</span>
+            <strong className="journal-summary-value">{themeGroupCount}</strong>
+          </div>
+          <div className="journal-summary-mini-card">
+            <span className="journal-summary-label">전체 테마</span>
+            <strong className="journal-summary-value">{manageableThemes.length}</strong>
+          </div>
+          <div className="journal-summary-mini-card">
+            <span className="journal-summary-label">활성 테마</span>
+            <strong className="journal-summary-value">{activeThemesCount}</strong>
+          </div>
+          <div className="journal-summary-mini-card">
+            <span className="journal-summary-label">수급 테마</span>
+            <strong className="journal-summary-value">{supplyThemesCount}</strong>
+          </div>
+          <div className="journal-summary-mini-card">
+            <span className="journal-summary-label">연결 종목 있음</span>
+            <strong className="journal-summary-value">{linkedThemesCount}</strong>
+          </div>
+          <div className="journal-summary-mini-card">
+            <span className="journal-summary-label">추천 후보</span>
+            <strong className="journal-summary-value">{pendingCandidatesCount}</strong>
+          </div>
+        </section>
       </div>
 
       {message ? <div className="inline-result inline-success">{message}</div> : null}

@@ -7,27 +7,16 @@ import { repositories } from "@/services";
 import type { AiSummarizeResponse } from "@/types/analysis";
 import type { NewsBulkDeleteResponse, NewsCollectResponse, NewsCollectSelectedResponse, NewsCollectionTarget, NewsItem } from "@/types/news";
 
-function sentimentMeta(sentiment?: string | null): { label: string; variant: "positive" | "neutral" | "negative" } {
-  const value = (sentiment || "").toLowerCase();
-  if (value === "positive") return { label: "긍정", variant: "positive" };
-  if (value === "negative") return { label: "부정", variant: "negative" };
-  return { label: "중립", variant: "neutral" };
-}
-
 function importanceMeta(score?: number | null): { label: string; variant: "importance-high" | "importance-medium" | "importance-low" } {
   const value = Number.isFinite(score) ? Number(score) : 0;
-  if (value >= 70) return { label: `${value} / 중요`, variant: "importance-high" };
-  if (value >= 40) return { label: `${value} / 보통`, variant: "importance-medium" };
-  return { label: `${value} / 낮음`, variant: "importance-low" };
+  if (value >= 70) return { label: `${value}점 · 높음`, variant: "importance-high" };
+  if (value >= 40) return { label: `${value}점 · 보통`, variant: "importance-medium" };
+  return { label: `${value}점 · 낮음`, variant: "importance-low" };
 }
 
-function aiStatusMeta(news: NewsItem): { label: string; tone: "emerald" | "rose" | "blue" | "slate" } {
-  const err = (news.ai_summary_error || "").toLowerCase();
-  if (err.startsWith("fallback:")) return { label: "보완 필요", tone: "rose" };
-  if (err.startsWith("partial:")) return { label: "일부 보완", tone: "blue" };
-  if (news.ai_summary) return { label: "완료", tone: "emerald" };
-  if (news.ai_summary_error) return { label: "실패", tone: "rose" };
-  if (news.ai_processed_at) return { label: "처리중", tone: "blue" };
+function aiStatusMeta(news: NewsItem): { label: string; tone: "emerald" | "rose" | "slate" } {
+  if (news.ai_summary) return { label: "처리완료", tone: "emerald" };
+  if (news.ai_summary_error) return { label: "오류", tone: "rose" };
   return { label: "미처리", tone: "slate" };
 }
 
@@ -36,11 +25,70 @@ function formatDate(value?: string | null): string {
   return value.replace("T", " ").slice(0, 16);
 }
 
-function parseAiMetaFromTags(tags?: string | null): { riskLevel: string; eventType: string } {
-  const raw = (tags || "").split(",").map((v) => v.trim()).filter(Boolean);
-  const risk = raw.find((v) => v.startsWith("risk:"))?.slice(5) || "unknown";
-  const event = raw.find((v) => v.startsWith("event:"))?.slice(6) || "other";
-  return { riskLevel: risk, eventType: event };
+type SimpleNewsAiSummary = {
+  summary: string;
+  keywords: string[];
+  importanceScore: number | null;
+};
+
+function splitKeywordText(value?: string | null): string[] {
+  if (!value) return [];
+  return value
+    .split(/[,|\n]/)
+    .map((keyword) => keyword.replace(/^[-•]\s*/, "").trim())
+    .filter((keyword) => keyword && !keyword.startsWith("risk:") && !keyword.startsWith("event:") && !keyword.startsWith("relevance:"))
+    .filter((keyword, index, values) => values.indexOf(keyword) === index)
+    .slice(0, 7);
+}
+
+function extractSection(text: string, title: string): string {
+  const pattern = new RegExp(`\\[${title}\\]\\s*([\\s\\S]*?)(?=\\n\\s*\\[[^\\]]+\\]|$)`);
+  return pattern.exec(text)?.[1]?.trim() ?? "";
+}
+
+function fallbackKeywordsFromText(text?: string | null): string[] {
+  const tokens = (text || "").match(/[가-힣A-Za-z0-9][가-힣A-Za-z0-9·\-/]{1,24}/g) ?? [];
+  const blocked = new Set(["뉴스", "기사", "관련", "오늘", "기준", "이번", "지난", "시장", "투자"]);
+  return tokens.filter((token, index, values) => !blocked.has(token) && values.indexOf(token) === index).slice(0, 3);
+}
+
+function parseSimpleAiSummary(news: NewsItem): SimpleNewsAiSummary {
+  const raw = news.ai_summary?.trim() || "";
+  let summary = "";
+  let keywords: string[] = [];
+  let importanceScore = news.ai_importance_score ?? news.importance_score ?? null;
+
+  if (raw.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(raw) as { summary?: unknown; keywords?: unknown; importance_score?: unknown };
+      summary = typeof parsed.summary === "string" ? parsed.summary.trim() : "";
+      keywords = Array.isArray(parsed.keywords) ? parsed.keywords.map((keyword) => String(keyword).trim()).filter(Boolean) : [];
+      const parsedScore = Number(parsed.importance_score);
+      if (Number.isFinite(parsedScore)) importanceScore = parsedScore;
+    } catch {
+      summary = "";
+    }
+  }
+
+  if (!summary && raw) {
+    summary = extractSection(raw, "기사 요약") || extractSection(raw, "핵심 요약") || raw;
+    summary = summary.replace(/\n\s*-\s*수치:.*$/m, "").trim();
+  }
+  if (!keywords.length && raw) {
+    keywords = splitKeywordText(extractSection(raw, "관련 키워드"));
+  }
+  if (!keywords.length) {
+    keywords = splitKeywordText(news.ai_tags);
+  }
+  if (!keywords.length) {
+    keywords = fallbackKeywordsFromText(`${news.stock_name ?? ""} ${news.title}`);
+  }
+
+  return {
+    summary: summary || news.summary || "아직 AI 요약이 생성되지 않았습니다.",
+    keywords,
+    importanceScore,
+  };
 }
 
 function toUserError(error: unknown, fallback: string): string {
@@ -297,7 +345,7 @@ function NewsPage() {
     setIsDrawerOpen(false);
     setSelectedNews(null);
   };
-  const selectedMeta = useMemo(() => parseAiMetaFromTags(selectedNews?.ai_tags), [selectedNews?.ai_tags]);
+  const selectedAiSummary = selectedNews ? parseSimpleAiSummary(selectedNews) : null;
 
   return (
     <div className="space-y-4">
@@ -437,16 +485,16 @@ function NewsPage() {
                         <th className="news-col-stock">종목명</th>
                         <th className="news-col-title">제목</th>
                         <th className="news-col-importance">중요도</th>
-                        <th className="news-col-sentiment">감성</th>
+                        <th className="news-col-keywords">키워드</th>
                         <th className="news-col-source">출처</th>
                         <th className="news-col-date">발행일</th>
                       </tr>
                     </thead>
                     <tbody>
                       {sortedItems.map((news) => {
-                        const sentiment = sentimentMeta(news.ai_sentiment ?? news.sentiment);
                         const importance = importanceMeta(news.ai_importance_score ?? news.importance_score);
                         const aiStatus = aiStatusMeta(news);
+                        const aiSummary = parseSimpleAiSummary(news);
                         const checked = checkedNewsIds.includes(news.id);
                         return (
                           <tr key={news.id} className="row-clickable" onClick={() => onOpenDetail(news)}>
@@ -473,7 +521,13 @@ function NewsPage() {
                               {news.title}
                             </td>
                             <td><StatusBadge label={importance.label} variant={importance.variant} /></td>
-                            <td><StatusBadge label={sentiment.label} variant={sentiment.variant} /></td>
+                            <td>
+                              <div className="news-keyword-chip-list compact">
+                                {aiSummary.keywords.length ? aiSummary.keywords.slice(0, 4).map((keyword) => (
+                                  <span key={keyword} className="news-keyword-chip">{keyword}</span>
+                                )) : <span className="cell-muted">-</span>}
+                              </div>
+                            </td>
                             <td className="cell-nowrap">{news.source ?? "-"}</td>
                             <td className="cell-nowrap cell-muted">{formatDate(news.published_at)}</td>
                           </tr>
@@ -530,9 +584,6 @@ function NewsPage() {
                   <div className="detail-body">
                     <p>{`종목명: ${selectedNews.stock_name ?? "-"}`}</p>
                     <p>{`종목코드: ${selectedNews.stock_code ?? "-"}`}</p>
-                    <p>{`중요도: ${selectedNews.ai_importance_score ?? selectedNews.importance_score ?? "-"}`}</p>
-                    <p>{`감성: ${selectedNews.ai_sentiment ?? selectedNews.sentiment ?? "-"}`}</p>
-                    <p>Risk: 미분류</p>
                     <p>{`출처: ${selectedNews.source ?? "-"}`}</p>
                     <p>{`발행일: ${formatDate(selectedNews.published_at)}`}</p>
                     <p>{`수집일: ${formatDate(selectedNews.collected_at)}`}</p>
@@ -540,25 +591,39 @@ function NewsPage() {
                   </div>
                 </div>
                 <div className="detail-section">
-                  <p className="detail-label">분석 필드</p>
+                  <p className="detail-label">AI 요약</p>
+                  <div className="news-ai-simple-grid">
+                    <div className="news-ai-simple-card summary">
+                      <span className="news-ai-simple-label">기사 요약</span>
+                      <p className="news-ai-simple-text">{selectedAiSummary?.summary ?? "아직 AI 요약이 생성되지 않았습니다."}</p>
+                    </div>
+                    <div className="news-ai-simple-card">
+                      <span className="news-ai-simple-label">관련 키워드</span>
+                      <div className="news-keyword-chip-list">
+                        {selectedAiSummary?.keywords.length ? selectedAiSummary.keywords.map((keyword) => (
+                          <span key={keyword} className="news-keyword-chip">{keyword}</span>
+                        )) : <span className="cell-muted">-</span>}
+                      </div>
+                    </div>
+                    <div className="news-ai-simple-card">
+                      <span className="news-ai-simple-label">중요도</span>
+                      <div className="news-ai-importance-line">
+                        <StatusBadge
+                          label={importanceMeta(selectedAiSummary?.importanceScore).label}
+                          variant={importanceMeta(selectedAiSummary?.importanceScore).variant}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <details className="legacy-analysis-fields">
+                  <summary>기존 분석 필드 보기</summary>
                   <div className="detail-body">
                     <p>{`tag: ${selectedNews.ai_tags ?? "미분류"}`}</p>
                     <p>{`score: ${selectedNews.ai_importance_score ?? selectedNews.importance_score ?? "-"}`}</p>
                     <p>{`sentiment: ${selectedNews.ai_sentiment ?? selectedNews.sentiment ?? "미분류"}`}</p>
-                    <p>{`risk_level: ${selectedMeta.riskLevel}`}</p>
-                    <p>{`event_type: ${selectedMeta.eventType}`}</p>
                   </div>
-                </div>
-                <div className="detail-section">
-                  <p className="detail-label">AI 요약</p>
-                  {(selectedNews.ai_summary_error || "").toLowerCase().startsWith("fallback:") ? (
-                    <p className="text-xs text-amber-700 mb-2">AI 요약 상태: 보완 필요</p>
-                  ) : null}
-                  {(selectedNews.ai_summary_error || "").toLowerCase().startsWith("partial:") ? (
-                    <p className="text-xs text-blue-700 mb-2">AI 요약 상태: 일부 보완</p>
-                  ) : null}
-                  <p className="detail-body news-ai-summary">{selectedNews.ai_summary ?? "아직 AI 처리가 완료되지 않은 뉴스입니다."}</p>
-                </div>
+                </details>
                 <div className="detail-section">
                   <p className="detail-label">원문 링크</p>
                   {selectedNews.url ? (

@@ -433,8 +433,16 @@ export type DailyThemeFlowStocksResponse = {
   items: DailyThemeFlowStock[];
 };
 
+export type MonthlyThemeFlowStock = {
+  stock_id?: number | null;
+  stock_code?: string | null;
+  stock_name: string;
+};
+
 export type MonthlyThemeFlowCalendarTheme = {
   rank: number;
+  theme_group_id: number | null;
+  theme_group_name: string;
   market_theme_id: number;
   theme_name: string;
   stock_count: number;
@@ -447,10 +455,13 @@ export type MonthlyThemeFlowCalendarTheme = {
   final_rank: number | null;
   rank_score: number;
   rank_basis: "auto" | "manual";
+  stocks: MonthlyThemeFlowStock[];
 };
 
 export type MonthlyThemeFlowCalendarDay = {
   trade_date: string;
+  event_count: number;
+  related_stock_count: number;
   themes: MonthlyThemeFlowCalendarTheme[];
 };
 
@@ -478,6 +489,12 @@ export type MonthlyThemeFlowTrendPoint = {
 export type MonthlyThemeFlowTrendTheme = {
   market_theme_id: number;
   theme_name: string;
+  view_mode?: "THEME_GROUP" | "THEME";
+  theme_group_id?: number | null;
+  theme_group_name?: string | null;
+  child_theme_count?: number;
+  top_child_themes?: string[];
+  related_stocks?: string[];
   series: MonthlyThemeFlowTrendPoint[];
 };
 

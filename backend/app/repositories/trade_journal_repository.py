@@ -7,6 +7,7 @@ from backend.app.core.config import now_kst
 from backend.app.entities.trade_journal import TradeJournal
 from backend.app.entities.trade_journal_image import TradeJournalImage
 from backend.app.entities.trade_method import TradeMethod
+from backend.app.entities.trade_method_image import TradeMethodImage
 
 
 class TradeJournalRepository:
@@ -144,6 +145,37 @@ class TradeJournalRepository:
         return image
 
     def delete_trade_journal_image(self, image: TradeJournalImage) -> None:
+        self.db.delete(image)
+        self.db.commit()
+
+    def list_trade_method_images(self, method_id: int) -> list[TradeMethodImage]:
+        stmt = (
+            select(TradeMethodImage)
+            .where(TradeMethodImage.trade_method_id == method_id)
+            .order_by(TradeMethodImage.sort_order.asc(), TradeMethodImage.id.asc())
+        )
+        return list(self.db.scalars(stmt).all())
+
+    def create_trade_method_image(self, payload: dict) -> TradeMethodImage:
+        item = TradeMethodImage(**payload)
+        self.db.add(item)
+        self.db.commit()
+        self.db.refresh(item)
+        return item
+
+    def get_trade_method_image(self, image_id: int) -> TradeMethodImage | None:
+        return self.db.get(TradeMethodImage, image_id)
+
+    def update_trade_method_image(self, image: TradeMethodImage, payload: dict) -> TradeMethodImage:
+        for key, value in payload.items():
+            setattr(image, key, value)
+        image.updated_at = now_kst()
+        self.db.add(image)
+        self.db.commit()
+        self.db.refresh(image)
+        return image
+
+    def delete_trade_method_image(self, image: TradeMethodImage) -> None:
         self.db.delete(image)
         self.db.commit()
 

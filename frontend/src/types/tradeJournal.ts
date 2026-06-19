@@ -101,6 +101,28 @@ export type TradeJournalImage = {
   created_at?: string;
 };
 
+export type TradeMethodImageType =
+  | "example_chart"
+  | "entry_example"
+  | "exit_example"
+  | "failure_example"
+  | "checklist_reference"
+  | "other";
+
+export type TradeMethodImage = {
+  id: number;
+  trade_method_id: number;
+  image_type: TradeMethodImageType;
+  image_type_label?: string;
+  image_path: string;
+  image_url?: string | null;
+  image_memo?: string | null;
+  original_filename?: string | null;
+  sort_order: number;
+  created_at?: string;
+  updated_at?: string | null;
+};
+
 export type TradeCalendarDaySummary = {
   trade_date: string;
   trade_count: number;

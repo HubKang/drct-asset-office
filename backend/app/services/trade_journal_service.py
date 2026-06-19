@@ -23,6 +23,15 @@ class TradeJournalService:
         "one_week_after_chart",
         "review_chart",
     }
+    VALID_METHOD_IMAGE_TYPES = {
+        "example_chart": "예시 차트",
+        "entry_example": "진입 예시",
+        "exit_example": "청산 예시",
+        "failure_example": "실패 예시",
+        "checklist_reference": "체크리스트 참고",
+        "other": "기타",
+    }
+    VALID_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
     TRADE_SINGLE_REVIEW_FALLBACK_PROMPT = (
         "당신은 데이터 기반 주식 매매 복기 코치입니다.\n"
         "아래 DrCT에셋 매매복기 패키지를 바탕으로 사용자의 매매 판단 과정과 결과를 객관적으로 분석해 주세요.\n"
@@ -222,6 +231,91 @@ class TradeJournalService:
         self.repo.delete_trade_journal_image(image)
         return {"success": True}
 
+    def list_trade_method_images(self, method_id: int):
+        _ = self.get_trade_method_or_404(method_id)
+        return [self._to_method_image_response(image) for image in self.repo.list_trade_method_images(method_id)]
+
+    def upload_trade_method_image(
+        self,
+        method_id: int,
+        image_type: str,
+        image_memo: str | None,
+        sort_order: int | None,
+        original_filename: str,
+        file_bytes: bytes,
+    ):
+        _ = self.get_trade_method_or_404(method_id)
+        normalized_type = (image_type or "").strip()
+        self._validate_method_image_type(normalized_type)
+        if not file_bytes:
+            raise HTTPException(status_code=400, detail="empty image file")
+
+        extension = Path(original_filename or "").suffix.lower()
+        if extension not in self.VALID_IMAGE_EXTENSIONS:
+            raise HTTPException(status_code=400, detail="invalid image extension")
+
+        now = datetime.now()
+        base_dir = PROJECT_ROOT / "data" / "trade_method_images" / now.strftime("%Y") / now.strftime("%m") / now.strftime("%d")
+        base_dir.mkdir(parents=True, exist_ok=True)
+
+        filename = f"method_{method_id}_{normalized_type}_{uuid4().hex[:8]}{extension}"
+        save_path = base_dir / filename
+        save_path.write_bytes(file_bytes)
+
+        relative_path = save_path.relative_to(PROJECT_ROOT).as_posix()
+        created = self.repo.create_trade_method_image(
+            {
+                "trade_method_id": method_id,
+                "image_type": normalized_type,
+                "image_path": relative_path,
+                "image_memo": (image_memo or "").strip() or None,
+                "original_filename": original_filename or filename,
+                "sort_order": int(sort_order or 0),
+                "created_at": now_kst(),
+                "updated_at": now_kst(),
+            }
+        )
+        return self._to_method_image_response(created)
+
+    def update_trade_method_image(self, method_id: int, image_id: int, payload):
+        _ = self.get_trade_method_or_404(method_id)
+        image = self.repo.get_trade_method_image(image_id)
+        if not image or image.trade_method_id != method_id:
+            raise HTTPException(status_code=404, detail="trade method image not found")
+        updates = payload.model_dump(exclude_unset=True)
+        if "image_type" in updates and updates["image_type"] is not None:
+            updates["image_type"] = updates["image_type"].strip()
+            self._validate_method_image_type(updates["image_type"])
+        if "image_memo" in updates and updates["image_memo"] is not None:
+            updates["image_memo"] = updates["image_memo"].strip() or None
+        if "sort_order" in updates and updates["sort_order"] is None:
+            updates.pop("sort_order")
+        updated = self.repo.update_trade_method_image(image, updates)
+        return self._to_method_image_response(updated)
+
+    def delete_trade_method_image(self, method_id: int, image_id: int) -> dict[str, bool]:
+        _ = self.get_trade_method_or_404(method_id)
+        image = self.repo.get_trade_method_image(image_id)
+        if not image or image.trade_method_id != method_id:
+            raise HTTPException(status_code=404, detail="trade method image not found")
+        image_path = getattr(image, "image_path", None)
+        self.repo.delete_trade_method_image(image)
+        if image_path:
+            try:
+                target = (PROJECT_ROOT / image_path).resolve()
+                data_root = (PROJECT_ROOT / "data").resolve()
+                if target.is_file() and str(target).startswith(str(data_root)):
+                    target.unlink()
+            except OSError:
+                pass
+        return {"success": True}
+
+    def get_trade_method_or_404(self, method_id: int):
+        method = self.repo.get_trade_method(method_id)
+        if not method:
+            raise HTTPException(status_code=404, detail="trade method not found")
+        return method
+
     def _to_image_response(self, image):
         image_url = None
         if image.image_path:
@@ -237,6 +331,26 @@ class TradeJournalService:
             "image_memo": image.image_memo,
             "original_filename": image.original_filename,
             "created_at": image.created_at,
+        }
+
+    def _to_method_image_response(self, image):
+        image_url = None
+        if image.image_path:
+            normalized = str(image.image_path).replace("\\", "/")
+            if normalized.startswith("data/"):
+                image_url = f"/static/{normalized[len('data/'):]}"
+        return {
+            "id": image.id,
+            "trade_method_id": image.trade_method_id,
+            "image_type": image.image_type,
+            "image_type_label": self.VALID_METHOD_IMAGE_TYPES.get(image.image_type, image.image_type),
+            "image_path": image.image_path,
+            "image_url": image_url,
+            "image_memo": image.image_memo,
+            "original_filename": image.original_filename,
+            "sort_order": int(image.sort_order or 0),
+            "created_at": image.created_at,
+            "updated_at": image.updated_at,
         }
 
     def list_calendar_monthly(self, month: str):
@@ -749,6 +863,7 @@ class TradeJournalService:
         method = self.repo.get_trade_method(method_id)
         if not method:
             raise HTTPException(status_code=404, detail="trade method not found")
+        method_images = [self._to_method_image_response(image) for image in self.repo.list_trade_method_images(method_id)]
 
         rows, _ = self.repo.list_trade_journals(
             start_date="2000-01-01",
@@ -935,6 +1050,19 @@ class TradeJournalService:
                 "total_image_count": total_image_count,
                 "chart_image_count": chart_image_count,
                 "image_analysis_hint": image_analysis_hint,
+                "method_reference_image_count": len(method_images),
+                "method_reference_images": [
+                    {
+                        "image_id": image["id"],
+                        "image_type": image["image_type"],
+                        "image_type_label": image["image_type_label"],
+                        "filename": image.get("original_filename"),
+                        "memo": image.get("image_memo"),
+                        "image_url": image.get("image_url"),
+                        "stored_path": image.get("image_path"),
+                    }
+                    for image in method_images
+                ],
             },
         }
         markdown = self._build_strategy_guide_markdown(
@@ -1500,3 +1628,7 @@ class TradeJournalService:
     def _validate_image_type(self, image_type: str) -> None:
         if image_type not in self.VALID_IMAGE_TYPES:
             raise HTTPException(status_code=400, detail=f"invalid image_type: {image_type}")
+
+    def _validate_method_image_type(self, image_type: str) -> None:
+        if image_type not in self.VALID_METHOD_IMAGE_TYPES:
+            raise HTTPException(status_code=400, detail=f"invalid method image_type: {image_type}")

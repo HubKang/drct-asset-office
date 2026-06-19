@@ -20,6 +20,8 @@ from backend.app.schemas.trade_journal_schema import (
     TradeJournalMonthlyStatisticResponse,
     TradeJournalUpdate,
     TradeMethodCreate,
+    TradeMethodImageResponse,
+    TradeMethodImageUpdate,
     TradeMethodResponse,
     TradeMethodUpdate,
 )
@@ -45,6 +47,41 @@ def create_trade_method(payload: TradeMethodCreate, db: Session = Depends(get_db
 @router.patch("/trade-methods/{method_id}", response_model=TradeMethodResponse)
 def update_trade_method(method_id: int, payload: TradeMethodUpdate, db: Session = Depends(get_db)):
     return TradeJournalService(db).update_trade_method(method_id, payload)
+
+
+@router.get("/trade-methods/{method_id}/images", response_model=list[TradeMethodImageResponse])
+def list_trade_method_images(method_id: int, db: Session = Depends(get_db)):
+    return TradeJournalService(db).list_trade_method_images(method_id)
+
+
+@router.post("/trade-methods/{method_id}/images", response_model=TradeMethodImageResponse)
+async def upload_trade_method_image(
+    method_id: int,
+    image_type: str = Form(...),
+    image_memo: str | None = Form(default=None),
+    sort_order: int | None = Form(default=0),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    content = await file.read()
+    return TradeJournalService(db).upload_trade_method_image(
+        method_id=method_id,
+        image_type=image_type,
+        image_memo=image_memo,
+        sort_order=sort_order,
+        original_filename=file.filename or "upload.png",
+        file_bytes=content,
+    )
+
+
+@router.patch("/trade-methods/{method_id}/images/{image_id}", response_model=TradeMethodImageResponse)
+def update_trade_method_image(method_id: int, image_id: int, payload: TradeMethodImageUpdate, db: Session = Depends(get_db)):
+    return TradeJournalService(db).update_trade_method_image(method_id, image_id, payload)
+
+
+@router.delete("/trade-methods/{method_id}/images/{image_id}", response_model=TradeJournalDeleteResponse)
+def delete_trade_method_image(method_id: int, image_id: int, db: Session = Depends(get_db)):
+    return TradeJournalService(db).delete_trade_method_image(method_id, image_id)
 
 
 @router.get("/trade-journals", response_model=TradeJournalListResponse)

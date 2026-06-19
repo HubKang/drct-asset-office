@@ -220,3 +220,47 @@ class SimulationReviewSaveRequest(BaseModel):
     next_training_goal: str | None = None
     main_mistake: str | None = None
     discipline_score: int | None = Field(default=None, ge=0, le=100)
+
+
+class TrainingCalendarStock(BaseModel):
+    stock_code: str | None = None
+    stock_name: str
+    training_count: int
+    total_return_rate: float
+    avg_return_rate: float
+    review_saved_count: int
+
+
+class TrainingCalendarMethodGroup(BaseModel):
+    trade_method_id: int | None = None
+    trade_method_name: str
+    training_count: int
+    total_return_rate: float
+    avg_return_rate: float
+    review_saved_count: int
+    stocks: list[TrainingCalendarStock] = Field(default_factory=list)
+
+
+class TrainingCalendarDay(BaseModel):
+    date: str
+    training_count: int
+    total_return_rate: float
+    avg_return_rate: float
+    training_score: int
+    review_saved_count: int
+    review_required_count: int
+    method_groups: list[TrainingCalendarMethodGroup] = Field(default_factory=list)
+
+
+class TrainingCalendarSummary(BaseModel):
+    total_sessions: int
+    training_days: int
+    avg_training_score: int
+    avg_return_rate: float
+    review_completion_rate: float
+
+
+class TrainingCalendarResponse(BaseModel):
+    month: str
+    summary: TrainingCalendarSummary
+    days: list[TrainingCalendarDay] = Field(default_factory=list)

@@ -899,6 +899,25 @@ def ensure_runtime_schema() -> None:
         )
         conn.exec_driver_sql(
             """
+            CREATE TABLE IF NOT EXISTS trade_method_images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                trade_method_id INTEGER NOT NULL,
+                image_type TEXT NOT NULL DEFAULT 'example_chart',
+                image_path TEXT NOT NULL,
+                image_memo TEXT,
+                original_filename TEXT,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT,
+                FOREIGN KEY (trade_method_id) REFERENCES trade_methods(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_trade_method_images_method_id ON trade_method_images(trade_method_id)"
+        )
+        conn.exec_driver_sql(
+            """
             CREATE TABLE IF NOT EXISTS trade_reviews (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 stock_id INTEGER NOT NULL DEFAULT 0,

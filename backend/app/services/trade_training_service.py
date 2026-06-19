@@ -24,6 +24,172 @@ class TradeTrainingService:
     def list_stocks(self, q: str | None, limit: int) -> dict[str, Any]:
         return {"items": self.repo.list_training_stocks(q=q, limit=limit), "limit": limit}
 
+    def get_training_calendar(self, month: str) -> dict[str, Any]:
+        if not month or len(month) != 7:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="month must be YYYY-MM")
+        try:
+            datetime.strptime(month, "%Y-%m")
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="month must be YYYY-MM") from exc
+
+        day_bucket: dict[str, dict[str, Any]] = {}
+        for row in self.repo.list_calendar_sessions(month):
+            date = str(row.get("activity_date") or row.get("activity_at") or row.get("current_date") or "")[:10]
+            if not date:
+                continue
+            return_rate = self._calendar_return_rate(row)
+            review_done = self._calendar_review_done(row)
+            day = day_bucket.setdefault(
+                date,
+                {
+                    "date": date,
+                    "training_count": 0,
+                    "total_return_rate": 0.0,
+                    "review_saved_count": 0,
+                    "review_required_count": 0,
+                    "_methods": {},
+                },
+            )
+            day["training_count"] += 1
+            day["total_return_rate"] += return_rate
+            day["review_required_count"] += 1
+            if review_done:
+                day["review_saved_count"] += 1
+
+            method_id = row.get("method_id")
+            method_key = str(method_id) if method_id is not None else "free"
+            method = day["_methods"].setdefault(
+                method_key,
+                {
+                    "trade_method_id": method_id,
+                    "trade_method_name": row.get("trade_method_name") or "자유훈련",
+                    "training_count": 0,
+                    "total_return_rate": 0.0,
+                    "review_saved_count": 0,
+                    "_stocks": {},
+                },
+            )
+            method["training_count"] += 1
+            method["total_return_rate"] += return_rate
+            if review_done:
+                method["review_saved_count"] += 1
+
+            stock_code = str(row.get("stock_code") or "")
+            stock_name = str(row.get("stock_name") or stock_code or "종목 미지정")
+            stock_key = stock_code or stock_name
+            stock = method["_stocks"].setdefault(
+                stock_key,
+                {
+                    "stock_code": stock_code or None,
+                    "stock_name": stock_name,
+                    "training_count": 0,
+                    "total_return_rate": 0.0,
+                    "review_saved_count": 0,
+                },
+            )
+            stock["training_count"] += 1
+            stock["total_return_rate"] += return_rate
+            if review_done:
+                stock["review_saved_count"] += 1
+
+        days = [self._finalize_calendar_day(day) for day in day_bucket.values()]
+        days.sort(key=lambda item: item["date"])
+
+        total_sessions = sum(int(day["training_count"]) for day in days)
+        training_days = len(days)
+        total_score = sum(int(day["training_score"]) for day in days)
+        total_return = sum(float(day["total_return_rate"]) for day in days)
+        review_saved = sum(int(day["review_saved_count"]) for day in days)
+        review_required = sum(int(day["review_required_count"]) for day in days)
+        return {
+            "month": month,
+            "summary": {
+                "total_sessions": total_sessions,
+                "training_days": training_days,
+                "avg_training_score": round(total_score / training_days) if training_days else 0,
+                "avg_return_rate": round(total_return / total_sessions, 2) if total_sessions else 0.0,
+                "review_completion_rate": round((review_saved / review_required) * 100, 1) if review_required else 0.0,
+            },
+            "days": days,
+        }
+
+    @staticmethod
+    def _calendar_return_rate(row: dict[str, Any]) -> float:
+        initial_cash = float(row.get("initial_cash") or 0)
+        realized_profit = float(row.get("realized_profit") or 0)
+        if initial_cash <= 0:
+            return 0.0
+        return round((realized_profit / initial_cash) * 100, 4)
+
+    @staticmethod
+    def _calendar_review_done(row: dict[str, Any]) -> bool:
+        if row.get("review_id"):
+            return True
+        status_value = str(row.get("review_status") or "").strip()
+        return status_value == "복기완료" or bool(row.get("reviewed_at"))
+
+    @staticmethod
+    def _calendar_training_score(training_count: int, total_return_rate: float, review_saved_count: int) -> int:
+        base = 20 if training_count > 0 else 0
+        count_score = min(training_count * 5, 30)
+        positive_return = max(total_return_rate, 0)
+        return_score = min(positive_return * 3, 30)
+        count_bonus = min((training_count // 3) * 5, 15)
+        return_bonus = min((int(positive_return) // 3) * 5, 15)
+        review_bonus = min(review_saved_count * 5, 20)
+        return min(round(base + count_score + return_score + count_bonus + return_bonus + review_bonus), 100)
+
+    def _finalize_calendar_day(self, day: dict[str, Any]) -> dict[str, Any]:
+        training_count = int(day["training_count"] or 0)
+        total_return_rate = round(float(day["total_return_rate"] or 0.0), 2)
+        review_saved_count = int(day["review_saved_count"] or 0)
+        method_groups = []
+        for method in day["_methods"].values():
+            method_training_count = int(method["training_count"] or 0)
+            stocks = []
+            for stock in method["_stocks"].values():
+                stock_count = int(stock["training_count"] or 0)
+                stock_total = round(float(stock["total_return_rate"] or 0.0), 2)
+                stocks.append(
+                    {
+                        "stock_code": stock.get("stock_code"),
+                        "stock_name": stock.get("stock_name") or "종목 미지정",
+                        "training_count": stock_count,
+                        "total_return_rate": stock_total,
+                        "avg_return_rate": round(stock_total / stock_count, 2) if stock_count else 0.0,
+                        "review_saved_count": int(stock["review_saved_count"] or 0),
+                    }
+                )
+            stocks.sort(key=lambda item: (-item["training_count"], item["stock_name"]))
+            method_total = round(float(method["total_return_rate"] or 0.0), 2)
+            method_groups.append(
+                {
+                    "trade_method_id": method.get("trade_method_id"),
+                    "trade_method_name": method.get("trade_method_name") or "자유훈련",
+                    "training_count": method_training_count,
+                    "total_return_rate": method_total,
+                    "avg_return_rate": round(method_total / method_training_count, 2) if method_training_count else 0.0,
+                    "review_saved_count": int(method["review_saved_count"] or 0),
+                    "stocks": stocks,
+                }
+            )
+        method_groups.sort(key=lambda item: (-item["training_count"], item["trade_method_name"]))
+        score = self._calendar_training_score(
+            training_count=training_count,
+            total_return_rate=total_return_rate,
+            review_saved_count=review_saved_count,
+        )
+        return {
+            "date": str(day["date"]),
+            "training_count": training_count,
+            "total_return_rate": total_return_rate,
+            "avg_return_rate": round(total_return_rate / training_count, 2) if training_count else 0.0,
+            "training_score": score,
+            "review_saved_count": review_saved_count,
+            "review_required_count": int(day["review_required_count"] or 0),
+            "method_groups": method_groups,
+        }
+
     @staticmethod
     def _parse_options(session: dict[str, Any]) -> dict[str, Any]:
         raw = session.get("options_json")
