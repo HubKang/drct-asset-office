@@ -439,6 +439,14 @@ export type MonthlyThemeFlowStock = {
   stock_name: string;
 };
 
+export type MonthlyThemeFlowMemoItem = {
+  theme_id?: number | null;
+  theme_name: string;
+  stock_code?: string | null;
+  stock_name: string;
+  memo: string;
+};
+
 export type MonthlyThemeFlowCalendarTheme = {
   rank: number;
   theme_group_id: number | null;
@@ -463,6 +471,7 @@ export type MonthlyThemeFlowCalendarDay = {
   event_count: number;
   related_stock_count: number;
   themes: MonthlyThemeFlowCalendarTheme[];
+  memo_items?: MonthlyThemeFlowMemoItem[];
 };
 
 export type MonthlyThemeFlowCalendarResponse = {

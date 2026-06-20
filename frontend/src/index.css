@@ -6990,6 +6990,17 @@ a:focus-visible {
   resize: vertical;
 }
 
+.theme-event-memo-textarea {
+  width: 100%;
+  min-width: 220px;
+  min-height: 44px;
+  max-height: 120px;
+  resize: vertical;
+  padding: 9px 10px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
 .manual-candidate-actions {
   display: flex;
   justify-content: flex-end;
@@ -9126,10 +9137,10 @@ a:focus-visible {
 }
 
 .monthly-flow-toolbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(520px, 1fr);
   align-items: center;
-  justify-content: space-between;
-  gap: 14px;
+  gap: 16px;
   margin-bottom: 14px;
 }
 
@@ -9149,18 +9160,16 @@ a:focus-visible {
 }
 
 .monthly-flow-compact-stats {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(132px, 1fr));
   align-items: stretch;
-  justify-content: flex-end;
-  flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
 }
 
 .monthly-flow-stat-mini {
   display: flex;
-  min-width: 112px;
-  max-width: 152px;
+  min-width: 0;
   min-height: 58px;
   flex-direction: column;
   justify-content: center;
@@ -9244,6 +9253,29 @@ a:focus-visible {
 
 .monthly-flow-selected-detail .section-title {
   font-size: 16px;
+}
+
+.monthly-flow-selected-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.monthly-flow-selected-title {
+  display: grid;
+  gap: 4px;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.selected-date-inline {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .selected-date {
@@ -9352,18 +9384,110 @@ a:focus-visible {
   line-height: 1.45;
 }
 
+.theme-flow-detail-tabs {
+  display: flex;
+  gap: 6px;
+  flex: 1 1 180px;
+  min-width: 0;
+  margin: 0;
+  padding: 4px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.theme-flow-detail-tab {
+  flex: 1;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.2;
+  padding: 8px 10px;
+}
+
+.theme-flow-detail-tab.is-active {
+  background: #fff;
+  color: #1d4ed8;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+@media (max-width: 720px) {
+  .monthly-flow-selected-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+.theme-flow-theme-cards {
+  display: grid;
+  gap: 10px;
+}
+
+.theme-flow-memo-panel {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px;
+}
+
+.theme-flow-memo-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.theme-flow-memo-panel-header h5 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.theme-flow-memo-table th,
+.theme-flow-memo-table td {
+  vertical-align: top;
+}
+
+.theme-flow-memo-table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.theme-flow-memo-cell,
+.theme-flow-memo-text {
+  white-space: pre-line;
+  line-height: 1.6;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
 .monthly-flow-selected-fallback {
   margin-top: 8px;
 }
 
 @media (max-width: 1100px) {
+  .daily-flow-toolbar {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+
+  .daily-flow-compact-stats {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
   .monthly-flow-toolbar {
     align-items: stretch;
-    flex-direction: column;
+    grid-template-columns: 1fr;
   }
 
   .monthly-flow-compact-stats {
-    justify-content: flex-start;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .market-trend-monthly-grid {
@@ -9372,6 +9496,10 @@ a:focus-visible {
 }
 
 @media (max-width: 768px) {
+  .daily-flow-compact-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .monthly-flow-compact-stats {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -9384,6 +9512,10 @@ a:focus-visible {
 }
 
 @media (max-width: 520px) {
+  .daily-flow-compact-stats {
+    grid-template-columns: 1fr;
+  }
+
   .monthly-flow-compact-stats {
     grid-template-columns: 1fr;
   }
@@ -9407,10 +9539,39 @@ a:focus-visible {
   font-weight: 600;
 }
 
+.daily-flow-toolbar {
+  display: grid;
+  grid-template-columns: auto minmax(680px, 1fr);
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.daily-flow-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.daily-flow-controls .input-control {
+  width: 160px;
+  min-width: 160px;
+}
+
+.daily-flow-compact-stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(126px, 1fr));
+  align-items: stretch;
+  gap: 8px;
+  min-width: 0;
+}
+
 .daily-theme-flow-section .watchlist-top-stat-card {
   min-width: 0;
-  padding: 14px 16px;
-  min-height: 86px;
+  min-height: 58px;
+  padding: 9px 12px;
 }
 
 .daily-theme-flow-section .watchlist-top-stat-label {

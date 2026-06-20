@@ -19,6 +19,7 @@ from backend.app.schemas.external_kiwoom_schema import (
     DailyThemeFlowSummaryItem,
     DailyThemeFlowSummaryResponse,
     MonthlyThemeFlowCalendarDayItem,
+    MonthlyThemeFlowMemoItem,
     MonthlyThemeFlowCalendarResponse,
     MonthlyThemeFlowStockItem,
     MonthlyThemeFlowCalendarThemeItem,
@@ -990,6 +991,54 @@ class ExternalKiwoomService:
                 )
             )
 
+        memo_rows = self.db.execute(
+            text(
+                """
+                SELECT
+                    mte.trade_date AS trade_date,
+                    mt.id AS market_theme_id,
+                    mt.theme_name AS theme_name,
+                    mte.stock_code AS stock_code,
+                    COALESCE(mte.stock_name, s.stock_name, mte.stock_code, '-') AS stock_name,
+                    mte.user_memo AS user_memo
+                FROM market_trend_events mte
+                JOIN market_trend_event_theme_links l ON l.event_id = mte.id
+                JOIN market_themes mt ON mt.id = l.market_theme_id
+                LEFT JOIN stocks s ON s.id = mte.stock_id
+                WHERE mte.trade_date BETWEEN :start_date AND :end_date
+                  AND mte.detection_source IN ('kiwoom_condition', 'kiwoom_rest', 'manual')
+                  AND COALESCE(mte.is_active, 1) = 1
+                  AND COALESCE(l.is_active, 1) = 1
+                  AND COALESCE(mt.is_active, 1) = 1
+                  AND COALESCE(mte.deleted_at, '') = ''
+                  AND COALESCE(l.deleted_at, '') = ''
+                  AND TRIM(COALESCE(mte.user_memo, '')) <> ''
+                ORDER BY mte.trade_date ASC, mt.theme_name ASC, stock_name ASC, mte.stock_code ASC
+                """
+            ),
+            {"start_date": month_start.isoformat(), "end_date": month_end.isoformat()},
+        ).mappings().all()
+        memo_items_by_date: dict[str, list[MonthlyThemeFlowMemoItem]] = {}
+        seen_memos: set[tuple[str, int, str, str]] = set()
+        for row in memo_rows:
+            trade_date = str(row["trade_date"])
+            theme_id = int(row["market_theme_id"]) if row["market_theme_id"] is not None else 0
+            stock_code = str(row["stock_code"] or "")
+            memo = str(row["user_memo"] or "").strip()
+            seen_key = (trade_date, theme_id, stock_code or str(row["stock_name"] or ""), memo)
+            if seen_key in seen_memos:
+                continue
+            seen_memos.add(seen_key)
+            memo_items_by_date.setdefault(trade_date, []).append(
+                MonthlyThemeFlowMemoItem(
+                    theme_id=theme_id or None,
+                    theme_name=str(row["theme_name"] or "미지정 테마"),
+                    stock_code=stock_code or None,
+                    stock_name=str(row["stock_name"] or stock_code or "-"),
+                    memo=memo,
+                )
+            )
+
         grouped: dict[str, list[DailyThemeFlowSummaryItem]] = {}
         theme_group_meta: dict[tuple[str, int], dict[str, object]] = {}
         for row in rows:
@@ -1076,6 +1125,7 @@ class ExternalKiwoomService:
                     event_count=totals["event_count"],
                     related_stock_count=totals["related_stock_count"],
                     themes=ranked,
+                    memo_items=memo_items_by_date.get(key, []),
                 )
             )
             cursor += timedelta(days=1)

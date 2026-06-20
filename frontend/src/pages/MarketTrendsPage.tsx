@@ -11,7 +11,6 @@ import type {
   KiwoomMarketEventItem,
   MarketEventThemeLink,
   MonthlyThemeFlowCalendarDay,
-  MonthlyThemeFlowCalendarTheme,
   MonthlyThemeFlowTrendTheme,
 } from "@/types/marketTrend";
 import type { Stock } from "@/types/stock";
@@ -21,6 +20,7 @@ type SortOrder = "asc" | "desc";
 type ConditionOrderMode = "number" | "name";
 type ResultSortKey = "stock_code" | "stock_name" | "current_price" | "change_rate" | "volume" | "estimated_trading_value";
 type ThemeFlowViewMode = "THEME" | "THEME_GROUP";
+type SelectedDayDetailTab = "themes" | "memos";
 type ManualCandidateForm = {
   trade_date: string;
   change_rate: string;
@@ -161,6 +161,7 @@ function MarketTrendsPage() {
   const [monthlyStartDate, setMonthlyStartDate] = useState<string>("");
   const [monthlyEndDate, setMonthlyEndDate] = useState<string>("");
   const [selectedMonthlyDate, setSelectedMonthlyDate] = useState<string>("");
+  const [selectedDayDetailTab, setSelectedDayDetailTab] = useState<SelectedDayDetailTab>("themes");
   const [monthlyLoading, setMonthlyLoading] = useState<boolean>(false);
   const [eventNameSortOrder, setEventNameSortOrder] = useState<SortOrder>("asc");
   const [manualModalOpen, setManualModalOpen] = useState(false);
@@ -695,6 +696,10 @@ function MarketTrendsPage() {
   }, [activeTab]);
 
   useEffect(() => {
+    setSelectedDayDetailTab("themes");
+  }, [selectedMonthlyDate]);
+
+  useEffect(() => {
     if (activeTab === "kiwoom") {
       void loadEvents(tradeDate);
     }
@@ -744,49 +749,17 @@ function MarketTrendsPage() {
     () => monthlyCalendarDays.find((d) => d.trade_date === selectedMonthlyDate) ?? null,
     [monthlyCalendarDays, selectedMonthlyDate],
   );
-  const selectedMonthlyGroups = useMemo(() => {
+  const selectedMonthlyThemes = useMemo(() => {
     if (!selectedMonthlyDay) return [];
-    const groupMap = new Map<
-      string,
-      {
-        theme_group_id: number | null;
-        theme_group_name: string;
-        total_score: number;
-        themes: MonthlyThemeFlowCalendarTheme[];
-      }
-    >();
-
-    for (const theme of selectedMonthlyDay.themes) {
-      const groupId = theme.theme_group_id ?? null;
-      const groupName = theme.theme_group_name || "미지정 테마그룹";
-      const key = groupId == null ? `none:${groupName}` : String(groupId);
-      const current = groupMap.get(key) ?? {
-        theme_group_id: groupId,
-        theme_group_name: groupName,
-        total_score: 0,
-        themes: [],
-      };
-      current.total_score += Number(theme.rank_score || 0);
-      current.themes.push({
+    return [...selectedMonthlyDay.themes]
+      .map((theme) => ({
         ...theme,
         stocks: [...(theme.stocks ?? [])].sort((a, b) => (a.stock_name || "").localeCompare(b.stock_name || "", "ko")),
-      });
-      groupMap.set(key, current);
-    }
-
-    return [...groupMap.values()]
-      .map((group) => ({
-        ...group,
-        themes: [...group.themes].sort((a, b) => {
-          const scoreDiff = Number(b.rank_score || 0) - Number(a.rank_score || 0);
-          if (scoreDiff !== 0) return scoreDiff;
-          return (a.theme_name || "").localeCompare(b.theme_name || "", "ko");
-        }),
       }))
       .sort((a, b) => {
-        const scoreDiff = b.total_score - a.total_score;
+        const scoreDiff = Number(b.rank_score || 0) - Number(a.rank_score || 0);
         if (scoreDiff !== 0) return scoreDiff;
-        return a.theme_group_name.localeCompare(b.theme_group_name, "ko");
+        return (a.theme_name || "").localeCompare(b.theme_name || "", "ko");
       });
   }, [selectedMonthlyDay]);
   const monthlySummary = useMemo(() => {
@@ -1062,7 +1035,14 @@ function MarketTrendsPage() {
                             ) : null}
                           </div>
                         </td>
-                        <td className="align-top"><input className="input-control min-w-[220px]" value={draft.user_memo} onChange={(ev) => setEventDrafts((prev) => ({ ...prev, [e.event_id]: { ...(prev[e.event_id] ?? draft), user_memo: ev.target.value } }))} placeholder="메모" /></td>
+                        <td className="align-top">
+                          <textarea
+                            className="input-control theme-event-memo-textarea"
+                            value={draft.user_memo}
+                            onChange={(ev) => setEventDrafts((prev) => ({ ...prev, [e.event_id]: { ...(prev[e.event_id] ?? draft), user_memo: ev.target.value } }))}
+                            placeholder="메모"
+                          />
+                        </td>
                         <td className="align-top"><div className="flex gap-1"><button type="button" className="btn btn-secondary whitespace-nowrap" onClick={() => void saveEventNote(e.event_id)}>메모 저장</button><button type="button" className="btn btn-danger" onClick={() => void deleteEvent(e.event_id)}>삭제</button></div></td>
                       </tr>
                     );
@@ -1218,35 +1198,36 @@ function MarketTrendsPage() {
               <h3 className="section-title m-0">일별 테마 수급 흐름</h3>
               <span className="hint-icon" title="선택한 날짜의 저장된 수급 이벤트 후보를 테마별로 집계합니다. 날짜를 선택하면 즉시 조회됩니다.">i</span>
             </div>
-            <div className="flex gap-2 items-end mb-3 flex-wrap">
-              <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => void applyFlowDate(shiftDate(tradeDate, -1))}>◀</button>
-              <input
-                className="input-control"
-                style={{ width: "160px", minWidth: "160px" }}
-                type="date"
-                value={tradeDate}
-                onChange={(e) => void applyFlowDate(e.target.value)}
-                onBlur={(e) => void applyFlowDate(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void applyFlowDate((e.target as HTMLInputElement).value);
-                  }
-                }}
-              />
-              <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => void applyFlowDate(shiftDate(tradeDate, 1))}>▶</button>
-              <button type="button" className="btn btn-secondary" onClick={() => void applyFlowDate(todayInKst())}>오늘</button>
-              <button type="button" className="btn btn-secondary" title="자동 순위와 다르게 체감 주도 테마를 직접 조정할 수 있습니다." onClick={() => setRankEditMode((p) => !p)}>{rankEditMode ? "편집 취소" : "순위 편집"}</button>
-              {rankEditMode ? <button type="button" className="btn btn-primary" onClick={() => void saveDailyRanks()}>순위 저장</button> : null}
-              {rankEditMode ? <button type="button" className="btn btn-secondary" onClick={() => void resetDailyRanks()}>수동 순위 초기화</button> : null}
-            </div>
+            <div className="daily-flow-toolbar">
+              <div className="daily-flow-controls">
+                <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => void applyFlowDate(shiftDate(tradeDate, -1))}>◀</button>
+                <input
+                  className="input-control"
+                  type="date"
+                  value={tradeDate}
+                  onChange={(e) => void applyFlowDate(e.target.value)}
+                  onBlur={(e) => void applyFlowDate(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void applyFlowDate((e.target as HTMLInputElement).value);
+                    }
+                  }}
+                />
+                <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => void applyFlowDate(shiftDate(tradeDate, 1))}>▶</button>
+                <button type="button" className="btn btn-secondary" onClick={() => void applyFlowDate(todayInKst())}>오늘</button>
+                <button type="button" className="btn btn-secondary" title="자동 순위와 다르게 체감 주도 테마를 직접 조정할 수 있습니다." onClick={() => setRankEditMode((p) => !p)}>{rankEditMode ? "편집 취소" : "순위 편집"}</button>
+                {rankEditMode ? <button type="button" className="btn btn-primary" onClick={() => void saveDailyRanks()}>순위 저장</button> : null}
+                {rankEditMode ? <button type="button" className="btn btn-secondary" onClick={() => void resetDailyRanks()}>수동 순위 초기화</button> : null}
+              </div>
 
-            <div className="watchlist-top-stats mb-3">
-              <div className="watchlist-top-stat-card"><p className="watchlist-top-stat-label">저장 후보</p><strong className="watchlist-top-stat-value">{flowSummaryStats.savedCandidates}건</strong></div>
-              <div className="watchlist-top-stat-card"><p className="watchlist-top-stat-label">등장 테마</p><strong className="watchlist-top-stat-value">{flowSummaryStats.themeCount}개</strong></div>
-              <div className="watchlist-top-stat-card"><p className="watchlist-top-stat-label">1위 테마</p><strong className="watchlist-top-stat-value">{flowSummaryStats.topTheme}</strong></div>
-              <div className="watchlist-top-stat-card"><p className="watchlist-top-stat-label">최고 등락률</p><strong className="watchlist-top-stat-value">{fmtPct(flowSummaryStats.maxChangeRate)}</strong></div>
-              <div className="watchlist-top-stat-card"><p className="watchlist-top-stat-label">미분류</p><strong className="watchlist-top-stat-value">{flowSummaryStats.unclassified}</strong></div>
+              <div className="daily-flow-compact-stats">
+                <div className="watchlist-top-stat-card"><p className="watchlist-top-stat-label">저장 후보</p><strong className="watchlist-top-stat-value">{flowSummaryStats.savedCandidates}건</strong></div>
+                <div className="watchlist-top-stat-card"><p className="watchlist-top-stat-label">등장 테마</p><strong className="watchlist-top-stat-value">{flowSummaryStats.themeCount}개</strong></div>
+                <div className="watchlist-top-stat-card"><p className="watchlist-top-stat-label">1위 테마</p><strong className="watchlist-top-stat-value">{flowSummaryStats.topTheme}</strong></div>
+                <div className="watchlist-top-stat-card"><p className="watchlist-top-stat-label">최고 등락률</p><strong className="watchlist-top-stat-value">{fmtPct(flowSummaryStats.maxChangeRate)}</strong></div>
+                <div className="watchlist-top-stat-card"><p className="watchlist-top-stat-label">미분류</p><strong className="watchlist-top-stat-value">{flowSummaryStats.unclassified}</strong></div>
+              </div>
             </div>
 
             {flowLoading ? <p className="text-sm text-muted">테마 요약을 조회 중입니다.</p> : null}
@@ -1379,7 +1360,7 @@ function MarketTrendsPage() {
                             <div>{row.stock_name}</div>
                             <div className="text-xs text-muted">{row.stock_code}</div>
                             {row.user_memo ? (
-                              <div className="text-[11px] text-slate-500 truncate max-w-[220px]" title={row.user_memo}>
+                              <div className="theme-flow-memo-text text-[11px] text-slate-500 max-w-[260px]" title={row.user_memo}>
                                 메모: {row.user_memo}
                               </div>
                             ) : null}
@@ -1474,17 +1455,39 @@ function MarketTrendsPage() {
                 </div>
 
                 <div className="monthly-flow-selected-detail">
-                  <h4 className="section-title m-0">선택일 상세</h4>
                   {selectedMonthlyDay ? (
                     <div>
-                      <p className="selected-date">{selectedMonthlyDay.trade_date}</p>
-                      {selectedMonthlyGroups.length === 0 ? <p className="selected-empty-message">선택한 날짜에 수급 테마가 없습니다.</p> : null}
-                      {selectedMonthlyGroups.map((group) => (
-                        <div key={`${group.theme_group_id ?? "none"}-${group.theme_group_name}`} className="selected-theme-group">
-                          <div className="selected-theme-group-header">
-                            <span className="selected-theme-group-name">{group.theme_group_name}</span>
-                          </div>
-                          {group.themes.map((theme) => (
+                      <div className="monthly-flow-selected-head">
+                        <div className="monthly-flow-selected-title">
+                          <h4 className="section-title m-0">선택일 상세</h4>
+                          <span className="selected-date-inline">{selectedMonthlyDay.trade_date}</span>
+                        </div>
+                        <div className="theme-flow-detail-tabs" role="tablist" aria-label="선택일 상세 구분">
+                          <button
+                            type="button"
+                            className={`theme-flow-detail-tab ${selectedDayDetailTab === "themes" ? "is-active" : ""}`}
+                            onClick={() => setSelectedDayDetailTab("themes")}
+                            role="tab"
+                            aria-selected={selectedDayDetailTab === "themes"}
+                          >
+                            테마별 종목
+                          </button>
+                          <button
+                            type="button"
+                            className={`theme-flow-detail-tab ${selectedDayDetailTab === "memos" ? "is-active" : ""}`}
+                            onClick={() => setSelectedDayDetailTab("memos")}
+                            role="tab"
+                            aria-selected={selectedDayDetailTab === "memos"}
+                          >
+                            종목 메모
+                          </button>
+                        </div>
+                      </div>
+
+                      {selectedDayDetailTab === "themes" ? (
+                        <div className="theme-flow-theme-cards">
+                          {selectedMonthlyThemes.length === 0 ? <p className="selected-empty-message">선택한 날짜에 수급 테마가 없습니다.</p> : null}
+                          {selectedMonthlyThemes.map((theme) => (
                             <div key={`selected-${theme.market_theme_id}`} className="selected-theme-item">
                               <div className="selected-theme-row">
                                 <span className="selected-theme-name" title={theme.theme_name}>{theme.theme_name}</span>
@@ -1507,7 +1510,49 @@ function MarketTrendsPage() {
                             </div>
                           ))}
                         </div>
-                      ))}
+                      ) : null}
+
+                      {selectedDayDetailTab === "memos" ? (
+                        <div className="theme-flow-memo-panel">
+                          <div className="theme-flow-memo-panel-header">
+                            <h5>메모 목록</h5>
+                          </div>
+                          {(selectedMonthlyDay.memo_items ?? []).length > 0 ? (
+                            <div className="table-shell overflow-auto">
+                              <table className="data-table compact-table theme-flow-memo-table">
+                                <colgroup>
+                                  <col style={{ width: "20%" }} />
+                                  <col style={{ width: "30%" }} />
+                                  <col style={{ width: "50%" }} />
+                                </colgroup>
+                                <thead>
+                                  <tr>
+                                    <th>테마명</th>
+                                    <th>종목명</th>
+                                    <th>메모</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {(selectedMonthlyDay.memo_items ?? []).map((item, index) => (
+                                    <tr key={`${selectedMonthlyDay.trade_date}-${item.theme_id ?? "none"}-${item.stock_code ?? item.stock_name}-${index}`}>
+                                      <td>{item.theme_name || "-"}</td>
+                                      <td>
+                                        <div className="stock-cell">
+                                          <strong>{item.stock_name || item.stock_code || "-"}</strong>
+                                          {item.stock_code ? <span>{item.stock_code}</span> : null}
+                                        </div>
+                                      </td>
+                                      <td className="theme-flow-memo-cell">{item.memo || "-"}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          ) : (
+                            <p className="selected-empty-message">선택한 날짜에 등록된 수급 메모가 없습니다.</p>
+                          )}
+                        </div>
+                      ) : null}
                     </div>
                   ) : (
                     <div className="monthly-flow-selected-fallback">

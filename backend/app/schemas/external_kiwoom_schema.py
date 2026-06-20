@@ -259,6 +259,14 @@ class MonthlyThemeFlowStockItem(BaseModel):
     stock_name: str
 
 
+class MonthlyThemeFlowMemoItem(BaseModel):
+    theme_id: int | None = None
+    theme_name: str
+    stock_code: str | None = None
+    stock_name: str
+    memo: str
+
+
 class MonthlyThemeFlowCalendarThemeItem(BaseModel):
     rank: int
     theme_group_id: int | None = None
@@ -283,6 +291,7 @@ class MonthlyThemeFlowCalendarDayItem(BaseModel):
     event_count: int = 0
     related_stock_count: int = 0
     themes: list[MonthlyThemeFlowCalendarThemeItem] = Field(default_factory=list)
+    memo_items: list[MonthlyThemeFlowMemoItem] = Field(default_factory=list)
 
 
 class MonthlyThemeFlowCalendarResponse(BaseModel):
