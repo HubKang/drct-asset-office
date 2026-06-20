@@ -4,7 +4,7 @@ import EmptyState from "@/components/common/EmptyState";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import { repositories } from "@/services";
-import type { TradeMethod } from "@/types/tradeJournal";
+import type { TradeMethod, TradeMethodSaveRequest } from "@/types/tradeJournal";
 import type {
   SimulationReview,
   TrainingCandle,
@@ -890,6 +890,31 @@ function cleanRuleText(value?: string | null): string {
     .map((line) => line.replace(/^\s{0,3}#{1,6}\s*/, "").replace(/^\s*[-*]\s+/, "• "))
     .join("\n")
     .trim();
+}
+
+type TrainingMethodEditableField = "core_concept" | "buy_condition" | "sell_condition" | "stop_loss_rule" | "checklist";
+
+type TrainingMethodPrinciplesForm = Record<TrainingMethodEditableField, string>;
+
+type TrainingMethodPrinciplesTab = {
+  key: TrainingMethodEditableField | "lessons";
+  label: string;
+  value: string;
+  editableField?: TrainingMethodEditableField;
+};
+
+function methodPrinciplesFormFromMethod(method: TradeMethod): TrainingMethodPrinciplesForm {
+  return {
+    core_concept: tradeMethodValue(method, "core_concept", "description"),
+    buy_condition: tradeMethodValue(method, "buy_condition", "entry_rule"),
+    sell_condition: tradeMethodValue(method, "sell_condition", "exit_rule", "take_profit_rule"),
+    stop_loss_rule: tradeMethodValue(method, "stop_loss_rule"),
+    checklist: tradeMethodValue(method, "checklist"),
+  };
+}
+
+function normalizePrincipleText(value: string): string {
+  return value.trim();
 }
 
 function reasonQualityClass(grade?: string | null): string {
@@ -1875,32 +1900,98 @@ function TrainingChartSummary({
 
 function TrainingMethodPrinciplesModal({
   method,
+  onSave,
   onClose,
 }: {
   method: TradeMethod;
+  onSave: (methodId: number, payload: Partial<TradeMethodSaveRequest>) => Promise<TradeMethod>;
   onClose: () => void;
 }) {
-  const tabs = [
-    { key: "core", label: "핵심개념", value: tradeMethodValue(method, "core_concept", "description") },
-    { key: "buy", label: "매수조건", value: tradeMethodValue(method, "buy_condition", "entry_rule") },
-    { key: "sell", label: "매도조건", value: tradeMethodValue(method, "sell_condition", "exit_rule", "take_profit_rule") },
-    { key: "failure", label: "실패패턴", value: tradeMethodValue(method, "stop_loss_rule") },
-    { key: "checklist", label: "체크리스트", value: tradeMethodValue(method, "checklist") },
+  const [editForm, setEditForm] = useState<TrainingMethodPrinciplesForm>(() => methodPrinciplesFormFromMethod(method));
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const tabs: TrainingMethodPrinciplesTab[] = [
+    { key: "core_concept", label: "핵심개념", value: tradeMethodValue(method, "core_concept", "description"), editableField: "core_concept" },
+    { key: "buy_condition", label: "매수조건", value: tradeMethodValue(method, "buy_condition", "entry_rule"), editableField: "buy_condition" },
+    {
+      key: "sell_condition",
+      label: "매도조건",
+      value: tradeMethodValue(method, "sell_condition", "exit_rule", "take_profit_rule"),
+      editableField: "sell_condition",
+    },
+    { key: "stop_loss_rule", label: "실패패턴", value: tradeMethodValue(method, "stop_loss_rule"), editableField: "stop_loss_rule" },
+    { key: "checklist", label: "체크리스트", value: tradeMethodValue(method, "checklist"), editableField: "checklist" },
     { key: "lessons", label: "최근 복기 교훈", value: "최근 GPT 복기에서 도출된 교훈이 여기에 표시됩니다." },
   ];
   const [activeTab, setActiveTab] = useState(tabs[0].key);
   const active = tabs.find((tab) => tab.key === activeTab) || tabs[0];
 
   useEffect(() => {
+    setEditForm(methodPrinciplesFormFromMethod(method));
+  }, [method]);
+
+  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key !== "Escape") return;
+      if (isEditMode) {
+        setEditForm(methodPrinciplesFormFromMethod(method));
+        setIsEditMode(false);
+        setSaveError("");
+        return;
+      }
+      onClose();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  }, [isEditMode, method, onClose]);
+
+  const handleBackdropClose = () => {
+    if (isSaving) return;
+    onClose();
+  };
+
+  const handleEdit = () => {
+    setEditForm(methodPrinciplesFormFromMethod(method));
+    setSaveError("");
+    setIsEditMode(true);
+  };
+
+  const handleCancelEdit = () => {
+    setEditForm(methodPrinciplesFormFromMethod(method));
+    setSaveError("");
+    setIsEditMode(false);
+  };
+
+  const handleChangePrinciple = (field: TrainingMethodEditableField, value: string) => {
+    setEditForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    setSaveError("");
+    const buyCondition = normalizePrincipleText(editForm.buy_condition);
+    const sellCondition = normalizePrincipleText(editForm.sell_condition);
+    try {
+      await onSave(method.id, {
+        core_concept: normalizePrincipleText(editForm.core_concept),
+        buy_condition: buyCondition,
+        entry_rule: buyCondition,
+        sell_condition: sellCondition,
+        exit_rule: sellCondition,
+        stop_loss_rule: normalizePrincipleText(editForm.stop_loss_rule),
+        checklist: normalizePrincipleText(editForm.checklist),
+      });
+      setIsEditMode(false);
+    } catch (nextError) {
+      setSaveError(nextError instanceof Error ? nextError.message : "매매원칙을 저장하지 못했습니다.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   return (
-    <div className="training-modal-backdrop" role="presentation" onMouseDown={onClose}>
+    <div className="training-modal-backdrop" role="presentation" onMouseDown={handleBackdropClose}>
       <div
         className="training-modal training-principles-modal"
         role="dialog"
@@ -1910,13 +2001,31 @@ function TrainingMethodPrinciplesModal({
       >
         <div className="training-modal-head">
           <div>
-            <h3>매매원칙 보기</h3>
+            <h3>{isEditMode ? "매매원칙 수정" : "매매원칙 보기"}</h3>
             <p className="training-result-subtitle">{method.method_name}</p>
           </div>
-          <button type="button" className="training-icon-button" onClick={onClose} aria-label="닫기">
-            <X size={18} />
-          </button>
+          <div className="training-principles-head-actions">
+            {isEditMode ? (
+              <>
+                <button type="button" className="btn btn-secondary" disabled={isSaving} onClick={handleCancelEdit}>
+                  취소
+                </button>
+                <button type="button" className="btn btn-primary" disabled={isSaving} onClick={handleSave}>
+                  {isSaving ? "저장 중..." : "저장"}
+                </button>
+              </>
+            ) : (
+              <button type="button" className="btn btn-primary" onClick={handleEdit}>
+                수정
+              </button>
+            )}
+            <button type="button" className="training-icon-button" disabled={isSaving} onClick={onClose} aria-label="닫기">
+              <X size={18} />
+            </button>
+          </div>
         </div>
+
+        {saveError ? <div className="inline-result inline-error">{saveError}</div> : null}
 
         <div className="training-principles-tabs" role="tablist" aria-label="매매원칙 구분">
           {tabs.map((tab) => (
@@ -1935,7 +2044,19 @@ function TrainingMethodPrinciplesModal({
 
         <div className="training-principles-content">
           <h4>{active.label}</h4>
-          <pre>{cleanRuleText(active.value)}</pre>
+          {isEditMode && active.editableField ? (
+            <textarea
+              className="training-principles-editor"
+              value={editForm[active.editableField]}
+              onChange={(event) => handleChangePrinciple(active.editableField!, event.target.value)}
+              aria-label={`${active.label} 수정`}
+            />
+          ) : (
+            <>
+              <pre>{cleanRuleText(active.editableField && isEditMode ? editForm[active.editableField] : active.value)}</pre>
+              {isEditMode && !active.editableField ? <p className="training-principles-readonly-note">최근 복기 교훈은 별도 복기 결과 영역에서 관리됩니다.</p> : null}
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -2115,6 +2236,17 @@ function TradeTrainingPage() {
     setScrollTargetDate(null);
     setOrderMode(null);
     setMessage(orderMode === "BUY" ? "매수 체결되었습니다." : "매도 체결되었습니다.");
+  };
+
+  const handleSaveMethodPrinciples = async (methodId: number, payload: Partial<TradeMethodSaveRequest>) => {
+    const updated = await repositories.tradeJournals.updateTradeMethod(methodId, payload);
+    setTradeMethods((prev) => prev.map((method) => (method.id === updated.id ? updated : method)));
+    setDetail((prev) => {
+      if (!prev || prev.trade_method?.id !== updated.id) return prev;
+      return { ...prev, trade_method: updated };
+    });
+    setMessage("매매원칙이 저장되었습니다.");
+    return updated;
   };
 
   const focusTradeDate = (tradeDate: string) => {
@@ -2304,7 +2436,11 @@ function TradeTrainingPage() {
         />
       ) : null}
       {detail?.trade_method && showMethodPrinciples ? (
-        <TrainingMethodPrinciplesModal method={detail.trade_method} onClose={() => setShowMethodPrinciples(false)} />
+        <TrainingMethodPrinciplesModal
+          method={detail.trade_method}
+          onSave={handleSaveMethodPrinciples}
+          onClose={() => setShowMethodPrinciples(false)}
+        />
       ) : null}
       {detail && orderMode ? <OrderModal mode={orderMode} detail={detail} onClose={() => setOrderMode(null)} onSubmit={submitOrder} /> : null}
       {result ? <ResultModal result={result} onClose={() => setResult(null)} /> : null}

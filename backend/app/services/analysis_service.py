@@ -50,26 +50,51 @@ from backend.app.services.analysis_classifier import AnalysisClassifier
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_NEWS_ITEM_SUMMARY_TEMPLATE = """당신은 국내 주식 뉴스 요약 보조 AI입니다.
-아래 뉴스 1건을 읽고 기사 요약, 관련 키워드, 중요도만 간결하게 정리하세요.
+MAX_NEWS_BODY_CHARS = 4000
+MAX_DISCLOSURE_BODY_CHARS = 4000
+NEWS_BODY_MISSING_MESSAGE = "수집된 본문이 부족하여 원문 확인이 필요합니다."
+DISCLOSURE_BODY_MISSING_MESSAGE = "수집된 공시 본문이 부족하여 원문 확인이 필요합니다."
+NEWS_ARTICLE_FETCH_TIMEOUT_SECONDS = 8
 
-반드시 JSON 객체만 출력하세요. 설명문/마크다운/코드블록은 금지합니다.
+DEFAULT_NEWS_ITEM_SUMMARY_TEMPLATE = """당신은 개인 투자자의 뉴스 판단 훈련을 돕는 뉴스 요약 분석가입니다.
+
+아래 뉴스 제목과 본문을 바탕으로 JSON만 출력하세요.
+투자 추천, 매수 의견, 매도 의견, 목표가 제시는 절대 하지 마세요.
+본문에 없는 내용을 추측하지 마세요.
+
+요약 작성 기준:
+1. summary는 기사 원문을 충실하게 반영해 4~6문장으로 작성하세요.
+2. 단순히 제목을 반복하지 말고, 기사에서 실제로 발생한 일과 배경을 설명하세요.
+3. 다음 요소가 본문에 있으면 반드시 포함하세요.
+   - 관련 기업/기관/지자체/정부 부처
+   - 사업 규모, 금액, 기업 수, 수주 규모, 경제효과 등 수치
+   - 발표 시점 또는 향후 일정
+   - 관심종목과의 직접적 또는 간접적 연결성
+   - 기대효과
+   - 아직 확인이 필요한 부분
+4. 본문 품질이 short 또는 empty이면 억지로 추론하지 말고, 본문 부족으로 원문 확인이 필요하다고 적으세요.
+5. summary는 사용자가 원문을 읽지 않아도 기사 핵심을 이해할 수 있을 정도로 충분히 작성하세요.
+6. keywords는 기사 핵심 키워드 5~8개를 작성하세요.
+7. importance_score는 관심종목과의 관련성, 구체적 수치, 사업 영향 가능성을 기준으로 0~100 사이 정수로 작성하세요.
+
+중요도 기준:
+- 80~100: 관심종목과 직접 관련 있고, 수주/실적/계약/정책/대규모 투자 등 영향 가능성이 큼
+- 60~79: 관심종목 또는 핵심 테마와 강하게 관련 있음
+- 40~59: 업종이나 테마 관련성은 있으나 직접 영향은 제한적
+- 20~39: 단순 언급 또는 시황성 기사
+- 0~19: 관련성 낮음
 
 {
-  "summary": "기사 핵심 내용 2~3문장으로 요약",
-  "keywords": ["관련 키워드 3~7개"],
+  "summary": "4~6문장의 충실한 원문 기반 요약",
+  "keywords": ["키워드1", "키워드2", "키워드3"],
   "importance_score": 0
 }
-
-규칙:
-- summary는 기사 제목과 본문에 있는 사실만 사용하세요.
-- keywords는 종목명, 산업, 제품, 정책, 이슈를 중심으로 3~7개만 작성하세요.
-- importance_score는 0~100 정수로 작성하세요. 낮음 0~39, 보통 40~69, 높음 70~100 기준입니다.
-- 감성, 리스크, 이벤트 유형, 투자 의견, 후속 확인 항목은 출력하지 마세요.
 
 종목명: {{stock_name}}
 종목코드: {{stock_code}}
 제목: {{title}}
+본문 출처: {{body_source}}
+본문 품질: {{body_quality}}
 내용: {{content}}
 보조 내용: {{snippet}}
 출처: {{source}}
@@ -77,22 +102,28 @@ DEFAULT_NEWS_ITEM_SUMMARY_TEMPLATE = """당신은 국내 주식 뉴스 요약 �
 원문 URL: {{url}}
 """
 
-DEFAULT_DISCLOSURE_ITEM_SUMMARY_TEMPLATE = """당신은 국내 주식 공시를 사실 기반으로 요약하는 보조 AI입니다.
-반드시 공시 원문에 있는 사실만 요약하고, 추측/해석을 만들지 마세요.
-반드시 JSON 객체만 출력하세요. 설명문/마크다운/코드블록은 금지합니다.
+DEFAULT_DISCLOSURE_ITEM_SUMMARY_TEMPLATE = """당신은 개인 투자자의 공시 확인 훈련을 돕는 공시 요약 분석가입니다.
+
+아래 공시 제목과 원문 본문을 바탕으로 JSON만 출력하세요.
+투자 추천, 매수 의견, 매도 의견, 목표가 제시는 절대 하지 마세요.
+본문에 없는 내용을 추측하지 마세요.
+
+요약 작성 기준:
+1. summary는 공시 원문의 단락 흐름을 유지해 작성하세요.
+2. 원문 각 단락의 핵심 내용을 한 문장으로 요약하세요.
+3. 단락 수가 많으면 핵심 단락 중심으로 4~8문장 이내로 요약하세요.
+4. 표, 주석, 정정 사유, 계약 내용, 대상자, 금액, 기간 등 공시에 명시된 정보는 원문에 있는 범위 안에서만 반영하세요.
+5. 문서 탐색 경로, 메뉴명, 저작권 문구, 공시 시스템 안내 문구처럼 실제 공시 내용이 아닌 문구는 요약에서 제외하세요.
+6. 같은 내용이 반복되는 단락은 하나의 문장으로 합쳐도 됩니다.
+7. 제목만 반복하지 말고 본문 단락의 실제 내용을 반영하세요.
+8. 본문이 부족하거나 실제 공시 내용이 확인되지 않으면 “수집된 공시 본문이 부족하여 원문 확인이 필요합니다.”라고 summary에 포함하세요.
+9. keywords는 공시 핵심 키워드 3~8개를 작성하세요.
+10. importance_score는 공시의 구체성, 금액·계약·지분·정정·실적 등 투자자가 확인할 필요가 있는 정도를 기준으로 0~100 사이 정수로 작성하세요.
 
 {
-  "summary": "공시 원문 핵심 2~4문장",
-  "key_facts": ["원문에 명시된 사실 1", "원문에 명시된 사실 2"],
-  "keywords": ["키워드1", "키워드2"],
-  "relevance_level": "high | medium | low",
-  "relevance_reason": "투자 관련성 판단 근거",
-  "follow_up_points": ["후속 확인 1", "후속 확인 2"],
-  "sentiment": "positive | neutral | negative",
-  "importance_score": 0,
-  "risk_level": "low | medium | high | unknown",
-  "event_type": "earnings | contract | investment | regulation | lawsuit | product | market | supply | policy | real_estate | project | financing | disclosure_correction | governance | other",
-  "tags": ["태그1", "태그2"]
+  "summary": "공시 원문 단락별 핵심을 한 문장씩 요약한 내용",
+  "keywords": ["키워드1", "키워드2", "키워드3"],
+  "importance_score": 0
 }
 
 공시 제목: {{disclosure_title}}
@@ -100,7 +131,8 @@ DEFAULT_DISCLOSURE_ITEM_SUMMARY_TEMPLATE = """당신은 국내 주식 공시를 
 공시일: {{disclosed_at}}
 접수번호: {{dart_receipt_no}}
 DART URL: {{dart_url}}
-본문 상태: {{body_status}}
+본문 출처: {{body_source}}
+본문 품질: {{body_quality}}
 공시 본문:
 {{disclosure_body}}
 """
@@ -144,6 +176,7 @@ class AnalysisService:
         self.classification_rule_repo = ClassificationRuleRepository(db)
         self.classifier = AnalysisClassifier()
         self.llm_client = LMStudioClient()
+        self._news_body_context_cache: dict[int, tuple[str, str]] = {}
 
     def get_stock_briefing_candidates(
         self,
@@ -418,7 +451,7 @@ class AnalysisService:
         item_system_prompt = (
             "너는 국내 주식 뉴스 요약 보조 AI이다. "
             "내부 사고 과정, Thinking Process, Analysis, Reasoning을 절대 출력하지 마라. "
-            "summary, keywords, importance_score만 포함한 JSON 객체만 출력하라."
+            "기사 원문에 있는 사실만 바탕으로 4~6문장 요약을 만들고, summary, keywords, importance_score만 포함한 JSON 객체만 출력하라."
         )
 
         for item in items:
@@ -585,43 +618,37 @@ class AnalysisService:
         success_count = 0
         failed_count = 0
         skipped_count = 0
-        rules = self.classification_rule_repo.list_active_by_target("disclosure")
-        self._warn_if_no_active_rules(target_type="disclosure", active_rule_count=len(rules))
         item_system_prompt = (
-            "너는 투자 공시를 사실 기반으로 구조화 요약하는 보조 AI이다. "
+            "너는 개인 투자자의 공시 확인 훈련을 돕는 공시 요약 분석가이다. "
             "내부 사고 과정, Thinking Process, Analysis, Reasoning을 절대 출력하지 마라. "
-            "지정한 JSON 객체만 출력하라."
+            "summary, keywords, importance_score만 포함한 JSON 객체만 출력하라."
         )
 
         for item in items:
             processed_at = now_kst()
             disclosure_body, body_error, body_source = self._resolve_disclosure_body_text(item)
-            body_status = "ok" if disclosure_body else "missing"
-            if disclosure_body and body_source in {"raw_file", "dart_fetch"}:
-                # Cache fetched disclosure body so later AI summarize runs can reuse DB text first.
-                self.disclosure_repo.update_summary_text(item.id, disclosure_body)
-                item.summary = disclosure_body
-            base_prompt = self._build_disclosure_item_prompt(item, disclosure_body=disclosure_body, body_status=body_status)
+            body_quality = self._get_disclosure_body_quality(disclosure_body)
+            base_prompt = self._build_disclosure_item_prompt(
+                item,
+                disclosure_body=disclosure_body,
+                body_source=body_source,
+                body_quality=body_quality,
+            )
             attempts = max(1, LLM_ITEM_SUMMARY_RETRY_COUNT + 1)
             saved = False
             last_error = ""
 
-            if not disclosure_body:
+            if body_quality in {"missing", "navigation_only"}:
                 fallback_reason = body_error or "missing_disclosure_body"
-                fallback_summary = self._build_disclosure_summary_fallback(item, fallback_reason)
+                fallback_payload = self._build_simple_disclosure_summary_fallback(item, disclosure_body, fallback_reason)
+                fallback_summary = self._format_simple_disclosure_summary(fallback_payload)
                 event_type = self._infer_disclosure_event_type(item.disclosure_title, item.disclosure_type, "other")
                 risk_level = self._infer_disclosure_risk_level(item.disclosure_title, item.disclosure_type, "unknown")
-                relevance_level = "low" if event_type == "governance" else "medium"
                 self.disclosure_repo.update_ai_summary(
                     disclosure_id=item.id,
                     ai_summary=fallback_summary,
-                    ai_importance_score=40 if event_type == "governance" else 50,
-                    ai_tags=self._normalize_tags([
-                        "공시",
-                        event_type,
-                        f"risk:{risk_level}",
-                        "본문미수집",
-                    ]),
+                    ai_importance_score=int(fallback_payload.get("importance_score") or 30),
+                    ai_tags=self._normalize_tags(fallback_payload.get("keywords") or []),
                     ai_risk_level=risk_level,
                     ai_event_type=event_type,
                     ai_processed_at=processed_at,
@@ -633,53 +660,33 @@ class AnalysisService:
             for attempt in range(attempts):
                 prompt = base_prompt
                 if attempt > 0:
-                    prompt += "\n\n이전 응답이 형식/품질 기준을 충족하지 못했습니다. JSON 객체만 출력하고 key_facts/keywords/follow_up_points를 구체화하세요."
+                    prompt += "\n\n이전 응답이 형식 기준을 충족하지 못했습니다. summary, keywords, importance_score만 담은 JSON 객체만 출력하세요."
                 try:
                     raw = self.llm_client.generate_text(
                         prompt=prompt,
                         temperature=0.1,
-                        max_tokens=LLM_ITEM_SUMMARY_MAX_OUTPUT_TOKENS,
+                        max_tokens=max(LLM_ITEM_SUMMARY_MAX_OUTPUT_TOKENS, 700),
                         timeout=LLM_ITEM_SUMMARY_TIMEOUT_SECONDS,
                         purpose=f"disclosure_ai_summary:{item.id}:attempt{attempt + 1}",
                         system_prompt=item_system_prompt,
                     )
                     cleaned = self._clean_item_summary_text(raw)
-                    structured = self._parse_news_summary_payload(cleaned)
+                    structured = self._parse_simple_disclosure_summary_payload(cleaned, item, disclosure_body)
                     if not structured:
                         last_error = "json_parse_failed"
                         continue
-                    if not self._is_valid_structured_summary(structured):
+                    if not self._is_valid_simple_news_summary(structured):
                         last_error = "quality_too_low"
                         continue
 
-                    event_type = self._infer_disclosure_event_type(item.disclosure_title, item.disclosure_type, structured.get("event_type", "other"))
-                    risk_level = self._infer_disclosure_risk_level(item.disclosure_title, item.disclosure_type, structured.get("risk_level", "unknown"))
-                    relevance_level = str(structured.get("relevance_level", "medium")).lower()
-                    if event_type == "governance" and relevance_level == "high":
-                        relevance_level = "medium"
-                    structured["event_type"] = event_type
-                    structured["risk_level"] = risk_level
-                    structured["relevance_level"] = relevance_level
-                    structured["importance_score"] = self._normalize_importance_with_context(
-                        structured.get("importance_score"),
-                        event_type,
-                        risk_level,
-                        [],
-                    )
-                    structured["tags"] = self._normalize_string_list(structured.get("tags")) + [event_type, "공시"]
-                    cleaned_summary = self._format_structured_news_summary(structured)
-
-                    classified = self.classifier.classify_disclosure(
-                        disclosure_title=item.disclosure_title,
-                        disclosure_type=item.disclosure_type,
-                        ai_summary=cleaned_summary,
-                        rules=rules,
-                    )
+                    event_type = self._infer_disclosure_event_type(item.disclosure_title, item.disclosure_type, "other")
+                    risk_level = self._infer_disclosure_risk_level(item.disclosure_title, item.disclosure_type, "unknown")
+                    cleaned_summary = self._format_simple_disclosure_summary(structured)
                     self.disclosure_repo.update_ai_summary(
                         disclosure_id=item.id,
                         ai_summary=cleaned_summary,
-                        ai_importance_score=int(structured.get("importance_score") or classified.get("ai_importance_score", 50)),
-                        ai_tags=self._normalize_tags(structured.get("tags")) or str(classified.get("ai_tags", "공시")),
+                        ai_importance_score=int(structured.get("importance_score") or 30),
+                        ai_tags=self._normalize_tags(structured.get("keywords") or []),
                         ai_risk_level=risk_level,
                         ai_event_type=event_type,
                         ai_processed_at=processed_at,
@@ -692,21 +699,16 @@ class AnalysisService:
                     last_error = str(exc)
 
             if not saved:
-                fallback_summary = self._build_disclosure_summary_fallback(item, last_error or "invalid or empty summary response")
+                fallback_payload = self._build_simple_disclosure_summary_fallback(item, disclosure_body, last_error or "invalid or empty summary response")
+                fallback_summary = self._format_simple_disclosure_summary(fallback_payload)
                 try:
                     event_type = self._infer_disclosure_event_type(item.disclosure_title, item.disclosure_type, "other")
                     risk_level = self._infer_disclosure_risk_level(item.disclosure_title, item.disclosure_type, "unknown")
-                    classified = self.classifier.classify_disclosure(
-                        disclosure_title=item.disclosure_title,
-                        disclosure_type=item.disclosure_type,
-                        ai_summary=fallback_summary,
-                        rules=rules,
-                    )
                     self.disclosure_repo.update_ai_summary(
                         disclosure_id=item.id,
                         ai_summary=fallback_summary,
-                        ai_importance_score=int(classified.get("ai_importance_score", 50)),
-                        ai_tags=str(classified.get("ai_tags", "공시")),
+                        ai_importance_score=int(fallback_payload.get("importance_score") or 30),
+                        ai_tags=self._normalize_tags(fallback_payload.get("keywords") or []),
                         ai_risk_level=risk_level,
                         ai_event_type=event_type,
                         ai_processed_at=processed_at,
@@ -730,7 +732,7 @@ class AnalysisService:
             success_count=success_count,
             failed_count=failed_count,
             skipped_count=skipped_count,
-            message=self._message_with_active_rules("disclosure ai summary completed", len(rules)),
+            message="disclosure ai summary completed",
         )
 
     def summarize_source_items(
@@ -860,23 +862,29 @@ class AnalysisService:
     def _build_news_item_prompt(self, item: Any) -> str:
         template = self._read_prompt_template("lmstudio_news_item_summary_template.md", DEFAULT_NEWS_ITEM_SUMMARY_TEMPLATE)
         title = self._normalize_news_text(getattr(item, "title", ""))
-        content = self._normalize_news_text(getattr(item, "summary", ""))
-        if len(content) < 50:
-            content = self._normalize_news_text(getattr(item, "raw_text_path", "")) or content
-        snippet = self._truncate_text(content, 240)
-        content_for_prompt = self._truncate_text(content, LLM_MAX_ITEM_SUMMARY_CHARS) or snippet or "정보 없음"
+        content, body_source = self._resolve_news_body_context(item)
+        body_quality = self._get_news_body_quality(content)
+        snippet = self._truncate_text(self._normalize_news_text(content), 240)
+        content_for_prompt = self._truncate_news_body_text(content, MAX_NEWS_BODY_CHARS)
+        if body_quality in {"empty", "short"}:
+            content_for_prompt = "\n".join(part for part in [content_for_prompt, NEWS_BODY_MISSING_MESSAGE] if part).strip()
+        content_for_prompt = content_for_prompt or NEWS_BODY_MISSING_MESSAGE
         logger.debug(
-            "news_ai_summary prompt_input news_id=%s title_len=%s content_len=%s snippet_len=%s",
+            "news_ai_summary prompt_input news_id=%s title_len=%s content_len=%s snippet_len=%s body_source=%s body_quality=%s",
             getattr(item, "id", None),
             len(title),
             len(content_for_prompt),
             len(snippet),
+            body_source,
+            body_quality,
         )
         return (
             template.replace("{{stock_name}}", getattr(item, "stock_name", None) or "정보 없음")
             .replace("{{stock_code}}", getattr(item, "stock_code", None) or "정보 없음")
             .replace("{{title}}", self._truncate_text(title, 200))
             .replace("{{published_at}}", item.published_at or "정보 없음")
+            .replace("{{body_source}}", body_source)
+            .replace("{{body_quality}}", body_quality)
             .replace("{{summary}}", content_for_prompt)
             .replace("{{content}}", content_for_prompt)
             .replace("{{snippet}}", snippet or "정보 없음")
@@ -884,16 +892,21 @@ class AnalysisService:
             .replace("{{url}}", getattr(item, "url", None) or "정보 없음")
         )
 
-    def _build_disclosure_item_prompt(self, item: Any, disclosure_body: str, body_status: str) -> str:
+    def _build_disclosure_item_prompt(self, item: Any, disclosure_body: str, body_source: str, body_quality: str) -> str:
         template = self._read_prompt_template("lmstudio_disclosure_item_summary_template.md", DEFAULT_DISCLOSURE_ITEM_SUMMARY_TEMPLATE)
+        body_for_prompt = self._truncate_disclosure_body_text(disclosure_body, MAX_DISCLOSURE_BODY_CHARS)
+        if body_quality in {"missing", "short", "navigation_only"}:
+            body_for_prompt = "\n".join(part for part in [body_for_prompt, DISCLOSURE_BODY_MISSING_MESSAGE] if part).strip()
+        body_for_prompt = body_for_prompt or DISCLOSURE_BODY_MISSING_MESSAGE
         return (
             template.replace("{{disclosure_title}}", self._truncate_text(item.disclosure_title, 220))
             .replace("{{disclosure_type}}", item.disclosure_type or "정보 없음")
             .replace("{{disclosed_at}}", item.disclosed_at or "정보 없음")
             .replace("{{dart_receipt_no}}", getattr(item, "dart_receipt_no", None) or "정보 없음")
             .replace("{{dart_url}}", getattr(item, "url", None) or "정보 없음")
-            .replace("{{body_status}}", body_status)
-            .replace("{{disclosure_body}}", disclosure_body or "본문 미수집")
+            .replace("{{body_source}}", body_source)
+            .replace("{{body_quality}}", body_quality)
+            .replace("{{disclosure_body}}", body_for_prompt)
         )
 
     def _build_chunk_prompt(self, source_label: str, items_text: str) -> str:
@@ -1049,8 +1062,8 @@ class AnalysisService:
             return None
 
         title_text = self._normalize_news_text(getattr(item, "title", "")) if item is not None else ""
-        content_text = self._normalize_news_text(getattr(item, "summary", "")) if item is not None else ""
-        summary = self._normalize_news_text(payload.get("summary"))
+        content_text = self._resolve_news_body_text(item) if item is not None else ""
+        summary = self._normalize_summary_text(payload.get("summary"))
         if not summary:
             summary = self._fallback_simple_news_summary_text(title_text, content_text)
 
@@ -1086,7 +1099,7 @@ class AnalysisService:
             score += 40
         elif summary_len >= 12:
             score += 25
-        if 3 <= len(keywords) <= 7:
+        if 3 <= len(keywords) <= 8:
             score += 30
         elif keywords:
             score += 15
@@ -1098,7 +1111,7 @@ class AnalysisService:
         return max(0, min(100, score))
 
     def _format_simple_news_summary(self, payload: dict[str, Any]) -> str:
-        summary = self._normalize_news_text(payload.get("summary")) or "-"
+        summary = self._normalize_summary_text(payload.get("summary")) or "-"
         keywords = self._normalize_simple_news_keywords(payload.get("keywords") or [])
         score = self._normalize_importance_score(payload.get("importance_score"))
         return "\n\n".join(
@@ -1111,10 +1124,10 @@ class AnalysisService:
 
     def _build_simple_news_summary_fallback(self, item: Any, reason: str) -> dict[str, Any]:
         title = self._normalize_news_text(getattr(item, "title", "")) or "제목 정보 없음"
-        content = self._normalize_news_text(getattr(item, "summary", ""))
+        content = self._resolve_news_body_text(item)
         summary = self._fallback_simple_news_summary_text(title, content)
         keywords = self._fallback_news_keywords(f"{title} {content}")
-        score = self._normalize_importance_score(getattr(item, "importance_score", None)) or 30
+        score = self._fallback_news_importance_score(item)
         return {
             "summary": summary,
             "keywords": keywords,
@@ -1124,13 +1137,28 @@ class AnalysisService:
 
     def _fallback_simple_news_summary_text(self, title: str, content: str) -> str:
         title_text = self._truncate_text(self._normalize_news_text(title), 120)
-        content_text = self._normalize_news_text(content)
-        if content_text:
-            sentences = re.split(r"(?<=[.!?。！？])\s+|(?<=다\.)\s+", content_text)
-            summary = " ".join(sentence.strip() for sentence in sentences if sentence.strip())[:260].strip()
-            if summary:
-                return summary
-        return f"{title_text or '뉴스'} 관련 기사입니다. 제목과 수집된 설명을 기준으로 핵심 내용을 간단히 정리했습니다."
+        content_text = self._normalize_news_body_text(content)
+        if len(self._normalize_news_text(content_text)) < 100:
+            return f"{title_text or '뉴스'} 기사입니다. {NEWS_BODY_MISSING_MESSAGE}"
+
+        sentences = self._split_korean_sentences(content_text)
+        picked: list[str] = [sentence for sentence in sentences[:3] if sentence]
+        if picked:
+            prefix = f"{title_text} 기사입니다. " if title_text else ""
+            suffix = ""
+            if self._get_news_body_quality(content_text) == "short":
+                suffix = " 다만 현재 수집된 본문만으로는 세부 사업 규모나 직접적인 실적 영향까지는 확인하기 어렵다."
+            return prefix + " ".join(picked) + suffix
+
+        picked = []
+        for paragraph in self._split_news_paragraphs(content_text):
+            if paragraph and paragraph not in picked:
+                picked.append(self._truncate_text(paragraph, 220))
+            if len(picked) >= 5:
+                break
+        if picked:
+            return "\n".join(picked)
+        return f"{title_text or '뉴스'} 기사입니다. {NEWS_BODY_MISSING_MESSAGE}"
 
     def _normalize_simple_news_keywords(self, keywords: Any) -> list[str]:
         raw_keywords = self._normalize_string_list(keywords)
@@ -1142,7 +1170,7 @@ class AnalysisService:
                 continue
             if value not in filtered:
                 filtered.append(value)
-            if len(filtered) >= 7:
+            if len(filtered) >= 8:
                 break
         return filtered
 
@@ -1247,25 +1275,365 @@ class AnalysisService:
         text = re.sub(r"\s+", " ", text).strip()
         return text
 
+    def _resolve_news_body_text(self, item: Any) -> str:
+        return self._resolve_news_body_context(item)[0]
+
+    def _resolve_news_body_context(self, item: Any) -> tuple[str, str]:
+        if item is None:
+            return "", "missing"
+
+        item_id = getattr(item, "id", None)
+        if isinstance(item_id, int) and item_id in self._news_body_context_cache:
+            return self._news_body_context_cache[item_id]
+
+        article_text = self._fetch_news_article_body(getattr(item, "url", None))
+        if len(self._normalize_news_text(article_text)) >= 100:
+            result = (article_text, "article_url")
+            if isinstance(item_id, int):
+                self._news_body_context_cache[item_id] = result
+            return result
+
+        summary_text = self._normalize_news_body_text(getattr(item, "summary", ""))
+        if len(self._normalize_news_text(summary_text)) >= 30:
+            result = (summary_text, "stored_description")
+            if isinstance(item_id, int):
+                self._news_body_context_cache[item_id] = result
+            return result
+
+        raw_text = self._read_news_raw_text(getattr(item, "raw_text_path", None), getattr(item, "url", None))
+        if raw_text:
+            result = (raw_text, "raw_response")
+            if isinstance(item_id, int):
+                self._news_body_context_cache[item_id] = result
+            return result
+
+        result = (summary_text, "missing")
+        if isinstance(item_id, int):
+            self._news_body_context_cache[item_id] = result
+        return result
+
+    def _fetch_news_article_body(self, url: str | None) -> str:
+        normalized_url = str(url or "").strip()
+        if not normalized_url.startswith(("http://", "https://")):
+            return ""
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.7,en;q=0.6",
+        }
+        try:
+            response = requests.get(
+                normalized_url,
+                headers=headers,
+                timeout=NEWS_ARTICLE_FETCH_TIMEOUT_SECONDS,
+                allow_redirects=True,
+            )
+            response.raise_for_status()
+            content_type = response.headers.get("content-type", "").lower()
+            if content_type and "html" not in content_type and "text" not in content_type:
+                return ""
+            if not response.encoding or response.encoding.lower() == "iso-8859-1":
+                response.encoding = response.apparent_encoding or "utf-8"
+            return self._extract_news_article_body_from_html(response.text)
+        except Exception as exc:  # noqa: BLE001
+            logger.info("news article body fetch skipped: url=%s reason=%s", normalized_url, exc)
+            return ""
+
+    def _extract_news_article_body_from_html(self, html_text: str) -> str:
+        if not html_text:
+            return ""
+
+        cleaned = re.sub(r"(?is)<script[^>]*>.*?</script>", " ", html_text)
+        cleaned = re.sub(r"(?is)<style[^>]*>.*?</style>", " ", cleaned)
+        cleaned = re.sub(r"(?is)<noscript[^>]*>.*?</noscript>", " ", cleaned)
+        cleaned = re.sub(r"(?is)<svg[^>]*>.*?</svg>", " ", cleaned)
+
+        candidate_htmls: list[str] = []
+        for tag in ("article", "main"):
+            candidate_htmls.extend(re.findall(rf"(?is)<{tag}\b[^>]*>.*?</{tag}>", cleaned))
+
+        attr_pattern = (
+            r"(?is)<(?P<tag>div|section)\b(?=[^>]*(?:id|class)\s*=\s*"
+            r"['\"][^'\"]*(?:article|news|body|content|view|read|본문|기사)[^'\"]*['\"])[^>]*>"
+            r"(?P<body>.*?)</(?P=tag)>"
+        )
+        candidate_htmls.extend(match.group(0) for match in re.finditer(attr_pattern, cleaned))
+
+        candidates = [self._html_to_news_text(candidate) for candidate in candidate_htmls]
+        candidates = [candidate for candidate in candidates if len(self._normalize_news_text(candidate)) >= 200]
+        if candidates:
+            return max(candidates, key=lambda value: len(self._normalize_news_text(value)))
+
+        return self._extract_news_text_from_full_html(cleaned)
+
+    def _html_to_news_text(self, html_text: str) -> str:
+        text = re.sub(r"(?i)<br\s*/?>", "\n", html_text)
+        text = re.sub(r"(?i)</p\s*>", "\n", text)
+        text = re.sub(r"(?i)</div\s*>", "\n", text)
+        text = re.sub(r"(?i)</li\s*>", "\n", text)
+        text = re.sub(r"<[^>]+>", " ", text)
+        return self._filter_article_lines(text)
+
+    def _extract_news_text_from_full_html(self, html_text: str) -> str:
+        text = self._html_to_news_text(html_text)
+        paragraphs = self._split_news_paragraphs(text)
+        return "\n".join(paragraphs[:20])
+
+    def _filter_article_lines(self, text: str) -> str:
+        normalized = self._normalize_news_body_text(text)
+        blocked_terms = (
+            "무단전재",
+            "재배포 금지",
+            "저작권",
+            "copyright",
+            "관련기사",
+            "많이 본 뉴스",
+            "구독",
+            "로그인",
+            "댓글",
+            "광고",
+            "제보",
+            "기자",
+        )
+        lines: list[str] = []
+        for line in normalized.split("\n"):
+            compact = self._normalize_news_text(line)
+            if len(compact) < 25:
+                continue
+            lowered = compact.lower()
+            if any(term in lowered for term in blocked_terms) and len(compact) < 120:
+                continue
+            lines.append(compact)
+        return "\n".join(lines)
+
+    def _read_news_raw_text(self, raw_text_path: str | None, url: str | None = None) -> str:
+        if not raw_text_path:
+            return ""
+        try:
+            path = Path(raw_text_path)
+            if not path.is_absolute():
+                path = PROJECT_ROOT / path
+            if not path.exists():
+                return ""
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            return ""
+
+        entries = payload.get("items") if isinstance(payload, dict) else None
+        if not isinstance(entries, list):
+            return ""
+
+        target_url = str(url or "").strip()
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            entry_url = str(entry.get("originallink") or entry.get("link") or "").strip()
+            if target_url and entry_url and entry_url != target_url:
+                continue
+            for key in ("content", "body", "raw_content", "text_content", "description", "summary"):
+                value = self._normalize_news_body_text(entry.get(key))
+                if len(self._normalize_news_text(value)) >= 80:
+                    return value
+        return ""
+
+    def _get_news_body_quality(self, body: str) -> str:
+        length = len(self._normalize_news_text(body))
+        if length < 100:
+            return "empty"
+        if length < 500:
+            return "short"
+        return "sufficient"
+
+    def _normalize_news_body_text(self, value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, (list, tuple)):
+            text = "\n".join(str(v) for v in value if v is not None)
+        elif isinstance(value, dict):
+            text = json.dumps(value, ensure_ascii=False)
+        else:
+            text = str(value)
+        text = html.unescape(text)
+        text = re.sub(r"(?i)<br\s*/?>", "\n", text)
+        text = re.sub(r"(?i)</p\s*>", "\n", text)
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = text.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", " ")
+        text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\xa0", " ")
+        lines = [re.sub(r"[ \t]+", " ", line).strip() for line in text.split("\n")]
+        return "\n".join(line for line in lines if line).strip()
+
+    def _normalize_summary_text(self, value: Any) -> str:
+        text = self._normalize_news_body_text(value)
+        lines = [self._normalize_news_text(line) for line in text.split("\n")]
+        return "\n".join(line for line in lines if line).strip()
+
+    def _truncate_news_body_text(self, value: str, max_chars: int) -> str:
+        text = self._normalize_news_body_text(value)
+        if len(text) <= max_chars:
+            return text
+        head_chars = min(2500, max_chars)
+        tail_chars = max(0, max_chars - head_chars)
+        head = text[:head_chars].rstrip()
+        tail = text[-tail_chars:].lstrip() if tail_chars else ""
+        head_cut = max(head.rfind("\n\n"), head.rfind("\n"))
+        if head_cut >= head_chars // 2:
+            head = head[:head_cut].rstrip()
+        tail_cut = min((cut for cut in [tail.find("\n\n"), tail.find("\n")] if cut >= 0), default=-1)
+        if tail_cut >= 0 and tail_cut < len(tail) // 2:
+            tail = tail[tail_cut:].lstrip()
+        if not tail:
+            return head + "\n..."
+        return head + "\n...\n[본문 후반부]\n" + tail
+
+    def _split_news_paragraphs(self, value: str) -> list[str]:
+        paragraphs = []
+        blocked_terms = ("무단전재", "재배포 금지", "저작권", "기자", "구독", "광고", "제보")
+        for paragraph in self._normalize_news_body_text(value).split("\n"):
+            normalized = self._normalize_news_text(paragraph)
+            if len(normalized) < 25:
+                continue
+            if any(term in normalized for term in blocked_terms) and len(normalized) < 80:
+                continue
+            paragraphs.append(normalized)
+        return paragraphs
+
+    def _split_korean_sentences(self, value: str) -> list[str]:
+        text = self._normalize_news_body_text(value)
+        sentences: list[str] = []
+        for paragraph in self._split_news_paragraphs(text):
+            parts = re.split(r"(?<=[.!?。！？])\s+|(?<=다\.)\s+", paragraph)
+            for part in parts:
+                sentence = self._normalize_news_text(part)
+                if len(sentence) < 20:
+                    continue
+                sentences.append(self._truncate_text(sentence, 240))
+                if len(sentences) >= 6:
+                    return sentences
+        return sentences
+
+    def _extract_first_sentence(self, paragraph: str) -> str:
+        normalized = self._normalize_news_text(paragraph)
+        if not normalized:
+            return ""
+        sentences = re.split(r"(?<=[.!?。！？])\s+|(?<=다\.)\s+", normalized)
+        sentence = next((item.strip() for item in sentences if item.strip()), normalized)
+        return self._truncate_text(sentence, 220)
+
+    def _fallback_news_importance_score(self, item: Any) -> int:
+        existing_score = self._normalize_importance_score(getattr(item, "importance_score", None))
+        if existing_score and existing_score > 0:
+            return existing_score
+        relevance = str(
+            getattr(item, "relevance_level", None)
+            or getattr(item, "ai_relevance_level", None)
+            or getattr(item, "relevance", None)
+            or ""
+        ).strip().lower()
+        relevance_scores = {
+            "direct": 75,
+            "strong": 65,
+            "indirect": 45,
+            "low": 30,
+            "exclude": 15,
+        }
+        return relevance_scores.get(relevance, 30)
+
+    def _parse_simple_disclosure_summary_payload(self, text: str, item: Any | None = None, disclosure_body: str = "") -> dict[str, Any] | None:
+        payload = self._extract_json_object(text)
+        if not payload:
+            repaired = self._repair_json_like_text(text)
+            payload = self._extract_json_object(repaired)
+        if not payload:
+            logger.warning("disclosure_ai_summary simple parse failed after repair")
+            return None
+
+        title_text = self._normalize_news_text(getattr(item, "disclosure_title", "")) if item is not None else ""
+        body_text = self._normalize_news_body_text(disclosure_body)
+        summary = self._normalize_summary_text(payload.get("summary"))
+        if not summary:
+            summary = self._fallback_simple_disclosure_summary_text(title_text, body_text)
+
+        keywords = self._normalize_simple_news_keywords(payload.get("keywords"))
+        if not keywords:
+            keywords = self._fallback_news_keywords(f"{title_text} {body_text}")
+
+        importance_score = self._normalize_importance_score(payload.get("importance_score"))
+        if importance_score is None:
+            importance_score = self._normalize_importance_score(getattr(item, "importance_score", None)) if item is not None else None
+        if importance_score is None:
+            importance_score = 30
+
+        return {
+            "summary": summary,
+            "keywords": keywords,
+            "importance_score": importance_score,
+        }
+
+    def _format_simple_disclosure_summary(self, payload: dict[str, Any]) -> str:
+        summary = self._normalize_summary_text(payload.get("summary")) or DISCLOSURE_BODY_MISSING_MESSAGE
+        keywords = self._normalize_simple_news_keywords(payload.get("keywords") or [])
+        score = self._normalize_importance_score(payload.get("importance_score"))
+        return json.dumps(
+            {
+                "summary": summary,
+                "keywords": keywords,
+                "importance_score": 30 if score is None else score,
+            },
+            ensure_ascii=False,
+        )
+
+    def _build_simple_disclosure_summary_fallback(self, item: Any, disclosure_body: str, reason: str) -> dict[str, Any]:
+        title = self._normalize_news_text(getattr(item, "disclosure_title", "")) or "공시 제목 정보 없음"
+        body_text = self._normalize_news_body_text(disclosure_body or getattr(item, "summary", ""))
+        summary = self._fallback_simple_disclosure_summary_text(title, body_text)
+        keywords = self._fallback_news_keywords(f"{title} {body_text}")
+        score = self._normalize_importance_score(getattr(item, "importance_score", None)) or 30
+        return {
+            "summary": summary,
+            "keywords": keywords,
+            "importance_score": score,
+            "error_reason": reason,
+        }
+
+    def _fallback_simple_disclosure_summary_text(self, title: str, body: str) -> str:
+        title_text = self._truncate_text(self._normalize_news_text(title), 120)
+        body_text = self._normalize_news_body_text(body)
+        if self._get_disclosure_body_quality(body_text) in {"missing", "navigation_only"}:
+            return f"{title_text or '공시'} 공시입니다. {DISCLOSURE_BODY_MISSING_MESSAGE}"
+
+        picked: list[str] = []
+        for paragraph in self._split_disclosure_paragraphs(body_text):
+            sentence = self._extract_first_sentence(paragraph)
+            if sentence and sentence not in picked:
+                picked.append(sentence)
+            if len(picked) >= 6:
+                break
+        if picked:
+            return "\n".join(picked)
+        return f"{title_text or '공시'} 공시입니다. {DISCLOSURE_BODY_MISSING_MESSAGE}"
+
     def _resolve_disclosure_body_text(self, item: Any) -> tuple[str, str | None, str]:
-        # 1) Prefer disclosure fields already persisted in DB.
+        # 1) Prefer a temporary DART URL fetch. The fetched body is not persisted.
+        dart_text, dart_error = self._fetch_dart_disclosure_text(getattr(item, "url", None), getattr(item, "dart_receipt_no", None))
+        if dart_text:
+            return self._truncate_disclosure_body_text(dart_text, 12000), None, "dart_fetch"
+
+        # 2) Use disclosure fields already persisted in DB.
         db_candidates = [
             getattr(item, "summary", None),
         ]
         for candidate in db_candidates:
             normalized = self._normalize_news_text(candidate)
             if len(normalized) >= 80:
-                return self._truncate_text(normalized, 12000), None, "db_summary"
+                return self._truncate_disclosure_body_text(self._normalize_news_body_text(candidate), 12000), None, "db_summary"
 
-        # 2) Try the saved raw response file.
+        # 3) Try the saved raw response file.
         raw_from_file = self._extract_disclosure_text_from_raw_file(getattr(item, "raw_text_path", None), getattr(item, "dart_receipt_no", None))
         if raw_from_file:
-            return self._truncate_text(raw_from_file, 12000), None, "raw_file"
-
-        # 3) Fallback to DART fetch at summarize time.
-        dart_text, dart_error = self._fetch_dart_disclosure_text(getattr(item, "url", None), getattr(item, "dart_receipt_no", None))
-        if dart_text:
-            return self._truncate_text(dart_text, 12000), None, "dart_fetch"
+            return self._truncate_disclosure_body_text(raw_from_file, 12000), None, "raw_file"
 
         return "", dart_error or "missing_disclosure_body", "missing"
 
@@ -1294,10 +1662,94 @@ class AnalysisService:
             if target_receipt and str(entry.get("rcept_no") or "").strip() != target_receipt:
                 continue
             for key in ("summary", "content", "raw_content", "text_content", "report_content", "rm"):
-                value = self._normalize_news_text(entry.get(key))
-                if len(value) >= 80:
+                value = self._normalize_news_body_text(entry.get(key))
+                if len(self._normalize_news_text(value)) >= 80:
                     return value
         return ""
+
+    def _get_disclosure_body_quality(self, body: str) -> str:
+        normalized = self._normalize_news_text(body)
+        if len(normalized) < 100:
+            return "missing"
+        if self._looks_like_navigation_only_disclosure(normalized):
+            return "navigation_only"
+        if len(normalized) < 500:
+            return "short"
+        return "sufficient"
+
+    def _looks_like_navigation_only_disclosure(self, text: str) -> bool:
+        normalized = self._normalize_news_text(text).lower()
+        if not normalized:
+            return True
+        navigation_terms = [
+            "문서목차",
+            "첨부문서",
+            "공시서류검색",
+            "viewer",
+            "dart",
+            "인쇄",
+            "닫기",
+            "이전",
+            "다음",
+            "검색",
+            "회사명",
+            "보고서명",
+        ]
+        hit_count = sum(1 for term in navigation_terms if term.lower() in normalized)
+        business_terms = [
+            "계약금액",
+            "계약기간",
+            "계약상대",
+            "매출액",
+            "발행주식",
+            "보유주식",
+            "취득",
+            "처분",
+            "정정",
+            "공급계약",
+            "판매",
+            "영업이익",
+            "당기순이익",
+        ]
+        has_business_term = any(term in normalized for term in business_terms)
+        return hit_count >= 4 and not has_business_term
+
+    def _truncate_disclosure_body_text(self, value: str, max_chars: int) -> str:
+        text = self._normalize_news_body_text(value)
+        if len(text) <= max_chars:
+            return text
+        head_chars = min(3000, max_chars)
+        tail_chars = max(0, max_chars - head_chars)
+        head = text[:head_chars].rstrip()
+        tail = text[-tail_chars:].lstrip() if tail_chars else ""
+        head_cut = max(head.rfind("\n\n"), head.rfind("\n"))
+        if head_cut >= head_chars // 2:
+            head = head[:head_cut].rstrip()
+        if not tail:
+            return head + "\n..."
+        return head + "\n...\n[공시 본문 후반부]\n" + tail
+
+    def _split_disclosure_paragraphs(self, value: str) -> list[str]:
+        paragraphs: list[str] = []
+        blocked_terms = (
+            "문서목차",
+            "첨부문서",
+            "공시서류검색",
+            "인쇄",
+            "닫기",
+            "이전",
+            "다음",
+            "저작권",
+            "copyright",
+        )
+        for paragraph in self._normalize_news_body_text(value).split("\n"):
+            normalized = self._normalize_news_text(paragraph)
+            if len(normalized) < 20:
+                continue
+            if any(term.lower() in normalized.lower() for term in blocked_terms) and len(normalized) < 100:
+                continue
+            paragraphs.append(normalized)
+        return paragraphs
 
     def _fetch_dart_disclosure_text(self, dart_url: str | None, receipt_no: str | None) -> tuple[str, str | None]:
         rcp_no = self._extract_dart_receipt_no(dart_url, receipt_no)
@@ -1310,34 +1762,61 @@ class AnalysisService:
             response.raise_for_status()
             main_html = response.text
             # Try viewer link parsing first.
-            viewer_match = re.search(
-                r"viewDoc\(\s*'(?P<rcpNo>\d+)'\s*,\s*'(?P<dcmNo>\d+)'\s*,\s*'?(?P<eleId>\d+)?'?\s*,\s*'?(?P<offset>\d+)?'?\s*,\s*'?(?P<length>\d+)?'?\s*,\s*'(?P<dtd>[^']+)'\s*\)",
-                main_html,
-            )
-            if viewer_match:
-                groups = viewer_match.groupdict()
+            viewer_args = self._extract_dart_viewer_args(main_html, rcp_no)
+            if viewer_args:
                 viewer_url = (
                     "https://dart.fss.or.kr/report/viewer.do"
-                    f"?rcpNo={groups.get('rcpNo') or rcp_no}"
-                    f"&dcmNo={groups.get('dcmNo') or ''}"
-                    f"&eleId={groups.get('eleId') or '0'}"
-                    f"&offset={groups.get('offset') or '0'}"
-                    f"&length={groups.get('length') or '0'}"
-                    f"&dtd={groups.get('dtd') or 'dart3.xsd'}"
+                    f"?rcpNo={viewer_args.get('rcpNo') or rcp_no}"
+                    f"&dcmNo={viewer_args.get('dcmNo') or ''}"
+                    f"&eleId={viewer_args.get('eleId') or '0'}"
+                    f"&offset={viewer_args.get('offset') or '0'}"
+                    f"&length={viewer_args.get('length') or '0'}"
+                    f"&dtd={viewer_args.get('dtd') or 'dart3.xsd'}"
                 )
                 viewer_response = requests.get(viewer_url, headers=headers, timeout=10)
                 viewer_response.raise_for_status()
-                viewer_text = self._extract_visible_text_from_html(viewer_response.text)
+                if not viewer_response.encoding or viewer_response.encoding.lower() == "iso-8859-1":
+                    viewer_response.encoding = viewer_response.apparent_encoding or "utf-8"
+                viewer_text = self._extract_visible_disclosure_text_from_html(viewer_response.text)
                 if len(viewer_text) >= 80:
                     return viewer_text, None
 
             # Fallback to main page text (can be sparse if iframe-based, still useful).
-            main_text = self._extract_visible_text_from_html(main_html)
+            main_text = self._extract_visible_disclosure_text_from_html(main_html)
             if len(main_text) >= 80:
                 return main_text, None
             return "", "missing_disclosure_body"
         except Exception:  # noqa: BLE001
             return "", "dart_fetch_failed"
+
+    def _extract_dart_viewer_args(self, main_html: str, receipt_no: str) -> dict[str, str] | None:
+        if not main_html:
+            return None
+        quoted_call_pattern = re.compile(
+            r"""viewDoc\(\s*
+            (?P<q1>['"])(?P<rcpNo>\d+)(?P=q1)\s*,\s*
+            (?P<q2>['"])(?P<dcmNo>\d+)(?P=q2)\s*,\s*
+            (?P<q3>['"]?)(?P<eleId>\d*)(?P=q3)\s*,\s*
+            (?P<q4>['"]?)(?P<offset>\d*)(?P=q4)\s*,\s*
+            (?P<q5>['"]?)(?P<length>\d*)(?P=q5)\s*,\s*
+            (?P<q6>['"])(?P<dtd>[^'"]+)(?P=q6)
+            (?:\s*,\s*(?P<q7>['"]?)[^'")]*?(?P=q7))?
+            \s*\)""",
+            re.IGNORECASE | re.VERBOSE,
+        )
+        for match in quoted_call_pattern.finditer(main_html):
+            groups = {key: (value or "") for key, value in match.groupdict().items()}
+            if receipt_no and groups.get("rcpNo") != receipt_no:
+                continue
+            return {
+                "rcpNo": groups.get("rcpNo") or receipt_no,
+                "dcmNo": groups.get("dcmNo") or "",
+                "eleId": groups.get("eleId") or "0",
+                "offset": groups.get("offset") or "0",
+                "length": groups.get("length") or "0",
+                "dtd": groups.get("dtd") or "dart3.xsd",
+            }
+        return None
 
     def _extract_dart_receipt_no(self, dart_url: str | None, fallback_receipt_no: str | None) -> str:
         if fallback_receipt_no and str(fallback_receipt_no).strip():
@@ -1356,6 +1835,29 @@ class AnalysisService:
         cleaned = cleaned.replace("\xa0", " ")
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
         return cleaned
+
+    def _extract_visible_disclosure_text_from_html(self, html_text: str) -> str:
+        if not html_text:
+            return ""
+        cleaned = re.sub(r"(?is)<script[^>]*>.*?</script>", " ", html_text)
+        cleaned = re.sub(r"(?is)<style[^>]*>.*?</style>", " ", cleaned)
+        cleaned = re.sub(r"(?is)<nav[^>]*>.*?</nav>", " ", cleaned)
+        cleaned = re.sub(r"(?is)<header[^>]*>.*?</header>", " ", cleaned)
+        cleaned = re.sub(r"(?is)<footer[^>]*>.*?</footer>", " ", cleaned)
+        cleaned = re.sub(r"(?is)<button[^>]*>.*?</button>", " ", cleaned)
+        cleaned = re.sub(r"(?is)<select[^>]*>.*?</select>", " ", cleaned)
+        cleaned = re.sub(r"(?is)<option[^>]*>.*?</option>", " ", cleaned)
+        cleaned = re.sub(r"(?i)<br\s*/?>", "\n", cleaned)
+        cleaned = re.sub(r"(?i)</p\s*>", "\n", cleaned)
+        cleaned = re.sub(r"(?i)</tr\s*>", "\n", cleaned)
+        cleaned = re.sub(r"(?i)</td\s*>", " ", cleaned)
+        cleaned = re.sub(r"(?i)</th\s*>", " ", cleaned)
+        cleaned = re.sub(r"(?i)</div\s*>", "\n", cleaned)
+        cleaned = re.sub(r"<[^>]+>", " ", cleaned)
+        cleaned = html.unescape(cleaned)
+        cleaned = cleaned.replace("\xa0", " ")
+        lines = [re.sub(r"\s+", " ", line).strip() for line in cleaned.split("\n")]
+        return "\n".join(line for line in lines if line).strip()
 
     def _normalize_sentiment(self, value: Any) -> str | None:
         normalized = str(value or "").strip().lower()
@@ -1509,12 +2011,12 @@ class AnalysisService:
             return False
         return True
 
-    def _format_structured_news_summary(self, payload: dict[str, Any]) -> str:
+    def _format_structured_disclosure_summary(self, payload: dict[str, Any]) -> str:
         summary = str(payload.get("summary", "")).strip() or "-"
         key_facts = payload.get("key_facts") or []
         keywords = payload.get("keywords") or []
         relevance = str(payload.get("relevance_level", "medium")).lower()
-        relevance_reason = str(payload.get("relevance_reason", "")).strip() or "후속 분석 참고용으로 정리된 뉴스입니다."
+        relevance_reason = str(payload.get("relevance_reason", "")).strip() or "후속 분석 참고용으로 정리된 공시입니다."
         follow_ups = payload.get("follow_up_points") or []
         key_numbers = payload.get("key_numbers") or []
 
@@ -1525,13 +2027,17 @@ class AnalysisService:
 
         return "\n\n".join(
             [
-                "[핵심 요약]\n" + summary + (f"\n- 수치: {', '.join(key_numbers)}" if key_numbers else ""),
+                "[공시 요약]\n" + summary,
                 _section("주요 사실", key_facts),
+                "[주요 수치]\n" + (", ".join(key_numbers) if key_numbers else "-"),
                 "[관련 키워드]\n" + (", ".join(keywords) if keywords else "-"),
                 f"[투자 관련성]\n{relevance}: {relevance_reason}",
                 _section("후속 확인", follow_ups),
             ]
         )
+
+    def _format_structured_news_summary(self, payload: dict[str, Any]) -> str:
+        return self._format_structured_disclosure_summary(payload)
 
     def _build_news_summary_fallback(self, item: Any, reason: str) -> dict[str, Any]:
         title = self._truncate_text(self._normalize_news_text(getattr(item, "title", "")) or "제목 정보 없음", 80)
@@ -1556,8 +2062,26 @@ class AnalysisService:
         receipt_no = self._truncate_text(str(getattr(item, "dart_receipt_no", "") or "정보 없음"), 20)
         error_code = "dart_fetch_failed" if "dart_fetch_failed" in reason else "missing_disclosure_body"
         reason_text = "공시 본문 미수집" if error_code == "missing_disclosure_body" else "DART 본문 조회 실패"
+        body_text = self._normalize_news_body_text(getattr(item, "summary", ""))
+        body_sentences = self._split_korean_sentences(body_text)[:4] if len(self._normalize_news_text(body_text)) >= 100 else []
+        if body_sentences:
+            return (
+                "[공시 요약]\n"
+                f"{title} 공시입니다. " + " ".join(body_sentences) + "\n\n"
+                "[주요 사실]\n"
+                + "\n".join(f"- {sentence}" for sentence in body_sentences[:3])
+                + "\n\n"
+                "[관련 키워드]\n"
+                + ", ".join(self._fallback_news_keywords(f"{title} {body_text}"))
+                + "\n\n"
+                "[투자 관련성]\n"
+                "medium: 공시 원문 기반으로 세부 조건과 사업 영향을 추가 확인해야 합니다.\n\n"
+                "[후속 확인]\n"
+                "- 계약금액, 계약기간, 상대방, 정정 여부를 DART 원문에서 확인하세요.\n"
+                "- 해당 공시가 매출과 수주잔고에 반영되는 시점을 추가 확인하세요."
+            )
         return (
-            "[핵심 요약]\n"
+            "[공시 요약]\n"
             "공시 원문 본문을 확보하지 못해 상세 요약을 생성할 수 없습니다. 제목/접수정보 기준 최소 사실만 정리합니다.\n\n"
             "[주요 사실]\n"
             f"- 공시명: {title}\n"

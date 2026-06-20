@@ -50,6 +50,63 @@ function formatDate(value?: string | null): string {
   return value.replace("T", " ").slice(0, 16);
 }
 
+type SimpleDisclosureAiSummary = {
+  summary: string;
+  keywords: string[];
+  importanceScore: number | null;
+};
+
+function splitKeywordText(value?: string | null): string[] {
+  if (!value) return [];
+  return value
+    .split(/[,|\n]/)
+    .map((keyword) => keyword.replace(/^[-•]\s*/, "").trim())
+    .filter(Boolean)
+    .filter((keyword, index, values) => values.indexOf(keyword) === index)
+    .slice(0, 8);
+}
+
+function extractSection(text: string, title: string): string {
+  const pattern = new RegExp(`\\[${title}\\]\\s*([\\s\\S]*?)(?=\\n\\s*\\[[^\\]]+\\]|$)`);
+  return pattern.exec(text)?.[1]?.trim() ?? "";
+}
+
+function parseDisclosureAiSummary(item: Disclosure): SimpleDisclosureAiSummary {
+  const raw = item.ai_summary?.trim() || "";
+  let summary = "";
+  let keywords: string[] = [];
+  let importanceScore = item.ai_importance_score ?? item.importance_score ?? null;
+
+  if (raw.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(raw) as { summary?: unknown; keywords?: unknown; importance_score?: unknown };
+      summary = typeof parsed.summary === "string" ? parsed.summary.trim() : "";
+      keywords = Array.isArray(parsed.keywords) ? parsed.keywords.map((keyword) => String(keyword).trim()).filter(Boolean) : [];
+      const parsedScore = Number(parsed.importance_score);
+      if (Number.isFinite(parsedScore)) importanceScore = parsedScore;
+    } catch {
+      summary = "";
+    }
+  }
+
+  if (!summary && raw) {
+    summary = extractSection(raw, "공시 요약") || extractSection(raw, "핵심 요약") || raw;
+    summary = summary.trim();
+  }
+  if (!keywords.length && raw) {
+    keywords = splitKeywordText(extractSection(raw, "관련 키워드"));
+  }
+  if (!keywords.length) {
+    keywords = splitKeywordText(item.ai_tags);
+  }
+
+  return {
+    summary: summary || "아직 AI 처리가 완료되지 않은 공시입니다.",
+    keywords,
+    importanceScore,
+  };
+}
+
 function toUserError(error: unknown, fallback: string): string {
   if (error instanceof Error) {
     const message = error.message?.trim() || "";
@@ -305,6 +362,7 @@ function DisclosuresPage() {
   };
 
   const onSearchTargets = () => setWatchlistFilter(watchlistKeyword);
+  const selectedAiSummary = selectedDisclosure ? parseDisclosureAiSummary(selectedDisclosure) : null;
 
   return (
     <div className="space-y-4">
@@ -527,7 +585,36 @@ function DisclosuresPage() {
                   </div>
                 </div>
                 <div className="detail-section">
-                  <p className="detail-label">AI 분석 정보</p>
+                  <p className="detail-label">AI 요약</p>
+                  {selectedDisclosure.ai_summary_error === "missing_disclosure_body" || selectedDisclosure.ai_summary_error === "dart_fetch_failed" ? (
+                    <p className="text-xs text-amber-700 mb-2">AI 요약 상태: 원문 본문 확인 필요</p>
+                  ) : null}
+                  <div className="news-ai-simple-grid">
+                    <div className="news-ai-simple-card summary">
+                      <span className="news-ai-simple-label">공시 요약</span>
+                      <p className="disclosure-ai-summary-text">{selectedAiSummary?.summary ?? "아직 AI 처리가 완료되지 않은 공시입니다."}</p>
+                    </div>
+                    <div className="news-ai-simple-card">
+                      <span className="news-ai-simple-label">관련 키워드</span>
+                      <div className="news-keyword-chip-list">
+                        {selectedAiSummary?.keywords.length ? selectedAiSummary.keywords.map((keyword) => (
+                          <span key={keyword} className="news-keyword-chip">{keyword}</span>
+                        )) : <span className="cell-muted">-</span>}
+                      </div>
+                    </div>
+                    <div className="news-ai-simple-card">
+                      <span className="news-ai-simple-label">중요도</span>
+                      <div className="news-ai-importance-line">
+                        <StatusBadge
+                          label={importanceMeta(selectedAiSummary?.importanceScore).label}
+                          variant={importanceMeta(selectedAiSummary?.importanceScore).variant}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <details className="legacy-analysis-fields">
+                  <summary>기존 분석 필드 보기</summary>
                   <div className="detail-body">
                     <p>{`AI 처리 여부: ${selectedDisclosure.ai_summary || selectedDisclosure.ai_processed_at ? "완료" : "미처리"}`}</p>
                     <p>{`AI 처리일: ${formatDate(selectedDisclosure.ai_processed_at)}`}</p>
@@ -536,18 +623,10 @@ function DisclosuresPage() {
                     <p>{`중요도: ${selectedDisclosure.ai_importance_score ?? selectedDisclosure.importance_score ?? "-"}`}</p>
                     <p>{`tag: ${selectedDisclosure.ai_tags ?? "-"}`}</p>
                     <p>{`score: ${selectedDisclosure.ai_importance_score ?? selectedDisclosure.importance_score ?? "-"}`}</p>
-                    <p>sentiment: -</p>
                     <p>{`risk_level: ${selectedDisclosure.ai_risk_level ?? "-"}`}</p>
                     <p>{`event_type: ${selectedDisclosure.ai_event_type ?? selectedDisclosure.disclosure_type ?? "-"}`}</p>
                   </div>
-                </div>
-                <div className="detail-section">
-                  <p className="detail-label">AI 요약</p>
-                  {selectedDisclosure.ai_summary_error === "missing_disclosure_body" || selectedDisclosure.ai_summary_error === "dart_fetch_failed" ? (
-                    <p className="text-xs text-amber-700 mb-2">AI 요약 상태: 원문 본문 확인 필요</p>
-                  ) : null}
-                  <p className="detail-body news-ai-summary">{selectedDisclosure.ai_summary ?? "아직 AI 처리가 완료되지 않은 공시입니다."}</p>
-                </div>
+                </details>
                 <div className="detail-section">
                   <p className="detail-label">원문 링크</p>
                   {selectedDisclosure.url ? (

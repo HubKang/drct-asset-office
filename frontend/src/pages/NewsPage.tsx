@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { HelpCircle, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
@@ -128,6 +128,7 @@ function NewsPage() {
   const [summarizeLoading, setSummarizeLoading] = useState(false);
   const [summarizeError, setSummarizeError] = useState("");
   const [summarizeResult, setSummarizeResult] = useState<AiSummarizeResponse | null>(null);
+  const [showImportanceGuide, setShowImportanceGuide] = useState(false);
 
   const [checkedNewsIds, setCheckedNewsIds] = useState<number[]>([]);
   const [checkedStockIds, setCheckedStockIds] = useState<number[]>([]);
@@ -448,7 +449,18 @@ function NewsPage() {
         <div className="min-w-0">
           <SectionCard title="">
             <div className="news-list-header">
-              <h3 className="section-title m-0">{`뉴스 목록${activeStockLabel ? ` - ${activeStockLabel.stock_name}` : ""}`}</h3>
+              <div className="news-list-title-row">
+                <h3 className="section-title m-0">{`뉴스 목록${activeStockLabel ? ` - ${activeStockLabel.stock_name}` : ""}`}</h3>
+                <button
+                  type="button"
+                  className={`news-help-icon news-importance-help-button ${showImportanceGuide ? "active" : ""}`}
+                  aria-label="중요도 기준 보기"
+                  title="중요도 기준 보기"
+                  onClick={() => setShowImportanceGuide((prev) => !prev)}
+                >
+                  <HelpCircle size={16} />
+                </button>
+              </div>
               <div className="flex items-center gap-2">
                 <button type="button" className="btn btn-secondary" disabled={selectedNewsCount === 0 || summarizeLoading} onClick={() => void onSummarizeSelectedNews()}>
                   {summarizeLoading ? "선택 AI 처리 중..." : `선택 AI 처리 ${selectedNewsCount}건`}
@@ -464,6 +476,15 @@ function NewsPage() {
             {error ? <p className="text-sm text-rose-600">{error}</p> : null}
             {!loading && !error && currentStockId !== null && sortedItems.length === 0 ? (
               <p className="text-sm text-muted">조회된 뉴스가 없습니다.</p>
+            ) : null}
+            {showImportanceGuide ? (
+              <div className="news-importance-guide" role="note">
+                <p><b>80~100</b> 관심종목과 직접 관련 있고, 수주/실적/계약/정책/대규모 투자 등 영향 가능성이 큼</p>
+                <p><b>60~79</b> 관심종목 또는 핵심 테마와 강하게 관련 있음</p>
+                <p><b>40~59</b> 업종이나 테마 관련성은 있으나 직접 영향은 제한적</p>
+                <p><b>20~39</b> 단순 언급 또는 시황성 기사</p>
+                <p><b>0~19</b> 관련성 낮음</p>
+              </div>
             ) : null}
 
             {!loading && !error && sortedItems.length > 0 ? (

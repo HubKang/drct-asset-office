@@ -5015,6 +5015,13 @@ a:focus-visible {
   box-shadow: inset 0 -2px 0 #2563eb;
 }
 
+.training-principles-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .training-principles-content {
   min-height: 260px;
   max-height: calc(100vh - 220px);
@@ -5040,6 +5047,33 @@ a:focus-visible {
   line-height: 1.7;
   white-space: pre-wrap;
   word-break: keep-all;
+}
+
+.training-principles-editor {
+  width: 100%;
+  min-height: 260px;
+  resize: vertical;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  color: #0f172a;
+  font-family: "Noto Sans KR", Pretendard, sans-serif;
+  font-size: 13px;
+  line-height: 1.7;
+  padding: 12px;
+  outline: none;
+}
+
+.training-principles-editor:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.training-principles-readonly-note {
+  margin: 12px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .training-main-focused {
@@ -9580,6 +9614,70 @@ a:focus-visible {
   margin-bottom: 10px;
 }
 
+.news-list-title-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+}
+
+.news-list-title-row .section-title {
+  margin: 0;
+  line-height: 1.2;
+}
+
+.news-importance-help-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #fff;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0;
+}
+
+.news-help-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+}
+
+.news-importance-help-button:hover,
+.news-importance-help-button.active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.news-importance-guide {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 10px;
+  padding: 9px 11px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.news-importance-guide p {
+  margin: 0;
+}
+
+.news-importance-guide b {
+  display: inline-block;
+  min-width: 50px;
+  color: #172554;
+}
+
 .news-row-table th,
 .news-row-table td {
   white-space: nowrap;
@@ -9683,8 +9781,26 @@ a:focus-visible {
   margin: 0;
   color: #1f2937;
   font-size: 13px;
-  line-height: 1.65;
-  white-space: pre-wrap;
+  line-height: 1.7;
+  white-space: pre-line;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.news-ai-summary {
+  white-space: pre-line;
+  line-height: 1.7;
+  font-size: 13px;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.disclosure-ai-summary-text {
+  margin: 0;
+  white-space: pre-line;
+  line-height: 1.7;
+  font-size: 13px;
+  color: #1f2937;
   word-break: keep-all;
   overflow-wrap: anywhere;
 }
