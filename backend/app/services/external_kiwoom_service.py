@@ -46,6 +46,8 @@ from backend.app.schemas.external_kiwoom_schema import (
     KiwoomMarketEventThemeLinkDeleteResponse,
     KiwoomMarketEventThemeLinkItemOut,
     KiwoomMarketEventThemeLinkListResponse,
+    ThemeStockSyncResult,
+    ThemeStockSyncSummary,
     KiwoomMarketEventSaveRequest,
     KiwoomMarketEventSaveResponse,
 )
@@ -1473,14 +1475,137 @@ class ExternalKiwoomService:
         ).mappings().first()
         return KiwoomMarketEventPatchResponse(success=True, item=KiwoomMarketEventItemOut(**dict(row)))
 
+    def _sync_theme_stock_link_from_event(self, *, event_id: int, theme_id: int, now: str) -> ThemeStockSyncResult:
+        event_row = self.db.execute(
+            text(
+                """
+                SELECT id, stock_id, stock_code, stock_name
+                FROM market_trend_events
+                WHERE id=:event_id AND is_active=1
+                """
+            ),
+            {"event_id": event_id},
+        ).mappings().first()
+        if not event_row:
+            return ThemeStockSyncResult(status="skipped", reason="event_not_found")
+
+        stock_id = int(event_row["stock_id"])
+        existing = self.db.execute(
+            text(
+                """
+                SELECT id, mapping_source, is_active
+                FROM market_theme_stocks
+                WHERE theme_id=:theme_id AND stock_id=:stock_id
+                LIMIT 1
+                """
+            ),
+            {"theme_id": theme_id, "stock_id": stock_id},
+        ).mappings().first()
+        if existing and int(existing["is_active"] or 0) == 1:
+            print(f"[theme-stock-sync] skipped existing theme_id={theme_id} stock_id={stock_id}")
+            return ThemeStockSyncResult(status="skipped", reason="already_exists", mapping_id=int(existing["id"]))
+        if existing:
+            self.db.execute(
+                text(
+                    """
+                    UPDATE market_theme_stocks
+                    SET is_active=1, updated_at=:updated_at
+                    WHERE id=:mapping_id
+                    """
+                ),
+                {"mapping_id": int(existing["id"]), "updated_at": now},
+            )
+            print(f"[theme-stock-sync] reactivated theme_id={theme_id} stock_id={stock_id}")
+            return ThemeStockSyncResult(status="reactivated", mapping_id=int(existing["id"]))
+
+        self.db.execute(
+            text(
+                """
+                INSERT INTO market_theme_stocks
+                (theme_id, stock_id, mapping_source, confidence_score, is_primary, is_active, created_at, updated_at)
+                VALUES (:theme_id, :stock_id, 'supply_event', 1.0, 0, 1, :created_at, :updated_at)
+                """
+            ),
+            {"theme_id": theme_id, "stock_id": stock_id, "created_at": now, "updated_at": now},
+        )
+        mapping_id = int(
+            self.db.execute(
+                text("SELECT id FROM market_theme_stocks WHERE theme_id=:theme_id AND stock_id=:stock_id"),
+                {"theme_id": theme_id, "stock_id": stock_id},
+            ).mappings().first()["id"]
+        )
+        print(f"[theme-stock-sync] created theme_id={theme_id} stock_id={stock_id} source=supply_event")
+        return ThemeStockSyncResult(status="created", mapping_id=mapping_id)
+
+    def _sync_remove_theme_stock_link_from_event(self, *, event_id: int, theme_id: int, stock_id: int, now: str) -> ThemeStockSyncResult:
+        existing = self.db.execute(
+            text(
+                """
+                SELECT id, mapping_source, is_primary, is_active
+                FROM market_theme_stocks
+                WHERE theme_id=:theme_id AND stock_id=:stock_id
+                LIMIT 1
+                """
+            ),
+            {"theme_id": theme_id, "stock_id": stock_id},
+        ).mappings().first()
+        if not existing:
+            return ThemeStockSyncResult(status="skipped", reason="link_not_found")
+        mapping_id = int(existing["id"])
+        if (existing["mapping_source"] or "") == "manual":
+            print(f"[theme-stock-sync] skipped manual protected theme_id={theme_id} stock_id={stock_id}")
+            return ThemeStockSyncResult(status="skipped", reason="manual_link_protected", mapping_id=mapping_id)
+        if int(existing["is_primary"] or 0) == 1:
+            return ThemeStockSyncResult(status="skipped", reason="primary_link_protected", mapping_id=mapping_id)
+        if int(existing["is_active"] or 0) != 1:
+            return ThemeStockSyncResult(status="skipped", reason="already_inactive", mapping_id=mapping_id)
+
+        other_reference = self.db.execute(
+            text(
+                """
+                SELECT l.id
+                FROM market_trend_event_theme_links l
+                JOIN market_trend_events e ON e.id=l.event_id
+                WHERE l.market_theme_id=:theme_id
+                  AND e.stock_id=:stock_id
+                  AND l.is_active=1
+                  AND e.is_active=1
+                  AND l.event_id<>:event_id
+                LIMIT 1
+                """
+            ),
+            {"theme_id": theme_id, "stock_id": stock_id, "event_id": event_id},
+        ).mappings().first()
+        if other_reference:
+            return ThemeStockSyncResult(status="skipped", reason="referenced_by_other_supply_event", mapping_id=mapping_id)
+
+        self.db.execute(
+            text("UPDATE market_theme_stocks SET is_active=0, updated_at=:updated_at WHERE id=:mapping_id"),
+            {"mapping_id": mapping_id, "updated_at": now},
+        )
+        print(f"[theme-stock-sync] deactivated theme_id={theme_id} stock_id={stock_id}")
+        return ThemeStockSyncResult(status="deactivated", mapping_id=mapping_id)
+
     def delete_market_event(self, event_id: int) -> KiwoomMarketEventDeleteResponse:
         now = now_kst()
         existing = self.db.execute(
-            text("SELECT id FROM market_trend_events WHERE id=:event_id AND detection_source IN ('kiwoom_condition', 'manual')"),
+            text("SELECT id, stock_id FROM market_trend_events WHERE id=:event_id AND detection_source IN ('kiwoom_condition', 'manual')"),
             {"event_id": event_id},
         ).mappings().first()
         if not existing:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="수급 이벤트 후보를 찾을 수 없습니다.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="\uC218\uAE09 \uC774\uBCA4\uD2B8 \uD6C4\uBCF4\uB97C \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4.")
+
+        linked_theme_rows = self.db.execute(
+            text(
+                """
+                SELECT market_theme_id
+                FROM market_trend_event_theme_links
+                WHERE event_id=:event_id AND is_active=1
+                """
+            ),
+            {"event_id": event_id},
+        ).mappings().all()
+        stock_id = int(existing["stock_id"])
 
         self.db.execute(
             text("UPDATE market_trend_events SET is_active=0, deleted_at=:deleted_at, updated_at=:updated_at WHERE id=:event_id"),
@@ -1496,8 +1621,24 @@ class ExternalKiwoomService:
             ),
             {"event_id": event_id, "deleted_at": now, "updated_at": now},
         )
+        sync_summary = ThemeStockSyncSummary()
+        for linked_theme in linked_theme_rows:
+            try:
+                sync_result = self._sync_remove_theme_stock_link_from_event(
+                    event_id=event_id,
+                    theme_id=int(linked_theme["market_theme_id"]),
+                    stock_id=stock_id,
+                    now=now,
+                )
+                if sync_result.status == "deactivated":
+                    sync_summary.deactivated += 1
+                elif sync_result.status == "skipped":
+                    sync_summary.skipped += 1
+            except Exception as exc:
+                sync_summary.failed += 1
+                print(f"[theme-stock-sync] failed delete event_id={event_id} reason={exc}")
         self.db.commit()
-        return KiwoomMarketEventDeleteResponse(success=True, event_id=event_id)
+        return KiwoomMarketEventDeleteResponse(success=True, event_id=event_id, theme_stock_sync=sync_summary)
 
     def list_market_event_themes(self, event_id: int) -> KiwoomMarketEventThemeLinkListResponse:
         rows = self.db.execute(
@@ -1588,6 +1729,16 @@ class ExternalKiwoomService:
                 ).mappings().first()["id"]
             )
 
+        theme_stock_sync = None
+        try:
+            theme_stock_sync = self._sync_theme_stock_link_from_event(
+                event_id=event_id,
+                theme_id=int(payload.market_theme_id),
+                now=now,
+            )
+        except Exception as exc:
+            print(f"[theme-stock-sync] failed add event_id={event_id} theme_id={payload.market_theme_id} reason={exc}")
+            theme_stock_sync = ThemeStockSyncResult(status="failed", reason=str(exc))
         self.db.commit()
         row = self.db.execute(
             text(
@@ -1601,20 +1752,37 @@ class ExternalKiwoomService:
             ),
             {"link_id": link_id},
         ).mappings().first()
-        return KiwoomMarketEventThemeLinkAddResponse(success=True, item=KiwoomMarketEventThemeLinkItemOut(**dict(row)))
+        return KiwoomMarketEventThemeLinkAddResponse(success=True, item=KiwoomMarketEventThemeLinkItemOut(**dict(row)), theme_stock_sync=theme_stock_sync)
 
     def remove_market_event_theme(self, event_id: int, link_id: int) -> KiwoomMarketEventThemeLinkDeleteResponse:
         now = now_kst()
         row = self.db.execute(
-            text("SELECT id FROM market_trend_event_theme_links WHERE id=:link_id AND event_id=:event_id AND is_active=1"),
+            text(
+                """
+                SELECT l.id, l.market_theme_id, e.stock_id
+                FROM market_trend_event_theme_links l
+                JOIN market_trend_events e ON e.id=l.event_id
+                WHERE l.id=:link_id AND l.event_id=:event_id AND l.is_active=1
+                """
+            ),
             {"link_id": link_id, "event_id": event_id},
         ).mappings().first()
         if not row:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="테마 연결을 찾을 수 없습니다.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="\uD14C\uB9C8 \uC5F0\uACB0\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4.")
         self.db.execute(
             text("UPDATE market_trend_event_theme_links SET is_active=0, deleted_at=:deleted_at, updated_at=:updated_at WHERE id=:id"),
             {"id": link_id, "deleted_at": now, "updated_at": now},
         )
+        theme_stock_sync = None
+        try:
+            theme_stock_sync = self._sync_remove_theme_stock_link_from_event(
+                event_id=event_id,
+                theme_id=int(row["market_theme_id"]),
+                stock_id=int(row["stock_id"]),
+                now=now,
+            )
+        except Exception as exc:
+            print(f"[theme-stock-sync] failed remove event_id={event_id} link_id={link_id} reason={exc}")
+            theme_stock_sync = ThemeStockSyncResult(status="failed", reason=str(exc))
         self.db.commit()
-        return KiwoomMarketEventThemeLinkDeleteResponse(success=True, link_id=link_id)
-
+        return KiwoomMarketEventThemeLinkDeleteResponse(success=True, link_id=link_id, theme_stock_sync=theme_stock_sync)

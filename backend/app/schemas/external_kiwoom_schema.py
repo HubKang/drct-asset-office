@@ -170,9 +170,24 @@ class KiwoomMarketEventPatchResponse(BaseModel):
     item: KiwoomMarketEventItemOut
 
 
+class ThemeStockSyncResult(BaseModel):
+    status: str
+    reason: str | None = None
+    mapping_id: int | None = None
+
+
+class ThemeStockSyncSummary(BaseModel):
+    created: int = 0
+    reactivated: int = 0
+    deactivated: int = 0
+    skipped: int = 0
+    failed: int = 0
+
+
 class KiwoomMarketEventDeleteResponse(BaseModel):
     success: bool
     event_id: int
+    theme_stock_sync: ThemeStockSyncSummary | None = None
 
 
 class KiwoomMarketEventThemeLinkItemOut(BaseModel):
@@ -201,11 +216,13 @@ class KiwoomMarketEventThemeLinkAddRequest(BaseModel):
 class KiwoomMarketEventThemeLinkAddResponse(BaseModel):
     success: bool
     item: KiwoomMarketEventThemeLinkItemOut
+    theme_stock_sync: ThemeStockSyncResult | None = None
 
 
 class KiwoomMarketEventThemeLinkDeleteResponse(BaseModel):
     success: bool
     link_id: int
+    theme_stock_sync: ThemeStockSyncResult | None = None
 
 
 class DailyThemeFlowSummaryItem(BaseModel):

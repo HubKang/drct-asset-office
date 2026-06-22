@@ -83,6 +83,16 @@ const changeRateClass = (value: number | null | undefined) => {
 };
 
 const getResultRowKey = (row: KiwoomConditionResultItem) => `${row.stock_code || "NA"}|${row.stock_name || "NA"}|${row.detected_at || "NA"}|${row.source_api || "NA"}`;
+const escapeMarkdownCell = (value: string | number | null | undefined) => String(value ?? "-").replace(/\|/g, "\\|").replace(/\r?\n/g, " ").trim() || "-";
+const getConditionResultMarket = (row: KiwoomConditionResultItem) => {
+  const raw = row.raw ?? {};
+  const candidates = ["market", "market_type", "stex_tp", "mrkt_tp", "시장", "시장구분"];
+  for (const key of candidates) {
+    const value = raw[key];
+    if (value != null && String(value).trim()) return String(value).trim();
+  }
+  return "-";
+};
 const getMonthInput = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 const toMonthDateLabel = (value: string) => value.slice(5);
 const colorPalette = ["#2563eb", "#dc2626", "#16a34a", "#d97706", "#7c3aed", "#0f766e", "#be123c", "#334155", "#0891b2", "#84cc16"];
@@ -133,6 +143,7 @@ function MarketTrendsPage() {
   const [events, setEvents] = useState<KiwoomMarketEventItem[]>([]);
   const [eventThemeLinksMap, setEventThemeLinksMap] = useState<Record<number, MarketEventThemeLink[]>>({});
   const [eventDrafts, setEventDrafts] = useState<Record<number, { theme_status: string; user_memo: string; selected_theme_id: string }>>({});
+  const [eventThemeSearchMap, setEventThemeSearchMap] = useState<Record<number, string>>({});
   const [marketThemes, setMarketThemes] = useState<Array<{ id: number; theme_name: string }>>([]);
 
   const [tradeDate, setTradeDate] = useState(() => todayInKst());
@@ -356,6 +367,116 @@ function MarketTrendsPage() {
     }
   };
 
+  const buildIssueSummaryPrompt = () => {
+    const hasSelected = selectedItems.length > 0;
+    const sourceRows = hasSelected ? selectedItems : sortedResults;
+    if (sourceRows.length === 0) return "";
+    const limitedRows = hasSelected ? sourceRows : sourceRows.slice(0, 30);
+    const selectedKeys = new Set(selectedItems.map((row) => getResultRowKey(row)));
+    const conditionLabel = selectedConditionSeq
+      ? `${selectedConditionSeq}${selectedConditionName ? ` · ${selectedConditionName}` : ""}`
+      : selectedConditionName || "-";
+    const limitNotice = !hasSelected && sourceRows.length > limitedRows.length
+      ? `\n※ 조건검색 결과가 많아 상위 ${limitedRows.length}개 종목만 포함했습니다. 필요한 종목은 체크 후 다시 복사하세요.\n`
+      : "";
+    const tableRows = limitedRows
+      .map((row, index) => {
+        const selectedLabel = selectedKeys.has(getResultRowKey(row)) ? "선택" : "-";
+        return `| ${index + 1} | ${escapeMarkdownCell(row.stock_name || "-")} | ${escapeMarkdownCell(normalizeStockCode(row.stock_code) || row.stock_code || "-")} | ${escapeMarkdownCell(getConditionResultMarket(row))} | ${escapeMarkdownCell(fmtNumber(row.current_price))} | ${escapeMarkdownCell(fmtPct(row.change_rate))} | ${escapeMarkdownCell(fmtNumber(row.volume))} | ${escapeMarkdownCell(fmtEok2(estimatedTradingValue(row)))} | ${selectedLabel} |`;
+      })
+      .join("\n");
+
+    return `[DrCT에셋 조건검색 결과 오늘 이슈 정리 요청]
+
+당신은 종목 추천자가 아니라, 당일 조건검색에 포착된 종목들이 어떤 이슈로 시장의 관심을 받았는지 정리하는 분석 보조자입니다.
+
+아래 종목들은 오늘 키움 조건검색식에 포착된 종목입니다.
+각 종목이 오늘 주목받은 이유를 뉴스, 공시, 테마, 수급, 업종 이슈 관점에서 확인해 주세요.
+
+주의사항:
+- 매수·매도 추천은 하지 마세요.
+- 목표가를 제시하지 마세요.
+- 확인되지 않은 내용을 단정하지 마세요.
+- 오늘 이슈가 명확하지 않으면 “확인 필요”라고 표시하세요.
+- 같은 테마로 묶이는 종목은 테마를 통일해서 정리해 주세요.
+- 결과는 표로 작성해 주세요.
+
+정리할 표 컬럼:
+1. 순번
+2. 종목명
+3. 종목코드
+4. 등락률
+5. 거래대금
+6. 추정 테마
+7. 오늘 주목받은 이슈
+8. 근거 유형
+9. 이슈 강도
+10. 확인 필요 사항
+11. DrCT 후보 판단 메모
+
+이슈 강도 기준:
+- 높음: 당일 뉴스·공시·정책·수주·실적·테마 확산이 명확하고 거래대금도 큰 경우
+- 중간: 테마 또는 업종 흐름은 있으나 개별 기업 이슈가 약한 경우
+- 낮음: 단순 동반 상승, 기술적 반등, 명확한 뉴스 부족
+- 확인 필요: 현재 정보만으로 이유를 특정하기 어려운 경우
+
+근거 유형은 다음 중 하나 이상으로 표시하세요.
+- 뉴스
+- 공시
+- 정책
+- 테마
+- 수급
+- 업종
+- 실적
+- 수주/계약
+- 단순 급등
+- 확인 필요
+
+조건식명:
+${conditionLabel}
+
+조회일:
+${tradeDate || todayInKst()}
+${limitNotice}
+종목 목록:
+| 순번 | 종목명 | 종목코드 | 시장 | 현재가 | 등락률 | 거래량 | 거래대금(억) | 선택 여부 |
+|---|---|---|---|---:|---:|---:|---:|---|
+${tableRows}
+`;
+  };
+
+  const copyTextToClipboard = async (text: string) => {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "true");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand("copy");
+    document.body.removeChild(textarea);
+    if (!copied) throw new Error("clipboard_copy_failed");
+  };
+
+  const copyIssueSummaryPrompt = async () => {
+    const prompt = buildIssueSummaryPrompt();
+    if (!prompt) {
+      setError("복사할 조건검색 결과가 없습니다.");
+      return;
+    }
+    setError("");
+    try {
+      await copyTextToClipboard(prompt);
+      const targetCount = selectedItems.length > 0 ? selectedItems.length : Math.min(sortedResults.length, 30);
+      setMessage(`GPT 이슈정리 요청문이 복사되었습니다. ${targetCount}개 종목을 GPT에 붙여넣어 오늘의 이슈를 표로 정리하세요.`);
+    } catch (e) {
+      setError(toErr(e, "클립보드 복사에 실패했습니다. 다시 시도해 주세요."));
+    }
+  };
   const loadEvents = async (targetDate?: string) => {
     setError("");
     try {
@@ -372,6 +493,7 @@ function MarketTrendsPage() {
         };
       }
       setEventDrafts(draftMap);
+      setEventThemeSearchMap(Object.fromEntries(fetchedEvents.map((item) => [item.event_id, ""])));
 
       const linkEntries = await Promise.all(
         fetchedEvents.map(async (item) => {
@@ -493,26 +615,44 @@ function MarketTrendsPage() {
     }
   };
 
-  const addThemeLink = async (eventId: number) => {
+  const addThemeLink = async (eventId: number, searchTextOverride?: string) => {
     const draft = eventDrafts[eventId];
-    if (!draft?.selected_theme_id) {
-      setError("추가 연결할 테마를 선택해 주세요.");
+    const searchText = (searchTextOverride ?? eventThemeSearchMap[eventId] ?? "").trim();
+    const normalizedSearchText = searchText.toLowerCase();
+    const selectedTheme = draft?.selected_theme_id
+      ? marketThemes.find((theme) => String(theme.id) === draft.selected_theme_id)
+      : null;
+    const matchedTheme = selectedTheme
+      ?? marketThemes.find((theme) => theme.theme_name === searchText)
+      ?? marketThemes.find((theme) => theme.theme_name.toLowerCase() === normalizedSearchText);
+
+    if (!matchedTheme) {
+      setError("\uCD94\uAC00 \uC5F0\uACB0\uD560 \uD14C\uB9C8\uB97C \uC120\uD0DD\uD574 \uC8FC\uC138\uC694. \uD14C\uB9C8\uBA85 \uC77C\uBD80\uB97C \uC785\uB825\uD55C \uB4A4 \uBAA9\uB85D\uC5D0\uC11C \uD14C\uB9C8\uB97C \uC120\uD0DD\uD574\uC57C \uD569\uB2C8\uB2E4.");
       return;
     }
+
     setError("");
     setMessage("");
     try {
       const payload: AddMarketEventThemeLinkRequest = {
-        market_theme_id: Number(draft.selected_theme_id),
-        user_memo: draft.user_memo || null,
+        market_theme_id: matchedTheme.id,
+        user_memo: draft?.user_memo || null,
       };
       await repositories.marketTrends.addKiwoomMarketEventTheme(eventId, payload);
       const links = await repositories.marketTrends.getKiwoomMarketEventThemes(eventId);
       setEventThemeLinksMap((prev) => ({ ...prev, [eventId]: links.items }));
+      setEventDrafts((prev) => ({
+        ...prev,
+        [eventId]: {
+          ...(prev[eventId] ?? { theme_status: "unassigned", user_memo: "", selected_theme_id: "" }),
+          selected_theme_id: "",
+        },
+      }));
+      setEventThemeSearchMap((prev) => ({ ...prev, [eventId]: "" }));
       await loadFlow();
-      setMessage("테마를 추가 연결했습니다.");
+      setMessage("\uD14C\uB9C8\uB97C \uCD94\uAC00 \uC5F0\uACB0\uD588\uC2B5\uB2C8\uB2E4.");
     } catch (e) {
-      setError(toErr(e, "테마 추가 연결에 실패했습니다."));
+      setError(toErr(e, "\uD14C\uB9C8 \uCD94\uAC00 \uC5F0\uACB0\uC5D0 \uC2E4\uD328\uD588\uC2B5\uB2C8\uB2E4."));
     }
   };
 
@@ -921,6 +1061,7 @@ function MarketTrendsPage() {
                 <div className="flex gap-2 flex-wrap">
                   <button type="button" className="btn btn-secondary" onClick={() => void loadConditionResults()} disabled={!selectedConditionSeq}>결과 조회</button>
                   <button type="button" className="btn btn-primary" onClick={() => void saveSelectedAsEvents()} disabled={selectedItems.length === 0}>선택 후보 저장</button>
+                  <button type="button" className="btn btn-secondary condition-issue-copy-button" onClick={() => void copyIssueSummaryPrompt()} disabled={sortedResults.length === 0}>GPT 이슈정리 복사</button>
                 </div>
               </div>
               <div className="table-shell max-h-[420px] overflow-auto">
@@ -995,7 +1136,7 @@ function MarketTrendsPage() {
               <button type="button" className="btn btn-primary" onClick={openManualCandidateModal}>+ 후보 직접등록</button>
             </div>
             <div className="table-shell">
-              <table className="data-table compact-table">
+              <table className="data-table compact-table theme-event-candidate-table">
                 <thead>
                   <tr>
                     <th>감지일</th><th className="cursor-pointer" onClick={() => setEventNameSortOrder((p) => (p === "asc" ? "desc" : "asc"))}>종목{sortMark(true, eventNameSortOrder)}</th><th>시장</th><th className="text-right">등락률</th><th>연결 테마</th><th>메모</th><th>관리</th>
@@ -1008,6 +1149,14 @@ function MarketTrendsPage() {
                   {sortedEvents.map((e) => {
                     const draft = eventDrafts[e.event_id] ?? { theme_status: "unassigned", user_memo: "", selected_theme_id: "" };
                     const links = eventThemeLinksMap[e.event_id] ?? [];
+                    const themeSearchText = eventThemeSearchMap[e.event_id] ?? "";
+                    const themeSearchKeyword = themeSearchText.trim().toLowerCase();
+                    const selectedTheme = marketThemes.find((t) => String(t.id) === draft.selected_theme_id);
+                    const themeInputValue = themeSearchText || selectedTheme?.theme_name || "";
+                    const filteredThemeOptions = marketThemes
+                      .filter((t) => !themeSearchKeyword || t.theme_name.toLowerCase().includes(themeSearchKeyword))
+                      .slice(0, 50);
+                    const themeListId = `event-theme-list-${e.event_id}`;
                     return (
                       <tr key={e.event_id}>
                         <td>{formatDate(e.detected_at)}</td>
@@ -1022,15 +1171,61 @@ function MarketTrendsPage() {
                         <td className="align-top">
                           <div className="min-w-[260px]">
                             <div className="flex gap-1 items-center">
-                              <select className="input-control flex-1" value={draft.selected_theme_id} onChange={(ev) => setEventDrafts((prev) => ({ ...prev, [e.event_id]: { ...(prev[e.event_id] ?? draft), selected_theme_id: ev.target.value } }))}>
-                                <option value="">테마 선택</option>
-                                {marketThemes.map((t) => <option key={t.id} value={t.id}>{t.theme_name}</option>)}
-                              </select>
-                              <button type="button" className="btn btn-secondary whitespace-nowrap" onClick={() => void addThemeLink(e.event_id)}>테마 추가</button>
+                              <div className="theme-event-theme-picker">
+                                <input
+                                  className="input-control theme-event-theme-search"
+                                  value={themeInputValue}
+                                  list={themeListId}
+                                  placeholder={"\uD14C\uB9C8\uBA85 \uAC80\uC0C9"}
+                                  onChange={(ev) => {
+                                    const value = ev.target.value;
+                                    const matchedTheme = marketThemes.find((t) => t.theme_name === value)
+                                      ?? marketThemes.find((t) => t.theme_name.toLowerCase() === value.trim().toLowerCase());
+                                    setEventThemeSearchMap((prev) => ({ ...prev, [e.event_id]: value }));
+                                    setEventDrafts((prev) => ({
+                                      ...prev,
+                                      [e.event_id]: {
+                                        ...(prev[e.event_id] ?? draft),
+                                        selected_theme_id: matchedTheme ? String(matchedTheme.id) : "",
+                                      },
+                                    }));
+                                  }}
+                                  onBlur={(ev) => {
+                                    const value = ev.currentTarget.value;
+                                    const matchedTheme = marketThemes.find((t) => t.theme_name === value)
+                                      ?? marketThemes.find((t) => t.theme_name.toLowerCase() === value.trim().toLowerCase());
+                                    if (matchedTheme) {
+                                      setEventDrafts((prev) => ({
+                                        ...prev,
+                                        [e.event_id]: { ...(prev[e.event_id] ?? draft), selected_theme_id: String(matchedTheme.id) },
+                                      }));
+                                    }
+                                  }}
+                                  onKeyDown={(ev) => {
+                                    if (ev.key === "Enter") {
+                                      ev.preventDefault();
+                                      void addThemeLink(e.event_id, ev.currentTarget.value);
+                                    }
+                                  }}
+                                />
+                                <datalist id={themeListId}>
+                                  {filteredThemeOptions.map((t) => <option key={t.id} value={t.theme_name} />)}
+                                </datalist>
+                              </div>
+                              <button
+                                type="button"
+                                className="btn btn-secondary theme-event-inline-button whitespace-nowrap"
+                                onClick={() => {
+                                  const inputValue = (document.getElementById(themeListId) as HTMLInputElement | null)?.value ?? themeInputValue;
+                                  void addThemeLink(e.event_id, inputValue);
+                                }}
+                              >
+                                {"\uD14C\uB9C8 \uCD94\uAC00"}
+                              </button>
                             </div>
                             {links.length > 0 ? (
                               <div className="flex flex-wrap gap-1 mt-1">
-                                {links.map((l) => <button key={l.link_id} type="button" className="btn btn-secondary" onClick={() => void removeThemeLink(e.event_id, l.link_id)} title="테마 연결 해제">{l.theme_name} ×</button>)}
+                                {links.map((l) => <button key={l.link_id} type="button" className="btn btn-secondary theme-event-inline-button theme-event-theme-chip" onClick={() => void removeThemeLink(e.event_id, l.link_id)} title="테마 연결 해제">{l.theme_name} ×</button>)}
                               </div>
                             ) : null}
                           </div>
@@ -1043,7 +1238,7 @@ function MarketTrendsPage() {
                             placeholder="메모"
                           />
                         </td>
-                        <td className="align-top"><div className="flex gap-1"><button type="button" className="btn btn-secondary whitespace-nowrap" onClick={() => void saveEventNote(e.event_id)}>메모 저장</button><button type="button" className="btn btn-danger" onClick={() => void deleteEvent(e.event_id)}>삭제</button></div></td>
+                        <td className="align-top"><div className="flex gap-1"><button type="button" className="btn btn-secondary theme-event-inline-button whitespace-nowrap" onClick={() => void saveEventNote(e.event_id)}>메모 저장</button><button type="button" className="btn btn-danger theme-event-inline-button" onClick={() => void deleteEvent(e.event_id)}>삭제</button></div></td>
                       </tr>
                     );
                   })}
@@ -1701,3 +1896,4 @@ function MarketTrendsPage() {
 }
 
 export default MarketTrendsPage;
+

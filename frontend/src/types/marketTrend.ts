@@ -350,9 +350,18 @@ export type UpdateKiwoomMarketEventResponse = {
   item: KiwoomMarketEventItem;
 };
 
+export type ThemeStockSyncSummary = {
+  created: number;
+  reactivated: number;
+  deactivated: number;
+  skipped: number;
+  failed: number;
+};
+
 export type DeleteKiwoomMarketEventResponse = {
   success: boolean;
   event_id: number;
+  theme_stock_sync?: ThemeStockSyncSummary | null;
 };
 
 export type MarketEventThemeLink = {
@@ -378,14 +387,22 @@ export type AddMarketEventThemeLinkRequest = {
   is_primary?: number;
 };
 
+export type ThemeStockSyncResult = {
+  status: string;
+  reason: string | null;
+  mapping_id: number | null;
+};
+
 export type AddMarketEventThemeLinkResponse = {
   success: boolean;
   item: MarketEventThemeLink;
+  theme_stock_sync?: ThemeStockSyncResult | null;
 };
 
 export type RemoveMarketEventThemeLinkResponse = {
   success: boolean;
   link_id: number;
+  theme_stock_sync?: ThemeStockSyncResult | null;
 };
 
 export type DailyThemeFlowSummary = {

@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+﻿import { Fragment, useEffect, useMemo, useState } from "react";
 import SectionCard from "@/components/common/SectionCard";
 import StatusBadge from "@/components/common/StatusBadge";
 import { repositories } from "@/services";
@@ -14,6 +14,7 @@ import type { Stock } from "@/types/stock";
 
 type ActiveTab = "themes" | "mapping" | "candidates";
 type ThemeViewMode = "group" | "theme";
+const THEME_PAGE_SIZE = 20;
 
 function toErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message.trim()) return error.message;
@@ -28,8 +29,10 @@ function parseKeywordsInput(value: string): string[] {
 }
 
 function sourceLabel(source: string): string {
-  if (source === "news") return "뉴스";
-  if (source === "disclosure") return "공시";
+  if (source === "news") return "\uB274\uC2A4";
+  if (source === "disclosure") return "\uACF5\uC2DC";
+  if (source === "supply_event" || source === "kiwoom_supply_event") return "\uC218\uAE09\uC774\uBCA4\uD2B8";
+  if (source === "manual") return "manual";
   return source;
 }
 
@@ -51,6 +54,11 @@ function themeLevelLabel(level?: MarketThemeLevel): string {
   return level === "THEME_GROUP" ? "테마그룹" : "테마";
 }
 
+function themeGroupSortName(theme: MarketTheme): string {
+  if (theme.theme_level === "THEME_GROUP") return theme.theme_name || "";
+  return theme.parent_theme_name || "미지정";
+}
+
 function MarketThemesPage() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("themes");
 
@@ -67,6 +75,7 @@ function MarketThemesPage() {
   const [themeFilterGroupId, setThemeFilterGroupId] = useState<"all" | string>("all");
   const [expandedThemeGroupIds, setExpandedThemeGroupIds] = useState<Set<number>>(() => new Set());
   const [mappingThemeGroupId, setMappingThemeGroupId] = useState<"all" | string>("all");
+  const [themePage, setThemePage] = useState(1);
 
   const [candidateStatusFilter, setCandidateStatusFilter] = useState<"all" | MarketThemeCandidateStatus>("pending");
   const [candidateSourceFilter, setCandidateSourceFilter] = useState<"all" | "news" | "disclosure">("all");
@@ -97,13 +106,13 @@ function MarketThemesPage() {
   const sortedThemes = useMemo(
     () =>
       [...themes].sort((a, b) => {
-        if (b.is_supply_theme !== a.is_supply_theme) return b.is_supply_theme - a.is_supply_theme;
+        const groupCompare = themeGroupSortName(a).localeCompare(themeGroupSortName(b), "ko-KR");
+        if (groupCompare !== 0) return groupCompare;
         if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
         return a.theme_name.localeCompare(b.theme_name, "ko-KR");
       }),
     [themes],
   );
-
   const themeGroups = useMemo(
     () => sortedThemes.filter((row) => row.theme_level === "THEME_GROUP"),
     [sortedThemes],
@@ -127,6 +136,12 @@ function MarketThemesPage() {
       return row.theme_name.toLowerCase().includes(keyword) || row.keywords.join(" ").toLowerCase().includes(keyword);
     });
   }, [sortedThemes, themeFilterActive, themeFilterGroupId, themeFilterKeyword, themeFilterSupply, themeFilterType, themeViewMode]);
+
+  const themeTotalPages = Math.max(1, Math.ceil(filteredThemes.length / THEME_PAGE_SIZE));
+  const safeThemePage = Math.min(themePage, themeTotalPages);
+  const themePageStart = filteredThemes.length === 0 ? 0 : (safeThemePage - 1) * THEME_PAGE_SIZE + 1;
+  const themePageEnd = Math.min(filteredThemes.length, safeThemePage * THEME_PAGE_SIZE);
+  const pagedThemes = filteredThemes.slice((safeThemePage - 1) * THEME_PAGE_SIZE, safeThemePage * THEME_PAGE_SIZE);
 
   const selectedTheme = useMemo(() => sortedThemes.find((x) => x.id === selectedThemeId) ?? null, [sortedThemes, selectedThemeId]);
   const mappingSelectableThemes = useMemo(
@@ -217,6 +232,15 @@ function MarketThemesPage() {
     void loadThemeStocks(selectedThemeId);
   }, [selectedThemeId]);
 
+  useEffect(() => {
+    setThemePage(1);
+  }, [themeFilterActive, themeFilterGroupId, themeFilterKeyword, themeFilterSupply, themeFilterType, themeViewMode]);
+
+  useEffect(() => {
+    if (themePage > themeTotalPages) {
+      setThemePage(themeTotalPages);
+    }
+  }, [themePage, themeTotalPages]);
   useEffect(() => {
     if (mappingSelectableThemes.length === 0) {
       setSelectedThemeId(null);
@@ -543,12 +567,12 @@ function MarketThemesPage() {
                 {filteredThemes.length === 0 ? (
                   <tr><td colSpan={themeViewMode === "group" ? 8 : 9} className="text-center text-muted">조회 결과가 없습니다.</td></tr>
                 ) : null}
-                {themeViewMode === "group" ? filteredThemes.map((row) => {
+                {themeViewMode === "group" ? pagedThemes.map((row) => {
                   const isExpanded = expandedThemeGroupIds.has(row.id);
                   const childThemes = sortedThemes.filter((theme) => theme.parent_theme_id === row.id && theme.theme_level !== "THEME_GROUP");
                   return (
-                    <>
-                      <tr key={row.id} className="theme-group-row" onClick={() => toggleThemeGroupExpanded(row.id)}>
+                    <Fragment key={row.id}>
+                      <tr className="theme-group-row" onClick={() => toggleThemeGroupExpanded(row.id)}>
                         <td>{row.is_active === 1 ? <StatusBadge label="활성" tone="emerald" /> : <StatusBadge label="비활성" tone="slate" />}</td>
                         <td><button type="button" className="theme-expand-button" onClick={(e) => { e.stopPropagation(); toggleThemeGroupExpanded(row.id); }}>{isExpanded ? "접기" : "펼치기"}</button> {row.theme_name}</td>
                         <td><span className="badge badge-slate">{row.child_theme_count ?? childThemes.length}개</span></td>
@@ -604,9 +628,9 @@ function MarketThemesPage() {
                           </td>
                         </tr>
                       )) : null}
-                    </>
+                    </Fragment>
                   );
-                }) : filteredThemes.map((row) => (
+                }) : pagedThemes.map((row) => (
                   <tr key={row.id} onClick={() => setSelectedThemeId(row.id)}>
                     <td>{row.is_active === 1 ? <StatusBadge label="활성" tone="emerald" /> : <StatusBadge label="비활성" tone="slate" />}</td>
                     <td>{row.parent_theme_name ?? <span className="text-muted">미지정</span>}</td>
@@ -636,6 +660,29 @@ function MarketThemesPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+          <div className="pagination-bar">
+            <span className="pagination-info">              {`이번 페이지 ${themePageStart}-${themePageEnd} / 전체 ${filteredThemes.length}건 - 20개씩 표시`}
+            </span>
+            <div className="pagination-actions">
+              <button
+                type="button"
+                className="btn btn-secondary btn-table-sm"
+                disabled={safeThemePage <= 1}
+                onClick={() => setThemePage((prev) => Math.max(1, prev - 1))}
+              >
+                이전
+              </button>
+              <span className="pagination-info">{`${safeThemePage} / ${themeTotalPages}`}</span>
+              <button
+                type="button"
+                className="btn btn-secondary btn-table-sm"
+                disabled={safeThemePage >= themeTotalPages}
+                onClick={() => setThemePage((prev) => Math.min(themeTotalPages, prev + 1))}
+              >
+                다음
+              </button>
+            </div>
           </div>
         </SectionCard>
       ) : null}
@@ -688,7 +735,7 @@ function MarketThemesPage() {
                       <td><div className="stock-cell"><strong>{row.stock_name}</strong><span>{row.stock_code}</span></div></td>
                       <td>{row.market ?? "-"}</td>
                       <td><label className="inline-flex items-center gap-2"><input type="checkbox" checked={row.is_primary === 1} disabled={updatingPrimaryMappingId === row.mapping_id} onChange={(e) => void onTogglePrimary(row.mapping_id, e.target.checked)} /><span>{row.is_primary === 1 ? "대표" : "일반"}</span></label></td>
-                      <td>{row.mapping_source}</td><td>{row.confidence_score ?? "-"}</td><td>{row.is_active === 1 ? "활성" : "비활성"}</td>
+                      <td>{sourceLabel(row.mapping_source)}</td><td>{row.confidence_score ?? "-"}</td><td>{row.is_active === 1 ? "활성" : "비활성"}</td>
                       <td><button type="button" className="btn btn-secondary btn-table-sm" onClick={() => void onDeactivateMapping(row.mapping_id)}>해제</button></td>
                     </tr>
                   ))}

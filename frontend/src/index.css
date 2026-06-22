@@ -5914,6 +5914,11 @@ a:focus-visible {
   table-layout: fixed;
 }
 
+
+.condition-issue-copy-button {
+  white-space: nowrap;
+}
+
 .condition-result-col-check {
   width: 72px;
 }
@@ -6999,6 +7004,32 @@ a:focus-visible {
   padding: 9px 10px;
   line-height: 1.5;
   white-space: pre-wrap;
+}
+
+.theme-event-theme-picker {
+  flex: 1 1 220px;
+  min-width: 220px;
+}
+
+.theme-event-theme-search {
+  width: 100%;
+}
+
+.theme-event-candidate-table .theme-event-inline-button {
+  min-height: 34px;
+  padding: 7px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.theme-event-candidate-table .theme-event-theme-chip {
+  max-width: 260px;
+  justify-content: flex-start;
+  text-align: left;
+  white-space: normal;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 
 .manual-candidate-actions {
@@ -12265,3 +12296,4 @@ a:focus-visible {
     grid-template-columns: 1fr;
   }
 }
+
