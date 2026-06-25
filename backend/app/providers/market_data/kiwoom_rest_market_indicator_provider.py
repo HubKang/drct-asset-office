@@ -81,9 +81,11 @@ class KiwoomRestMarketIndicatorProvider:
         market_cap = None if raw_market_cap is None else int(raw_market_cap)
         return {
             "close_price": self._get_first_float(row, ("cur_prc",)),
+            "change_rate": self._get_first_float(row, ("flu_rt", "chg_rt", "change_rate")),
             "market_cap": market_cap,
             "listed_shares": self._get_first_int(row, ("flo_stk",)),
             "trading_volume": self._get_first_int(row, ("trde_qty",)),
+            "trading_value": self._to_krw_from_million_unit(self._get_first_int(row, ("trde_prica", "acml_tr_pbmn", "trading_value"))),
             "foreign_exhaustion_rate": self._get_first_str(row, ("for_exh_rt",)),
         }
 
@@ -99,7 +101,7 @@ class KiwoomRestMarketIndicatorProvider:
 
         row = self._extract_stock_daily_trade_row(payload) or {}
         trade_date = self._normalize_date(self._get_first_str(row, ("dt", "trade_date", "base_date")))
-        trading_value = self._get_first_int(row, ("trde_prica",))
+        trading_value = self._to_krw_from_million_unit(self._get_first_int(row, ("trde_prica",)))
         return {
             "trade_date": trade_date,
             "close_price": self._get_first_float(row, ("close_pric", "cur_prc")),
@@ -309,6 +311,11 @@ class KiwoomRestMarketIndicatorProvider:
             return float(raw)
         except Exception:
             return None
+
+    @staticmethod
+    def _to_krw_from_million_unit(value: int | None) -> int | None:
+        # Kiwoom trde_prica is provided in million KRW units.
+        return None if value is None else int(value) * 1_000_000
 
     @staticmethod
     def _to_int(value: Any) -> int | None:

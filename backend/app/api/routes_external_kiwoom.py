@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -28,6 +28,10 @@ from backend.app.schemas.external_kiwoom_schema import (
     DailyThemeFlowStocksResponse,
     DailyThemeRanksUpdateRequest,
     DailyThemeRanksUpdateResponse,
+    MarketThemeLatestReturnResponse,
+    MarketThemeMonthlyReturnResponse,
+    MarketThemeReturnRefreshRequest,
+    MarketThemeReturnRefreshResponse,
     MonthlyThemeFlowCalendarResponse,
     MonthlyThemeFlowTrendResponse,
 )
@@ -138,6 +142,67 @@ def remove_kiwoom_market_event_theme(
     return ExternalKiwoomService(db).remove_market_event_theme(event_id=event_id, link_id=link_id)
 
 
+
+@router.post("/external/kiwoom/market-themes/returns/refresh", response_model=MarketThemeReturnRefreshResponse)
+def refresh_market_theme_returns(
+    payload: MarketThemeReturnRefreshRequest | None = None,
+    db: Session = Depends(get_db),
+) -> MarketThemeReturnRefreshResponse:
+    return ExternalKiwoomService(db).refresh_market_theme_returns(payload or MarketThemeReturnRefreshRequest())
+
+
+@router.get("/external/kiwoom/market-themes/{theme_id}/returns/latest", response_model=MarketThemeLatestReturnResponse)
+def get_market_theme_latest_return(theme_id: int, db: Session = Depends(get_db)) -> MarketThemeLatestReturnResponse:
+    return ExternalKiwoomService(db).get_market_theme_latest_return(theme_id=theme_id)
+
+
+@router.get("/external/kiwoom/market-themes/returns/monthly", response_model=MarketThemeMonthlyReturnResponse)
+def get_market_theme_monthly_returns(
+    month: str = Query(..., description="YYYY-MM"),
+    active_only: bool = Query(True),
+    theme_group_id: int | None = Query(None),
+    keyword: str | None = Query(None),
+    limit: int | None = Query(None),
+    lookback_days: int = Query(0),
+    db: Session = Depends(get_db),
+) -> MarketThemeMonthlyReturnResponse:
+    return ExternalKiwoomService(db).get_market_theme_monthly_returns(
+        month=month,
+        active_only=active_only,
+        theme_group_id=theme_group_id,
+        keyword=keyword,
+        limit=limit,
+        lookback_days=lookback_days,
+    )
+
+
+
+
+@router.get("/external/kiwoom/market-themes/returns/range", response_model=MarketThemeMonthlyReturnResponse)
+def get_market_theme_range_returns(
+    end_date: str = Query(..., description="YYYY-MM-DD"),
+    days: int = Query(30),
+    active_only: bool = Query(True),
+    theme_group_id: int | None = Query(None),
+    keyword: str | None = Query(None),
+    limit: int | None = Query(None),
+    db: Session = Depends(get_db),
+) -> MarketThemeMonthlyReturnResponse:
+    return ExternalKiwoomService(db).get_market_theme_range_returns(
+        end_date=end_date,
+        days=days,
+        active_only=active_only,
+        theme_group_id=theme_group_id,
+        keyword=keyword,
+        limit=limit,
+    )
+@router.get("/external/kiwoom/market-themes/{theme_id}/returns/daily", response_model=MarketThemeLatestReturnResponse)
+def get_market_theme_daily_return(
+    theme_id: int,
+    date: str = Query(..., description="YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+) -> MarketThemeLatestReturnResponse:
+    return ExternalKiwoomService(db).get_market_theme_daily_return(theme_id=theme_id, return_date=date)
 @router.get("/external/kiwoom/theme-flow/daily", response_model=DailyThemeFlowSummaryResponse)
 def get_daily_theme_flow(
     trade_date: str = Query(..., description="YYYY-MM-DD"),

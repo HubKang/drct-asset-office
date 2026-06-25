@@ -1,4 +1,4 @@
-﻿@tailwind base;
+@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
@@ -695,7 +695,7 @@
   gap: 6px;
   border-radius: 7px;
   padding: 6px 10px;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
   white-space: nowrap;
 }
@@ -2289,7 +2289,7 @@ a:focus-visible {
 .pattern-step-button span {
   display: block;
   color: #0f172a;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -2556,7 +2556,7 @@ a:focus-visible {
   background: #fffbeb;
   color: #92400e;
   padding: 10px 12px;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -4635,7 +4635,7 @@ a:focus-visible {
 .training-result-section h4 {
   margin: 0;
   color: #0f172a;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -4946,7 +4946,7 @@ a:focus-visible {
   background: #f1f5f9;
   color: #475569;
   padding: 3px 8px;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
 }
 
@@ -5131,7 +5131,7 @@ a:focus-visible {
 
 .training-method-principles-title {
   color: #0f172a;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -5215,7 +5215,7 @@ a:focus-visible {
 .training-kpi-card strong {
   overflow: hidden;
   color: #0f172a;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
   line-height: 1.25;
   text-overflow: ellipsis;
@@ -5263,7 +5263,7 @@ a:focus-visible {
 
 .training-bottom-kpi strong {
   color: #0f172a;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -5275,7 +5275,7 @@ a:focus-visible {
   border-radius: 8px;
   background: #ffffff;
   color: #334155;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
   display: inline-flex;
   align-items: center;
@@ -5319,7 +5319,7 @@ a:focus-visible {
 
 .training-slider-head strong {
   color: #0f172a;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -5697,8 +5697,9 @@ a:focus-visible {
 
 .market-theme-filter-toolbar {
   display: grid;
-  grid-template-columns: repeat(4, minmax(120px, auto)) minmax(220px, 1fr) auto;
+  grid-template-columns: repeat(4, minmax(120px, auto)) minmax(240px, 0.72fr) auto auto;
   gap: 8px;
+  align-items: center;
   margin-bottom: 12px;
 }
 
@@ -5709,6 +5710,28 @@ a:focus-visible {
 
 .market-theme-filter-toolbar > .select-control:nth-child(3) {
   min-width: 120px;
+}
+
+.market-theme-search-input {
+  min-width: 240px;
+  max-width: 720px;
+}
+
+.market-theme-action-button {
+  min-width: 148px;
+  white-space: nowrap;
+}
+
+.market-theme-refresh-button {
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: #9f1239;
+}
+
+.market-theme-refresh-button:hover:not(:disabled) {
+  border-color: #fca5a5;
+  background: #ffe4e6;
+  color: #881337;
 }
 
 .market-theme-mapping-toolbar {
@@ -5728,6 +5751,98 @@ a:focus-visible {
 
 .market-theme-mapping-toolbar > .select-control:first-child {
   min-width: 0;
+}
+
+.market-theme-mapping-theme-picker {
+  position: relative;
+  min-width: 0;
+}
+
+.market-theme-mapping-theme-search {
+  width: 100%;
+}
+
+.theme-search-combobox {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.theme-search-combobox__input {
+  width: 100%;
+  padding-right: 34px;
+}
+
+.theme-search-combobox__toggle {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 0;
+  background: transparent;
+  color: #334155;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.theme-search-combobox__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 120;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.16);
+  padding: 6px;
+}
+
+.theme-search-combobox__item {
+  display: grid;
+  width: 100%;
+  gap: 3px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  padding: 9px 10px;
+  color: #111827;
+  cursor: pointer;
+  text-align: left;
+}
+
+.theme-search-combobox__item:hover,
+.theme-search-combobox__item--active {
+  background: #f1f5f9;
+}
+
+.theme-search-combobox__item-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.theme-search-combobox__item-meta {
+  overflow: hidden;
+  color: #64748b;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.theme-search-combobox__empty {
+  padding: 12px 10px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .market-theme-mapping-toolbar > .input-control {
@@ -6128,6 +6243,23 @@ a:focus-visible {
   width: min(560px, calc(100vw - 48px));
 }
 
+.market-theme-edit-modal {
+  font-size: 14px;
+}
+
+.market-theme-edit-modal .trade-journal-detail-header h3 {
+  font-size: 18px;
+}
+
+.market-theme-edit-modal label > span {
+  font-size: 14px;
+}
+
+.market-theme-edit-modal .input-control,
+.market-theme-edit-modal .select-control,
+.market-theme-edit-modal .btn {
+  font-size: 14px;
+}
 .watchlist-theme-modal-stock {
   display: grid;
   gap: 2px;
@@ -7015,6 +7147,7 @@ a:focus-visible {
   width: 100%;
 }
 
+
 .theme-event-candidate-table .theme-event-inline-button {
   min-height: 34px;
   padding: 7px 12px;
@@ -7589,7 +7722,7 @@ a:focus-visible {
 }
 
 .training-calendar-day-number {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -8009,13 +8142,13 @@ a:focus-visible {
 
 .trade-method-stat-card span {
   color: #64748b;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
 }
 
 .trade-method-stat-card strong {
   color: #0f172a;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
   line-height: 1.25;
   overflow-wrap: anywhere;
@@ -8414,7 +8547,7 @@ a:focus-visible {
   display: block;
   margin-bottom: 4px;
   color: #64748b;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
 }
 
@@ -8668,7 +8801,7 @@ a:focus-visible {
   background: #fff7ed;
   padding: 10px 12px;
   color: #9a3412;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -8727,7 +8860,7 @@ a:focus-visible {
 
 .trade-review-checklist-head span {
   color: #64748b;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
 }
 
@@ -9251,27 +9384,27 @@ a:focus-visible {
 }
 
 .market-trend-calendar-cell.heat-light {
-  background: #f8fbff;
-  border-color: #dbeafe;
+  background: #fff7f7;
+  border-color: #fecaca;
 }
 
 .market-trend-calendar-cell.heat-mid {
-  background: #eff6ff;
-  border-color: #93c5fd;
+  background: #fff1f2;
+  border-color: #fca5a5;
 }
 
 .market-trend-calendar-cell.heat-strong {
-  background: #dbeafe;
-  border-color: #60a5fa;
+  background: #fee2e2;
+  border-color: #f87171;
 }
 
 .market-trend-calendar-cell.selected {
-  border-color: #1d4ed8;
-  box-shadow: inset 0 0 0 1px #1d4ed8;
+  border-color: #ef4444;
+  box-shadow: inset 0 0 0 1px #ef4444;
 }
 
 .market-trend-calendar-cell.today {
-  box-shadow: inset 0 0 0 1px #2563eb;
+  box-shadow: inset 0 0 0 1px #f87171;
 }
 
 .monthly-flow-selected-detail {
@@ -9347,7 +9480,7 @@ a:focus-visible {
 
 .selected-theme-score {
   flex: 0 0 auto;
-  color: #1d4ed8;
+  color: #dc2626;
   font-weight: 800;
 }
 
@@ -9392,14 +9525,18 @@ a:focus-visible {
   align-items: baseline;
   gap: 4px;
   max-width: 100%;
-  border: 1px solid #dbeafe;
+  border: 1px solid #fecaca;
   border-radius: 999px;
-  background: #eff6ff;
-  color: #1e3a8a;
+  background: #fff1f2;
+  color: #9f1239;
   padding: 4px 8px;
   font-size: 12px;
   font-weight: 700;
   line-height: 1.2;
+}
+
+.selected-stock-name {
+  color: #111827;
 }
 
 .selected-stock-chip small {
@@ -9433,17 +9570,18 @@ a:focus-visible {
   border-radius: 8px;
   background: transparent;
   color: #64748b;
+  padding: 3px 1px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 10px;
   font-weight: 800;
   line-height: 1.2;
   padding: 8px 10px;
 }
 
 .theme-flow-detail-tab.is-active {
-  background: #fff;
-  color: #1d4ed8;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+  background: #fff7f7;
+  color: #dc2626;
+  box-shadow: 0 1px 3px rgba(127, 29, 29, 0.12);
 }
 
 @media (max-width: 720px) {
@@ -10888,7 +11026,7 @@ a:focus-visible {
   margin-top: 4px;
   padding: 12px;
   border-radius: 8px;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
   line-height: 1.45;
 }
@@ -11339,7 +11477,7 @@ a:focus-visible {
 .scenario-gpt-condition-expression {
   margin: 0;
   color: #111827;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -11966,6 +12104,120 @@ a:focus-visible {
   box-shadow: 0 1px 4px rgba(15, 23, 42, 0.1);
 }
 
+.monthly-theme-treemap-header {
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.monthly-theme-treemap-title-wrap {
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.monthly-theme-treemap-description {
+  margin: 5px 0 0;
+  color: var(--muted-text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.monthly-theme-treemap-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.monthly-theme-treemap-period {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: var(--muted-text);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.monthly-theme-treemap-section {
+  display: grid;
+  gap: 12px;
+}
+
+.monthly-theme-treemap-card {
+  min-height: 380px;
+  max-height: 460px;
+}
+
+.monthly-theme-treemap-tile {
+  text-align: left;
+}
+
+.monthly-theme-treemap-detail {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.monthly-theme-treemap-detail h4 {
+  margin: 0;
+  color: var(--text-color);
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.monthly-theme-treemap-detail p {
+  margin: 3px 0 0;
+}
+
+.monthly-theme-treemap-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.monthly-theme-treemap-detail-grid div {
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.monthly-theme-treemap-detail-grid span,
+.monthly-theme-treemap-detail-meta {
+  color: var(--muted-text);
+  font-size: 12px;
+}
+
+.monthly-theme-treemap-detail-grid strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-color);
+  font-size: 15px;
+}
+
+.monthly-theme-treemap-summary h4 {
+  margin: 0 0 8px;
+  color: var(--text-color);
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.monthly-theme-treemap-empty {
+  padding: 18px;
+  border: 1px dashed var(--border-color);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: var(--muted-text);
+  font-size: 14px;
+  font-weight: 700;
+}
 .theme-treemap-tile {
   --theme-intensity: 0.35;
   --theme-red: calc(255 - var(--theme-intensity) * 95);
@@ -12001,6 +12253,65 @@ a:focus-visible {
   outline-offset: 2px;
 }
 
+.dashboard-return-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.dashboard-return-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted-text);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.dashboard-return-legend-swatch {
+  width: 24px;
+  height: 13px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 4px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+.dashboard-return-treemap-tile {
+  border-color: rgba(15, 23, 42, 0.1);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.18), rgba(15, 23, 42, 0.06)),
+    var(--return-color, #f3f4f6);
+  color: #111827;
+  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.55);
+}
+
+.dashboard-return-treemap-tile:hover {
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.14);
+}
+
+.dashboard-return-treemap-tile.selected {
+  outline-color: #111827;
+}
+
+.dashboard-return-treemap-tile .theme-treemap-stock-count,
+.dashboard-return-treemap-tile .theme-treemap-subthemes {
+  color: rgba(17, 24, 39, 0.72);
+  text-shadow: none;
+}
+
+.dashboard-return-treemap-tile.is-dark {
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(15, 23, 42, 0.36);
+}
+
+.dashboard-return-treemap-tile.is-dark .theme-treemap-stock-count,
+.dashboard-return-treemap-tile.is-dark .theme-treemap-subthemes {
+  color: rgba(255, 255, 255, 0.88);
+  text-shadow: 0 1px 2px rgba(15, 23, 42, 0.28);
+}
+
 .theme-treemap-tile.large {
   grid-column: span 4;
   grid-row: span 3;
@@ -12014,43 +12325,88 @@ a:focus-visible {
 .theme-treemap-tile.small {
   grid-column: span 2;
   grid-row: span 1;
+  justify-content: center;
+  gap: 0;
+  padding: 8px 10px;
+}
+
+.theme-treemap-tile.tiny {
+  grid-column: span 1;
+  grid-row: span 1;
+  justify-content: center;
+  padding: 6px;
 }
 
 .theme-treemap-title {
   display: -webkit-box;
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   font-size: 16px;
   font-weight: 800;
-  line-height: 1.25;
+  line-height: 1.16;
+  word-break: keep-all;
   overflow-wrap: anywhere;
+  text-overflow: ellipsis;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
 
 .theme-treemap-tile.large .theme-treemap-title {
-  font-size: 28px;
+  font-size: clamp(24px, 2vw, 36px);
+  line-height: 1.12;
+  -webkit-line-clamp: 2;
 }
 
 .theme-treemap-tile.medium .theme-treemap-title {
-  font-size: 20px;
+  font-size: clamp(18px, 1.35vw, 24px);
+  -webkit-line-clamp: 2;
+}
+
+.theme-treemap-tile.small .theme-treemap-title {
+  font-size: 15px;
+  line-height: 1.15;
+  -webkit-line-clamp: 2;
+}
+
+.theme-treemap-tile.tiny .theme-treemap-title {
+  display: none;
 }
 
 .theme-treemap-stock-count {
+  overflow: hidden;
+  color: rgba(255, 248, 235, 0.92);
   font-size: 13px;
-  font-weight: 700;
-  color: rgba(255, 248, 235, 0.9);
+  font-weight: 800;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .theme-treemap-subthemes {
   display: -webkit-box;
+  min-width: 0;
   overflow: hidden;
-  color: rgba(255, 248, 235, 0.82);
+  color: rgba(255, 248, 235, 0.84);
   font-size: 12px;
   font-weight: 700;
-  line-height: 1.35;
+  line-height: 1.25;
+  word-break: keep-all;
   overflow-wrap: anywhere;
+  text-overflow: ellipsis;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
+}
+
+.theme-treemap-tile.medium .theme-treemap-subthemes {
+  display: none;
+}
+
+.theme-treemap-tile.small .theme-treemap-subthemes,
+.theme-treemap-tile.small .theme-treemap-stock-count,
+.theme-treemap-tile.tiny .theme-treemap-subthemes,
+.theme-treemap-tile.tiny .theme-treemap-stock-count {
+  display: none;
 }
 
 .theme-detail-panel {
@@ -12297,3 +12653,2311 @@ a:focus-visible {
   }
 }
 
+
+.theme-return-sort-button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+  padding: 0;
+}
+
+.theme-return-clickable-row {
+  cursor: pointer;
+}
+
+.theme-return-clickable-row:hover {
+  background: #f8fafc;
+}
+
+.theme-return-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 58px;
+  min-height: 22px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.theme-return-positive {
+  color: #dc2626;
+}
+
+.theme-return-negative {
+  color: #2563eb;
+}
+
+.theme-return-neutral,
+.theme-return-empty {
+  color: #64748b;
+}
+
+.theme-return-badge.theme-return-positive {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+}
+
+.theme-return-badge.theme-return-negative {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+}
+
+.theme-return-badge.theme-return-neutral,
+.theme-return-badge.theme-return-empty {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.theme-return-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  background: rgba(15, 23, 42, 0.3);
+}
+
+.theme-return-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: min(640px, 100%);
+  height: 100%;
+  overflow: auto;
+  border-left: 1px solid #e2e8f0;
+  background: #fff;
+  box-shadow: -18px 0 38px rgba(15, 23, 42, 0.18);
+}
+
+.theme-return-drawer-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #fff;
+}
+
+.theme-return-drawer-header h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.theme-return-drawer-header p {
+  margin: 4px 0 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.theme-return-drawer-body {
+  padding: 16px;
+}
+
+.theme-return-detail-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.theme-return-detail-title-block {
+  display: grid;
+  gap: 3px;
+}
+
+.theme-return-detail-title-block strong {
+  color: #0f172a;
+  font-size: 18px;
+}
+
+.theme-return-detail-title-block span,
+.theme-return-meta {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.theme-return-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.theme-return-kpi-grid > div {
+  display: grid;
+  gap: 2px;
+  min-height: 58px;
+  padding: 7px 9px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.theme-return-kpi-grid span {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.theme-return-kpi-grid strong {
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.theme-return-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.theme-return-stock-table th,
+.theme-return-stock-table td {
+  vertical-align: top;
+}
+
+.theme-return-fail-text {
+  display: block;
+  margin-top: 2px;
+  color: #dc2626;
+  font-size: 11px;
+}
+
+.theme-return-kpi-grid strong.theme-return-positive {
+  color: #dc2626;
+}
+
+.theme-return-kpi-grid strong.theme-return-negative {
+  color: #2563eb;
+}
+
+.theme-return-kpi-grid strong.theme-return-neutral,
+.theme-return-kpi-grid strong.theme-return-empty {
+  color: #64748b;
+}
+@media (max-width: 760px) {
+  .theme-return-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 480px) {
+  .theme-return-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.theme-return-trend-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.theme-return-trend-toolbar {
+  display: grid;
+  grid-template-columns: 160px 180px minmax(220px, 1fr) 140px auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.theme-return-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.theme-return-summary-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+  padding: 12px 14px;
+}
+
+.theme-return-summary-card span {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.theme-return-summary-card strong {
+  display: block;
+  margin-top: 6px;
+  color: #111827;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.theme-return-summary-card em {
+  display: block;
+  margin-top: 4px;
+  color: #9f1239;
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.theme-return-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.theme-return-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.theme-return-legend__chip {
+  display: inline-block;
+  width: 18px;
+  height: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 4px;
+}
+
+.theme-return-heatmap-wrap {
+  width: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.theme-return-heatmap {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+}
+
+.theme-return-heatmap__theme-cell,
+.theme-return-heatmap__date-cell,
+.theme-return-heatmap__value-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-top: 0;
+  border-left: 0;
+  padding: 3px 1px;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.theme-return-heatmap__theme-cell {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+  background: #fff;
+  padding: 5px 7px;
+  color: #111827;
+}
+
+.theme-return-heatmap__theme-cell strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.theme-return-heatmap__theme-cell span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.theme-return-heatmap__header-cell,
+.theme-return-heatmap__date-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 1px;
+}
+
+.theme-return-heatmap__date-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 1px;
+}
+
+.theme-return-heatmap__value-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-top: 0;
+  border-left: 0;
+  padding: 3px 1px;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.theme-return-heatmap__value-cell:hover:not(.theme-return-heatmap__value-cell--empty) {
+  outline: 1px solid #fb7185;
+  outline-offset: -2px;
+}
+
+.theme-return-heatmap__value-cell--empty {
+  cursor: default;
+}
+
+.theme-return-heatmap__value-text--negative-strong,
+.theme-return-heatmap__value-text--negative {
+  color: #1d4ed8;
+}
+
+.theme-return-heatmap__value-text--positive-strong,
+.theme-return-heatmap__value-text--positive {
+  color: #b91c1c;
+}
+
+.theme-return-heatmap__value-text--empty {
+  color: #64748b;
+}
+
+.theme-return-heatmap__empty-row {
+  grid-column: 1 / -1;
+  padding: 22px;
+  color: #64748b;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+@media (max-width: 900px) {
+  .theme-return-trend-toolbar,
+  .theme-return-summary-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .theme-return-trend-toolbar,
+  .theme-return-summary-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Compressed market-theme monthly return heatmap. */
+.theme-return-heatmap-wrap {
+  width: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.theme-return-heatmap {
+  width: 100%;
+  min-width: 0;
+}
+
+.theme-return-heatmap__theme-cell,
+.theme-return-heatmap__date-cell,
+.theme-return-heatmap__value-cell {
+  min-width: 0;
+  min-height: 30px;
+  border-right: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.theme-return-heatmap__theme-cell {
+  padding: 5px 7px;
+}
+
+.theme-return-heatmap__theme-cell strong,
+.theme-return-heatmap__theme-cell span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.theme-return-heatmap__theme-cell strong {
+  font-size: 12px;
+}
+
+.theme-return-heatmap__theme-cell span {
+  font-size: 10px;
+}
+
+.theme-return-heatmap__header-cell,
+.theme-return-heatmap__date-cell {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.theme-return-heatmap__date-cell,
+.theme-return-heatmap__value-cell {
+  padding: 3px 1px;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.theme-return-heatmap__value-cell {
+  cursor: pointer;
+}
+
+/* Market theme tab hierarchy and compact spacing. */
+.market-theme-tabs-card {
+  padding-top: 14px;
+  padding-bottom: 12px;
+}
+
+.market-theme-primary-tabs {
+  gap: 24px;
+}
+
+.market-theme-primary-tab {
+  padding: 8px 0;
+}
+
+.market-theme-management-card {
+  padding-top: 18px;
+}
+
+.market-theme-management-card .section-title {
+  margin-bottom: 12px;
+}
+
+.market-theme-view-toggle {
+  gap: 4px;
+  padding: 3px;
+  margin-bottom: 10px;
+  border-radius: 999px;
+  background: #f1f5f9;
+}
+
+.market-theme-view-toggle .theme-view-mode-tab {
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.market-theme-view-toggle .theme-view-mode-tab.active {
+  color: #0f172a;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.14);
+}
+
+.market-theme-management-card .market-theme-filter-toolbar {
+  margin-bottom: 10px;
+}
+
+.market-theme-management-card .theme-return-trend-panel {
+  gap: 10px;
+}
+
+.market-theme-management-card .theme-return-trend-toolbar {
+  gap: 8px;
+}
+
+.market-theme-management-card .theme-return-trend-toolbar .input-control,
+.market-theme-management-card .theme-return-trend-toolbar .select-control,
+.market-theme-management-card .theme-return-trend-toolbar .btn {
+  min-height: 38px;
+}
+
+.market-theme-management-card .theme-return-summary-grid {
+  gap: 8px;
+}
+
+.market-theme-management-card .theme-return-summary-card {
+  padding: 10px 12px;
+}
+
+.market-theme-management-card .theme-return-legend {
+  margin: 0;
+  gap: 6px 10px;
+}
+
+/* Remove secondary view heading and tighten market-theme content. */
+.market-theme-management-card {
+  padding-top: 12px;
+}
+
+.market-theme-management-card .section-title {
+  display: none;
+}
+
+.market-theme-view-toggle {
+  margin-bottom: 8px;
+}
+
+.market-theme-management-card .theme-return-trend-panel {
+  gap: 8px;
+}
+
+.market-theme-management-card .theme-return-summary-grid {
+  gap: 7px;
+}
+
+.market-theme-management-card .theme-return-legend {
+  margin-top: -2px;
+  margin-bottom: 0;
+}
+
+/* Compact market-theme hero summary row. */
+.market-theme-hero-row {
+  align-items: stretch;
+  gap: 12px;
+}
+
+.market-theme-hero-row .journal-hero-panel {
+  flex: 1 1 360px;
+  min-height: 112px;
+  padding: 18px 24px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.market-theme-hero-row .journal-hero-panel h1 {
+  font-size: 28px;
+  line-height: 1.1;
+}
+
+.market-theme-hero-row .journal-hero-panel p {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.market-theme-hero-summary {
+  flex: 0 1 760px;
+  gap: 8px;
+}
+
+.market-theme-hero-summary .journal-summary-mini-card {
+  flex-basis: 118px;
+  min-height: 112px;
+  padding: 10px 12px;
+  gap: 6px;
+  border-radius: 14px;
+}
+
+.market-theme-hero-summary .journal-summary-label {
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.market-theme-hero-summary .journal-summary-value {
+  font-size: 15px;
+}
+
+/* Compact two-line layout for theme return summary cards. */
+.market-theme-management-card .theme-return-summary-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  row-gap: 4px;
+  column-gap: 10px;
+  align-items: baseline;
+  padding: 8px 10px;
+  min-height: 56px;
+}
+
+.market-theme-management-card .theme-return-summary-card span {
+  grid-column: 1 / -1;
+  line-height: 1.15;
+}
+
+.market-theme-management-card .theme-return-summary-card strong {
+  grid-column: 1;
+  min-width: 0;
+  margin-top: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  line-height: 1.15;
+}
+
+.market-theme-management-card .theme-return-summary-card em {
+  grid-column: 2;
+  margin-top: 0;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 1.15;
+}
+
+/* Add breathing room between summary cards and heatmap legend. */
+.market-theme-management-card .theme-return-summary-grid {
+  margin-bottom: 8px;
+}
+
+
+.market-calendar-page {
+  position: relative;
+}
+
+.market-calendar-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+
+.market-calendar-month-nav,
+.market-calendar-filters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.market-calendar-month-nav strong {
+  min-width: 130px;
+  font-size: 20px;
+  color: #111827;
+}
+
+.market-calendar-filters select,
+.market-calendar-filters input,
+.market-calendar-form-grid input,
+.market-calendar-form-grid select,
+.market-calendar-field input,
+.market-calendar-field textarea,
+.market-calendar-stock-search input {
+  min-height: 42px;
+  border: 1px solid #d8dee9;
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: 14px;
+  color: #111827;
+  background: #ffffff;
+}
+
+.market-calendar-filters input {
+  width: min(420px, 40vw);
+}
+
+.market-calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  border: 1px solid #e5e7eb;
+  border-bottom: 0;
+  border-radius: 14px 14px 0 0;
+  overflow: hidden;
+  background: #f8fafc;
+}
+
+.market-calendar-weekdays span {
+  padding: 10px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: #64748b;
+}
+
+.market-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  border: 1px solid #e5e7eb;
+  border-radius: 0 0 14px 14px;
+  overflow: hidden;
+}
+
+.market-calendar-day {
+  min-height: 132px;
+  padding: 10px;
+  border: 0;
+  border-right: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
+  background: #ffffff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.market-calendar-day:nth-child(7n) {
+  border-right: 0;
+}
+
+.market-calendar-day:hover {
+  background: #f8fafc;
+}
+
+.market-calendar-day--muted {
+  background: #f9fafb;
+  color: #94a3b8;
+}
+
+.market-calendar-day--today {
+  box-shadow: inset 0 0 0 2px #ef4444;
+}
+
+.market-calendar-day__number {
+  font-size: 14px;
+  font-weight: 800;
+  color: #111827;
+  margin-bottom: 8px;
+}
+
+.market-calendar-day__events {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.market-calendar-event-chip {
+  display: grid;
+  gap: 1px;
+  border-left: 4px solid;
+  border-radius: 7px;
+  padding: 5px 7px;
+  overflow: hidden;
+}
+
+.market-calendar-event-chip span,
+.market-calendar-event-chip strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.market-calendar-event-chip span {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.market-calendar-event-chip strong {
+  font-size: 12px;
+  color: #111827;
+}
+
+.market-calendar-more {
+  font-size: 12px;
+  font-weight: 800;
+  color: #64748b;
+  padding-left: 4px;
+}
+
+.market-calendar-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(15, 23, 42, 0.32);
+}
+
+.market-calendar-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 1001;
+  width: min(520px, 92vw);
+  height: 100vh;
+  padding: 24px;
+  background: #ffffff;
+  border-left: 1px solid #e5e7eb;
+  box-shadow: -12px 0 30px rgba(15, 23, 42, 0.16);
+  overflow-y: auto;
+}
+
+.market-calendar-drawer__header,
+.market-calendar-detail-card__top,
+.market-calendar-detail-card__actions,
+.market-calendar-modal__header,
+.market-calendar-modal__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.market-calendar-drawer__header h3 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.market-calendar-drawer__header p {
+  margin: 4px 0 0;
+  color: #64748b;
+}
+
+.market-calendar-drawer__add {
+  width: 100%;
+  margin: 16px 0;
+}
+
+.market-calendar-drawer__list {
+  display: grid;
+  gap: 12px;
+}
+
+.market-calendar-detail-card {
+  border: 1px solid #e5e7eb;
+  border-left: 5px solid #ef4444;
+  border-radius: 12px;
+  padding: 14px;
+  background: #ffffff;
+}
+
+.market-calendar-detail-card h4 {
+  margin: 10px 0 6px;
+  font-size: 18px;
+}
+
+.market-calendar-detail-card p {
+  margin: 0;
+  color: #475569;
+  line-height: 1.5;
+}
+
+.market-calendar-detail-card__meta {
+  margin: 8px 0;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.badge-soft,
+.chip-light {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  padding: 5px 9px;
+  font-size: 12px;
+  font-weight: 800;
+  background: #f8fafc;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+button.chip-light {
+  cursor: pointer;
+}
+
+.market-calendar-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.45);
+  overflow: hidden;
+}
+
+.market-calendar-modal {
+  position: relative;
+  z-index: 1101;
+  width: min(820px, 96vw);
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  border-radius: 14px;
+  padding: 22px;
+  background: #ffffff;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.24);
+}
+
+.market-calendar-modal__header h3 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.market-calendar-form-alert {
+  margin: 14px 0 0;
+}
+
+.market-calendar-form-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0 10px;
+}
+
+.market-calendar-form-grid label,
+.market-calendar-field {
+  display: grid;
+  gap: 7px;
+  font-size: 14px;
+  font-weight: 800;
+  color: #334155;
+}
+
+.market-calendar-field {
+  margin-top: 10px;
+}
+
+.market-calendar-theme-picker {
+  margin-top: 6px;
+}
+
+.market-calendar-theme-picker .theme-search-combobox__input {
+  min-height: 42px;
+  border: 1px solid #d8dee9;
+  border-radius: 10px;
+  padding: 9px 38px 9px 12px;
+  font-size: 14px;
+  color: #111827;
+  background: #ffffff;
+}
+
+.theme-search-combobox__arrow {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  border: 0;
+  background: transparent;
+  color: #334155;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.market-calendar-stock-search {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.market-calendar-stock-search input {
+  flex: 1;
+}
+
+.market-calendar-stock-results {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.market-calendar-stock-results button {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #ffffff;
+  text-align: left;
+  font-weight: 800;
+}
+
+.market-calendar-stock-results span {
+  margin-left: 4px;
+  color: #64748b;
+  font-weight: 700;
+}
+
+.market-calendar-modal__footer {
+  position: sticky;
+  bottom: -22px;
+  z-index: 2;
+  justify-content: flex-end;
+  margin: 16px -22px -22px;
+  padding: 14px 22px;
+  border-top: 1px solid #eef2f7;
+  background: #ffffff;
+}
+
+@media (max-width: 1100px) {
+  .market-calendar-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .market-calendar-day {
+    min-height: 112px;
+    padding: 8px;
+  }
+}
+
+
+.alert-error {
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+/* Market calendar UX refinement */
+.market-calendar-page {
+  position: relative;
+}
+
+.market-calendar-page .page-header {
+  align-items: flex-start;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.market-calendar-page .page-description {
+  max-width: 720px;
+}
+
+.market-calendar-alert {
+  margin-top: -4px;
+  margin-bottom: 14px;
+}
+
+.market-calendar-card.card {
+  padding: 22px 24px 24px;
+}
+
+.market-calendar-page .btn-primary,
+.market-calendar-page .btn-secondary,
+.market-calendar-page .btn-danger,
+.market-calendar-page a.btn-secondary {
+  min-height: 42px;
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 800;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.market-calendar-toolbar {
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.market-calendar-month-nav {
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.market-calendar-month-nav strong {
+  min-width: 132px;
+  padding: 9px 4px 0 6px;
+  font-size: 21px;
+  line-height: 1.2;
+  color: #111827;
+}
+
+.market-calendar-filters {
+  flex: 1 1 620px;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.market-calendar-filters select,
+.market-calendar-filters input,
+.market-calendar-form-grid input,
+.market-calendar-form-grid select,
+.market-calendar-field input,
+.market-calendar-field textarea,
+.market-calendar-stock-search input {
+  min-height: 42px;
+  border: 1px solid #d8dee9;
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: 14px;
+  color: #111827;
+  background: #ffffff;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.market-calendar-filters select:focus,
+.market-calendar-filters input:focus,
+.market-calendar-form-grid input:focus,
+.market-calendar-form-grid select:focus,
+.market-calendar-field input:focus,
+.market-calendar-field textarea:focus,
+.market-calendar-stock-search input:focus,
+.market-calendar-theme-picker .theme-search-combobox__input:focus {
+  border-color: #9bbcf5;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.14);
+}
+
+.market-calendar-filters select:first-child {
+  width: 180px;
+}
+
+.market-calendar-filters select:nth-child(2) {
+  width: 140px;
+}
+
+.market-calendar-filters input {
+  flex: 1 1 300px;
+  width: auto;
+  min-width: 240px;
+}
+
+.market-calendar-weekdays {
+  border-radius: 12px 12px 0 0;
+  background: #f8fafc;
+}
+
+.market-calendar-weekdays span {
+  padding: 9px 8px;
+  font-size: 13px;
+  color: #475569;
+}
+
+.market-calendar-grid {
+  border-radius: 0 0 12px 12px;
+  background: #ffffff;
+}
+
+.market-calendar-day {
+  position: relative;
+  min-height: 128px;
+  padding: 10px;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.market-calendar-day:hover {
+  background: #f8fbff;
+  box-shadow: inset 0 0 0 1px #cfe0ff;
+}
+
+.market-calendar-day--muted {
+  background: #f9fafb;
+  opacity: 0.74;
+}
+
+.market-calendar-day--today {
+  background: #eff6ff;
+  box-shadow: inset 0 0 0 2px #93c5fd;
+}
+
+.market-calendar-day--selected,
+.market-calendar-day--selected:hover {
+  background: #fff7ed;
+  box-shadow: inset 0 0 0 2px #f97316;
+}
+
+.market-calendar-day__number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+  margin-bottom: 8px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 900;
+  color: #111827;
+}
+
+.market-calendar-day--today .market-calendar-day__number {
+  color: #1d4ed8;
+  background: #dbeafe;
+}
+
+.market-calendar-day--selected .market-calendar-day__number {
+  color: #ffffff;
+  background: #f97316;
+}
+
+.market-calendar-event-chip {
+  min-height: 28px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  border-left: 4px solid;
+  border-radius: 8px;
+  padding: 5px 7px;
+  background-clip: padding-box;
+}
+
+.market-calendar-event-chip span {
+  font-size: 10.5px;
+  line-height: 1.1;
+}
+
+.market-calendar-event-chip strong {
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.market-calendar-more {
+  margin-top: 1px;
+  font-size: 11px;
+  color: #475569;
+}
+
+.market-calendar-drawer-overlay {
+  background: rgba(15, 23, 42, 0.36);
+}
+
+.market-calendar-drawer {
+  width: min(560px, 92vw);
+  padding: 22px;
+  background: #ffffff;
+}
+
+.market-calendar-drawer__header {
+  align-items: flex-start;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.market-calendar-drawer__header h3 {
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.market-calendar-drawer__header p {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.market-calendar-drawer__add {
+  margin: 14px 0;
+}
+
+.market-calendar-detail-card {
+  border-radius: 10px;
+  padding: 14px;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
+}
+
+.market-calendar-detail-card__top > span:last-child {
+  display: inline-flex;
+  align-items: center;
+  min-height: 27px;
+  border-radius: 999px;
+  padding: 4px 9px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.market-calendar-detail-card h4 {
+  margin: 10px 0 6px;
+  color: #111827;
+  font-size: 18px;
+  line-height: 1.35;
+}
+
+.market-calendar-detail-card p {
+  color: #475569;
+  font-size: 14px;
+}
+
+.market-calendar-detail-card__actions {
+  justify-content: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.market-calendar-modal-backdrop {
+  background: rgba(15, 23, 42, 0.48);
+}
+
+.market-calendar-modal {
+  width: min(860px, 96vw);
+  padding: 0;
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.market-calendar-modal__header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  padding: 22px 24px 16px;
+  border-bottom: 1px solid #eef2f7;
+  background: #ffffff;
+}
+
+.market-calendar-modal__header h3 {
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.market-calendar-form-alert,
+.market-calendar-form-grid,
+.market-calendar-modal > .market-calendar-field,
+.market-calendar-modal > .theme-search-combobox,
+.market-calendar-modal > .market-calendar-stock-search,
+.market-calendar-modal > .market-calendar-stock-results,
+.market-calendar-modal > .chip-row {
+  margin-left: 24px;
+  margin-right: 24px;
+}
+
+.market-calendar-form-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+  margin-bottom: 10px;
+}
+
+.market-calendar-form-grid label,
+.market-calendar-field {
+  gap: 7px;
+  font-size: 13px;
+  color: #334155;
+}
+
+.market-calendar-field {
+  margin-top: 10px;
+}
+
+.market-calendar-theme-picker {
+  margin-top: 6px;
+}
+
+.market-calendar-theme-picker .theme-search-combobox__input {
+  min-height: 42px;
+  border: 1px solid #d8dee9;
+  border-radius: 10px;
+  padding: 9px 38px 9px 12px;
+  font-size: 14px;
+  background: #ffffff;
+}
+
+.market-calendar-theme-picker .theme-search-combobox__menu {
+  z-index: 1300;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.market-calendar-stock-search {
+  align-items: stretch;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.market-calendar-stock-results button:hover {
+  border-color: #bfdbfe;
+  background: #f8fbff;
+}
+
+.market-calendar-modal > .chip-row {
+  min-height: 6px;
+}
+
+.market-calendar-modal__footer {
+  bottom: 0;
+  z-index: 3;
+  justify-content: space-between;
+  margin: 16px 0 0;
+  padding: 14px 24px;
+  border-top: 1px solid #eef2f7;
+  background: #ffffff;
+}
+
+.market-calendar-modal__footer p {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.market-calendar-modal__footer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (max-width: 1180px) {
+  .market-calendar-toolbar,
+  .market-calendar-filters {
+    align-items: stretch;
+  }
+
+  .market-calendar-filters {
+    justify-content: flex-start;
+  }
+
+  .market-calendar-filters input {
+    flex-basis: 100%;
+  }
+}
+
+@media (max-width: 760px) {
+  .market-calendar-card.card {
+    padding: 18px;
+  }
+
+  .market-calendar-month-nav strong {
+    width: 100%;
+    padding-top: 2px;
+  }
+
+  .market-calendar-filters select,
+  .market-calendar-filters input,
+  .market-calendar-filters button {
+    width: 100% !important;
+  }
+
+  .market-calendar-grid {
+    overflow-x: auto;
+  }
+
+  .market-calendar-weekdays,
+  .market-calendar-grid {
+    min-width: 760px;
+  }
+
+  .market-calendar-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .market-calendar-modal__footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .market-calendar-modal__footer-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
+/* Market calendar detail polish */
+.market-calendar-alert.alert-success,
+.market-calendar-form-alert.alert-error {
+  font-size: 13px;
+  line-height: 1.45;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-weight: 800;
+}
+
+.market-calendar-alert.alert-success {
+  display: inline-flex;
+  max-width: min(720px, 100%);
+  align-items: center;
+  margin-top: -2px;
+  margin-bottom: 12px;
+}
+
+.market-calendar-month-nav {
+  align-items: center;
+  min-height: 42px;
+}
+
+.market-calendar-month-nav strong {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 126px;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #111827;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.market-calendar-drawer__header h3 {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.market-calendar-drawer__header p {
+  color: #64748b;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.market-calendar-detail-card h4 {
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.market-calendar-event-summary,
+.market-calendar-event-memo p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+}
+
+.market-calendar-event-summary {
+  margin: 0;
+  color: #475569;
+  font-size: 14px;
+}
+
+.market-calendar-event-memo {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.market-calendar-event-memo span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.market-calendar-event-memo p {
+  margin: 0;
+  color: #334155;
+  font-size: 14px;
+}
+
+.market-calendar-detail-card__meta {
+  margin-top: 10px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.market-calendar-detail-card__top .badge-soft {
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.market-calendar-modal__header h3 {
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.market-calendar-modal__header .btn-secondary {
+  min-width: 68px;
+}
+
+.market-calendar-form-grid label,
+.market-calendar-field {
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.market-calendar-form-grid input,
+.market-calendar-form-grid select,
+.market-calendar-field input,
+.market-calendar-field textarea,
+.market-calendar-stock-search input,
+.market-calendar-theme-picker .theme-search-combobox__input {
+  font-size: 15px;
+}
+
+.market-calendar-field textarea {
+  line-height: 1.5;
+}
+
+.market-calendar-modal__footer p {
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.market-calendar-modal__footer-actions .btn-primary,
+.market-calendar-modal__footer-actions .btn-secondary {
+  min-width: 74px;
+}
+
+.market-calendar-stock-search .btn-secondary {
+  min-width: 72px;
+}
+
+/* Market calendar modal layout fix */
+.market-calendar-modal-backdrop {
+  align-items: center;
+  justify-content: center;
+  padding: 16px 24px;
+  overflow: hidden;
+}
+
+.market-calendar-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(1040px, calc(100vw - 48px));
+  max-height: calc(100vh - 32px);
+  overflow: hidden;
+}
+
+.market-calendar-modal__header,
+.market-calendar-modal__footer {
+  flex: 0 0 auto;
+}
+
+.market-calendar-modal__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 24px 18px;
+}
+
+.market-calendar-modal__body > .market-calendar-form-alert {
+  margin: 0 0 12px;
+}
+
+.market-calendar-date-grid,
+.market-calendar-meta-grid {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.market-calendar-date-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.market-calendar-meta-grid {
+  grid-template-columns: minmax(280px, 1.5fr) minmax(140px, 0.75fr) minmax(140px, 0.75fr);
+  align-items: end;
+}
+
+.market-calendar-date-grid label,
+.market-calendar-meta-grid label,
+.market-calendar-modal__body .market-calendar-field {
+  display: grid;
+  gap: 7px;
+  margin: 0 0 10px;
+  color: #334155;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.market-calendar-theme-field {
+  min-width: 0;
+}
+
+.market-calendar-theme-field .market-calendar-theme-picker {
+  margin-top: 0;
+}
+
+.market-calendar-date-grid input,
+.market-calendar-meta-grid select,
+.market-calendar-modal__body .market-calendar-field input,
+.market-calendar-modal__body .market-calendar-field textarea,
+.market-calendar-stock-search input,
+.market-calendar-theme-picker .theme-search-combobox__input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid #d8dee9;
+  border-radius: 10px;
+  padding: 9px 12px;
+  color: #111827;
+  background: #ffffff;
+  font-size: 15px;
+}
+
+.market-calendar-theme-picker .theme-search-combobox__input {
+  padding-right: 38px;
+}
+
+.market-calendar-modal__body textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
+.market-calendar-stock-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 86px;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
+.market-calendar-stock-results {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px;
+  max-height: 148px;
+  margin: 0 0 10px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.market-calendar-stock-results button {
+  min-height: 42px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #ffffff;
+  color: #111827;
+  text-align: left;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.market-calendar-modal__body > .chip-row {
+  margin: 0 0 10px;
+  max-height: 78px;
+  overflow-y: auto;
+}
+
+.market-calendar-modal__footer {
+  position: relative;
+  bottom: auto;
+  margin: 0;
+  padding: 14px 24px;
+  border-top: 1px solid #eef2f7;
+  background: #ffffff;
+}
+
+@media (max-width: 840px) {
+  .market-calendar-modal__body {
+    padding-bottom: 18px;
+  }
+
+  .market-calendar-date-grid,
+  .market-calendar-meta-grid,
+  .market-calendar-modal__body .market-calendar-field,
+  .market-calendar-stock-search,
+  .market-calendar-stock-results,
+  .market-calendar-modal__body > .chip-row {
+    min-width: 720px;
+  }
+}
+
+/* Market calendar requested card polish */
+.market-calendar-page .page-header {
+  margin-bottom: 12px;
+}
+
+.market-calendar-alert.alert-success {
+  display: none;
+  margin: 0;
+  padding: 0;
+}
+
+.market-calendar-card.card {
+  margin-top: 0;
+}
+
+.market-calendar-modal {
+  width: min(832px, calc(100vw - 48px));
+}
+
+.market-calendar-meta-grid {
+  grid-template-columns: minmax(280px, 1.6fr) minmax(120px, 0.7fr) minmax(120px, 0.7fr);
+}
+
+.market-calendar-event-chip {
+  display: grid;
+  gap: 2px;
+  min-height: 36px;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-left-width: 5px;
+  border-radius: 9px;
+  padding: 7px 8px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+}
+
+.market-calendar-event-chip span {
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.market-calendar-event-chip strong {
+  color: #111827;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.market-calendar-day__events {
+  gap: 7px;
+}
+
+.market-calendar-detail-card {
+  position: relative;
+  display: grid;
+  gap: 10px;
+  border: 1px solid #e2e8f0;
+  border-left-width: 6px;
+  border-radius: 14px;
+  padding: 16px 16px 14px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+}
+
+.market-calendar-detail-card__top {
+  align-items: center;
+}
+
+.market-calendar-detail-card__top .badge-soft {
+  border: 0;
+  border-radius: 999px;
+  padding: 6px 11px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.market-calendar-detail-card__top > span:last-child {
+  border: 0;
+  background: #f8fafc;
+  color: #475569;
+}
+
+.market-calendar-detail-card h4 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 1.32;
+}
+
+.market-calendar-event-summary {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #eef2f7;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 14px;
+}
+
+.market-calendar-event-memo {
+  margin-top: 0;
+  border-color: #e2e8f0;
+  background: #f8fafc;
+}
+
+.market-calendar-detail-card__meta {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.market-calendar-detail-card .chip-row {
+  margin: 0;
+}
+
+.market-calendar-detail-card__actions {
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 1px solid #eef2f7;
+}
+
+.market-calendar-drawer__list {
+  gap: 14px;
+}
+
+@media (max-width: 840px) {
+  .market-calendar-modal {
+    width: min(832px, calc(100vw - 32px));
+  }
+}
+
+/* Market calendar final requested refinements */
+.market-calendar-alert.alert-success {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: min(720px, 100%);
+  margin: -2px 0 12px;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  padding: 8px 11px;
+  background: #f0fdf4;
+  color: #166534;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.market-calendar-toolbar {
+  align-items: center;
+  gap: 12px;
+}
+
+.market-calendar-month-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+}
+
+.market-calendar-month-nav strong {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 112px;
+  min-height: 34px;
+  border: 0;
+  border-radius: 0;
+  padding: 0 4px;
+  background: transparent;
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.market-calendar-page .market-calendar-month-nav .btn-secondary,
+.market-calendar-page .market-calendar-month-nav .btn-primary {
+  min-height: 34px;
+  border-radius: 7px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.market-calendar-drawer,
+.market-calendar-modal {
+  font-family: inherit;
+}
+
+.market-calendar-drawer__header h3 {
+  color: #0f172a;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.22;
+}
+
+.market-calendar-drawer__header p {
+  color: #64748b;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.market-calendar-detail-card h4 {
+  color: #0f172a;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.market-calendar-event-summary,
+.market-calendar-event-memo p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #334155;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.market-calendar-detail-card__meta {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.market-calendar-modal__header h3 {
+  color: #0f172a;
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.market-calendar-date-grid label,
+.market-calendar-meta-grid label,
+.market-calendar-modal__body .market-calendar-field {
+  color: #334155;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.market-calendar-date-grid input,
+.market-calendar-meta-grid select,
+.market-calendar-modal__body .market-calendar-field input,
+.market-calendar-modal__body .market-calendar-field textarea,
+.market-calendar-stock-search input,
+.market-calendar-theme-picker .theme-search-combobox__input {
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.market-calendar-modal__body textarea {
+  white-space: pre-wrap;
+  line-height: 1.55;
+}
+
+.market-calendar-modal__footer p {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.market-calendar-modal__footer-actions .btn-primary,
+.market-calendar-modal__footer-actions .btn-secondary {
+  min-height: 36px;
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+/* Market calendar compact schedule rows */
+.market-calendar-toolbar {
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.market-calendar-month-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+}
+
+.market-calendar-month-nav strong {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 112px;
+  min-height: 34px;
+  border: 0;
+  border-radius: 0;
+  padding: 0 4px;
+  background: transparent;
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.market-calendar-page .market-calendar-month-nav .btn-secondary,
+.market-calendar-page .market-calendar-month-nav .btn-primary {
+  min-height: 34px;
+  border-radius: 7px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.market-calendar-page .market-calendar-month-nav .btn-primary {
+  border-color: #111827;
+  background: #111827;
+  color: #ffffff;
+}
+
+.market-calendar-day {
+  min-height: 120px;
+  padding: 9px;
+}
+
+.market-calendar-day__number {
+  margin-bottom: 6px;
+}
+
+.market-calendar-day__events {
+  gap: 4px;
+}
+
+.market-calendar-event-chip {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  min-height: 22px;
+  border: 0;
+  border-left: 0;
+  border-radius: 6px;
+  padding: 1px 3px 1px 1px;
+  background: transparent;
+  box-shadow: none;
+  color: #334155;
+}
+
+.market-calendar-event-chip:hover {
+  background: #f1f5f9;
+}
+
+.market-calendar-event-initial {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+}
+
+.market-calendar-event-chip strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.market-calendar-event-chip span:not(.market-calendar-event-initial) {
+  display: none;
+}
+
+.market-calendar-more {
+  margin-top: 1px;
+  padding-left: 2px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.market-calendar-detail-card {
+  position: relative;
+  display: grid;
+  gap: 12px;
+  border: 1px solid #e2e8f0;
+  border-left: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 18px;
+  background: #ffffff;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
+}
+
+.market-calendar-detail-card__top {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.market-calendar-detail-card__top .badge-soft {
+  min-height: 26px;
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.market-calendar-theme-badge {
+  gap: 6px;
+}
+
+.market-calendar-theme-badge i {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+}
+
+.market-calendar-type-badge {
+  color: #334155;
+}
+
+.market-calendar-importance-badge--high {
+  border-color: #fecaca !important;
+  background: #fef2f2 !important;
+  color: #b91c1c !important;
+}
+
+.market-calendar-importance-badge--medium {
+  border-color: #fde68a !important;
+  background: #fffbeb !important;
+  color: #92400e !important;
+}
+
+.market-calendar-importance-badge--low {
+  border-color: #dbe3ef !important;
+  background: #f8fafc !important;
+  color: #64748b !important;
+}
+
+.market-calendar-detail-card h4 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.market-calendar-event-summary {
+  margin: 0;
+  border: 1px solid #eef2f7;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.market-calendar-event-memo {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #ffffff;
+}
+
+.market-calendar-event-memo span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.market-calendar-event-memo p {
+  margin: 0;
+  color: #334155;
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.market-calendar-detail-card__meta {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.market-calendar-detail-card__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  margin-top: 0;
+  border-top: 1px solid #eef2f7;
+  padding-top: 12px;
+}
+
+.market-calendar-detail-card__actions .btn-secondary,
+.market-calendar-detail-card__actions .btn-danger {
+  min-height: 34px;
+  border-radius: 8px;
+  padding: 7px 11px;
+  font-size: 13px;
+}
+
+/* Market calendar: remove notice gap between header and calendar. */
+.market-calendar-page .page-header {
+  margin-bottom: 0;
+}
+
+.market-calendar-page > .market-calendar-card.card {
+  margin-top: 0;
+}
+
+.market-calendar-page.space-y-6 > :not([hidden]) ~ :not([hidden]) {
+  margin-top: 0 !important;
+}

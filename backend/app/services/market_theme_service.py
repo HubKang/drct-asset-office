@@ -1,9 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import re
 
 from fastapi import HTTPException, status
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import now_kst
@@ -23,6 +24,7 @@ ALLOWED_THEME_LEVELS = {THEME_LEVEL_GROUP, THEME_LEVEL_THEME}
 
 class MarketThemeService:
     def __init__(self, db: Session) -> None:
+        self.db = db
         self.repo = MarketThemeRepository(db)
 
     @staticmethod
@@ -73,6 +75,22 @@ class MarketThemeService:
             parent_stats["linked_stock_count"] = int(parent_stats["linked_stock_count"] or 0) + direct_stock_count.get(theme.id, 0)
         return stats
 
+    def _latest_return_summary(self, theme_id: int) -> dict[str, object] | None:
+        row = self.db.execute(
+            text(
+                """
+                SELECT return_date, avg_change_rate, last_refreshed_at, stock_count,
+                       success_stock_count, failed_stock_count, total_trading_value_100m
+                FROM market_theme_daily_returns
+                WHERE theme_id=:theme_id
+                ORDER BY return_date DESC, last_refreshed_at DESC, id DESC
+                LIMIT 1
+                """
+            ),
+            {"theme_id": theme_id},
+        ).mappings().first()
+        return dict(row) if row else None
+
     def _to_response(
         self,
         row: MarketTheme,
@@ -101,6 +119,7 @@ class MarketThemeService:
             keyword_count=keyword_count,
             child_theme_count=int(row_stats.get("child_theme_count") or 0),
             supply_child_theme_count=int(row_stats.get("supply_child_theme_count") or 0),
+            latest_return=self._latest_return_summary(row.id) if theme_level == THEME_LEVEL_THEME else None,
             created_at=row.created_at,
             updated_at=row.updated_at,
         )

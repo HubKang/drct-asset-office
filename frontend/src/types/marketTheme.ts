@@ -1,3 +1,141 @@
+export type MarketThemeLatestReturn = {
+  return_date: string | null;
+  avg_change_rate: number | null;
+  last_refreshed_at: string | null;
+  stock_count: number;
+  success_stock_count: number;
+  failed_stock_count: number;
+  total_trading_value_100m?: number | null;
+};
+
+export type MarketThemeReturnStock = {
+  stock_id: number;
+  stock_code: string | null;
+  stock_name: string;
+  trading_value_100m: number | null;
+  change_rate: number | null;
+  current_price?: number | null;
+  data_status: "success" | "failed" | "missing";
+  error_message?: string | null;
+};
+
+export type MarketThemeLatestReturnDetail = {
+  theme_id: number;
+  theme_name: string;
+  theme_group_name: string | null;
+  return_date: string | null;
+  avg_change_rate: number | null;
+  snapshot_at: string | null;
+  stock_count: number;
+  success_stock_count: number;
+  failed_stock_count: number;
+  rising_stock_count: number;
+  falling_stock_count: number;
+  flat_stock_count: number;
+  total_trading_value_100m: number | null;
+  stocks: MarketThemeReturnStock[];
+};
+
+export type MarketThemeReturnRefreshRequest = {
+  scope: "all_active" | "selected";
+  theme_ids?: number[];
+};
+
+export type MarketThemeReturnRefreshItem = {
+  theme_id: number;
+  theme_name: string;
+  return_date: string;
+  avg_change_rate: number | null;
+  stock_count: number;
+  success_stock_count: number;
+  failed_stock_count: number;
+  total_trading_value_100m: number | null;
+  save_action: string;
+};
+
+export type MarketThemeReturnRefreshResponse = {
+  success: boolean;
+  return_date: string;
+  refreshed_at: string;
+  theme_count: number;
+  stock_count: number;
+  success_stock_count: number;
+  failed_stock_count: number;
+  inserted_count: number;
+  updated_count: number;
+  items: MarketThemeReturnRefreshItem[];
+  message?: string | null;
+};
+
+export type MarketThemeMonthlyReturnDailyItem = {
+  return_date: string;
+  avg_change_rate: number | null;
+  total_trading_value_100m: number | null;
+  rising_stock_count: number;
+  falling_stock_count: number;
+  flat_stock_count: number;
+};
+
+export type MarketThemeMonthlyReturnThemeItem = {
+  theme_id: number;
+  theme_name: string;
+  theme_group_id: number | null;
+  theme_group_name: string | null;
+  monthly_compound_return: number | null;
+  monthly_sum_return: number | null;
+  period_compound_return?: number | null;
+  period_sum_return?: number | null;
+  total_trading_value_100m: number | null;
+  rising_days: number;
+  falling_days: number;
+  flat_days: number;
+  data_days: number;
+  daily_returns: MarketThemeMonthlyReturnDailyItem[];
+};
+
+export type MarketThemeMonthlyReturnSummaryTopItem = {
+  theme_id: number;
+  theme_name: string;
+  monthly_compound_return: number | null;
+  period_compound_return?: number | null;
+  total_trading_value_100m: number | null;
+  continuous_rising_days?: number | null;
+};
+
+export type MarketThemeMonthlyReturnResponse = {
+  month?: string | null;
+  end_date?: string | null;
+  days?: number | null;
+  active_only: boolean;
+  display_start_date: string;
+  display_end_date: string;
+  themes: MarketThemeMonthlyReturnThemeItem[];
+  summary: {
+    top_rising_theme: MarketThemeMonthlyReturnSummaryTopItem | null;
+    top_falling_theme: MarketThemeMonthlyReturnSummaryTopItem | null;
+    top_trading_value_theme: MarketThemeMonthlyReturnSummaryTopItem | null;
+    rising_day_theme: MarketThemeMonthlyReturnSummaryTopItem | null;
+    top_continuous_rising_theme?: MarketThemeMonthlyReturnSummaryTopItem | null;
+  };
+};
+
+export type MarketThemeMonthlyReturnParams = {
+  month: string;
+  active_only?: boolean;
+  theme_group_id?: number;
+  keyword?: string;
+  limit?: number;
+  lookback_days?: number;
+};
+
+export type MarketThemeRangeReturnParams = {
+  end_date: string;
+  days?: number;
+  active_only?: boolean;
+  theme_group_id?: number;
+  keyword?: string;
+  limit?: number;
+};
 export type MarketThemeType = "industry" | "theme" | "custom" | "telegram";
 export type MarketThemeLevel = "THEME_GROUP" | "THEME";
 
@@ -19,6 +157,7 @@ export type MarketTheme = {
   keyword_count?: number;
   child_theme_count?: number;
   supply_child_theme_count?: number;
+  latest_return?: MarketThemeLatestReturn | null;
   created_at: string;
   updated_at: string;
 };

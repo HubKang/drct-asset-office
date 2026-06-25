@@ -8,7 +8,7 @@ import { dataSourceLabel, repositories } from "@/services";
 import type { CollectionRun } from "@/types/collectionRun";
 import type { Disclosure } from "@/types/disclosure";
 import type { BriefingVideo } from "@/types/economicBriefing";
-import type { MonthlyThemeFlowTrendResponse } from "@/types/marketTrend";
+import type { MarketThemeMonthlyReturnResponse, MarketThemeMonthlyReturnThemeItem } from "@/types/marketTheme";
 import type { NewsItem } from "@/types/news";
 import type { TelegramItem } from "@/types/telegram";
 import type { TradeReviewListItem } from "@/types/tradeReview";
@@ -71,15 +71,16 @@ type ThemeTreemapItem = {
   themeGroupName: string | null;
   childThemeCount: number;
   topChildThemes: string[];
-  scoreSum: number;
+  returnSum: number;
+  sizeValue: number;
+  tradingValue100m: number;
   stockCount: number;
-  eventCount: number;
-  relatedStocks: string[];
+  successStockCount: number;
+  dataDays: number;
+  risingDays: number;
+  fallingDays: number;
+  flatDays: number;
   rank: number;
-  sourceDates: string[];
-  latestDate: string | null;
-  supplyValueSum: number;
-  latestFinalRank: number | null;
 };
 
 type TrainingStatus = {
@@ -156,20 +157,6 @@ const subtractOneMonth = (baseDate: string) => {
   const date = new Date(Date.UTC(year, (month ?? 1) - 1, day ?? 1));
   date.setUTCMonth(date.getUTCMonth() - 1);
   return new Intl.DateTimeFormat("sv-SE", { timeZone: "UTC" }).format(date);
-};
-
-const getMonthKey = (date: string) => date.slice(0, 7);
-
-const getMonthKeysBetween = (startDate: string, endDate: string) => {
-  const start = new Date(`${getMonthKey(startDate)}-01T00:00:00Z`);
-  const end = new Date(`${getMonthKey(endDate)}-01T00:00:00Z`);
-  const keys: string[] = [];
-  const cursor = new Date(start);
-  while (cursor <= end) {
-    keys.push(`${cursor.getUTCFullYear()}-${String(cursor.getUTCMonth() + 1).padStart(2, "0")}`);
-    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
-  }
-  return keys;
 };
 
 const getDatePart = (value?: string | null) => {
@@ -297,75 +284,133 @@ const buildKeywordIssues = (items: FeedItem[], requireMultiSource: boolean, limi
     .map((row) => ({ ...row, relatedStocks: row.relatedStocks.slice(0, 4) }));
 };
 
-const buildThemeSupplyTreemapItems = (
-  monthlyResponses: MonthlyThemeFlowTrendResponse[],
-  startDate: string,
-  endDate: string,
+const getInclusiveDateSpan = (startDate: string, endDate: string) => {
+  const start = new Date(`${startDate}T00:00:00Z`);
+  const end = new Date(`${endDate}T00:00:00Z`);
+  const diff = Math.floor((end.getTime() - start.getTime()) / 86400000) + 1;
+  return Number.isFinite(diff) && diff > 0 ? diff : 30;
+};
+
+const sumThemeReturnRates = (theme: MarketThemeMonthlyReturnThemeItem) => {
+  if (theme.period_sum_return != null) return Number(theme.period_sum_return);
+  const rates = theme.daily_returns
+    .map((day) => day.avg_change_rate)
+    .filter((value): value is number => value != null && Number.isFinite(Number(value)))
+    .map(Number);
+  return rates.length ? rates.reduce((sum, value) => sum + value, 0) : 0;
+};
+
+const buildThemeReturnTreemapItems = (
+  response: MarketThemeMonthlyReturnResponse | null,
   viewMode: ThemeFlowViewMode,
 ): ThemeTreemapItem[] => {
+  if (!response) return [];
   const map = new Map<number, Omit<ThemeTreemapItem, "rank">>();
-  monthlyResponses.forEach((response) => {
-    (response.themes ?? []).forEach((theme) => {
-      const current =
-        map.get(theme.market_theme_id) ??
-        {
-          marketThemeId: theme.market_theme_id,
-          themeName: theme.theme_name,
-          viewMode,
-          themeGroupId: theme.theme_group_id ?? null,
-          themeGroupName: theme.theme_group_name ?? null,
-          childThemeCount: theme.child_theme_count ?? 0,
-          topChildThemes: theme.top_child_themes ?? [],
-          scoreSum: 0,
-          stockCount: 0,
-          eventCount: 0,
-          relatedStocks: theme.related_stocks ?? [],
-          sourceDates: [],
-          latestDate: null,
-          supplyValueSum: 0,
-          latestFinalRank: null,
-        };
-      current.viewMode = viewMode;
-      current.themeGroupId = theme.theme_group_id ?? current.themeGroupId;
-      current.themeGroupName = theme.theme_group_name ?? current.themeGroupName;
-      current.childThemeCount = Math.max(current.childThemeCount, theme.child_theme_count ?? 0);
-      current.topChildThemes = Array.from(new Set([...current.topChildThemes, ...(theme.top_child_themes ?? [])])).slice(0, 3);
-      current.relatedStocks = Array.from(new Set([...current.relatedStocks, ...(theme.related_stocks ?? [])])).slice(0, 8);
-      theme.series
-        .filter((point) => point.trade_date >= startDate && point.trade_date <= endDate)
-        .forEach((point) => {
-          const dailyScore = Number(point.daily_score || 0);
-          if (dailyScore <= 0) return;
-          current.scoreSum += dailyScore;
-          current.stockCount = Math.max(current.stockCount, Number(point.stock_count || 0));
-          current.eventCount += Number(point.event_count || 0);
-          current.supplyValueSum += Number(point.estimated_trading_value_sum || 0);
-          current.sourceDates.push(point.trade_date);
-          if (!current.latestDate || point.trade_date > current.latestDate) {
-            current.latestDate = point.trade_date;
-            current.latestFinalRank = point.final_rank;
-          }
-        });
-      map.set(theme.market_theme_id, current);
-    });
+
+  (response.themes ?? []).forEach((theme) => {
+    const returnSum = sumThemeReturnRates(theme);
+    if (!Number.isFinite(returnSum) || returnSum === 0) return;
+
+    const key = viewMode === "THEME_GROUP" ? theme.theme_group_id ?? -1 : theme.theme_id;
+    const current = map.get(key) ?? {
+      marketThemeId: key,
+      themeName: viewMode === "THEME_GROUP" ? theme.theme_group_name || "??? ????" : theme.theme_name,
+      viewMode,
+      themeGroupId: theme.theme_group_id ?? null,
+      themeGroupName: theme.theme_group_name ?? null,
+      childThemeCount: 0,
+      topChildThemes: [],
+      returnSum: 0,
+      sizeValue: 0,
+      tradingValue100m: 0,
+      stockCount: 0,
+      successStockCount: 0,
+      dataDays: 0,
+      risingDays: 0,
+      fallingDays: 0,
+      flatDays: 0,
+    };
+
+    const latestDaily = theme.daily_returns[theme.daily_returns.length - 1];
+    const latestStockCount =
+      Number(latestDaily?.rising_stock_count ?? 0) +
+      Number(latestDaily?.falling_stock_count ?? 0) +
+      Number(latestDaily?.flat_stock_count ?? 0);
+
+    if (viewMode === "THEME_GROUP") {
+      current.childThemeCount += 1;
+      current.topChildThemes = Array.from(new Set([...current.topChildThemes, theme.theme_name])).slice(0, 3);
+      current.stockCount += latestStockCount;
+      current.successStockCount += latestStockCount;
+    } else {
+      current.stockCount = latestStockCount;
+      current.successStockCount = latestStockCount;
+    }
+    current.returnSum += returnSum;
+    current.sizeValue = Math.abs(current.returnSum);
+    current.tradingValue100m += Number(theme.total_trading_value_100m || 0);
+    current.dataDays = Math.max(current.dataDays, Number(theme.data_days || 0));
+    current.risingDays += Number(theme.rising_days || 0);
+    current.fallingDays += Number(theme.falling_days || 0);
+    current.flatDays += Number(theme.flat_days || 0);
+    map.set(key, current);
   });
 
   return Array.from(map.values())
-    .filter((item) => item.scoreSum > 0)
-    .sort((a, b) => b.scoreSum - a.scoreSum || a.themeName.localeCompare(b.themeName))
-    .map((item, idx) => ({
-      ...item,
-      sourceDates: Array.from(new Set(item.sourceDates)).sort(),
-      rank: idx + 1,
-    }));
+    .map((item) => ({ ...item, returnSum: Math.round(item.returnSum * 100) / 100, sizeValue: Math.abs(Math.round(item.returnSum * 100) / 100) }))
+    .filter((item) => item.sizeValue > 0)
+    .sort((a, b) => b.sizeValue - a.sizeValue || a.themeName.localeCompare(b.themeName))
+    .map((item, idx) => ({ ...item, rank: idx + 1 }));
 };
 
 const getThemeTreemapSizeClass = (item: ThemeTreemapItem, maxScore: number) => {
-  const ratio = maxScore > 0 ? item.scoreSum / maxScore : 0;
+  const ratio = maxScore > 0 ? item.sizeValue / maxScore : 0;
   if (item.rank === 1 || ratio >= 0.72) return "large";
   if (item.rank <= 5 || ratio >= 0.36) return "medium";
-  return "small";
+  if (ratio >= 0.15) return "small";
+  return "tiny";
 };
+
+const getDashboardThemeReturnTreemapColor = (value: number | null | undefined) => {
+  const n = Number(value ?? 0);
+  if (n <= -30) return "#1D4ED8";
+  if (n <= -20) return "#2563EB";
+  if (n <= -10) return "#3B82F6";
+  if (n < 0) return "#93C5FD";
+  if (n === 0) return "#E5E7EB";
+  if (n < 10) return "#FCA5A5";
+  if (n < 20) return "#EF4444";
+  if (n < 30) return "#DC2626";
+  return "#991B1B";
+};
+
+const getDashboardThemeReturnTreemapToneClass = (value: number | null | undefined) => {
+  const n = Number(value ?? 0);
+  return n <= -10 || n >= 10 ? "is-dark" : "is-light";
+};
+
+const formatSignedPct = (value: number | null | undefined) => {
+  if (value == null || !Number.isFinite(Number(value))) return "-";
+  const n = Number(value);
+  return `${n > 0 ? "+" : ""}${n.toFixed(2)}%`;
+};
+
+const formatEok = (value: number | null | undefined) => {
+  if (value == null || !Number.isFinite(Number(value))) return "-";
+  return `${Number(value).toLocaleString("ko-KR", { maximumFractionDigits: 1 })}억`;
+};
+
+const DASHBOARD_RETURN_LEGEND = [
+  { label: "-30% 이하", color: "#1D4ED8" },
+  { label: "-20%", color: "#2563EB" },
+  { label: "-10%", color: "#3B82F6" },
+  { label: "-5%", color: "#93C5FD" },
+  { label: "0%", color: "#E5E7EB" },
+  { label: "+5%", color: "#FCA5A5" },
+  { label: "+10%", color: "#EF4444" },
+  { label: "+20%", color: "#DC2626" },
+  { label: "+30% 이상", color: "#991B1B" },
+];
 
 function DashboardPage() {
   const navigate = useNavigate();
@@ -383,9 +428,9 @@ function DashboardPage() {
     const today = todayInKst();
     const from30 = shiftDate(today, -29);
     const themePeriodStartDate = subtractOneMonth(today);
-    const themeMonthKeys = getMonthKeysBetween(themePeriodStartDate, today);
     try {
-      const [runsRes, newsItems, disclosures, videosRes, telegramItemsRes, reviewSummary, recentReviews, monthlyThemeFlowResponses] = await Promise.all([
+      const themeReturnDays = getInclusiveDateSpan(themePeriodStartDate, today);
+      const [runsRes, newsItems, disclosures, videosRes, telegramItemsRes, reviewSummary, recentReviews, themeReturnResponse] = await Promise.all([
         repositories.collectionRuns.listCollectionRuns({ limit: 500, offset: 0 }),
         repositories.news.listNews({ limit: 300, offset: 0 }),
         repositories.disclosures.listDisclosures({ limit: 300, offset: 0 }),
@@ -393,7 +438,7 @@ function DashboardPage() {
         repositories.telegram.listItems({ date_from: from30, date_to: today, limit: 500, offset: 0 }),
         repositories.tradeReviews.fetchTradeReviewSummary({ from_date: from30, to_date: today }),
         repositories.tradeReviews.fetchTradeReviews({ from_date: from30, to_date: today, limit: 20, offset: 0 }),
-        Promise.all(themeMonthKeys.map((month) => repositories.marketTrends.getExternalMonthlyThemeFlowTrend(month, { view_mode: treemapViewMode }))),
+        repositories.marketThemes.listRangeReturns({ end_date: today, days: themeReturnDays, active_only: true }),
       ]);
 
       const videos = videosRes.items ?? [];
@@ -528,7 +573,7 @@ function DashboardPage() {
 
       const issueKeywords = buildKeywordIssues(allFeed.filter((item) => getDatePart(item.collected_at) === today), false, 8);
       const crossKeywords = buildKeywordIssues(allFeed.filter((item) => getDatePart(item.collected_at) === today), true, 8);
-      const themeTreemap = buildThemeSupplyTreemapItems(monthlyThemeFlowResponses, themePeriodStartDate, today, treemapViewMode);
+      const themeTreemap = buildThemeReturnTreemapItems(themeReturnResponse, treemapViewMode);
       const reviews = recentReviews.items ?? [];
       const completedReviews = reviews.filter((item: TradeReviewListItem) => item.review_status === "복기완료");
       const trainingStatus: TrainingStatus = {
@@ -620,10 +665,6 @@ function DashboardPage() {
   }, [detailSource]);
 
   const summaryCards = dashboard?.source_summaries ?? [];
-  const todayCollected = summaryCards.reduce((sum, item) => sum + item.collected_count, 0);
-  const summarizedCount = summaryCards.reduce((sum, item) => sum + item.summarized_count, 0);
-  const attentionCount = summaryCards.reduce((sum, item) => sum + item.pending_count + item.failed_count, 0);
-  const recentReviewCount = dashboard?.training_status.reviewed_count ?? 0;
   const detailSummary = detailSource ? summaryCards.find((item) => item.source === detailSource) : null;
   const detailItems = detailSource ? dashboard?.feed_by_source[detailSource] ?? [] : [];
   const filteredDetailItems = detailItems.filter((item) => detailFilter === "all" || item.status_group === detailFilter);
@@ -631,26 +672,19 @@ function DashboardPage() {
   const selectedTheme = themeItems.find((item) => item.marketThemeId === selectedThemeId) ?? themeItems[0] ?? null;
   const themePeriodStart = subtractOneMonth(dashboard?.today ?? todayInKst());
   const themePeriodEnd = dashboard?.today ?? todayInKst();
-  const maxThemeScore = Math.max(...themeItems.map((item) => item.scoreSum), 1);
+  const maxThemeScore = Math.max(...themeItems.map((item) => item.sizeValue), 1);
   const topThemeSummary = themeItems.length
-    ? `최근 1개월 기준 점수 합산 상위 테마는 ${themeItems
+    ? `최근 1개월 누적 등락률 변동폭 상위 테마는 ${themeItems
         .slice(0, 3)
-        .map((item) => item.themeName)
+        .map((item) => `${item.themeName} ${formatSignedPct(item.returnSum)}`)
         .join(", ")}입니다.`
-    : "최근 1개월 테마 수급 점수 데이터가 부족하여 요약을 생성하지 않았습니다.";
-
-  const kpiCards = [
-    { label: "오늘 수집", value: `${todayCollected}건`, tone: "blue" as const, help: "4개 정보 소스 합산" },
-    { label: "요약 완료", value: `${summarizedCount}건`, tone: "emerald" as const, help: "AI 요약 또는 분석 완료" },
-    { label: "확인 필요", value: `${attentionCount}건`, tone: "amber" as const, help: "대기, 오류, 스킵 포함" },
-    { label: "최근 복기", value: `${recentReviewCount}건`, tone: "slate" as const, help: "최근 30일 복기 완료" },
-  ];
+    : "최근 1개월 테마등락률 데이터가 부족하여 요약을 생성하지 않았습니다.";
 
   return (
     <div className="space-y-4">
       <PageHeader
-        title="DrCT 정보 파악 대시보드"
-        description="수집된 투자 정보, 추출 키워드, 테마 흐름, 매매훈련 상태를 한눈에 확인합니다."
+        title="DrCT 대시보드"
+        description="수집 정보, 테마 흐름, 복기 상태를 한눈에 확인합니다."
         action={(
           <div className="flex flex-wrap items-center justify-end gap-2">
             <span className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-500">{dataSourceLabel.toUpperCase()}</span>
@@ -667,18 +701,142 @@ function DashboardPage() {
           <p className="text-sm text-rose-600">{errorMessage}</p>
         </SectionCard>
       ) : null}
-
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-        {kpiCards.map((card) => (
-          <div key={card.label} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="mb-3 flex items-center justify-between">
-              <p className="text-sm font-semibold text-slate-600">{card.label}</p>
-              <StatusBadge label={card.help} tone={card.tone} />
+<SectionCard title="최근 1개월 테마등락률 트리맵">
+        <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <p className="text-sm text-slate-600">최근 1개월 동안 저장된 테마등락률을 합산하여, 테마별 상승·하락 강도를 면적으로 표현합니다.</p>
+          <div className="dashboard-treemap-toolbar">
+            <div className="dashboard-treemap-view-toggle" aria-label="트리맵 표시 기준">
+              <button
+                type="button"
+                className={`dashboard-treemap-toggle-button ${treemapViewMode === "THEME_GROUP" ? "active" : ""}`}
+                onClick={() => {
+                  setSelectedThemeId(null);
+                  setTreemapViewMode("THEME_GROUP");
+                }}
+              >
+                테마그룹 기준
+              </button>
+              <button
+                type="button"
+                className={`dashboard-treemap-toggle-button ${treemapViewMode === "THEME" ? "active" : ""}`}
+                onClick={() => {
+                  setSelectedThemeId(null);
+                  setTreemapViewMode("THEME");
+                }}
+              >
+                테마 기준
+              </button>
             </div>
-            <p className="text-3xl font-bold text-slate-950">{card.value}</p>
+            <StatusBadge label={`기간 ${themePeriodStart} ~ ${themePeriodEnd}`} tone="slate" />
           </div>
-        ))}
-      </div>
+        </div>
+        {!themeItems.length ? (
+          <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4">
+            <p className="text-sm font-semibold text-slate-700">최근 1개월 기준으로 집계된 테마등락률 데이터가 없습니다.</p>
+            <p className="mt-1 text-sm text-slate-500">시장테마관리에서 테마등락률 갱신 후 다시 확인해 주세요.</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">{topThemeSummary}</p>
+            <div className="dashboard-return-legend" aria-label="테마등락률 색상 기준">
+              {DASHBOARD_RETURN_LEGEND.map((item) => (
+                <span key={item.label} className="dashboard-return-legend-item">
+                  <span className="dashboard-return-legend-swatch" style={{ background: item.color }} />
+                  {item.label}
+                </span>
+              ))}
+            </div>
+            <div className="theme-treemap">
+              {themeItems.map((item) => {
+                const sizeClass = getThemeTreemapSizeClass(item, maxThemeScore);
+                const intensity = Math.max(0.22, Math.min(1, item.sizeValue / maxThemeScore));
+                return (
+                  <button
+                    key={item.marketThemeId}
+                    type="button"
+                    title={`${item.themeName} · 기간 ${themePeriodStart} ~ ${themePeriodEnd} · 합산 등락률 ${formatSignedPct(item.returnSum)} · 거래대금 ${formatEok(item.tradingValue100m)} · 상승일 ${item.risingDays}일 / 하락일 ${item.fallingDays}일 / 보합 ${item.flatDays}일 · 데이터 ${item.dataDays}일 · 종목 ${item.stockCount}개`}
+                    className={`theme-treemap-tile dashboard-return-treemap-tile ${getDashboardThemeReturnTreemapToneClass(item.returnSum)} ${sizeClass} ${selectedTheme?.marketThemeId === item.marketThemeId ? "selected" : ""}`}
+                    style={{ "--theme-intensity": intensity, "--return-color": getDashboardThemeReturnTreemapColor(item.returnSum) } as CSSProperties}
+                    onClick={() => setSelectedThemeId(item.marketThemeId)}
+                  >
+                    <span className="theme-treemap-title">{item.themeName}</span>
+                    {item.viewMode === "THEME_GROUP" && item.topChildThemes.length ? (
+                      <span className="theme-treemap-subthemes">{item.topChildThemes.join(" · ")}</span>
+                    ) : item.viewMode === "THEME" && item.themeGroupName ? (
+                      <span className="theme-treemap-subthemes">{item.themeGroupName}</span>
+                    ) : null}
+                    <span className="theme-treemap-stock-count">{formatSignedPct(item.returnSum)} · {formatEok(item.tradingValue100m)}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {selectedTheme ? (
+              <div className="theme-detail-panel">
+                <div className="theme-detail-header">
+                  <div>
+                    <h3 className="theme-detail-title">{selectedTheme.themeName} 상세</h3>
+                    <p className="theme-detail-period">기간 {themePeriodStart} ~ {themePeriodEnd}</p>
+                  </div>
+                  <div className="theme-detail-actions">
+                    <StatusBadge label={`${selectedTheme.rank}위`} tone="blue" />
+                    <button type="button" className="btn btn-secondary theme-detail-link-btn" onClick={() => navigate("/market-themes")}>시장테마관리로 이동</button>
+                  </div>
+                </div>
+                <div className="theme-detail-kpis">
+                  <div className="theme-detail-kpi">
+                    <p className="theme-detail-kpi-label">합산 등락률</p>
+                    <p className="theme-detail-kpi-value">{formatSignedPct(selectedTheme.returnSum)}</p>
+                  </div>
+                  <div className="theme-detail-kpi">
+                    <p className="theme-detail-kpi-label">종목수</p>
+                    <p className="theme-detail-kpi-value">{selectedTheme.stockCount}종목</p>
+                  </div>
+                  <div className="theme-detail-kpi">
+                    <p className="theme-detail-kpi-label">거래대금</p>
+                    <p className="theme-detail-kpi-value">{formatEok(selectedTheme.tradingValue100m)}</p>
+                  </div>
+                  <div className="theme-detail-kpi">
+                    <p className="theme-detail-kpi-label">데이터 일수</p>
+                    <p className="theme-detail-kpi-value">{selectedTheme.dataDays}일</p>
+                  </div>
+                </div>
+                <div className="theme-detail-info-row">
+                  <div className="theme-detail-info-box">
+                    <span className="theme-detail-info-label">등락 일수</span>
+                    <span className="theme-detail-info-value">
+                      상승 {selectedTheme.risingDays}일 · 하락 {selectedTheme.fallingDays}일 · 보합 {selectedTheme.flatDays}일
+                    </span>
+                  </div>
+                  <div className="theme-detail-info-box">
+                    <span className="theme-detail-info-label">조회 성공 종목</span>
+                    <span className="theme-detail-info-value">{selectedTheme.successStockCount || selectedTheme.stockCount}종목</span>
+                  </div>
+                </div>
+                <div className="theme-detail-context-row">
+                  {selectedTheme.viewMode === "THEME_GROUP" ? (
+                    <div className="theme-detail-context-box">
+                      <span className="theme-detail-info-label">하위 테마</span>
+                      <span className="theme-detail-info-value">
+                        {selectedTheme.topChildThemes.length ? selectedTheme.topChildThemes.join(", ") : "하위 테마 정보 없음"}
+                        {selectedTheme.childThemeCount > selectedTheme.topChildThemes.length ? ` 외 ${selectedTheme.childThemeCount - selectedTheme.topChildThemes.length}개` : ""}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="theme-detail-context-box">
+                      <span className="theme-detail-info-label">테마그룹</span>
+                      <span className="theme-detail-info-value">{selectedTheme.themeGroupName || "미지정 테마그룹"}</span>
+                    </div>
+                  )}
+                </div>
+                <p className="theme-score-note">
+                  <b>면적 기준:</b> 최근 1개월 테마등락률 합산값의 절댓값입니다. 색상은 실제 합산 등락률 기준이며, 상승은 빨간 계열, 하락은 파란 계열로 표시합니다.
+                </p>
+              </div>
+            ) : null}
+          </div>
+        )}
+      </SectionCard>
 
       <SectionCard title="오늘 소스별 수집 현황">
         {summaryCards.length === 0 ? (
@@ -780,136 +938,6 @@ function DashboardPage() {
         </SectionCard>
       </div>
 
-      <SectionCard title="최근 1개월 테마 수급 트리맵">
-        <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <p className="text-sm text-slate-600">시장트렌드분석의 월간 테마 누적 흐름 점수를 최근 1개월 기준으로 합산하여, 테마별 수급 집중도를 면적으로 표현합니다.</p>
-          <div className="dashboard-treemap-toolbar">
-            <div className="dashboard-treemap-view-toggle" aria-label="트리맵 표시 기준">
-              <button
-                type="button"
-                className={`dashboard-treemap-toggle-button ${treemapViewMode === "THEME_GROUP" ? "active" : ""}`}
-                onClick={() => {
-                  setSelectedThemeId(null);
-                  setTreemapViewMode("THEME_GROUP");
-                }}
-              >
-                테마그룹 기준
-              </button>
-              <button
-                type="button"
-                className={`dashboard-treemap-toggle-button ${treemapViewMode === "THEME" ? "active" : ""}`}
-                onClick={() => {
-                  setSelectedThemeId(null);
-                  setTreemapViewMode("THEME");
-                }}
-              >
-                테마 기준
-              </button>
-            </div>
-            <StatusBadge label={`기간 ${themePeriodStart} ~ ${themePeriodEnd}`} tone="slate" />
-          </div>
-        </div>
-        {!themeItems.length ? (
-          <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4">
-            <p className="text-sm font-semibold text-slate-700">최근 1개월 테마 수급 점수 데이터가 없습니다.</p>
-            <p className="mt-1 text-sm text-slate-500">시장트렌드분석 데이터가 생성되면 테마 수급 트리맵이 표시됩니다.</p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">{topThemeSummary}</p>
-            <div className="theme-treemap">
-              {themeItems.map((item, idx) => {
-                const sizeClass = getThemeTreemapSizeClass(item, maxThemeScore);
-                const intensity = Math.max(0.22, Math.min(1, item.scoreSum / maxThemeScore));
-                return (
-                  <button
-                    key={item.marketThemeId}
-                    type="button"
-                    title={`${item.themeName} · 점수 합산 ${item.scoreSum}점 · ${item.stockCount}종목`}
-                    className={`theme-treemap-tile ${sizeClass} ${selectedTheme?.marketThemeId === item.marketThemeId ? "selected" : ""}`}
-                    style={{ "--theme-intensity": intensity } as CSSProperties}
-                    onClick={() => setSelectedThemeId(item.marketThemeId)}
-                  >
-                    <span className="theme-treemap-title">{item.themeName}</span>
-                    {item.viewMode === "THEME_GROUP" && item.topChildThemes.length ? (
-                      <span className="theme-treemap-subthemes">{item.topChildThemes.join(" · ")}</span>
-                    ) : item.viewMode === "THEME" && item.themeGroupName ? (
-                      <span className="theme-treemap-subthemes">{item.themeGroupName}</span>
-                    ) : null}
-                    <span className="theme-treemap-stock-count">{item.stockCount}종목</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            {selectedTheme ? (
-              <div className="theme-detail-panel">
-                <div className="theme-detail-header">
-                  <div>
-                    <h3 className="theme-detail-title">{selectedTheme.themeName} 상세</h3>
-                    <p className="theme-detail-period">기간 {themePeriodStart} ~ {themePeriodEnd}</p>
-                  </div>
-                  <div className="theme-detail-actions">
-                    <StatusBadge label={`${selectedTheme.rank}위`} tone="blue" />
-                    <button type="button" className="btn btn-secondary theme-detail-link-btn" onClick={() => navigate("/market-trends")}>시장트렌드분석으로 이동</button>
-                  </div>
-                </div>
-                <div className="theme-detail-kpis">
-                  <div className="theme-detail-kpi">
-                    <p className="theme-detail-kpi-label">점수 합산</p>
-                    <p className="theme-detail-kpi-value">{selectedTheme.scoreSum}점</p>
-                  </div>
-                  <div className="theme-detail-kpi">
-                    <p className="theme-detail-kpi-label">종목수</p>
-                    <p className="theme-detail-kpi-value">{selectedTheme.stockCount}종목</p>
-                  </div>
-                  <div className="theme-detail-kpi">
-                    <p className="theme-detail-kpi-label">이벤트</p>
-                    <p className="theme-detail-kpi-value">{selectedTheme.eventCount}건</p>
-                  </div>
-                  <div className="theme-detail-kpi">
-                    <p className="theme-detail-kpi-label">마지막 순위</p>
-                    <p className="theme-detail-kpi-value">{selectedTheme.latestFinalRank ? `${selectedTheme.latestFinalRank}위` : "-"}</p>
-                  </div>
-                </div>
-                <div className="theme-detail-info-row">
-                  <div className="theme-detail-info-box">
-                    <span className="theme-detail-info-label">등장 날짜</span>
-                    <span className="theme-detail-info-value">
-                      {selectedTheme.sourceDates.length ? selectedTheme.sourceDates.join(", ") : "-"} · 마지막 등장일: {selectedTheme.latestDate ?? "-"}
-                    </span>
-                  </div>
-                  <div className="theme-detail-info-box">
-                    <span className="theme-detail-info-label">관련 종목</span>
-                    <span className="theme-detail-info-value">
-                      {selectedTheme.relatedStocks.length ? selectedTheme.relatedStocks.join(", ") : "월간 테마 누적 흐름 그래프 데이터에 포함되지 않음"}
-                    </span>
-                  </div>
-                </div>
-                <div className="theme-detail-context-row">
-                  {selectedTheme.viewMode === "THEME_GROUP" ? (
-                    <div className="theme-detail-context-box">
-                      <span className="theme-detail-info-label">하위 테마</span>
-                      <span className="theme-detail-info-value">
-                        {selectedTheme.topChildThemes.length ? selectedTheme.topChildThemes.join(", ") : "하위 테마 정보 없음"}
-                        {selectedTheme.childThemeCount > selectedTheme.topChildThemes.length ? ` 외 ${selectedTheme.childThemeCount - selectedTheme.topChildThemes.length}개` : ""}
-                      </span>
-                    </div>
-                  ) : (
-                    <div className="theme-detail-context-box">
-                      <span className="theme-detail-info-label">테마그룹</span>
-                      <span className="theme-detail-info-value">{selectedTheme.themeGroupName || "미지정 테마그룹"}</span>
-                    </div>
-                  )}
-                </div>
-                <p className="theme-score-note">
-                  <b>점수 기준:</b> 시장트렌드분석 월간 테마 누적 흐름 그래프의 daily_score를 최근 1개월 기준으로 합산하며, 타일 면적은 종목수가 아니라 점수 합산값 기준입니다.
-                </p>
-              </div>
-            ) : null}
-          </div>
-        )}
-      </SectionCard>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <SectionCard title="매매훈련 현황">

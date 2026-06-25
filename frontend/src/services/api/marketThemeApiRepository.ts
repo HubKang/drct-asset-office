@@ -8,7 +8,13 @@ import type {
   MarketThemeCandidateReviewInput,
   MarketThemeCreateInput,
   MarketThemeByStockResponse,
+  MarketThemeLatestReturnDetail,
   MarketThemeListParams,
+  MarketThemeMonthlyReturnParams,
+  MarketThemeMonthlyReturnResponse,
+  MarketThemeRangeReturnParams,
+  MarketThemeReturnRefreshRequest,
+  MarketThemeReturnRefreshResponse,
   MarketThemeStock,
   MarketThemeStockCreateInput,
   MarketThemeStockUpdateInput,
@@ -36,7 +42,30 @@ export const marketThemeApiRepository = {
     apiRequest<MarketTheme>(`/market-themes/${themeId}`, { method: "PUT", body: JSON.stringify(payload) }),
   deactivate: (themeId: number) =>
     apiRequest<MarketTheme>(`/market-themes/${themeId}/deactivate`, { method: "PATCH" }),
-  listThemeStocks: (themeId: number) => apiRequest<MarketThemeStock[]>(`/market-themes/${themeId}/stocks`),
+  refreshReturns: (payload: MarketThemeReturnRefreshRequest = { scope: "all_active" }) =>
+    apiRequest<MarketThemeReturnRefreshResponse>("/external/kiwoom/market-themes/returns/refresh", { method: "POST", body: JSON.stringify(payload) }),
+  getLatestReturn: (themeId: number) => apiRequest<MarketThemeLatestReturnDetail>(`/external/kiwoom/market-themes/${themeId}/returns/latest`),
+  getDailyReturn: (themeId: number, date: string) => apiRequest<MarketThemeLatestReturnDetail>(`/external/kiwoom/market-themes/${themeId}/returns/daily?date=${encodeURIComponent(date)}`),
+  listMonthlyReturns: (params: MarketThemeMonthlyReturnParams) => {
+    const search = new URLSearchParams();
+    search.set("month", params.month);
+    if (params.active_only !== undefined) search.set("active_only", String(params.active_only));
+    if (params.theme_group_id !== undefined) search.set("theme_group_id", String(params.theme_group_id));
+    if (params.keyword) search.set("keyword", params.keyword);
+    if (params.limit !== undefined) search.set("limit", String(params.limit));
+    if (params.lookback_days !== undefined) search.set("lookback_days", String(params.lookback_days));
+    return apiRequest<MarketThemeMonthlyReturnResponse>(`/external/kiwoom/market-themes/returns/monthly?${search.toString()}`);
+  },
+  listRangeReturns: (params: MarketThemeRangeReturnParams) => {
+    const search = new URLSearchParams();
+    search.set("end_date", params.end_date);
+    if (params.days !== undefined) search.set("days", String(params.days));
+    if (params.active_only !== undefined) search.set("active_only", String(params.active_only));
+    if (params.theme_group_id !== undefined) search.set("theme_group_id", String(params.theme_group_id));
+    if (params.keyword) search.set("keyword", params.keyword);
+    if (params.limit !== undefined) search.set("limit", String(params.limit));
+    return apiRequest<MarketThemeMonthlyReturnResponse>(`/external/kiwoom/market-themes/returns/range?${search.toString()}`);
+  },  listThemeStocks: (themeId: number) => apiRequest<MarketThemeStock[]>(`/market-themes/${themeId}/stocks`),
   createThemeStock: (themeId: number, payload: MarketThemeStockCreateInput) =>
     apiRequest<MarketThemeStock>(`/market-themes/${themeId}/stocks`, { method: "POST", body: JSON.stringify(payload) }),
   updateThemeStock: (mappingId: number, payload: MarketThemeStockUpdateInput) =>

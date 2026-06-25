@@ -1,10 +1,13 @@
-﻿import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import SectionCard from "@/components/common/SectionCard";
 import StatusBadge from "@/components/common/StatusBadge";
 import { repositories } from "@/services";
 import type {
   MarketTheme,
   MarketThemeCandidate,
+  MarketThemeLatestReturnDetail,
+  MarketThemeMonthlyReturnResponse,
+  MarketThemeMonthlyReturnThemeItem,
   MarketThemeCandidateStatus,
   MarketThemeLevel,
   MarketThemeStock,
@@ -13,7 +16,8 @@ import type {
 import type { Stock } from "@/types/stock";
 
 type ActiveTab = "themes" | "mapping" | "candidates";
-type ThemeViewMode = "group" | "theme";
+type ThemeViewMode = "group" | "theme" | "trend";
+type ThemeReturnSort = "default" | "desc" | "asc";
 const THEME_PAGE_SIZE = 20;
 
 function toErrorMessage(error: unknown, fallback: string): string {
@@ -59,6 +63,78 @@ function themeGroupSortName(theme: MarketTheme): string {
   return theme.parent_theme_name || "미지정";
 }
 
+const fmtPct = (value: number | null | undefined) => {
+  if (value == null || Number.isNaN(Number(value))) return "-";
+  const n = Number(value);
+  return `${n > 0 ? "+" : ""}${n.toFixed(2)}%`;
+};
+
+const fmtEok = (value: number | null | undefined) => {
+  if (value == null || Number.isNaN(Number(value))) return "-";
+  return Number(value).toLocaleString("ko-KR", { maximumFractionDigits: 1 });
+};
+
+
+const formatDateInputValue = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const parseDateInputValue = (value: string) => {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, (month || 1) - 1, day || 1);
+};
+
+const getDateInputValue = () => formatDateInputValue(new Date());
+
+const getDateRange = (startDate: string, endDate: string) => {
+  const dates: string[] = [];
+  const start = parseDateInputValue(startDate);
+  const end = parseDateInputValue(endDate);
+  for (const day = new Date(start); day <= end; day.setDate(day.getDate() + 1)) {
+    dates.push(formatDateInputValue(day));
+  }
+  return dates;
+};
+
+
+const formatHeatmapDayLabel = (date: string): string => date.slice(8, 10);
+
+const fmtHeatmapCellPct = (value: number | null | undefined) => {
+  if (value == null || Number.isNaN(Number(value))) return "-";
+  const n = Number(value);
+  return `${n > 0 ? "+" : ""}${n.toFixed(1)}`;
+};
+const getThemeReturnHeatmapColor = (rate: number | null | undefined): string => {
+  if (rate == null || Number.isNaN(Number(rate))) return "#F8FAFC";
+  const value = Number(rate);
+  if (value <= -10) return "#93C5FD";
+  if (value <= -7) return "#BFDBFE";
+  if (value <= -5) return "#DBEAFE";
+  if (value <= -3) return "#EFF6FF";
+  if (value < 3) return "#F3F4F6";
+  if (value < 5) return "#FEF2F2";
+  if (value < 7) return "#FEE2E2";
+  if (value < 10) return "#FECACA";
+  return "#FCA5A5";
+};
+
+const heatmapTextClass = (rate: number | null | undefined) => {
+  if (rate == null || Number.isNaN(Number(rate))) return "theme-return-heatmap__value-text--empty";
+  if (Number(rate) <= -7) return "theme-return-heatmap__value-text--negative-strong";
+  if (Number(rate) < 0) return "theme-return-heatmap__value-text--negative";
+  if (Number(rate) >= 7) return "theme-return-heatmap__value-text--positive-strong";
+  if (Number(rate) > 0) return "theme-return-heatmap__value-text--positive";
+  return "theme-return-heatmap__value-text--empty";
+};
+const returnToneClass = (value: number | null | undefined) => {
+  if (value == null || Number.isNaN(Number(value))) return "theme-return-empty";
+  if (Number(value) > 0) return "theme-return-positive";
+  if (Number(value) < 0) return "theme-return-negative";
+  return "theme-return-neutral";
+};
 function MarketThemesPage() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("themes");
 
@@ -71,10 +147,12 @@ function MarketThemesPage() {
   const [themeFilterActive, setThemeFilterActive] = useState<"all" | "1" | "0">("all");
   const [themeFilterSupply, setThemeFilterSupply] = useState<"all" | "1" | "0">("all");
   const [themeFilterKeyword, setThemeFilterKeyword] = useState("");
-  const [themeViewMode, setThemeViewMode] = useState<ThemeViewMode>("group");
+  const [themeViewMode, setThemeViewMode] = useState<ThemeViewMode>("theme");
   const [themeFilterGroupId, setThemeFilterGroupId] = useState<"all" | string>("all");
   const [expandedThemeGroupIds, setExpandedThemeGroupIds] = useState<Set<number>>(() => new Set());
   const [mappingThemeGroupId, setMappingThemeGroupId] = useState<"all" | string>("all");
+  const [mappingThemeSearchText, setMappingThemeSearchText] = useState("");
+  const [mappingThemeDropdownOpen, setMappingThemeDropdownOpen] = useState(false);
   const [themePage, setThemePage] = useState(1);
 
   const [candidateStatusFilter, setCandidateStatusFilter] = useState<"all" | MarketThemeCandidateStatus>("pending");
@@ -89,7 +167,20 @@ function MarketThemesPage() {
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
   const [generatingCandidates, setGeneratingCandidates] = useState(false);
+  const [refreshingReturns, setRefreshingReturns] = useState(false);
+  const [themeReturnSort, setThemeReturnSort] = useState<ThemeReturnSort>("default");
+  const [trendEndDate, setTrendEndDate] = useState(getDateInputValue());
+  const [trendThemeGroupId, setTrendThemeGroupId] = useState<"all" | string>("all");
+  const [trendKeyword, setTrendKeyword] = useState("");
+  const [trendLimit, setTrendLimit] = useState<"all" | string>("20");
+  const [trendLoading, setTrendLoading] = useState(false);
+  const [trendData, setTrendData] = useState<MarketThemeMonthlyReturnResponse | null>(null);
+  const [returnDrawerOpen, setReturnDrawerOpen] = useState(false);
+  const [returnDetailLoading, setReturnDetailLoading] = useState(false);
+  const [returnDetailError, setReturnDetailError] = useState("");
+  const [selectedReturnDetail, setSelectedReturnDetail] = useState<MarketThemeLatestReturnDetail | null>(null);
   const [updatingPrimaryMappingId, setUpdatingPrimaryMappingId] = useState<number | null>(null);
+  const mappingThemePickerRef = useRef<HTMLDivElement | null>(null);
 
   const [themeModalOpen, setThemeModalOpen] = useState(false);
   const [formThemeId, setFormThemeId] = useState<number | null>(null);
@@ -106,8 +197,10 @@ function MarketThemesPage() {
   const sortedThemes = useMemo(
     () =>
       [...themes].sort((a, b) => {
+        if (a.is_active !== b.is_active) return b.is_active - a.is_active;
         const groupCompare = themeGroupSortName(a).localeCompare(themeGroupSortName(b), "ko-KR");
         if (groupCompare !== 0) return groupCompare;
+        if (a.is_supply_theme !== b.is_supply_theme) return b.is_supply_theme - a.is_supply_theme;
         if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
         return a.theme_name.localeCompare(b.theme_name, "ko-KR");
       }),
@@ -125,7 +218,7 @@ function MarketThemesPage() {
 
   const filteredThemes = useMemo(() => {
     const keyword = themeFilterKeyword.trim().toLowerCase();
-    return sortedThemes.filter((row) => {
+    const rows = sortedThemes.filter((row) => {
       if (themeViewMode === "group" && row.theme_level !== "THEME_GROUP") return false;
       if (themeViewMode === "theme" && row.theme_level === "THEME_GROUP") return false;
       if (themeViewMode === "theme" && themeFilterGroupId !== "all" && String(row.parent_theme_id ?? "") !== themeFilterGroupId) return false;
@@ -135,7 +228,18 @@ function MarketThemesPage() {
       if (!keyword) return true;
       return row.theme_name.toLowerCase().includes(keyword) || row.keywords.join(" ").toLowerCase().includes(keyword);
     });
-  }, [sortedThemes, themeFilterActive, themeFilterGroupId, themeFilterKeyword, themeFilterSupply, themeFilterType, themeViewMode]);
+    if (themeViewMode !== "theme" || themeReturnSort === "default") return rows;
+    return [...rows].sort((a, b) => {
+      const av = a.latest_return?.avg_change_rate;
+      const bv = b.latest_return?.avg_change_rate;
+      const aMissing = av == null;
+      const bMissing = bv == null;
+      if (aMissing && bMissing) return 0;
+      if (aMissing) return 1;
+      if (bMissing) return -1;
+      return themeReturnSort === "desc" ? bv - av : av - bv;
+    });
+  }, [sortedThemes, themeFilterActive, themeFilterGroupId, themeFilterKeyword, themeFilterSupply, themeFilterType, themeReturnSort, themeViewMode]);
 
   const themeTotalPages = Math.max(1, Math.ceil(filteredThemes.length / THEME_PAGE_SIZE));
   const safeThemePage = Math.min(themePage, themeTotalPages);
@@ -143,7 +247,20 @@ function MarketThemesPage() {
   const themePageEnd = Math.min(filteredThemes.length, safeThemePage * THEME_PAGE_SIZE);
   const pagedThemes = filteredThemes.slice((safeThemePage - 1) * THEME_PAGE_SIZE, safeThemePage * THEME_PAGE_SIZE);
 
-  const selectedTheme = useMemo(() => sortedThemes.find((x) => x.id === selectedThemeId) ?? null, [sortedThemes, selectedThemeId]);
+
+  const trendDates = useMemo(
+    () => (trendData ? getDateRange(trendData.display_start_date, trendData.display_end_date) : []),
+    [trendData],
+  );
+  const trendSummaryCards = useMemo(() => {
+    const summary = trendData?.summary;
+    return [
+      { label: "30일 상승 1위", item: summary?.top_rising_theme, value: summary?.top_rising_theme?.period_compound_return ?? summary?.top_rising_theme?.monthly_compound_return },
+      { label: "30일 하락 1위", item: summary?.top_falling_theme, value: summary?.top_falling_theme?.period_compound_return ?? summary?.top_falling_theme?.monthly_compound_return },
+      { label: "거래대금 1위", item: summary?.top_trading_value_theme, value: summary?.top_trading_value_theme?.total_trading_value_100m, suffix: "억" },
+      { label: "상승 지속 1위", item: summary?.top_continuous_rising_theme ?? summary?.rising_day_theme, value: summary?.top_continuous_rising_theme?.continuous_rising_days ?? summary?.rising_day_theme?.continuous_rising_days, suffix: "일" },
+    ];
+  }, [trendData]);  const selectedTheme = useMemo(() => sortedThemes.find((x) => x.id === selectedThemeId) ?? null, [sortedThemes, selectedThemeId]);
   const mappingSelectableThemes = useMemo(
     () =>
       manageableThemes.filter((row) => {
@@ -153,6 +270,21 @@ function MarketThemesPage() {
       }),
     [manageableThemes, mappingThemeGroupId],
   );
+  const mappingThemePickerOptions = useMemo(() => {
+    const keyword = mappingThemeSearchText.trim().toLowerCase();
+    const rows = [...mappingSelectableThemes].sort((a, b) => {
+      const aRate = a.latest_return?.avg_change_rate ?? Number.NEGATIVE_INFINITY;
+      const bRate = b.latest_return?.avg_change_rate ?? Number.NEGATIVE_INFINITY;
+      if (aRate !== bRate) return bRate - aRate;
+      return a.theme_name.localeCompare(b.theme_name, "ko-KR");
+    });
+    const filtered = keyword
+      ? rows.filter((row) => row.theme_name.toLowerCase().includes(keyword) || (row.parent_theme_name || "").toLowerCase().includes(keyword) || row.keywords.join(" ").toLowerCase().includes(keyword))
+      : rows;
+    return filtered.slice(0, 10);
+  }, [mappingSelectableThemes, mappingThemeSearchText]);
+  const mappingThemeInputValue = mappingThemeSearchText || selectedTheme?.theme_name || "";
+
   const selectedThemeGroup = useMemo(
     () => themeGroups.find((row) => String(row.id) === mappingThemeGroupId) ?? null,
     [mappingThemeGroupId, themeGroups],
@@ -166,6 +298,7 @@ function MarketThemesPage() {
   const supplyThemesCount = useMemo(() => manageableThemes.filter((x) => x.is_supply_theme === 1).length, [manageableThemes]);
   const linkedThemesCount = useMemo(() => manageableThemes.filter((x) => x.stock_count > 0).length, [manageableThemes]);
   const themeGroupCount = useMemo(() => themes.filter((x) => x.theme_level === "THEME_GROUP").length, [themes]);
+  const themeManagementTitle = themeViewMode === "group" ? "테마그룹 관리" : themeViewMode === "trend" ? "테마등락추이" : "테마별 관리";
 
   const resetForm = () => {
     setFormThemeId(null);
@@ -211,6 +344,69 @@ function MarketThemesPage() {
     }
   };
 
+  const onRefreshThemeReturns = async () => {
+    setRefreshingReturns(true);
+    setError("");
+    setMessage("테마등락률 갱신 중...");
+    try {
+      const res = await repositories.marketThemes.refreshReturns({ scope: "all_active" });
+      await loadThemes();
+      setMessage(res.message || `테마등락률 갱신 완료: ${res.theme_count}개 테마, ${res.stock_count}개 종목 반영`);
+    } catch (e) {
+      setError(toErrorMessage(e, "테마등락률 갱신에 실패했습니다. 키움 REST 토큰/연결 상태를 확인해 주세요."));
+    } finally {
+      setRefreshingReturns(false);
+    }
+  };
+
+
+  const loadThemeReturnTrend = async () => {
+    setTrendLoading(true);
+    setError("");
+    try {
+      const rows = await repositories.marketThemes.listRangeReturns({
+        end_date: trendEndDate,
+        days: 30,
+        active_only: true,
+        theme_group_id: trendThemeGroupId === "all" ? undefined : Number(trendThemeGroupId),
+        keyword: trendKeyword.trim() || undefined,
+        limit: trendLimit === "all" ? undefined : Number(trendLimit),
+      });
+      setTrendData(rows);
+    } catch (e) {
+      setError(toErrorMessage(e, "테마등락추이 데이터를 불러오지 못했습니다."));
+      setTrendData(null);
+    } finally {
+      setTrendLoading(false);
+    }
+  };
+  const openThemeReturnDetail = async (theme: MarketTheme | MarketThemeMonthlyReturnThemeItem, returnDate?: string) => {
+    const themeId = "id" in theme ? theme.id : theme.theme_id;
+    setSelectedThemeId(themeId);
+    setReturnDrawerOpen(true);
+    setReturnDetailLoading(true);
+    setReturnDetailError("");
+    setSelectedReturnDetail(null);
+    try {
+      const detail = returnDate ? await repositories.marketThemes.getDailyReturn(themeId, returnDate) : await repositories.marketThemes.getLatestReturn(themeId);
+      setSelectedReturnDetail(detail);
+    } catch (e) {
+      setReturnDetailError(toErrorMessage(e, "테마 상세 정보를 불러오지 못했습니다."));
+    } finally {
+      setReturnDetailLoading(false);
+    }
+  };
+
+  const closeReturnDrawer = () => {
+    setReturnDrawerOpen(false);
+    setReturnDetailLoading(false);
+    setReturnDetailError("");
+    setSelectedReturnDetail(null);
+  };
+
+  const toggleThemeReturnSort = () => {
+    setThemeReturnSort((prev) => (prev === "default" ? "desc" : prev === "desc" ? "asc" : "default"));
+  };
   const loadCandidates = async () => {
     try {
       const rows = await repositories.marketThemes.listCandidates({
@@ -236,6 +432,12 @@ function MarketThemesPage() {
     setThemePage(1);
   }, [themeFilterActive, themeFilterGroupId, themeFilterKeyword, themeFilterSupply, themeFilterType, themeViewMode]);
 
+
+  useEffect(() => {
+    if (activeTab === "themes" && themeViewMode === "trend") {
+      void loadThemeReturnTrend();
+    }
+  }, [activeTab, themeViewMode, trendEndDate, trendThemeGroupId, trendLimit]);
   useEffect(() => {
     if (themePage > themeTotalPages) {
       setThemePage(themeTotalPages);
@@ -246,10 +448,29 @@ function MarketThemesPage() {
       setSelectedThemeId(null);
       return;
     }
-    if (!selectedThemeId || !mappingSelectableThemes.some((row) => row.id === selectedThemeId)) {
-      setSelectedThemeId(mappingSelectableThemes[0].id);
+    if (selectedThemeId && !mappingSelectableThemes.some((row) => row.id === selectedThemeId)) {
+      setSelectedThemeId(null);
+      setMappingThemeSearchText("");
     }
   }, [mappingSelectableThemes, selectedThemeId]);
+
+  useEffect(() => {
+    if (!mappingThemeDropdownOpen) return undefined;
+    const onPointerDown = (event: MouseEvent) => {
+      if (!mappingThemePickerRef.current?.contains(event.target as Node)) {
+        setMappingThemeDropdownOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMappingThemeDropdownOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [mappingThemeDropdownOpen]);
 
   useEffect(() => {
     void loadCandidates();
@@ -374,13 +595,31 @@ function MarketThemesPage() {
     if (theme.theme_level === "THEME_GROUP") {
       const firstChildTheme = sortedThemes.find((row) => row.parent_theme_id === theme.id && row.theme_level !== "THEME_GROUP" && row.is_active === 1);
       setMappingThemeGroupId(String(theme.id));
-      if (firstChildTheme) setSelectedThemeId(firstChildTheme.id);
+      if (firstChildTheme) {
+        setMappingThemeSearchText(firstChildTheme.theme_name);
+        setSelectedThemeId(firstChildTheme.id);
+      }
     } else {
       setMappingThemeGroupId(theme.parent_theme_id ? String(theme.parent_theme_id) : "all");
+      setMappingThemeSearchText(theme.theme_name);
       setSelectedThemeId(theme.id);
     }
     setStockSearchResults([]);
     setActiveTab("mapping");
+  };
+
+  const selectMappingTheme = (theme: MarketTheme) => {
+    setSelectedThemeId(theme.id);
+    setMappingThemeSearchText(theme.theme_name);
+    setMappingThemeDropdownOpen(false);
+  };
+
+  const applyMappingThemeSearchValue = (value: string) => {
+    const matchedTheme = mappingSelectableThemes.find((row) => row.theme_name === value)
+      ?? mappingSelectableThemes.find((row) => row.theme_name.toLowerCase() === value.trim().toLowerCase());
+    setMappingThemeSearchText(value);
+    setSelectedThemeId(matchedTheme ? matchedTheme.id : null);
+    setMappingThemeDropdownOpen(true);
   };
 
   const onSearchStocks = async () => {
@@ -483,7 +722,7 @@ function MarketThemesPage() {
       <div className="journal-hero-row market-theme-hero-row">
         <section className="journal-hero-panel">
           <h1>시장 테마 관리</h1>
-          <p>이슈·수급 흐름, 뉴스·공시 키워드 기반으로 테마와 연결 종목을 관리합니다.</p>
+          <p>테마와 연결 종목을 관리합니다.</p>
         </section>
 
         <section className="journal-summary-compact market-theme-hero-summary" aria-label="시장 테마 요약">
@@ -517,24 +756,99 @@ function MarketThemesPage() {
       {message ? <div className="inline-result inline-success">{message}</div> : null}
       {error ? <div className="inline-result inline-error">{error}</div> : null}
 
-      <SectionCard title="">
-        <div className="gpt-domain-tabs">
-          <button type="button" className={`gpt-domain-tab ${activeTab === "themes" ? "active" : ""}`} onClick={() => setActiveTab("themes")}>테마 목록</button>
-          <button type="button" className={`gpt-domain-tab ${activeTab === "mapping" ? "active" : ""}`} onClick={() => setActiveTab("mapping")}>종목 연결</button>
-          <button type="button" className={`gpt-domain-tab ${activeTab === "candidates" ? "active" : ""}`} onClick={() => setActiveTab("candidates")}>추천 후보</button>
+      <SectionCard title="" className="market-theme-tabs-card">
+        <div className="gpt-domain-tabs market-theme-primary-tabs">
+          <button type="button" className={`gpt-domain-tab market-theme-primary-tab ${activeTab === "themes" ? "active" : ""}`} onClick={() => { setActiveTab("themes"); setThemeViewMode("theme"); }}>테마 관리</button>
+          <button type="button" className={`gpt-domain-tab market-theme-primary-tab ${activeTab === "mapping" ? "active" : ""}`} onClick={() => setActiveTab("mapping")}>종목 연결</button>
+          <button type="button" className={`gpt-domain-tab market-theme-primary-tab ${activeTab === "candidates" ? "active" : ""}`} onClick={() => setActiveTab("candidates")}>추천 후보</button>
         </div>
       </SectionCard>
 
       {activeTab === "themes" ? (
-        <SectionCard title="테마 목록">
-          <div className="theme-view-mode-tabs">
+        <SectionCard title="" className="market-theme-management-card">
+          <div className="theme-view-mode-tabs market-theme-view-toggle">
             <button type="button" className={`theme-view-mode-tab ${themeViewMode === "group" ? "active" : ""}`} onClick={() => setThemeViewMode("group")}>
-              테마그룹 기준 보기
+              테마그룹별
             </button>
             <button type="button" className={`theme-view-mode-tab ${themeViewMode === "theme" ? "active" : ""}`} onClick={() => setThemeViewMode("theme")}>
-              테마 기준 보기
+              테마별
+            </button>
+            <button type="button" className={`theme-view-mode-tab ${themeViewMode === "trend" ? "active" : ""}`} onClick={() => setThemeViewMode("trend")}>
+              테마등락추이
             </button>
           </div>
+          {themeViewMode === "trend" ? (
+            <div className="theme-return-trend-panel">
+              <div className="theme-return-trend-toolbar">
+                <input className="input-control" type="date" value={trendEndDate} onChange={(e) => setTrendEndDate(e.target.value)} />
+                <select className="select-control" value={trendThemeGroupId} onChange={(e) => setTrendThemeGroupId(e.target.value)}>
+                  <option value="all">테마그룹 전체</option>
+                  {themeGroups.map((row) => (
+                    <option key={row.id} value={row.id}>{row.theme_name}</option>
+                  ))}
+                </select>
+                <input className="input-control" placeholder="테마명 검색" value={trendKeyword} onChange={(e) => setTrendKeyword(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void loadThemeReturnTrend(); }} />
+                <select className="select-control" value={trendLimit} onChange={(e) => setTrendLimit(e.target.value as "all" | string)}>
+                  <option value="10">상위 10개</option>
+                  <option value="20">상위 20개</option>
+                  <option value="30">상위 30개</option>
+                  <option value="all">전체</option>
+                </select>
+                <button type="button" className="btn btn-secondary market-theme-refresh-button" onClick={() => void loadThemeReturnTrend()} disabled={trendLoading}>{trendLoading ? "조회 중..." : "새로고침"}</button>
+              </div>
+              <div className="theme-return-summary-grid">
+                {trendSummaryCards.map((card) => (
+                  <div key={card.label} className="theme-return-summary-card">
+                    <span>{card.label}</span>
+                    <strong>{card.item?.theme_name ?? "-"}</strong>
+                    <em>{card.value == null ? "-" : card.suffix === "억" ? `${fmtEok(card.value)}억` : fmtPct(card.value)}</em>
+                  </div>
+                ))}
+              </div>
+              <div className="theme-return-legend">
+                {[`-10% 이하`, `-7%`, `-5%`, `-3%`, `0%`, `+3%`, `+5%`, `+7%`, `+10% 이상`].map((label, index) => {
+                  const colors = ["#93C5FD", "#BFDBFE", "#DBEAFE", "#EFF6FF", "#F3F4F6", "#FEF2F2", "#FEE2E2", "#FECACA", "#FCA5A5"];
+                  return <span key={label} className="theme-return-legend__item"><i className="theme-return-legend__chip" style={{ background: colors[index] }} />{label}</span>;
+                })}
+              </div>
+              <div className="theme-return-heatmap-wrap">
+                <div className="theme-return-heatmap" style={{ gridTemplateColumns: `minmax(130px, 150px) repeat(${Math.max(trendDates.length, 1)}, minmax(0, 1fr))` }}>
+                  <div className="theme-return-heatmap__theme-cell theme-return-heatmap__header-cell">테마</div>
+                  {trendDates.map((day) => <div key={day} className="theme-return-heatmap__date-cell" title={day}>{formatHeatmapDayLabel(day)}</div>)}
+                  {trendLoading ? <div className="theme-return-heatmap__empty-row">테마등락추이를 조회 중입니다.</div> : null}
+                  {!trendLoading && (!trendData || trendData.themes.length === 0) ? <div className="theme-return-heatmap__empty-row">조회된 테마등락추이 데이터가 없습니다.</div> : null}
+                  {!trendLoading && trendData?.themes.map((theme) => {
+                    const dailyMap = new Map(theme.daily_returns.map((item) => [item.return_date, item]));
+                    return (
+                      <Fragment key={theme.theme_id}>
+                        <div className="theme-return-heatmap__theme-cell" title={`${theme.theme_group_name ?? "미지정"} / ${theme.theme_name}`}>
+                          <strong>{theme.theme_name}</strong>
+                          <span>{fmtPct(theme.period_compound_return ?? theme.monthly_compound_return)} · {fmtEok(theme.total_trading_value_100m)}억</span>
+                        </div>
+                        {trendDates.map((day) => {
+                          const item = dailyMap.get(day);
+                          const rate = item?.avg_change_rate ?? null;
+                          return (
+                            <button
+                              key={`${theme.theme_id}-${day}`}
+                              type="button"
+                              className={`theme-return-heatmap__value-cell ${item ? "" : "theme-return-heatmap__value-cell--empty"}`}
+                              style={{ background: getThemeReturnHeatmapColor(rate) }}
+                              title={`${theme.theme_name} / ${day} / 등락률 ${fmtPct(rate)} / 거래대금 ${fmtEok(item?.total_trading_value_100m)}억 / 상승 ${item?.rising_stock_count ?? 0} / 하락 ${item?.falling_stock_count ?? 0} / 보합 ${item?.flat_stock_count ?? 0}`}
+                              onClick={() => item ? void openThemeReturnDetail(theme, day) : undefined}
+                            >
+                              <span className={heatmapTextClass(rate)}>{item ? fmtHeatmapCellPct(rate) : "-"}</span>
+                            </button>
+                          );
+                        })}
+                      </Fragment>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
           <div className="market-theme-filter-toolbar">
             {themeViewMode === "theme" ? (
               <select className="select-control" value={themeFilterGroupId} onChange={(e) => setThemeFilterGroupId(e.target.value)}>
@@ -547,25 +861,30 @@ function MarketThemesPage() {
             <select className="select-control" value={themeFilterType} onChange={(e) => setThemeFilterType(e.target.value as "all" | MarketThemeType)}>
               <option value="all">유형 전체</option><option value="theme">테마</option><option value="industry">산업</option><option value="custom">커스텀</option><option value="telegram">텔레그램</option>
             </select>
-            <select className="select-control" value={themeFilterActive} onChange={(e) => setThemeFilterActive(e.target.value as "all" | "1" | "0")}> 
+            <select className="select-control" value={themeFilterActive} onChange={(e) => setThemeFilterActive(e.target.value as "all" | "1" | "0")}>
               <option value="all">활성 전체</option><option value="1">활성</option><option value="0">비활성</option>
             </select>
-            <select className="select-control" value={themeFilterSupply} onChange={(e) => setThemeFilterSupply(e.target.value as "all" | "1" | "0")}> 
+            <select className="select-control" value={themeFilterSupply} onChange={(e) => setThemeFilterSupply(e.target.value as "all" | "1" | "0")}>
               <option value="all">수급 전체</option><option value="1">수급 테마</option><option value="0">일반 테마</option>
             </select>
-            <input className="input-control" placeholder="테마그룹명, 테마명 또는 키워드 검색" value={themeFilterKeyword} onChange={(e) => setThemeFilterKeyword(e.target.value)} />
-            <button type="button" className="btn btn-secondary" onClick={openCreateThemeModal}>+ 테마 등록</button>
+            <input className="input-control market-theme-search-input" placeholder="테마그룹명, 테마명 또는 키워드 검색" value={themeFilterKeyword} onChange={(e) => setThemeFilterKeyword(e.target.value)} />
+            <button type="button" className="btn btn-secondary market-theme-action-button" onClick={openCreateThemeModal}>+ 테마 등록</button>
+            {themeViewMode === "theme" ? (
+              <button type="button" className="btn btn-secondary market-theme-action-button market-theme-refresh-button" onClick={() => void onRefreshThemeReturns()} disabled={refreshingReturns}>
+                {refreshingReturns ? "갱신 중..." : "테마등락률 갱신"}
+              </button>
+            ) : null}
           </div>
           <div className="table-shell">
             <table className="data-table compact-table">
               {themeViewMode === "group" ? (
                 <thead><tr><th>상태</th><th>테마그룹명</th><th>하위 테마</th><th>수급 테마</th><th>키워드</th><th>연결 종목</th><th>정렬</th><th>작업</th></tr></thead>
               ) : (
-                <thead><tr><th>상태</th><th>테마그룹</th><th>테마명</th><th>유형</th><th>수급</th><th>키워드</th><th>연결 종목</th><th>정렬</th><th>작업</th></tr></thead>
+                <thead><tr><th>상태</th><th>테마그룹</th><th>테마명</th><th>유형</th><th>수급</th><th>키워드</th><th>연결 종목</th><th><button type="button" className="theme-return-sort-button" onClick={toggleThemeReturnSort}>테마등락률{themeReturnSort === "desc" ? " ↓" : themeReturnSort === "asc" ? " ↑" : ""}</button></th><th>정렬</th><th>작업</th></tr></thead>
               )}
               <tbody>
                 {filteredThemes.length === 0 ? (
-                  <tr><td colSpan={themeViewMode === "group" ? 8 : 9} className="text-center text-muted">조회 결과가 없습니다.</td></tr>
+                  <tr><td colSpan={themeViewMode === "group" ? 8 : 10} className="text-center text-muted">조회 결과가 없습니다.</td></tr>
                 ) : null}
                 {themeViewMode === "group" ? pagedThemes.map((row) => {
                   const isExpanded = expandedThemeGroupIds.has(row.id);
@@ -631,7 +950,7 @@ function MarketThemesPage() {
                     </Fragment>
                   );
                 }) : pagedThemes.map((row) => (
-                  <tr key={row.id} onClick={() => setSelectedThemeId(row.id)}>
+                  <tr key={row.id} className="theme-return-clickable-row" onClick={() => void openThemeReturnDetail(row)}>
                     <td>{row.is_active === 1 ? <StatusBadge label="활성" tone="emerald" /> : <StatusBadge label="비활성" tone="slate" />}</td>
                     <td>{row.parent_theme_name ?? <span className="text-muted">미지정</span>}</td>
                     <td>{row.theme_name}</td><td>{themeTypeLabel(row.theme_type)}</td><td>{row.is_supply_theme === 1 ? <span className="badge badge-blue">수급</span> : "-"}</td>
@@ -645,6 +964,7 @@ function MarketThemesPage() {
                         {row.stock_count}개
                       </button>
                     </td>
+                    <td><span className={`theme-return-badge ${returnToneClass(row.latest_return?.avg_change_rate)}`}>{fmtPct(row.latest_return?.avg_change_rate)}</span></td>
                     <td>{row.sort_order}</td>
                     <td>
                       <div className="theme-group-actions">
@@ -684,6 +1004,8 @@ function MarketThemesPage() {
               </button>
             </div>
           </div>
+            </>
+          )}
         </SectionCard>
       ) : null}
 
@@ -691,15 +1013,70 @@ function MarketThemesPage() {
         <div className="space-y-4">
           <SectionCard title="종목 연결">
             <div className="market-theme-mapping-toolbar">
-              <select className="select-control" value={mappingThemeGroupId} onChange={(e) => setMappingThemeGroupId(e.target.value)}>
+              <select
+                className="select-control"
+                value={mappingThemeGroupId}
+                onChange={(e) => {
+                  setMappingThemeGroupId(e.target.value);
+                  setMappingThemeSearchText("");
+                  setSelectedThemeId(null);
+                }}
+              >
                 <option value="all">테마그룹 전체</option>
                 {themeGroups.filter((x) => x.is_active === 1).map((row) => <option key={row.id} value={row.id}>{row.theme_name}</option>)}
               </select>
-              <select className="select-control" value={selectedThemeId ?? ""} onChange={(e) => setSelectedThemeId(e.target.value ? Number(e.target.value) : null)}>
-                {mappingSelectableThemes.map((row) => (
-                  <option key={row.id} value={row.id}>{row.is_supply_theme === 1 ? `[수급] ${row.theme_name}` : row.theme_name}</option>
-                ))}
-              </select>
+              <div className="market-theme-mapping-theme-picker" ref={mappingThemePickerRef}>
+                <div className="theme-search-combobox">
+                  <input
+                    className="input-control theme-search-combobox__input"
+                    value={mappingThemeInputValue}
+                    placeholder="테마명 검색"
+                    autoComplete="off"
+                    onFocus={() => setMappingThemeDropdownOpen(true)}
+                    onChange={(e) => applyMappingThemeSearchValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        const firstTheme = mappingThemePickerOptions[0];
+                        if (firstTheme) {
+                          e.preventDefault();
+                          selectMappingTheme(firstTheme);
+                        }
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="theme-search-combobox__toggle"
+                    aria-label="테마 목록 열기"
+                    onClick={() => setMappingThemeDropdownOpen((prev) => !prev)}
+                  >
+                    ▾
+                  </button>
+                </div>
+                {mappingThemeDropdownOpen ? (
+                  <div className="theme-search-combobox__menu" role="listbox">
+                    {mappingThemePickerOptions.length === 0 ? (
+                      <div className="theme-search-combobox__empty">검색된 테마가 없습니다.</div>
+                    ) : (
+                      mappingThemePickerOptions.map((row) => (
+                        <button
+                          key={row.id}
+                          type="button"
+                          className={`theme-search-combobox__item ${row.id === selectedThemeId ? "theme-search-combobox__item--active" : ""}`}
+                          onClick={() => selectMappingTheme(row)}
+                          role="option"
+                          aria-selected={row.id === selectedThemeId}
+                        >
+                          <span className="theme-search-combobox__item-title">{row.theme_name}</span>
+                          <span className="theme-search-combobox__item-meta">
+                            {row.parent_theme_name || "미지정"} · 연결 {row.linked_stock_count ?? row.stock_count}종목
+                          </span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                ) : null}
+              </div>
               <input className="input-control" placeholder="종목명 또는 종목코드 검색" value={stockSearchKeyword} onChange={(e) => setStockSearchKeyword(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void onSearchStocks(); } }} />
               <button type="button" className="btn btn-secondary" onClick={() => void onSearchStocks()} disabled={searching || !selectedThemeId}>{searching ? "검색 중..." : "검색"}</button>
             </div>
@@ -805,10 +1182,80 @@ function MarketThemesPage() {
           </div>
         </SectionCard>
       ) : null}
+      {returnDrawerOpen ? (
+        <div className="theme-return-drawer-backdrop" onClick={closeReturnDrawer}>
+          <aside className="theme-return-drawer" onClick={(e) => e.stopPropagation()}>
+            <div className="theme-return-drawer-header">
+              <div>
+                <h3>테마 상세</h3>
+                <p>{selectedReturnDetail?.theme_name ?? "테마 정보를 불러오는 중입니다."}</p>
+              </div>
+              <button type="button" className="btn btn-secondary btn-table-sm" onClick={closeReturnDrawer}>닫기</button>
+            </div>
+            <div className="theme-return-drawer-body">
+              {returnDetailLoading ? <p className="text-sm text-muted">테마 상세를 조회 중입니다.</p> : null}
+              {returnDetailError ? <p className="text-sm text-red-600">{returnDetailError}</p> : null}
+              {!returnDetailLoading && !returnDetailError && selectedReturnDetail ? (
+                <div className="theme-return-detail-stack">
+                  <div className="theme-return-detail-title-block">
+                    <strong>{selectedReturnDetail.theme_name}</strong>
+                    <span>{selectedReturnDetail.theme_group_name || "미지정 테마그룹"}</span>
+                  </div>
+                  {selectedReturnDetail.return_date ? (
+                    <>
+                      <div className="theme-return-kpi-grid">
+                        <div><span>테마등락률</span><strong className={returnToneClass(selectedReturnDetail.avg_change_rate)}>{fmtPct(selectedReturnDetail.avg_change_rate)}</strong></div>
+                        <div><span>연결 종목</span><strong>{selectedReturnDetail.stock_count}개</strong></div>
+                        <div><span>거래대금 합계(억)</span><strong>{fmtEok(selectedReturnDetail.total_trading_value_100m)}</strong></div>
+                        <div><span>상승</span><strong className="theme-return-positive">{selectedReturnDetail.rising_stock_count}개</strong></div>
+                        <div><span>하락</span><strong className="theme-return-negative">{selectedReturnDetail.falling_stock_count}개</strong></div>
+                        <div><span>보합</span><strong className="theme-return-neutral">{selectedReturnDetail.flat_stock_count}개</strong></div>
+                      </div>
+                      <div className="theme-return-meta">
+                        <span>기준일: {selectedReturnDetail.return_date}</span>
+                        <span>최종 갱신: {selectedReturnDetail.snapshot_at || "-"}</span>
+                        {selectedReturnDetail.failed_stock_count > 0 ? <span>조회 실패: {selectedReturnDetail.failed_stock_count}개</span> : null}
+                      </div>
+                      {selectedReturnDetail.stocks.length > 0 ? (
+                        <div className="table-shell overflow-auto">
+                          <table className="data-table compact-table theme-return-stock-table">
+                            <thead><tr><th>종목명</th><th className="text-right">거래대금(억)</th><th className="text-right">등락률(%)</th></tr></thead>
+                            <tbody>
+                              {selectedReturnDetail.stocks.map((stock) => (
+                                <tr key={`${stock.stock_id}-${stock.stock_code}`}>
+                                  <td>
+                                    <div className="stock-cell">
+                                      <strong>{stock.stock_name || stock.stock_code || "-"}</strong>
+                                      {stock.stock_code ? <span>{stock.stock_code}</span> : null}
+                                      {stock.data_status !== "success" ? <small className="theme-return-fail-text">조회 실패</small> : null}
+                                    </div>
+                                  </td>
+                                  <td className="text-right">{fmtEok(stock.trading_value_100m)}</td>
+                                  <td className={`text-right ${returnToneClass(stock.change_rate)}`}>{fmtPct(stock.change_rate)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <p className="selected-empty-message">이 테마에 연결된 종목이 없습니다.</p>
+                      )}
+                    </>
+                  ) : selectedReturnDetail.stock_count > 0 ? (
+                    <p className="selected-empty-message">아직 갱신된 테마등락률 데이터가 없습니다. 상단의 테마등락률 갱신 버튼을 눌러 데이터를 생성하세요.</p>
+                  ) : (
+                    <p className="selected-empty-message">이 테마에 연결된 종목이 없습니다.</p>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          </aside>
+        </div>
+      ) : null}
 
       {themeModalOpen ? (
         <div className="modal-backdrop">
-          <div className="modal-card watchlist-theme-modal">
+          <div className="modal-card watchlist-theme-modal market-theme-edit-modal">
             <div className="trade-journal-detail-header">
               <h3>{formThemeId ? `${themeLevelLabel(themeLevel)} 수정` : `${themeLevelLabel(themeLevel)} 등록`}</h3>
               <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => setThemeModalOpen(false)}>닫기</button>

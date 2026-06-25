@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Any
 
@@ -224,6 +224,118 @@ class KiwoomMarketEventThemeLinkDeleteResponse(BaseModel):
     link_id: int
     theme_stock_sync: ThemeStockSyncResult | None = None
 
+
+class MarketThemeReturnRefreshRequest(BaseModel):
+    scope: str = "all_active"
+    theme_ids: list[int] = Field(default_factory=list)
+
+
+class MarketThemeReturnRefreshItem(BaseModel):
+    theme_id: int
+    theme_name: str
+    return_date: str
+    avg_change_rate: float | None = None
+    stock_count: int = 0
+    success_stock_count: int = 0
+    failed_stock_count: int = 0
+    total_trading_value_100m: float | None = None
+    save_action: str = "skipped"
+
+
+class MarketThemeReturnRefreshResponse(BaseModel):
+    success: bool
+    return_date: str
+    refreshed_at: str
+    theme_count: int = 0
+    stock_count: int = 0
+    success_stock_count: int = 0
+    failed_stock_count: int = 0
+    inserted_count: int = 0
+    updated_count: int = 0
+    items: list[MarketThemeReturnRefreshItem] = Field(default_factory=list)
+    message: str | None = None
+
+
+class MarketThemeReturnStockItem(BaseModel):
+    stock_id: int
+    stock_code: str | None = None
+    stock_name: str
+    trading_value_100m: float | None = None
+    change_rate: float | None = None
+    current_price: int | None = None
+    data_status: str = "missing"
+    error_message: str | None = None
+
+
+class MarketThemeLatestReturnResponse(BaseModel):
+    theme_id: int
+    theme_name: str
+    theme_group_name: str | None = None
+    return_date: str | None = None
+    avg_change_rate: float | None = None
+    snapshot_at: str | None = None
+    stock_count: int = 0
+    success_stock_count: int = 0
+    failed_stock_count: int = 0
+    rising_stock_count: int = 0
+    falling_stock_count: int = 0
+    flat_stock_count: int = 0
+    total_trading_value_100m: float | None = None
+    stocks: list[MarketThemeReturnStockItem] = Field(default_factory=list)
+
+
+class MarketThemeMonthlyReturnDailyItem(BaseModel):
+    return_date: str
+    avg_change_rate: float | None = None
+    total_trading_value_100m: float | None = None
+    rising_stock_count: int = 0
+    falling_stock_count: int = 0
+    flat_stock_count: int = 0
+
+
+class MarketThemeMonthlyReturnThemeItem(BaseModel):
+    theme_id: int
+    theme_name: str
+    theme_group_id: int | None = None
+    theme_group_name: str | None = None
+    monthly_compound_return: float | None = None
+    monthly_sum_return: float | None = None
+    period_compound_return: float | None = None
+    period_sum_return: float | None = None
+    total_trading_value_100m: float | None = None
+    rising_days: int = 0
+    falling_days: int = 0
+    flat_days: int = 0
+    data_days: int = 0
+    daily_returns: list[MarketThemeMonthlyReturnDailyItem] = Field(default_factory=list)
+
+
+class MarketThemeMonthlyReturnSummaryTopItem(BaseModel):
+    theme_id: int
+    theme_name: str
+    monthly_compound_return: float | None = None
+    period_compound_return: float | None = None
+    total_trading_value_100m: float | None = None
+    continuous_rising_days: int | None = None
+
+
+class MarketThemeMonthlyReturnSummary(BaseModel):
+    top_rising_theme: MarketThemeMonthlyReturnSummaryTopItem | None = None
+    top_falling_theme: MarketThemeMonthlyReturnSummaryTopItem | None = None
+    top_trading_value_theme: MarketThemeMonthlyReturnSummaryTopItem | None = None
+    rising_day_theme: MarketThemeMonthlyReturnSummaryTopItem | None = None
+    top_continuous_rising_theme: MarketThemeMonthlyReturnSummaryTopItem | None = None
+
+
+class MarketThemeMonthlyReturnResponse(BaseModel):
+    month: str | None = None
+    end_date: str | None = None
+    days: int | None = None
+    active_only: bool = True
+    display_start_date: str
+    display_end_date: str
+    themes: list[MarketThemeMonthlyReturnThemeItem] = Field(default_factory=list)
+    summary: MarketThemeMonthlyReturnSummary
 
 class DailyThemeFlowSummaryItem(BaseModel):
     market_theme_id: int

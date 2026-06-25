@@ -239,6 +239,66 @@ def ensure_runtime_schema() -> None:
             """
         )
         conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_theme_daily_returns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                theme_id INTEGER NOT NULL,
+                return_date TEXT NOT NULL,
+                avg_change_rate REAL,
+                stock_count INTEGER NOT NULL DEFAULT 0,
+                success_stock_count INTEGER NOT NULL DEFAULT 0,
+                failed_stock_count INTEGER NOT NULL DEFAULT 0,
+                rising_stock_count INTEGER NOT NULL DEFAULT 0,
+                falling_stock_count INTEGER NOT NULL DEFAULT 0,
+                flat_stock_count INTEGER NOT NULL DEFAULT 0,
+                total_trading_value INTEGER NOT NULL DEFAULT 0,
+                total_trading_value_100m REAL,
+                data_source TEXT NOT NULL DEFAULT 'kiwoom',
+                first_created_at TEXT NOT NULL,
+                last_refreshed_at TEXT NOT NULL,
+                refresh_count INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(theme_id, return_date),
+                FOREIGN KEY (theme_id) REFERENCES market_themes(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_theme_stock_daily_returns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                theme_daily_return_id INTEGER NOT NULL,
+                theme_id INTEGER NOT NULL,
+                stock_id INTEGER NOT NULL,
+                stock_code TEXT,
+                stock_name TEXT,
+                return_date TEXT NOT NULL,
+                change_rate REAL,
+                trading_value INTEGER,
+                trading_value_100m REAL,
+                current_price INTEGER,
+                data_status TEXT NOT NULL DEFAULT 'missing',
+                error_message TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(theme_id, stock_id, return_date),
+                FOREIGN KEY (theme_daily_return_id) REFERENCES market_theme_daily_returns(id) ON DELETE CASCADE,
+                FOREIGN KEY (theme_id) REFERENCES market_themes(id) ON DELETE CASCADE,
+                FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_theme_daily_returns_date ON market_theme_daily_returns(return_date)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_theme_daily_returns_theme_date ON market_theme_daily_returns(theme_id, return_date)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_theme_stock_daily_returns_theme_date ON market_theme_stock_daily_returns(theme_id, return_date)"
+        )
+        conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_market_themes_active_sort ON market_themes(is_active, sort_order)"
         )
         conn.exec_driver_sql(
@@ -246,6 +306,50 @@ def ensure_runtime_schema() -> None:
         )
         conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_market_themes_level_parent ON market_themes(theme_level, parent_theme_id)"
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_calendar_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                start_date TEXT NOT NULL,
+                end_date TEXT NOT NULL,
+                theme_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                summary TEXT,
+                news_url TEXT,
+                event_type TEXT NOT NULL DEFAULT 'news',
+                importance TEXT NOT NULL DEFAULT 'medium',
+                memo TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (theme_id) REFERENCES market_themes(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_calendar_event_stocks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER NOT NULL,
+                stock_id INTEGER NOT NULL,
+                stock_code TEXT,
+                stock_name TEXT,
+                created_at TEXT NOT NULL,
+                UNIQUE(event_id, stock_id),
+                FOREIGN KEY (event_id) REFERENCES market_calendar_events(id) ON DELETE CASCADE,
+                FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_calendar_events_range ON market_calendar_events(start_date, end_date)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_calendar_events_theme ON market_calendar_events(theme_id, is_active)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_calendar_event_stocks_event ON market_calendar_event_stocks(event_id)"
         )
         conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_market_themes_supply_active_sort "

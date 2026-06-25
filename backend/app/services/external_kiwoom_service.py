@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 from calendar import monthrange
@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from backend.app.clients.kiwoom import KiwoomApiError
 from backend.app.core.config import now_kst
 from backend.app.providers.market_data.kiwoom_rest_condition_provider import KiwoomRestConditionProvider
+from backend.app.providers.market_data.kiwoom_rest_market_indicator_provider import KiwoomRestMarketIndicatorProvider
 from backend.app.schemas.external_kiwoom_schema import (
     DailyThemeFlowStockItem,
     DailyThemeRanksUpdateRequest,
@@ -18,6 +19,16 @@ from backend.app.schemas.external_kiwoom_schema import (
     DailyThemeFlowStocksResponse,
     DailyThemeFlowSummaryItem,
     DailyThemeFlowSummaryResponse,
+    MarketThemeLatestReturnResponse,
+    MarketThemeMonthlyReturnDailyItem,
+    MarketThemeMonthlyReturnResponse,
+    MarketThemeMonthlyReturnSummary,
+    MarketThemeMonthlyReturnSummaryTopItem,
+    MarketThemeMonthlyReturnThemeItem,
+    MarketThemeReturnRefreshItem,
+    MarketThemeReturnRefreshRequest,
+    MarketThemeReturnRefreshResponse,
+    MarketThemeReturnStockItem,
     MonthlyThemeFlowCalendarDayItem,
     MonthlyThemeFlowMemoItem,
     MonthlyThemeFlowCalendarResponse,
@@ -501,6 +512,8 @@ class ExternalKiwoomService:
                             condition_seq=:condition_seq,
                             condition_name=:condition_name,
                             detection_source='kiwoom_condition',
+                            is_active=1,
+                            deleted_at=NULL,
                             detected_at=:detected_at,
                             updated_at=:updated_at
                         WHERE id=:id
@@ -1786,3 +1799,701 @@ class ExternalKiwoomService:
             theme_stock_sync = ThemeStockSyncResult(status="failed", reason=str(exc))
         self.db.commit()
         return KiwoomMarketEventThemeLinkDeleteResponse(success=True, link_id=link_id, theme_stock_sync=theme_stock_sync)
+    def refresh_market_theme_returns(self, payload: MarketThemeReturnRefreshRequest) -> MarketThemeReturnRefreshResponse:
+        refreshed_at = now_kst()
+        return_date = refreshed_at[:10]
+        provider = KiwoomRestMarketIndicatorProvider()
+        themes = self._list_return_refresh_themes(payload)
+        items: list[MarketThemeReturnRefreshItem] = []
+        inserted_count = 0
+        updated_count = 0
+        total_stock_count = 0
+        total_success_count = 0
+        total_failed_count = 0
+
+        for theme in themes:
+            theme_id = int(theme["theme_id"])
+            stocks = self._list_active_theme_return_stocks(theme_id)
+            stock_results: list[dict[str, object]] = []
+            for stock in stocks:
+                stock_results.append(self._fetch_theme_stock_return(provider, stock, return_date))
+
+            stock_count = len(stocks)
+            success_results = [row for row in stock_results if row.get("data_status") == "success" and row.get("change_rate") is not None]
+            failed_count = stock_count - len(success_results)
+            total_stock_count += stock_count
+            total_success_count += len(success_results)
+            total_failed_count += failed_count
+
+            if stock_count > 0 and not success_results:
+                items.append(MarketThemeReturnRefreshItem(
+                    theme_id=theme_id,
+                    theme_name=str(theme["theme_name"]),
+                    return_date=return_date,
+                    avg_change_rate=None,
+                    stock_count=stock_count,
+                    success_stock_count=0,
+                    failed_stock_count=failed_count,
+                    total_trading_value_100m=None,
+                    save_action="skipped",
+                ))
+                continue
+
+            change_rates = [float(row["change_rate"]) for row in success_results if row.get("change_rate") is not None]
+            avg_change_rate = round(sum(change_rates) / len(change_rates), 4) if change_rates else None
+            total_trading_value = sum(int(row.get("trading_value") or 0) for row in success_results)
+            total_trading_value_100m = round(total_trading_value / 100_000_000, 4) if total_trading_value else 0.0
+            rising_count = sum(1 for rate in change_rates if rate > 0)
+            falling_count = sum(1 for rate in change_rates if rate < 0)
+            flat_count = sum(1 for rate in change_rates if rate == 0)
+
+            daily_return_id, save_action = self._upsert_market_theme_daily_return(
+                theme_id=theme_id,
+                return_date=return_date,
+                avg_change_rate=avg_change_rate,
+                stock_count=stock_count,
+                success_stock_count=len(success_results),
+                failed_stock_count=failed_count,
+                rising_stock_count=rising_count,
+                falling_stock_count=falling_count,
+                flat_stock_count=flat_count,
+                total_trading_value=total_trading_value,
+                total_trading_value_100m=total_trading_value_100m,
+                now=refreshed_at,
+            )
+            for stock_result in stock_results:
+                self._upsert_market_theme_stock_daily_return(daily_return_id=daily_return_id, theme_id=theme_id, return_date=return_date, row=stock_result, now=refreshed_at)
+
+            if save_action == "inserted":
+                inserted_count += 1
+            elif save_action == "updated":
+                updated_count += 1
+            items.append(MarketThemeReturnRefreshItem(
+                theme_id=theme_id,
+                theme_name=str(theme["theme_name"]),
+                return_date=return_date,
+                avg_change_rate=avg_change_rate,
+                stock_count=stock_count,
+                success_stock_count=len(success_results),
+                failed_stock_count=failed_count,
+                total_trading_value_100m=total_trading_value_100m,
+                save_action=save_action,
+            ))
+
+        self.db.commit()
+        message = f"테마등락률 갱신 완료: {len(themes)}개 테마, {total_stock_count}개 종목 반영"
+        if total_failed_count:
+            message = f"테마등락률 갱신 완료: {len(themes)}개 테마 반영, {total_failed_count}개 종목 조회 실패"
+        return MarketThemeReturnRefreshResponse(
+            success=True,
+            return_date=return_date,
+            refreshed_at=refreshed_at,
+            theme_count=len(themes),
+            stock_count=total_stock_count,
+            success_stock_count=total_success_count,
+            failed_stock_count=total_failed_count,
+            inserted_count=inserted_count,
+            updated_count=updated_count,
+            items=items,
+            message=message,
+        )
+
+    def get_market_theme_latest_return(self, theme_id: int) -> MarketThemeLatestReturnResponse:
+        theme = self.db.execute(
+            text(
+                """
+                SELECT t.id, t.theme_name, p.theme_name AS theme_group_name
+                FROM market_themes t
+                LEFT JOIN market_themes p ON p.id=t.parent_theme_id
+                WHERE t.id=:theme_id
+                """
+            ),
+            {"theme_id": theme_id},
+        ).mappings().first()
+        if not theme:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="테마를 찾을 수 없습니다.")
+
+        latest = self.db.execute(
+            text(
+                """
+                SELECT id, return_date, avg_change_rate, stock_count, success_stock_count, failed_stock_count,
+                       rising_stock_count, falling_stock_count, flat_stock_count, total_trading_value_100m, last_refreshed_at
+                FROM market_theme_daily_returns
+                WHERE theme_id=:theme_id
+                ORDER BY return_date DESC, last_refreshed_at DESC, id DESC
+                LIMIT 1
+                """
+            ),
+            {"theme_id": theme_id},
+        ).mappings().first()
+        if not latest:
+            stock_count = len(self._list_active_theme_return_stocks(theme_id))
+            return MarketThemeLatestReturnResponse(
+                theme_id=theme_id,
+                theme_name=str(theme["theme_name"]),
+                theme_group_name=theme["theme_group_name"],
+                stock_count=stock_count,
+                stocks=[],
+            )
+
+        stock_rows = self.db.execute(
+            text(
+                """
+                SELECT stock_id, stock_code, stock_name, trading_value_100m, change_rate, current_price, data_status, error_message
+                FROM market_theme_stock_daily_returns
+                WHERE theme_daily_return_id=:daily_return_id
+                ORDER BY data_status='success' DESC, COALESCE(trading_value, 0) DESC, stock_name ASC
+                """
+            ),
+            {"daily_return_id": int(latest["id"])},
+        ).mappings().all()
+        return MarketThemeLatestReturnResponse(
+            theme_id=theme_id,
+            theme_name=str(theme["theme_name"]),
+            theme_group_name=theme["theme_group_name"],
+            return_date=latest["return_date"],
+            avg_change_rate=latest["avg_change_rate"],
+            snapshot_at=latest["last_refreshed_at"],
+            stock_count=int(latest["stock_count"] or 0),
+            success_stock_count=int(latest["success_stock_count"] or 0),
+            failed_stock_count=int(latest["failed_stock_count"] or 0),
+            rising_stock_count=int(latest["rising_stock_count"] or 0),
+            falling_stock_count=int(latest["falling_stock_count"] or 0),
+            flat_stock_count=int(latest["flat_stock_count"] or 0),
+            total_trading_value_100m=latest["total_trading_value_100m"],
+            stocks=[MarketThemeReturnStockItem(**dict(row)) for row in stock_rows],
+        )
+
+    def get_market_theme_monthly_returns(
+        self,
+        *,
+        month: str,
+        active_only: bool = True,
+        theme_group_id: int | None = None,
+        keyword: str | None = None,
+        limit: int | None = None,
+        lookback_days: int = 0,
+    ) -> MarketThemeMonthlyReturnResponse:
+        try:
+            year, month_num = [int(part) for part in month.split("-", 1)]
+            start = date(year, month_num, 1)
+        except Exception:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="month는 YYYY-MM 형식이어야 합니다.")
+        end = date(start.year, start.month, monthrange(start.year, start.month)[1])
+        if lookback_days and lookback_days > 0:
+            start = max(start, date.today() - timedelta(days=lookback_days - 1))
+
+        params: dict[str, object] = {"start_date": start.isoformat(), "end_date": end.isoformat()}
+        where = ["COALESCE(t.theme_level, 'THEME')='THEME'"]
+        if active_only:
+            where.append("t.is_active=1")
+        if theme_group_id is not None:
+            where.append("t.parent_theme_id=:theme_group_id")
+            params["theme_group_id"] = int(theme_group_id)
+        if keyword:
+            where.append("(LOWER(t.theme_name) LIKE :keyword OR LOWER(COALESCE(p.theme_name, '')) LIKE :keyword OR LOWER(COALESCE(t.keywords, '')) LIKE :keyword)")
+            params["keyword"] = f"%{keyword.lower()}%"
+        sql_where = " AND ".join(where)
+        rows = self.db.execute(
+            text(
+                f"""
+                SELECT t.id AS theme_id, t.theme_name, t.parent_theme_id AS theme_group_id,
+                       p.theme_name AS theme_group_name, d.return_date, d.avg_change_rate,
+                       d.total_trading_value_100m, d.rising_stock_count, d.falling_stock_count, d.flat_stock_count
+                FROM market_themes t
+                LEFT JOIN market_themes p ON p.id=t.parent_theme_id
+                LEFT JOIN market_theme_daily_returns d
+                  ON d.theme_id=t.id AND d.return_date BETWEEN :start_date AND :end_date
+                WHERE {sql_where}
+                ORDER BY t.is_supply_theme DESC, COALESCE(p.theme_name, '미지정') ASC, t.sort_order ASC, t.theme_name ASC, d.return_date ASC
+                """
+            ),
+            params,
+        ).mappings().all()
+
+        grouped: dict[int, dict[str, object]] = {}
+        for row in rows:
+            theme_id = int(row["theme_id"])
+            item = grouped.setdefault(theme_id, {
+                "theme_id": theme_id,
+                "theme_name": str(row["theme_name"]),
+                "theme_group_id": row["theme_group_id"],
+                "theme_group_name": row["theme_group_name"],
+                "daily_returns": [],
+            })
+            if row["return_date"]:
+                item["daily_returns"].append(MarketThemeMonthlyReturnDailyItem(
+                    return_date=str(row["return_date"]),
+                    avg_change_rate=row["avg_change_rate"],
+                    total_trading_value_100m=row["total_trading_value_100m"],
+                    rising_stock_count=int(row["rising_stock_count"] or 0),
+                    falling_stock_count=int(row["falling_stock_count"] or 0),
+                    flat_stock_count=int(row["flat_stock_count"] or 0),
+                ))
+
+        themes: list[MarketThemeMonthlyReturnThemeItem] = []
+        for item in grouped.values():
+            daily_returns = item["daily_returns"]
+            rates = [float(day.avg_change_rate) for day in daily_returns if day.avg_change_rate is not None]
+            compound: float | None = None
+            if rates:
+                acc = 1.0
+                for rate in rates:
+                    acc *= 1 + (rate / 100)
+                compound = round((acc - 1) * 100, 4)
+            sum_return = round(sum(rates), 4) if rates else None
+            trading_value = sum(float(day.total_trading_value_100m or 0) for day in daily_returns)
+            themes.append(MarketThemeMonthlyReturnThemeItem(
+                theme_id=int(item["theme_id"]),
+                theme_name=str(item["theme_name"]),
+                theme_group_id=item["theme_group_id"],
+                theme_group_name=item["theme_group_name"],
+                monthly_compound_return=compound,
+                monthly_sum_return=sum_return,
+                total_trading_value_100m=round(trading_value, 4),
+                rising_days=sum(1 for rate in rates if rate > 0),
+                falling_days=sum(1 for rate in rates if rate < 0),
+                flat_days=sum(1 for rate in rates if rate == 0),
+                data_days=len(rates),
+                daily_returns=daily_returns,
+            ))
+
+        themes.sort(key=lambda row: (row.monthly_compound_return is None, -(row.monthly_compound_return or -999999), row.theme_name))
+        if limit and limit > 0:
+            themes = themes[:limit]
+
+        def to_top(theme: MarketThemeMonthlyReturnThemeItem | None) -> MarketThemeMonthlyReturnSummaryTopItem | None:
+            if theme is None:
+                return None
+            return MarketThemeMonthlyReturnSummaryTopItem(
+                theme_id=theme.theme_id,
+                theme_name=theme.theme_name,
+                monthly_compound_return=theme.monthly_compound_return,
+                total_trading_value_100m=theme.total_trading_value_100m,
+            )
+
+        with_return = [theme for theme in themes if theme.monthly_compound_return is not None]
+        summary = MarketThemeMonthlyReturnSummary(
+            top_rising_theme=to_top(max(with_return, key=lambda x: x.monthly_compound_return or 0) if with_return else None),
+            top_falling_theme=to_top(min(with_return, key=lambda x: x.monthly_compound_return or 0) if with_return else None),
+            top_trading_value_theme=to_top(max(themes, key=lambda x: x.total_trading_value_100m or 0) if themes else None),
+            rising_day_theme=to_top(max(themes, key=lambda x: x.rising_days) if themes else None),
+        )
+        return MarketThemeMonthlyReturnResponse(
+            month=month,
+            active_only=active_only,
+            display_start_date=start.isoformat(),
+            display_end_date=end.isoformat(),
+            themes=themes,
+            summary=summary,
+        )
+
+    def get_market_theme_range_returns(
+        self,
+        *,
+        end_date: str,
+        days: int = 30,
+        active_only: bool = True,
+        theme_group_id: int | None = None,
+        keyword: str | None = None,
+        limit: int | None = None,
+    ) -> MarketThemeMonthlyReturnResponse:
+        try:
+            end = date.fromisoformat(end_date)
+        except Exception:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="end_date는 YYYY-MM-DD 형식이어야 합니다.")
+        normalized_days = max(1, min(int(days or 30), 120))
+        start = end - timedelta(days=normalized_days - 1)
+        params: dict[str, object] = {"start_date": start.isoformat(), "end_date": end.isoformat()}
+        where = ["COALESCE(t.theme_level, 'THEME')='THEME'"]
+        if active_only:
+            where.append("t.is_active=1")
+        if theme_group_id is not None:
+            where.append("t.parent_theme_id=:theme_group_id")
+            params["theme_group_id"] = int(theme_group_id)
+        if keyword:
+            where.append("(LOWER(t.theme_name) LIKE :keyword OR LOWER(COALESCE(p.theme_name, '')) LIKE :keyword OR LOWER(COALESCE(t.keywords, '')) LIKE :keyword)")
+            params["keyword"] = f"%{keyword.lower()}%"
+        sql_where = " AND ".join(where)
+        rows = self.db.execute(
+            text(
+                f"""
+                SELECT t.id AS theme_id, t.theme_name, t.parent_theme_id AS theme_group_id,
+                       p.theme_name AS theme_group_name, d.return_date, d.avg_change_rate,
+                       d.total_trading_value_100m, d.rising_stock_count, d.falling_stock_count, d.flat_stock_count
+                FROM market_themes t
+                LEFT JOIN market_themes p ON p.id=t.parent_theme_id
+                LEFT JOIN market_theme_daily_returns d
+                  ON d.theme_id=t.id AND d.return_date BETWEEN :start_date AND :end_date
+                WHERE {sql_where}
+                ORDER BY t.is_supply_theme DESC, COALESCE(p.theme_name, '미지정') ASC, t.sort_order ASC, t.theme_name ASC, d.return_date ASC
+                """
+            ),
+            params,
+        ).mappings().all()
+
+        grouped: dict[int, dict[str, object]] = {}
+        for row in rows:
+            theme_id = int(row["theme_id"])
+            item = grouped.setdefault(theme_id, {
+                "theme_id": theme_id,
+                "theme_name": str(row["theme_name"]),
+                "theme_group_id": row["theme_group_id"],
+                "theme_group_name": row["theme_group_name"],
+                "daily_returns": [],
+            })
+            if row["return_date"]:
+                item["daily_returns"].append(MarketThemeMonthlyReturnDailyItem(
+                    return_date=str(row["return_date"]),
+                    avg_change_rate=row["avg_change_rate"],
+                    total_trading_value_100m=row["total_trading_value_100m"],
+                    rising_stock_count=int(row["rising_stock_count"] or 0),
+                    falling_stock_count=int(row["falling_stock_count"] or 0),
+                    flat_stock_count=int(row["flat_stock_count"] or 0),
+                ))
+
+        themes: list[MarketThemeMonthlyReturnThemeItem] = []
+        continuous_rising_by_theme: dict[int, int] = {}
+        for item in grouped.values():
+            daily_returns = item["daily_returns"]
+            rates = [float(day.avg_change_rate) for day in daily_returns if day.avg_change_rate is not None]
+            compound: float | None = None
+            if rates:
+                acc = 1.0
+                for rate in rates:
+                    acc *= 1 + (rate / 100)
+                compound = round((acc - 1) * 100, 4)
+            sum_return = round(sum(rates), 4) if rates else None
+            trading_value = sum(float(day.total_trading_value_100m or 0) for day in daily_returns)
+            continuous_rising = 0
+            for day in reversed(daily_returns):
+                if day.avg_change_rate is not None and float(day.avg_change_rate) > 0:
+                    continuous_rising += 1
+                else:
+                    break
+            theme_id = int(item["theme_id"])
+            continuous_rising_by_theme[theme_id] = continuous_rising
+            themes.append(MarketThemeMonthlyReturnThemeItem(
+                theme_id=theme_id,
+                theme_name=str(item["theme_name"]),
+                theme_group_id=item["theme_group_id"],
+                theme_group_name=item["theme_group_name"],
+                monthly_compound_return=compound,
+                monthly_sum_return=sum_return,
+                period_compound_return=compound,
+                period_sum_return=sum_return,
+                total_trading_value_100m=round(trading_value, 4),
+                rising_days=sum(1 for rate in rates if rate > 0),
+                falling_days=sum(1 for rate in rates if rate < 0),
+                flat_days=sum(1 for rate in rates if rate == 0),
+                data_days=len(rates),
+                daily_returns=daily_returns,
+            ))
+
+        themes.sort(key=lambda row: (row.monthly_compound_return is None, -(row.monthly_compound_return or -999999), row.theme_name))
+        if limit and limit > 0:
+            themes = themes[:limit]
+
+        def to_top(theme: MarketThemeMonthlyReturnThemeItem | None) -> MarketThemeMonthlyReturnSummaryTopItem | None:
+            if theme is None:
+                return None
+            continuous_rising = continuous_rising_by_theme.get(theme.theme_id, 0)
+            return MarketThemeMonthlyReturnSummaryTopItem(
+                theme_id=theme.theme_id,
+                theme_name=theme.theme_name,
+                monthly_compound_return=theme.monthly_compound_return,
+                period_compound_return=theme.period_compound_return,
+                total_trading_value_100m=theme.total_trading_value_100m,
+                continuous_rising_days=continuous_rising,
+            )
+
+        with_return = [theme for theme in themes if theme.monthly_compound_return is not None]
+        continuous_candidates = [theme for theme in themes if continuous_rising_by_theme.get(theme.theme_id, 0) > 0]
+        top_continuous = max(continuous_candidates, key=lambda x: continuous_rising_by_theme.get(x.theme_id, 0)) if continuous_candidates else None
+        summary = MarketThemeMonthlyReturnSummary(
+            top_rising_theme=to_top(max(with_return, key=lambda x: x.monthly_compound_return or 0) if with_return else None),
+            top_falling_theme=to_top(min(with_return, key=lambda x: x.monthly_compound_return or 0) if with_return else None),
+            top_trading_value_theme=to_top(max(themes, key=lambda x: x.total_trading_value_100m or 0) if themes else None),
+            rising_day_theme=to_top(max(themes, key=lambda x: x.rising_days) if themes else None),
+            top_continuous_rising_theme=to_top(top_continuous),
+        )
+        return MarketThemeMonthlyReturnResponse(
+            month=end.isoformat()[:7],
+            end_date=end.isoformat(),
+            days=normalized_days,
+            active_only=active_only,
+            display_start_date=start.isoformat(),
+            display_end_date=end.isoformat(),
+            themes=themes,
+            summary=summary,
+        )
+    def get_market_theme_daily_return(self, theme_id: int, return_date: str) -> MarketThemeLatestReturnResponse:
+        theme = self.db.execute(
+            text(
+                """
+                SELECT t.id, t.theme_name, p.theme_name AS theme_group_name
+                FROM market_themes t
+                LEFT JOIN market_themes p ON p.id=t.parent_theme_id
+                WHERE t.id=:theme_id
+                """
+            ),
+            {"theme_id": theme_id},
+        ).mappings().first()
+        if not theme:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="테마를 찾을 수 없습니다.")
+        daily = self.db.execute(
+            text(
+                """
+                SELECT id, return_date, avg_change_rate, stock_count, success_stock_count, failed_stock_count,
+                       rising_stock_count, falling_stock_count, flat_stock_count, total_trading_value_100m, last_refreshed_at
+                FROM market_theme_daily_returns
+                WHERE theme_id=:theme_id AND return_date=:return_date
+                LIMIT 1
+                """
+            ),
+            {"theme_id": theme_id, "return_date": return_date},
+        ).mappings().first()
+        if not daily:
+            return MarketThemeLatestReturnResponse(
+                theme_id=theme_id,
+                theme_name=str(theme["theme_name"]),
+                theme_group_name=theme["theme_group_name"],
+                return_date=return_date,
+                stock_count=len(self._list_active_theme_return_stocks(theme_id)),
+                stocks=[],
+            )
+        stock_rows = self.db.execute(
+            text(
+                """
+                SELECT stock_id, stock_code, stock_name, trading_value_100m, change_rate, current_price, data_status, error_message
+                FROM market_theme_stock_daily_returns
+                WHERE theme_daily_return_id=:daily_return_id
+                ORDER BY data_status='success' DESC, COALESCE(trading_value, 0) DESC, stock_name ASC
+                """
+            ),
+            {"daily_return_id": int(daily["id"])},
+        ).mappings().all()
+        return MarketThemeLatestReturnResponse(
+            theme_id=theme_id,
+            theme_name=str(theme["theme_name"]),
+            theme_group_name=theme["theme_group_name"],
+            return_date=daily["return_date"],
+            avg_change_rate=daily["avg_change_rate"],
+            snapshot_at=daily["last_refreshed_at"],
+            stock_count=int(daily["stock_count"] or 0),
+            success_stock_count=int(daily["success_stock_count"] or 0),
+            failed_stock_count=int(daily["failed_stock_count"] or 0),
+            rising_stock_count=int(daily["rising_stock_count"] or 0),
+            falling_stock_count=int(daily["falling_stock_count"] or 0),
+            flat_stock_count=int(daily["flat_stock_count"] or 0),
+            total_trading_value_100m=daily["total_trading_value_100m"],
+            stocks=[MarketThemeReturnStockItem(**dict(row)) for row in stock_rows],
+        )
+    def _list_return_refresh_themes(self, payload: MarketThemeReturnRefreshRequest) -> list[dict[str, object]]:
+        params: dict[str, object] = {}
+        where = "WHERE t.is_active=1 AND COALESCE(t.theme_level, 'THEME')='THEME'"
+        if payload.scope == "selected" and payload.theme_ids:
+            placeholders = []
+            for idx, theme_id in enumerate(payload.theme_ids):
+                key = f"theme_id_{idx}"
+                placeholders.append(f":{key}")
+                params[key] = int(theme_id)
+            where += f" AND t.id IN ({', '.join(placeholders)})"
+        rows = self.db.execute(
+            text(
+                f"""
+                SELECT t.id AS theme_id, t.theme_name
+                FROM market_themes t
+                {where}
+                ORDER BY t.is_supply_theme DESC, t.sort_order ASC, t.theme_name ASC
+                """
+            ),
+            params,
+        ).mappings().all()
+        return [dict(row) for row in rows]
+
+    def _list_active_theme_return_stocks(self, theme_id: int) -> list[dict[str, object]]:
+        rows = self.db.execute(
+            text(
+                """
+                SELECT s.id AS stock_id, s.stock_code, s.stock_name
+                FROM market_theme_stocks mts
+                JOIN stocks s ON s.id=mts.stock_id
+                WHERE mts.theme_id=:theme_id
+                  AND mts.is_active=1
+                  AND COALESCE(s.is_active, 1)=1
+                ORDER BY mts.is_primary DESC, s.stock_name ASC
+                """
+            ),
+            {"theme_id": theme_id},
+        ).mappings().all()
+        return [dict(row) for row in rows]
+
+    def _fetch_theme_stock_return(self, provider: KiwoomRestMarketIndicatorProvider, stock: dict[str, object], return_date: str) -> dict[str, object]:
+        stock_code = normalize_stock_code(str(stock.get("stock_code") or ""))
+        base_row = {
+            "stock_id": int(stock["stock_id"]),
+            "stock_code": stock_code,
+            "stock_name": str(stock.get("stock_name") or stock_code),
+            "change_rate": None,
+            "trading_value": None,
+            "trading_value_100m": None,
+            "current_price": None,
+            "data_status": "missing",
+            "error_message": None,
+        }
+        if len(stock_code) != 6:
+            base_row["data_status"] = "failed"
+            base_row["error_message"] = "invalid_stock_code"
+            return base_row
+        try:
+            basic = provider.get_stock_basic_info(stock_code=stock_code)
+            daily = provider.get_stock_daily_trade_detail(stock_code=stock_code, base_dt=return_date)
+            change_rate = self._normalize_change_rate(basic.get("change_rate"))
+            current_price = self._to_abs_int(basic.get("close_price") or daily.get("close_price"))
+            trading_value = self._to_int_or_none(daily.get("trading_value") or basic.get("trading_value"))
+            if change_rate is None:
+                base_row["data_status"] = "failed"
+                base_row["error_message"] = "change_rate_missing"
+                base_row["current_price"] = current_price
+                base_row["trading_value"] = trading_value
+                base_row["trading_value_100m"] = round(trading_value / 100_000_000, 4) if trading_value is not None else None
+                return base_row
+            base_row.update({
+                "change_rate": change_rate,
+                "trading_value": trading_value,
+                "trading_value_100m": round(trading_value / 100_000_000, 4) if trading_value is not None else None,
+                "current_price": current_price,
+                "data_status": "success",
+            })
+            return base_row
+        except Exception as exc:
+            base_row["data_status"] = "failed"
+            base_row["error_message"] = str(exc)[:500]
+            return base_row
+
+    def _upsert_market_theme_daily_return(
+        self,
+        *,
+        theme_id: int,
+        return_date: str,
+        avg_change_rate: float | None,
+        stock_count: int,
+        success_stock_count: int,
+        failed_stock_count: int,
+        rising_stock_count: int,
+        falling_stock_count: int,
+        flat_stock_count: int,
+        total_trading_value: int,
+        total_trading_value_100m: float | None,
+        now: str,
+    ) -> tuple[int, str]:
+        existing = self.db.execute(
+            text("SELECT id FROM market_theme_daily_returns WHERE theme_id=:theme_id AND return_date=:return_date"),
+            {"theme_id": theme_id, "return_date": return_date},
+        ).mappings().first()
+        params = {
+            "theme_id": theme_id,
+            "return_date": return_date,
+            "avg_change_rate": avg_change_rate,
+            "stock_count": stock_count,
+            "success_stock_count": success_stock_count,
+            "failed_stock_count": failed_stock_count,
+            "rising_stock_count": rising_stock_count,
+            "falling_stock_count": falling_stock_count,
+            "flat_stock_count": flat_stock_count,
+            "total_trading_value": total_trading_value,
+            "total_trading_value_100m": total_trading_value_100m,
+            "now": now,
+        }
+        if existing:
+            daily_return_id = int(existing["id"])
+            self.db.execute(
+                text(
+                    """
+                    UPDATE market_theme_daily_returns
+                    SET avg_change_rate=:avg_change_rate, stock_count=:stock_count,
+                        success_stock_count=:success_stock_count, failed_stock_count=:failed_stock_count,
+                        rising_stock_count=:rising_stock_count, falling_stock_count=:falling_stock_count,
+                        flat_stock_count=:flat_stock_count, total_trading_value=:total_trading_value,
+                        total_trading_value_100m=:total_trading_value_100m,
+                        last_refreshed_at=:now, refresh_count=refresh_count+1, updated_at=:now
+                    WHERE id=:id
+                    """
+                ),
+                {**params, "id": daily_return_id},
+            )
+            return daily_return_id, "updated"
+        self.db.execute(
+            text(
+                """
+                INSERT INTO market_theme_daily_returns
+                (theme_id, return_date, avg_change_rate, stock_count, success_stock_count, failed_stock_count,
+                 rising_stock_count, falling_stock_count, flat_stock_count, total_trading_value, total_trading_value_100m,
+                 data_source, first_created_at, last_refreshed_at, refresh_count, created_at, updated_at)
+                VALUES
+                (:theme_id, :return_date, :avg_change_rate, :stock_count, :success_stock_count, :failed_stock_count,
+                 :rising_stock_count, :falling_stock_count, :flat_stock_count, :total_trading_value, :total_trading_value_100m,
+                 'kiwoom', :now, :now, 1, :now, :now)
+                """
+            ),
+            params,
+        )
+        daily_return_id = int(self.db.execute(
+            text("SELECT id FROM market_theme_daily_returns WHERE theme_id=:theme_id AND return_date=:return_date"),
+            {"theme_id": theme_id, "return_date": return_date},
+        ).mappings().first()["id"])
+        return daily_return_id, "inserted"
+
+    def _upsert_market_theme_stock_daily_return(self, *, daily_return_id: int, theme_id: int, return_date: str, row: dict[str, object], now: str) -> None:
+        existing = self.db.execute(
+            text(
+                """
+                SELECT id FROM market_theme_stock_daily_returns
+                WHERE theme_id=:theme_id AND stock_id=:stock_id AND return_date=:return_date
+                """
+            ),
+            {"theme_id": theme_id, "stock_id": int(row["stock_id"]), "return_date": return_date},
+        ).mappings().first()
+        params = {
+            "theme_daily_return_id": daily_return_id,
+            "theme_id": theme_id,
+            "stock_id": int(row["stock_id"]),
+            "stock_code": row.get("stock_code"),
+            "stock_name": row.get("stock_name"),
+            "return_date": return_date,
+            "change_rate": row.get("change_rate"),
+            "trading_value": row.get("trading_value"),
+            "trading_value_100m": row.get("trading_value_100m"),
+            "current_price": row.get("current_price"),
+            "data_status": row.get("data_status") or "missing",
+            "error_message": row.get("error_message"),
+            "now": now,
+        }
+        if existing:
+            self.db.execute(
+                text(
+                    """
+                    UPDATE market_theme_stock_daily_returns
+                    SET theme_daily_return_id=:theme_daily_return_id, stock_code=:stock_code, stock_name=:stock_name,
+                        change_rate=:change_rate, trading_value=:trading_value, trading_value_100m=:trading_value_100m,
+                        current_price=:current_price, data_status=:data_status, error_message=:error_message, updated_at=:now
+                    WHERE id=:id
+                    """
+                ),
+                {**params, "id": int(existing["id"])},
+            )
+            return
+        self.db.execute(
+            text(
+                """
+                INSERT INTO market_theme_stock_daily_returns
+                (theme_daily_return_id, theme_id, stock_id, stock_code, stock_name, return_date, change_rate,
+                 trading_value, trading_value_100m, current_price, data_status, error_message, created_at, updated_at)
+                VALUES
+                (:theme_daily_return_id, :theme_id, :stock_id, :stock_code, :stock_name, :return_date, :change_rate,
+                 :trading_value, :trading_value_100m, :current_price, :data_status, :error_message, :now, :now)
+                """
+            ),
+            params,
+        )

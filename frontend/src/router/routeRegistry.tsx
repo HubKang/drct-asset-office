@@ -15,6 +15,7 @@ import TradeJournalsPage from "@/pages/TradeJournalsPage";
 import TradeReviewsPage from "@/pages/TradeReviewsPage";
 import TradeTrainingCalendarPage from "@/pages/TradeTrainingCalendarPage";
 import TradeTrainingPage from "@/pages/TradeTrainingPage";
+import MarketCalendarPage from "@/pages/MarketCalendarPage";
 import MarketThemesPage from "@/pages/MarketThemesPage";
 import MarketTrendsPage from "@/pages/MarketTrendsPage";
 import NewsPage from "@/pages/NewsPage";
@@ -43,6 +44,7 @@ export type RouteItem = {
 
 export const routeRegistry: RouteItem[] = [
   { routeKey: "dashboard", path: "/dashboard", title: "대시보드", description: "투자 리서치 현황 요약", component: <DashboardPage /> },
+  { routeKey: "market-calendar", path: "/market-calendar", title: "증시 캘린더", description: "테마별 뉴스와 일정을 월간 캘린더로 관리", component: <MarketCalendarPage /> },
   { routeKey: "advisory-packages", path: "/advisory-packages", title: "GPT 자문 패키지", description: "최종 투자 자문용 패키지 생성", component: <AdvisoryPackagePage /> },
   { routeKey: "stocks", path: "/stocks", title: "종목 관리", description: "종목 마스터 관리", component: <StocksPage /> },
   { routeKey: "watchlist", path: "/watchlist", title: "관심종목 Data수집", description: "분석 우선 종목 Pool 관리", component: <WatchlistPage /> },

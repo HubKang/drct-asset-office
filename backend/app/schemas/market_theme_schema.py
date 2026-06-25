@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -31,6 +31,16 @@ class MarketThemeUpdateRequest(BaseModel):
     is_active: int = 1
 
 
+class MarketThemeLatestReturnSummary(BaseModel):
+    return_date: str | None = None
+    avg_change_rate: float | None = None
+    last_refreshed_at: str | None = None
+    stock_count: int = 0
+    success_stock_count: int = 0
+    failed_stock_count: int = 0
+    total_trading_value_100m: float | None = None
+
+
 class MarketThemeResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -51,5 +61,6 @@ class MarketThemeResponse(BaseModel):
     keyword_count: int = 0
     child_theme_count: int = 0
     supply_child_theme_count: int = 0
+    latest_return: MarketThemeLatestReturnSummary | None = None
     created_at: str
     updated_at: str

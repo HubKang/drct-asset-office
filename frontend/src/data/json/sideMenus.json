@@ -1,28 +1,87 @@
-﻿[
-  { "menuKey": "home", "title": "대시보드", "routeKey": "dashboard" },
-  { "menuKey": "home", "title": "GPT 자문 패키지", "routeKey": "advisory-packages" },
-
-  { "menuKey": "stocks", "title": "종목 관리", "routeKey": "stocks" },
-  { "menuKey": "stocks", "title": "관심종목 Data수집", "routeKey": "watchlist" },
-  { "menuKey": "stocks", "title": "관심종목 Data분석", "routeKey": "stock-prices" },
-
-  { "menuKey": "market", "title": "시장 테마 관리", "routeKey": "market-themes" },
-  { "menuKey": "market", "title": "시장 트렌드 분석", "routeKey": "market-trends" },
-
-  { "menuKey": "collection", "title": "뉴스 관리", "routeKey": "news" },
-  { "menuKey": "collection", "title": "공시 관리", "routeKey": "disclosures" },
-  { "menuKey": "collection", "title": "경제 브리핑", "routeKey": "economic-briefing" },
-  { "menuKey": "collection", "title": "텔레그램 브리핑", "routeKey": "telegram-briefing" },
-  { "menuKey": "collection", "title": "수집 이력", "routeKey": "collection-runs" },
-
-  { "menuKey": "trade", "title": "매매기법", "routeKey": "trade-methods" },
+[
+  {
+    "menuKey": "home",
+    "title": "대시보드",
+    "routeKey": "dashboard"
+  },
+  {
+    "menuKey": "home",
+    "title": "증시 캘린더",
+    "routeKey": "market-calendar"
+  },
+  {
+    "menuKey": "home",
+    "title": "GPT 자문 패키지",
+    "routeKey": "advisory-packages"
+  },
+  {
+    "menuKey": "stocks",
+    "title": "종목 관리",
+    "routeKey": "stocks"
+  },
+  {
+    "menuKey": "stocks",
+    "title": "관심종목 Data수집",
+    "routeKey": "watchlist"
+  },
+  {
+    "menuKey": "stocks",
+    "title": "관심종목 Data분석",
+    "routeKey": "stock-prices"
+  },
+  {
+    "menuKey": "market",
+    "title": "시장 테마 관리",
+    "routeKey": "market-themes"
+  },
+  {
+    "menuKey": "market",
+    "title": "시장 트렌드 분석",
+    "routeKey": "market-trends"
+  },
+  {
+    "menuKey": "collection",
+    "title": "뉴스 관리",
+    "routeKey": "news"
+  },
+  {
+    "menuKey": "collection",
+    "title": "공시 관리",
+    "routeKey": "disclosures"
+  },
+  {
+    "menuKey": "collection",
+    "title": "경제 브리핑",
+    "routeKey": "economic-briefing"
+  },
+  {
+    "menuKey": "collection",
+    "title": "텔레그램 브리핑",
+    "routeKey": "telegram-briefing"
+  },
+  {
+    "menuKey": "collection",
+    "title": "수집 이력",
+    "routeKey": "collection-runs"
+  },
+  {
+    "menuKey": "trade",
+    "title": "매매기법",
+    "routeKey": "trade-methods"
+  },
   {
     "menuKey": "trade",
     "title": "매매일지",
     "routeKey": "trade-journals",
     "children": [
-      { "title": "매매일지 캘린더", "routeKey": "trade-calendar" },
-      { "title": "매매일지 복기", "routeKey": "trade-reviews" }
+      {
+        "title": "매매일지 캘린더",
+        "routeKey": "trade-calendar"
+      },
+      {
+        "title": "매매일지 복기",
+        "routeKey": "trade-reviews"
+      }
     ]
   },
   {
@@ -30,19 +89,45 @@
     "title": "매매훈련",
     "routeKey": "trade-training",
     "children": [
-      { "title": "매매훈련 캘린더", "routeKey": "trade-training-calendar" }
+      {
+        "title": "매매훈련 캘린더",
+        "routeKey": "trade-training-calendar"
+      }
     ]
   },
-  { "menuKey": "trade", "title": "매매기준 백테스트", "routeKey": "backtest" },
-  { "menuKey": "trade", "title": "매매패턴 AI연구", "routeKey": "pattern-research" },
-
-  { "menuKey": "analysis-rules", "title": "분류 규칙 관리", "routeKey": "classification-rules" },
-
-  { "menuKey": "system", "title": "설정", "routeKey": "settings" },
-  { "menuKey": "system", "title": "매매연구 지표 설정", "routeKey": "analysis-indicator-settings" },
-  { "menuKey": "system", "title": "DrCT아키텍처", "routeKey": "drct-architecture" },
-  { "menuKey": "system", "title": "DrCT테이블정보", "routeKey": "schema-comments" }
+  {
+    "menuKey": "trade",
+    "title": "매매기준 백테스트",
+    "routeKey": "backtest"
+  },
+  {
+    "menuKey": "trade",
+    "title": "매매패턴 AI연구",
+    "routeKey": "pattern-research"
+  },
+  {
+    "menuKey": "analysis-rules",
+    "title": "분류 규칙 관리",
+    "routeKey": "classification-rules"
+  },
+  {
+    "menuKey": "system",
+    "title": "설정",
+    "routeKey": "settings"
+  },
+  {
+    "menuKey": "system",
+    "title": "매매연구 지표 설정",
+    "routeKey": "analysis-indicator-settings"
+  },
+  {
+    "menuKey": "system",
+    "title": "DrCT아키텍처",
+    "routeKey": "drct-architecture"
+  },
+  {
+    "menuKey": "system",
+    "title": "DrCT테이블정보",
+    "routeKey": "schema-comments"
+  }
 ]
-
-
-
