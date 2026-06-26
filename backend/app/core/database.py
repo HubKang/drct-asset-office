@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from collections.abc import Generator
 
@@ -350,6 +350,109 @@ def ensure_runtime_schema() -> None:
         )
         conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_market_calendar_event_stocks_event ON market_calendar_event_stocks(event_id)"
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS stock_tracking_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT,
+                success_rule_note TEXT,
+                fail_rule_note TEXT,
+                observation_note TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_stock_tracking_groups_active ON stock_tracking_groups(is_active, updated_at)"
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS stock_tracking_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER NOT NULL,
+                candidate_id INTEGER,
+                condition_no TEXT,
+                condition_name TEXT,
+                stock_id INTEGER,
+                stock_code TEXT,
+                stock_name TEXT,
+                detected_date TEXT,
+                tracking_base_date TEXT NOT NULL,
+                base_price REAL,
+                base_change_rate REAL,
+                base_volume INTEGER,
+                base_trading_value INTEGER,
+                status TEXT NOT NULL DEFAULT 'TRACKING',
+                review_date TEXT,
+                review_note TEXT,
+                price_status TEXT NOT NULL DEFAULT 'NOT_COLLECTED',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (group_id) REFERENCES stock_tracking_groups(id) ON DELETE CASCADE,
+                FOREIGN KEY (candidate_id) REFERENCES market_trend_events(id) ON DELETE SET NULL,
+                FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE SET NULL
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_stock_tracking_items_group_candidate ON stock_tracking_items(group_id, candidate_id) WHERE candidate_id IS NOT NULL"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_stock_tracking_items_group ON stock_tracking_items(group_id)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_stock_tracking_items_status ON stock_tracking_items(status, price_status)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_stock_tracking_items_base_date ON stock_tracking_items(tracking_base_date)"
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS stock_tracking_images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tracking_item_id INTEGER NOT NULL,
+                image_path TEXT NOT NULL,
+                original_filename TEXT,
+                image_type TEXT NOT NULL,
+                caption TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (tracking_item_id) REFERENCES stock_tracking_items(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_stock_tracking_images_item ON stock_tracking_images(tracking_item_id, id)"
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS price_collection_targets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_type TEXT NOT NULL,
+                source_id INTEGER NOT NULL,
+                stock_id INTEGER,
+                stock_code TEXT,
+                base_date TEXT NOT NULL,
+                start_date TEXT NOT NULL,
+                end_date TEXT,
+                status TEXT NOT NULL DEFAULT 'ACTIVE',
+                last_collected_date TEXT,
+                error_message TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(source_type, source_id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_price_collection_targets_source ON price_collection_targets(source_type, source_id)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_price_collection_targets_status ON price_collection_targets(status, source_type)"
         )
         conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_market_themes_supply_active_sort "

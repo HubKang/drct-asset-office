@@ -21,6 +21,7 @@ import MarketTrendsPage from "@/pages/MarketTrendsPage";
 import NewsPage from "@/pages/NewsPage";
 import SchemaCommentsPage from "@/pages/SchemaCommentsPage";
 import StockPricesPage from "@/pages/StockPricesPage";
+import StockTrackingPage from "@/pages/StockTrackingPage";
 import StocksPage from "@/pages/StocksPage";
 import WatchlistPage from "@/pages/WatchlistPage";
 import PageHeader from "@/components/common/PageHeader";
@@ -47,15 +48,16 @@ export const routeRegistry: RouteItem[] = [
   { routeKey: "market-calendar", path: "/market-calendar", title: "증시 캘린더", description: "테마별 뉴스와 일정을 월간 캘린더로 관리", component: <MarketCalendarPage /> },
   { routeKey: "advisory-packages", path: "/advisory-packages", title: "GPT 자문 패키지", description: "최종 투자 자문용 패키지 생성", component: <AdvisoryPackagePage /> },
   { routeKey: "stocks", path: "/stocks", title: "종목 관리", description: "종목 마스터 관리", component: <StocksPage /> },
-  { routeKey: "watchlist", path: "/watchlist", title: "관심종목 Data수집", description: "분석 우선 종목 Pool 관리", component: <WatchlistPage /> },
-  { routeKey: "stock-prices", path: "/stock-prices", title: "관심종목 Data분석", description: "일봉/이동평균 데이터 검증", component: <StockPricesPage /> },
+  { routeKey: "watchlist", path: "/watchlist", title: "관심 종목", description: "분석 우선 종목 Pool 관리", component: <WatchlistPage /> },
+  { routeKey: "stock-prices", path: "/stock-prices", title: "관심 종목 분석", description: "일봉/이동평균 데이터 검증", component: <StockPricesPage /> },
+  { routeKey: "stock-tracking", path: "/stock-tracking", title: "종목 트래킹", description: "수급 이벤트 후보 종목을 그룹별로 추적하고 복기", component: <StockTrackingPage /> },
   { routeKey: "schema-comments", path: "/schema-comments", title: "DrCT테이블정보", description: "DrCT에셋 데이터베이스의 테이블/컬럼 구조 조회", component: <SchemaCommentsPage /> },
   { routeKey: "news", path: "/news", title: "뉴스 관리", description: "뉴스 수집/요약 결과 조회", component: <NewsPage /> },
   { routeKey: "disclosures", path: "/disclosures", title: "공시 관리", description: "DART 공시 수집/요약 결과 조회", component: <DisclosuresPage /> },
   { routeKey: "collection-runs", path: "/collection-runs", title: "수집 이력", description: "수집 실행 로그 확인", component: <CollectionRunsPage /> },
   { routeKey: "classification-rules", path: "/classification-rules", title: "분류 규칙 관리", description: "뉴스/공시 자동 분류 규칙 관리", component: <ClassificationRulesPage /> },
   { routeKey: "market-themes", path: "/market-themes", title: "시장 테마 관리", description: "테마 등록/종목 매핑 관리", component: <MarketThemesPage /> },
-  { routeKey: "market-trends", path: "/market-trends", title: "시장 트렌드 분석", description: "수급 이벤트 감지/테마 흐름 집계", component: <MarketTrendsPage /> },
+  { routeKey: "market-trends", path: "/market-trends", title: "시장 수급 분석", description: "수급 이벤트 감지/테마 흐름 집계", component: <MarketTrendsPage /> },
   { routeKey: "economic-briefing", path: "/economic-briefing", title: "경제 브리핑", description: "경제 영상 메타데이터/요약 관리", component: <EconomicBriefingPage /> },
   { routeKey: "telegram-briefing", path: "/telegram-briefing", title: "텔레그램 브리핑", description: "텔레그램 채널 수집/요약 관리", component: <TelegramBriefingPage /> },
   { routeKey: "trade-methods", path: "/trade-methods", title: "매매기법", description: "매매기법 등록/수정/비활성화 관리", component: <TradeMethodsPage /> },

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import type { CSSProperties } from "react";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
@@ -17,6 +18,7 @@ import type {
 } from "@/types/marketTrend";
 import type { MarketTheme } from "@/types/marketTheme";
 import type { Stock } from "@/types/stock";
+import type { StockTrackingGroup } from "@/types/stockTracking";
 
 type ActiveTab = "kiwoom" | "flow" | "monthly";
 type SortOrder = "asc" | "desc";
@@ -241,6 +243,7 @@ const buildCalendarCells = (month: string, days: MonthlyThemeFlowCalendarDay[]) 
 };
 
 function MarketTrendsPage() {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<ActiveTab>("kiwoom");
 
   const [conditions, setConditions] = useState<KiwoomConditionItem[]>([]);
@@ -292,6 +295,12 @@ function MarketTrendsPage() {
   const [manualSelectedStock, setManualSelectedStock] = useState<Stock | null>(null);
   const [manualStockLoading, setManualStockLoading] = useState(false);
   const [manualSaving, setManualSaving] = useState(false);
+  const [selectedTrackingCandidateIds, setSelectedTrackingCandidateIds] = useState<number[]>([]);
+  const [trackingGroups, setTrackingGroups] = useState<StockTrackingGroup[]>([]);
+  const [trackingRegisterOpen, setTrackingRegisterOpen] = useState(false);
+  const [trackingGroupId, setTrackingGroupId] = useState("");
+  const [trackingRegisterSaving, setTrackingRegisterSaving] = useState(false);
+  const [trackingRegisterCompleted, setTrackingRegisterCompleted] = useState(false);
   const [manualForm, setManualForm] = useState<ManualCandidateForm>({
     trade_date: tradeDate,
     change_rate: "",
@@ -355,6 +364,11 @@ function MarketTrendsPage() {
     });
     return arr;
   }, [events, eventNameSortOrder]);
+  const selectedTrackingCandidateSet = useMemo(() => new Set(selectedTrackingCandidateIds), [selectedTrackingCandidateIds]);
+  const allTrackingCandidatesChecked = useMemo(
+    () => sortedEvents.length > 0 && sortedEvents.every((item) => selectedTrackingCandidateSet.has(item.event_id)),
+    [sortedEvents, selectedTrackingCandidateSet],
+  );
   const flowSummaryStats = useMemo(() => {
     const top = flowSummaries[0];
     const maxChange = flowSummaries.reduce((max, item) => {
@@ -631,6 +645,7 @@ ${tableRows}
           selected_theme_id: "",
         };
       }
+      setSelectedTrackingCandidateIds([]);
       setEventDrafts(draftMap);
       setEventThemeSearchMap(Object.fromEntries(fetchedEvents.map((item) => [item.event_id, ""])));
 
@@ -658,6 +673,55 @@ ${tableRows}
       setMarketThemes(sortedItems.map((x) => ({ id: x.id, theme_name: x.theme_name, latest_return: x.latest_return ?? null })));
     } catch {
       setMarketThemes([]);
+    }
+  };
+
+  const toggleTrackingCandidate = (eventId: number, checked: boolean) => {
+    setSelectedTrackingCandidateIds((prev) => {
+      if (checked) return prev.includes(eventId) ? prev : [...prev, eventId];
+      return prev.filter((id) => id !== eventId);
+    });
+  };
+
+  const toggleAllTrackingCandidates = (checked: boolean) => {
+    setSelectedTrackingCandidateIds(checked ? sortedEvents.map((item) => item.event_id) : []);
+  };
+
+  const openTrackingRegisterModal = async () => {
+    if (selectedTrackingCandidateIds.length === 0) {
+      setError("\uC885\uBAA9\uD2B8\uB798\uD0B9\uC5D0 \uB4F1\uB85D\uD560 \uD6C4\uBCF4\uB97C \uC120\uD0DD\uD574 \uC8FC\uC138\uC694.");
+      return;
+    }
+    setError("");
+    setMessage("");
+    setTrackingRegisterCompleted(false);
+    const rows = await repositories.stockTracking.listGroups({ active_only: true });
+    setTrackingGroups(rows);
+    setTrackingGroupId(rows[0] ? String(rows[0].id) : "");
+    setTrackingRegisterOpen(true);
+  };
+
+  const registerTrackingCandidates = async () => {
+    if (!trackingGroupId) {
+      setError("\uB4F1\uB85D\uD560 \uADF8\uB8F9\uC744 \uC120\uD0DD\uD574 \uC8FC\uC138\uC694.");
+      return;
+    }
+    setError("");
+    setMessage("");
+    setTrackingRegisterSaving(true);
+    try {
+      const res = await repositories.stockTracking.registerFromCandidates({
+        group_id: Number(trackingGroupId),
+        candidate_ids: selectedTrackingCandidateIds,
+      });
+      setMessage(res.message || `????? ?? ??: ?? ${res.created_count}?, ?? ?? ${res.skipped_count}?`);
+      setSelectedTrackingCandidateIds([]);
+      setTrackingRegisterCompleted(true);
+      setTrackingRegisterOpen(false);
+    } catch (e) {
+      setError(toErr(e, "\uC885\uBAA9\uD2B8\uB798\uD0B9 \uB4F1\uB85D\uC5D0 \uC2E4\uD328\uD588\uC2B5\uB2C8\uB2E4."));
+    } finally {
+      setTrackingRegisterSaving(false);
     }
   };
 
@@ -1072,7 +1136,7 @@ ${tableRows}
   return (
     <div className="space-y-4">
       <PageHeader
-        title="시장 트랜드 분석"
+        title="시장 수급 분석"
         description="조건검색 결과를 수급 이벤트 후보로 저장하고 분석 우선순위를 관리합니다."
         action={(
           <button
@@ -1260,21 +1324,52 @@ ${tableRows}
               <h3 className="section-title m-0">저장된 수급 이벤트 후보</h3>
               <span className="hint-icon" title="저장된 후보는 일별·월별 테마 수급 흐름 분석의 기초 데이터로 활용됩니다.">i</span>
             </div>
-            <div className="flex gap-2 items-end mb-2 flex-wrap">
-              <input className="input-control" style={{ width: "160px", minWidth: "160px" }} type="date" value={tradeDate} onChange={(e) => setTradeDate(e.target.value)} />
-              <button type="button" className="btn btn-secondary" onClick={() => void loadEvents()}>조회</button>
-              <button type="button" className="btn btn-primary" onClick={openManualCandidateModal}>+ 후보 직접등록</button>
+            <div className="theme-event-candidate-toolbar">
+              <div className="candidate-date-nav">
+                <button type="button" className="btn btn-secondary" onClick={() => void applyFlowDate(shiftDate(tradeDate, -1))}>이전</button>
+                <input
+                  className="input-control candidate-date-input"
+                  type="date"
+                  value={tradeDate}
+                  onChange={(e) => void applyFlowDate(e.target.value)}
+                  onBlur={(e) => void applyFlowDate(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void applyFlowDate((e.target as HTMLInputElement).value);
+                    }
+                  }}
+                  aria-label="수급 이벤트 후보 날짜"
+                />
+                <button type="button" className="btn btn-secondary" onClick={() => void applyFlowDate(shiftDate(tradeDate, 1))}>다음</button>
+                <button type="button" className="btn btn-primary" onClick={() => void applyFlowDate(todayInKst())}>오늘</button>
+              </div>
+              <div className="theme-event-candidate-actions">
+                <button type="button" className="btn btn-secondary" onClick={() => void loadEvents()}>조회</button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={selectedTrackingCandidateIds.length === 0}
+                  title={selectedTrackingCandidateIds.length === 0 ? "등록할 후보를 선택해 주세요." : "선택한 후보를 종목트래킹 그룹에 등록합니다."}
+                  onClick={() => void openTrackingRegisterModal()}
+                >
+                  {selectedTrackingCandidateIds.length > 0 ? "선택 " + selectedTrackingCandidateIds.length + "건 트래킹 등록" : "종목트래킹 등록"}
+                </button>
+                {trackingRegisterCompleted ? <button type="button" className="btn btn-secondary" onClick={() => navigate("/stock-tracking")}>종목 트래킹으로 이동</button> : null}
+                <button type="button" className="btn btn-primary" onClick={openManualCandidateModal}>+ 후보 직접등록</button>
+              </div>
             </div>
             <div className="table-shell">
               <table className="data-table compact-table theme-event-candidate-table">
                 <thead>
                   <tr>
+                    <th className="condition-result-check-cell"><input type="checkbox" checked={allTrackingCandidatesChecked} onChange={(ev) => toggleAllTrackingCandidates(ev.target.checked)} aria-label="전체 후보 선택" /></th>
                     <th>감지일</th><th className="cursor-pointer" onClick={() => setEventNameSortOrder((p) => (p === "asc" ? "desc" : "asc"))}>종목{sortMark(true, eventNameSortOrder)}</th><th>시장</th><th className="text-right">등락률</th><th>연결 테마</th><th>메모</th><th>관리</th>
                   </tr>
                 </thead>
                 <tbody>
                   {sortedEvents.length === 0 ? (
-                    <tr><td colSpan={7} className="text-center text-muted">저장된 후보가 없습니다.</td></tr>
+                    <tr><td colSpan={8} className="text-center text-muted">저장된 후보가 없습니다.</td></tr>
                   ) : null}
                   {sortedEvents.map((e) => {
                     const draft = eventDrafts[e.event_id] ?? { theme_status: "unassigned", user_memo: "", selected_theme_id: "" };
@@ -1290,6 +1385,7 @@ ${tableRows}
                     const themeListId = `event-theme-list-${e.event_id}`;
                     return (
                       <tr key={e.event_id}>
+                        <td><input type="checkbox" checked={selectedTrackingCandidateSet.has(e.event_id)} onChange={(ev) => toggleTrackingCandidate(e.event_id, ev.target.checked)} aria-label="후보 선택" /></td>
                         <td>{formatDate(e.detected_at)}</td>
                         <td>
                           <div className="stock-cell">
@@ -1376,6 +1472,36 @@ ${tableRows}
               </table>
             </div>
           </SectionCard>
+        </div>
+      ) : null}
+
+      {trackingRegisterOpen ? (
+        <div className="modal-backdrop">
+          <div className="modal-card tracking-register-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="trade-journal-detail-header">
+              <h3>종목트래킹 등록</h3>
+              <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => setTrackingRegisterOpen(false)}>닫기</button>
+            </div>
+            <p className="text-sm text-muted mb-3">선택한 후보 종목을 종목트래킹 그룹에 등록합니다.</p>
+            <div className="tracking-register-count">선택 후보: {selectedTrackingCandidateIds.length}건</div>
+            <label className="manual-candidate-field">
+              <span>등록 그룹</span>
+              <select className="input-control" value={trackingGroupId} onChange={(e) => setTrackingGroupId(e.target.value)}>
+                {trackingGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+              </select>
+            </label>
+            {trackingGroups.length === 0 ? (
+              <div className="tracking-register-empty">
+                <p className="text-sm text-danger mt-2">등록 가능한 종목트래킹 그룹이 없습니다. 먼저 종목 관리 &gt; 종목 트래킹에서 그룹을 등록해 주세요.</p>
+                <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => navigate("/stock-tracking")}>종목 트래킹 화면으로 이동</button>
+              </div>
+            ) : null}
+            <p className="tracking-register-help">가격 갱신, 차트 확인, 메모 및 이미지는 종목 관리 &gt; 종목 트래킹 화면에서 관리합니다.</p>
+            <div className="modal-actions">
+              <button type="button" className="btn btn-secondary" onClick={() => setTrackingRegisterOpen(false)}>닫기</button>
+              <button type="button" className="btn btn-primary" disabled={trackingRegisterSaving || trackingGroups.length === 0} onClick={() => void registerTrackingCandidates()}>{trackingRegisterSaving ? "등록 중..." : "등록"}</button>
+            </div>
+          </div>
         </div>
       ) : null}
 

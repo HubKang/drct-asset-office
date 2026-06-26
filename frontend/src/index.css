@@ -14961,3 +14961,3033 @@ button.chip-light {
 .market-calendar-page.space-y-6 > :not([hidden]) ~ :not([hidden]) {
   margin-top: 0 !important;
 }
+
+/* Saved supply event candidate date navigator */
+.theme-event-candidate-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.candidate-date-nav,
+.theme-event-candidate-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.candidate-date-nav .btn,
+.theme-event-candidate-actions .btn {
+  min-height: 42px;
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.candidate-date-nav .btn-primary {
+  border-color: #111827;
+  background: #111827;
+  color: #ffffff;
+}
+
+.candidate-date-input.input-control {
+  width: 176px;
+  min-width: 176px;
+  min-height: 42px;
+  border-radius: 10px;
+  padding: 9px 12px;
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+@media (max-width: 720px) {
+  .theme-event-candidate-toolbar,
+  .candidate-date-nav,
+  .theme-event-candidate-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .candidate-date-input.input-control,
+  .candidate-date-nav .btn,
+  .theme-event-candidate-actions .btn {
+    width: 100%;
+  }
+}
+
+.stock-tracking-page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.stock-tracking-tabs {
+  margin-bottom: 2px;
+}
+
+.stock-tracking-group-layout,
+.stock-tracking-item-layout {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.82fr) minmax(520px, 1.18fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.stock-tracking-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.stock-tracking-form-grid label,
+.stock-tracking-review-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.stock-tracking-form-grid .wide {
+  grid-column: 1 / -1;
+}
+
+.stock-tracking-form-grid textarea,
+.stock-tracking-review-field textarea {
+  min-height: 86px;
+  resize: vertical;
+  white-space: pre-wrap;
+}
+
+.stock-tracking-actions,
+.stock-tracking-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.stock-tracking-group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.stock-tracking-group-card {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 16px;
+  background: #fff;
+}
+
+.stock-tracking-group-card > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.stock-tracking-group-card strong {
+  display: block;
+  font-size: 16px;
+  color: var(--text-primary);
+}
+
+.stock-tracking-group-card span,
+.stock-tracking-group-card p {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.stock-tracking-filter-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(120px, 0.8fr) minmax(120px, 0.8fr) 132px 132px minmax(180px, 1.3fr) auto;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.stock-tracking-table td small {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.stock-tracking-table tr.selected {
+  background: #f4fbff;
+}
+
+.tracking-status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 58px;
+  height: 24px;
+  border-radius: 999px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 800;
+  border: 1px solid var(--border);
+  background: #f8fafc;
+  color: var(--text-secondary);
+}
+
+.tracking-status-badge.status-tracking {
+  background: #eef6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+
+.tracking-status-badge.status-success {
+  background: #ecfdf3;
+  border-color: #bbf7d0;
+  color: #15803d;
+}
+
+.tracking-status-badge.status-fail {
+  background: #fff1f2;
+  border-color: #fecdd3;
+  color: #be123c;
+}
+
+.tracking-status-badge.status-hold {
+  background: #fffbeb;
+  border-color: #fde68a;
+  color: #b45309;
+}
+
+.tracking-status-badge.status-excluded {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #475569;
+}
+
+.stock-tracking-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.stock-tracking-detail-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.stock-tracking-detail-head h3 {
+  margin: 0;
+  font-size: 21px;
+  color: var(--text-primary);
+}
+
+.stock-tracking-detail-head p {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+}
+
+.stock-tracking-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.stock-tracking-detail-grid div {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: #fbfcfe;
+}
+
+.stock-tracking-detail-grid span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.stock-tracking-chart-placeholder,
+.stock-tracking-image-placeholder {
+  display: flex;
+  min-height: 150px;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--border);
+  border-radius: 16px;
+  background: #f8fafc;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.stock-tracking-image-placeholder {
+  min-height: 88px;
+}
+
+.tracking-register-modal {
+  max-width: 520px;
+}
+
+.tracking-register-modal .modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.theme-event-candidate-table input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+}
+
+@media (max-width: 1280px) {
+  .stock-tracking-group-layout,
+  .stock-tracking-item-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .stock-tracking-filter-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* 56-A-UX: Stock tracking screen refinement */
+.stock-tracking-page {
+  gap: 14px;
+}
+
+.stock-tracking-page .page-header {
+  padding: 26px 34px;
+  min-height: auto;
+  align-items: center;
+}
+
+.stock-tracking-page .page-title {
+  font-size: 31px;
+  line-height: 1.15;
+  letter-spacing: 0;
+}
+
+.stock-tracking-page .page-description {
+  max-width: 760px;
+  margin-top: 8px;
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.stock-tracking-kpis {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.stock-tracking-kpis span {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #f8fafc;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.stock-tracking-tabs {
+  margin: 0;
+}
+
+.stock-tracking-section-head,
+.stock-tracking-list-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.stock-tracking-section-head p {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.stock-tracking-group-section {
+  padding: 26px 28px;
+}
+
+.stock-tracking-group-table th,
+.stock-tracking-group-table td {
+  vertical-align: middle;
+}
+
+.stock-tracking-muted-cell {
+  max-width: 420px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.stock-tracking-row-actions,
+.stock-tracking-list-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.stock-tracking-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px dashed var(--border);
+  border-radius: 16px;
+  background: #fbfcfe;
+  padding: 24px;
+  color: var(--text-secondary);
+  text-align: left;
+}
+
+.stock-tracking-empty-state strong {
+  color: var(--text-primary);
+  font-size: 17px;
+}
+
+.stock-tracking-empty-state p {
+  margin: 0;
+  max-width: 620px;
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+
+.stock-tracking-empty-state.compact {
+  margin: 8px 0;
+  padding: 22px;
+}
+
+.stock-tracking-empty-state.detail-empty {
+  min-height: 360px;
+  justify-content: center;
+}
+
+.stock-tracking-item-layout {
+  grid-template-columns: minmax(620px, 1.08fr) minmax(420px, 0.92fr);
+  gap: 18px;
+}
+
+.stock-tracking-list-card,
+.stock-tracking-detail-card {
+  padding: 24px;
+}
+
+.stock-tracking-filter-row {
+  grid-template-columns: minmax(120px, 0.9fr) minmax(112px, 0.8fr) minmax(124px, 0.85fr) 132px minmax(170px, 1.15fr) auto;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.stock-tracking-filter-row .input-control,
+.stock-tracking-filter-row .select-control,
+.stock-tracking-filter-row .btn {
+  min-height: 40px;
+  height: 40px;
+  font-size: 14px;
+}
+
+.stock-tracking-list-shell {
+  overflow-x: auto;
+}
+
+.stock-tracking-table {
+  min-width: 760px;
+}
+
+.stock-tracking-table th,
+.stock-tracking-table td {
+  white-space: nowrap;
+}
+
+.stock-tracking-table tbody tr {
+  cursor: pointer;
+}
+
+.stock-tracking-table td small {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.stock-tracking-table tr.selected {
+  background: #f1f8ff;
+}
+
+.tracking-status-badge,
+.tracking-price-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 58px;
+  height: 24px;
+  border-radius: 999px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 800;
+  border: 1px solid var(--border);
+  background: #f8fafc;
+  color: var(--text-secondary);
+}
+
+.tracking-status-badge.status-tracking {
+  background: #eef6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+
+.tracking-status-badge.status-success {
+  background: #fff1f2;
+  border-color: #fecdd3;
+  color: #be123c;
+}
+
+.tracking-status-badge.status-fail {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+
+.tracking-status-badge.status-hold {
+  background: #faf5ff;
+  border-color: #e9d5ff;
+  color: #7e22ce;
+}
+
+.tracking-status-badge.status-excluded {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #475569;
+}
+
+.tracking-price-badge.price-not_collected,
+.tracking-price-badge.price-partial {
+  background: #fffbeb;
+  border-color: #fde68a;
+  color: #b45309;
+}
+
+.tracking-price-badge.price-collecting,
+.tracking-price-badge.price-latest {
+  background: #ecfdf5;
+  border-color: #bbf7d0;
+  color: #047857;
+}
+
+.tracking-price-badge.price-stopped {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #475569;
+}
+
+.tracking-price-badge.price-error {
+  background: #fff1f2;
+  border-color: #fecdd3;
+  color: #be123c;
+}
+
+.stock-tracking-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.stock-tracking-detail-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 14px;
+}
+
+.stock-tracking-detail-head h3 {
+  margin: 0;
+  font-size: 22px;
+  color: var(--text-primary);
+}
+
+.stock-tracking-detail-head p {
+  margin: 5px 0 0;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.stock-tracking-detail-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.stock-tracking-info-card,
+.stock-tracking-chart-card {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: #fff;
+  padding: 16px;
+}
+
+.stock-tracking-info-card h4,
+.stock-tracking-card-title h4 {
+  margin: 0 0 12px;
+  font-size: 16px;
+  color: var(--text-primary);
+}
+
+.stock-tracking-card-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.stock-tracking-card-title h4 {
+  margin: 0;
+}
+
+.stock-tracking-card-title span {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.stock-tracking-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.stock-tracking-detail-grid div {
+  border: 1px solid #edf1f6;
+  border-radius: 12px;
+  padding: 11px 12px;
+  background: #fbfcfe;
+}
+
+.stock-tracking-detail-grid span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-bottom: 5px;
+}
+
+.stock-tracking-chart-scroll {
+  overflow-x: auto;
+}
+
+.stock-tracking-chart-placeholder {
+  position: relative;
+  display: flex;
+  min-width: 1240px;
+  min-height: 440px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 16px;
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+  background: #f8fafc;
+  color: var(--text-muted);
+  font-weight: 800;
+  overflow: hidden;
+}
+
+.chart-placeholder-grid {
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(#e8edf5 1px, transparent 1px), linear-gradient(90deg, #e8edf5 1px, transparent 1px);
+  background-size: 48px 42px;
+  opacity: 0.75;
+}
+
+.stock-tracking-chart-placeholder p,
+.stock-tracking-chart-legend {
+  position: relative;
+  z-index: 1;
+}
+
+.stock-tracking-chart-legend {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.stock-tracking-chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.stock-tracking-review-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: var(--text-primary);
+  font-weight: 800;
+  margin-top: 10px;
+}
+
+.stock-tracking-review-field textarea {
+  min-height: 118px;
+  resize: vertical;
+  white-space: pre-wrap;
+}
+
+.stock-tracking-image-placeholder {
+  display: flex;
+  min-height: 88px;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+  background: #f8fafc;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.stock-tracking-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.stock-tracking-group-modal {
+  max-width: 760px;
+}
+
+.stock-tracking-group-modal .stock-tracking-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.stock-tracking-group-modal .stock-tracking-form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: var(--text-primary);
+  font-weight: 800;
+}
+
+.stock-tracking-group-modal .stock-tracking-form-grid .wide {
+  grid-column: 1 / -1;
+}
+
+.stock-tracking-group-modal textarea {
+  min-height: 84px;
+  resize: vertical;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 1280px) {
+  .stock-tracking-item-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .stock-tracking-filter-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .stock-tracking-page .page-header,
+  .stock-tracking-section-head,
+  .stock-tracking-list-head,
+  .stock-tracking-detail-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .stock-tracking-detail-grid,
+  .stock-tracking-group-modal .stock-tracking-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .stock-tracking-filter-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.tracking-register-count {
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  margin: 0 0 12px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #f8fafc;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.tracking-register-help {
+  margin: 12px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.tracking-register-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.stock-tracking-chart-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.stock-tracking-chart-range {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.stock-tracking-chart-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.stock-tracking-chart-inner {
+  display: block;
+  min-width: 1240px;
+  width: 1240px;
+  height: 500px;
+  background: #fbfcfe;
+}
+
+.chart-grid-line {
+  stroke: #e5eaf2;
+  stroke-width: 1;
+}
+
+.chart-axis-text {
+  fill: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.chart-volume-bar {
+  fill: #cbd5e1;
+  opacity: 0.8;
+}
+
+.chart-base-line {
+  stroke: #7c3aed;
+  stroke-width: 1.5;
+  stroke-dasharray: 5 5;
+}
+
+.chart-base-label {
+  fill: #6d28d9;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.stock-tracking-chart-legend span::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  margin-right: 6px;
+  border-radius: 999px;
+  background: var(--legend-color, #94a3b8);
+}
+
+.stock-tracking-chart-empty {
+  display: flex;
+  min-height: 420px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+  background: #f8fafc;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.stock-tracking-chart-empty strong {
+  color: var(--text-primary);
+  font-size: 16px;
+}
+
+.stock-tracking-chart-empty p {
+  margin: 0;
+}
+
+/* 56-B-UX stock tracking drawer and candle chart */
+.stock-tracking-main-layout,
+.stock-tracking-item-layout {
+  display: block;
+}
+
+.stock-tracking-list-card {
+  width: 100%;
+}
+
+.stock-tracking-list-head {
+  align-items: flex-start;
+}
+
+.stock-tracking-list-actions .btn-primary {
+  border-color: #111827;
+  background: #111827;
+  color: #fff;
+}
+
+.stock-tracking-filter-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.8fr) minmax(140px, 0.76fr) minmax(156px, 0.84fr) minmax(260px, 1.25fr) auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.stock-tracking-filter-row .input-control,
+.stock-tracking-filter-row .select-control,
+.stock-tracking-filter-row .btn {
+  height: 40px;
+  min-height: 40px;
+  border-radius: 12px;
+  padding: 0 14px;
+  font-size: 14px;
+}
+
+.stock-tracking-table tbody tr {
+  position: relative;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.stock-tracking-table tbody tr:hover {
+  background: #f8fbff;
+}
+
+.stock-tracking-check-col {
+  width: 42px;
+  min-width: 42px;
+  text-align: center;
+}
+
+.stock-tracking-checkbox {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: #111827;
+}
+
+.stock-tracking-checkbox:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
+.stock-tracking-list-actions .btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.stock-tracking-table tr.stock-tracking-row-selected {
+  background: #eef7ff;
+  box-shadow: inset 3px 0 0 #0ea5e9;
+}
+
+.stock-tracking-table tr.stock-tracking-row-selected td:nth-child(2) {
+  font-weight: 900;
+}
+
+.stock-tracking-detail-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(15, 23, 42, 0.28);
+}
+
+.stock-tracking-detail-card {
+  display: none;
+}
+
+.stock-tracking-detail-card.open {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 80;
+  display: flex;
+  width: 50vw;
+  min-width: 760px;
+  max-width: 1040px;
+  margin: 0;
+  padding: 0;
+  border-radius: 18px 0 0 18px;
+  overflow: hidden;
+}
+
+.stock-tracking-detail-card.open .stock-tracking-detail {
+  display: flex;
+  width: 100%;
+  max-height: 100vh;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+}
+
+.stock-tracking-detail-card.open .stock-tracking-detail-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0;
+  padding: 22px 24px;
+  background: #fff;
+}
+
+.stock-tracking-detail-card.open .stock-tracking-info-card,
+.stock-tracking-detail-card.open .stock-tracking-chart-card {
+  margin: 0 24px 14px;
+}
+
+.stock-tracking-detail-card.open .stock-tracking-info-card:first-of-type {
+  margin-top: 20px;
+}
+
+.stock-tracking-detail-card.open .stock-tracking-actions {
+  position: sticky;
+  bottom: 0;
+  margin: 0;
+  padding: 14px 24px;
+  border-top: 1px solid var(--border);
+  background: #fff;
+}
+
+.stock-tracking-detail-card.open .stock-tracking-detail > .stock-tracking-info-card,
+.stock-tracking-detail-card.open .stock-tracking-detail > .stock-tracking-chart-card,
+.stock-tracking-detail-card.open .stock-tracking-detail > .stock-tracking-actions {
+  flex-shrink: 0;
+}
+
+.stock-tracking-detail-card.open .stock-tracking-detail {
+  overflow-y: auto;
+}
+
+.stock-tracking-candle-chart .stock-tracking-chart-scroll {
+  overflow-x: auto;
+}
+
+.stock-tracking-candle-chart .stock-tracking-chart-inner {
+  min-width: 1240px;
+  height: 500px;
+}
+
+.chart-candle-body.rising,
+.chart-candle-wick.rising {
+  fill: #ef4444;
+  stroke: #ef4444;
+}
+
+.chart-candle-body.falling,
+.chart-candle-wick.falling {
+  fill: #2563eb;
+  stroke: #2563eb;
+}
+
+.chart-candle-wick {
+  stroke-width: 1.2;
+}
+
+.chart-volume-bar.rising {
+  fill: #fecaca;
+}
+
+.chart-volume-bar.falling {
+  fill: #bfdbfe;
+}
+
+@media (max-width: 900px) {
+  .stock-tracking-detail-card.open {
+    width: 100vw;
+    min-width: 0;
+    max-width: none;
+    border-radius: 0;
+  }
+
+  .stock-tracking-filter-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 56-B-UX-3 stock tracking detail drawer polish */
+.stock-tracking-detail-backdrop {
+  background: rgba(15, 23, 42, 0.38);
+}
+
+.stock-tracking-detail-card.open {
+  border: 1px solid rgba(226, 232, 240, 0.92);
+  background: #f8fafc;
+  box-shadow: -18px 0 44px rgba(15, 23, 42, 0.18);
+}
+
+.stock-tracking-detail-card.open .stock-tracking-detail {
+  gap: 0;
+  background: #f8fafc;
+  color: var(--text-primary);
+}
+
+.stock-tracking-detail-card.open .stock-tracking-detail-head {
+  align-items: center;
+  padding: 24px 30px;
+  border-bottom: 1px solid #e5eaf2;
+  background: #fff;
+}
+
+.stock-tracking-detail-head h3 {
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.stock-tracking-detail-head p {
+  margin-top: 6px;
+  color: #64748b;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.stock-tracking-detail-badges {
+  align-items: center;
+  gap: 8px;
+}
+
+.stock-tracking-detail-badges .btn {
+  height: 38px;
+  border-radius: 12px;
+  padding: 0 15px;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.tracking-status-badge,
+.tracking-price-badge {
+  min-width: 62px;
+  height: 27px;
+  padding: 0 11px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.stock-tracking-detail-card.open .stock-tracking-info-card,
+.stock-tracking-detail-card.open .stock-tracking-chart-card {
+  margin: 0 30px 18px;
+  padding: 18px;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: none;
+}
+
+.stock-tracking-detail-card.open .stock-tracking-info-card:first-of-type {
+  margin-top: 22px;
+}
+
+.stock-tracking-card-title {
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.stock-tracking-card-title h4,
+.stock-tracking-info-card h4 {
+  margin: 0;
+  color: #111827;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.3;
+}
+
+.stock-tracking-card-title span {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.45;
+  text-align: right;
+}
+
+.stock-tracking-detail-grid {
+  gap: 10px;
+}
+
+.stock-tracking-detail-grid div {
+  min-height: 74px;
+  padding: 13px 14px;
+  border: 1px solid #e8edf5;
+  border-radius: 14px;
+  background: #fbfcfe;
+}
+
+.stock-tracking-detail-grid span {
+  margin-bottom: 6px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.stock-tracking-detail-grid strong {
+  display: block;
+  color: #111827;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.42;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.stock-tracking-chart-card {
+  padding: 16px 18px 18px;
+}
+
+.stock-tracking-chart-range {
+  align-items: center;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.stock-tracking-chart-shell {
+  gap: 12px;
+}
+
+.stock-tracking-chart-scroll {
+  border-color: #e2e8f0;
+  border-radius: 16px;
+  background: #fff;
+}
+
+.stock-tracking-chart-inner {
+  background: #fff;
+}
+
+.chart-grid-line {
+  stroke: #edf2f7;
+}
+
+.chart-axis-text {
+  fill: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.chart-base-line {
+  stroke-width: 1.3;
+}
+
+.chart-base-label {
+  font-size: 11px;
+}
+
+.chart-volume-bar {
+  opacity: 0.58;
+}
+
+.stock-tracking-chart-legend {
+  gap: 10px 14px;
+}
+
+.stock-tracking-chart-legend span {
+  height: 24px;
+  padding: 0 8px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.stock-tracking-chart-legend span::before {
+  width: 8px;
+  height: 8px;
+}
+
+.stock-tracking-review-field {
+  gap: 8px;
+  margin-top: 12px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.stock-tracking-review-field .select-control {
+  height: 42px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.stock-tracking-review-field textarea {
+  min-height: 132px;
+  border-radius: 14px;
+  padding: 13px 14px;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.stock-tracking-review-field textarea::placeholder {
+  color: #94a3b8;
+}
+
+.stock-tracking-image-placeholder {
+  min-height: 92px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 14px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.stock-tracking-detail-card.open .stock-tracking-actions {
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 30px 18px;
+  border-top: 1px solid #e2e8f0;
+  background: #fff;
+}
+
+.stock-tracking-actions .btn {
+  min-width: 92px;
+  height: 44px;
+  border-radius: 12px;
+  padding: 0 18px;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.stock-tracking-actions .btn-danger {
+  border-color: #fecdd3;
+  background: #fff1f2;
+  color: #be123c;
+}
+
+.stock-tracking-actions .btn-primary {
+  border-color: #111827;
+  background: #111827;
+  color: #fff;
+}
+
+.stock-tracking-chart-empty {
+  min-height: 340px;
+  border-radius: 16px;
+  font-size: 14px;
+}
+
+.stock-tracking-candle-chart .stock-tracking-chart-inner {
+  height: 500px;
+}
+
+@media (max-width: 900px) {
+  .stock-tracking-detail-card.open .stock-tracking-detail-head,
+  .stock-tracking-detail-card.open .stock-tracking-actions {
+    padding-right: 20px;
+    padding-left: 20px;
+  }
+
+  .stock-tracking-detail-card.open .stock-tracking-info-card,
+  .stock-tracking-detail-card.open .stock-tracking-chart-card {
+    margin-right: 20px;
+    margin-left: 20px;
+  }
+
+  .stock-tracking-card-title {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .stock-tracking-card-title span {
+    text-align: left;
+  }
+}
+
+/* 56-B-UX-4 stock tracking basic info layout */
+.stock-tracking-detail-card.open .stock-tracking-detail-grid {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.stock-tracking-detail-card.open .stock-tracking-detail-grid > div {
+  grid-column: span 2;
+}
+
+.stock-tracking-detail-card.open .stock-tracking-detail-grid > .info-condition {
+  grid-column: span 4;
+}
+
+@media (max-width: 900px) {
+  .stock-tracking-detail-card.open .stock-tracking-detail-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .stock-tracking-detail-card.open .stock-tracking-detail-grid > div,
+  .stock-tracking-detail-card.open .stock-tracking-detail-grid > .info-condition {
+    grid-column: span 1;
+  }
+}
+
+/* 56-C-1 stock tracking notification and memo UX */
+.stock-tracking-page > .inline-result {
+  width: fit-content;
+  max-width: min(760px, 100%);
+  padding: 11px 16px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.stock-tracking-page > .inline-success {
+  border: 1px solid #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.stock-tracking-page > .inline-error {
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.stock-tracking-review-help {
+  margin: 12px 0 0;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+/* 56-C-1-2 stock tracking detail final layout polish */
+.stock-tracking-detail-card.open {
+  background: #f8fafc;
+  box-shadow: -20px 0 42px rgba(15, 23, 42, 0.2);
+}
+
+.stock-tracking-detail-card.open .stock-tracking-detail-head {
+  padding: 24px 32px;
+  border-bottom: 1px solid #dfe6ef;
+}
+
+.stock-tracking-detail-head h3 {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.stock-tracking-detail-head p {
+  color: #64748b;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.stock-tracking-detail-badges {
+  gap: 8px;
+}
+
+.tracking-status-badge,
+.tracking-price-badge {
+  height: 28px;
+  min-width: 64px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.stock-tracking-detail-badges .btn {
+  height: 40px;
+  min-width: 72px;
+  border-radius: 14px;
+}
+
+.stock-tracking-detail-card.open .stock-tracking-detail {
+  background: #f8fafc;
+}
+
+.stock-tracking-detail-card.open .stock-tracking-info-card,
+.stock-tracking-detail-card.open .stock-tracking-chart-card {
+  margin-right: 32px;
+  margin-bottom: 28px;
+  margin-left: 32px;
+  padding: 17px 18px;
+  border-color: #e2e8f0;
+  border-radius: 16px;
+  background: #fff;
+}
+
+.stock-tracking-detail-card.open .stock-tracking-info-card:first-of-type {
+  margin-top: 26px;
+}
+
+.stock-tracking-card-title {
+  margin-bottom: 14px;
+}
+
+.stock-tracking-card-title h4,
+.stock-tracking-info-card h4 {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.stock-tracking-card-title span {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.stock-tracking-detail-grid {
+  gap: 11px;
+}
+
+.stock-tracking-detail-grid div {
+  min-height: 70px;
+  padding: 14px 15px;
+  border-color: #e5eaf2;
+  border-radius: 15px;
+  background: #fbfcfe;
+}
+
+.stock-tracking-detail-grid span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.stock-tracking-detail-grid strong {
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.stock-tracking-chart-card {
+  overflow: hidden;
+}
+
+.stock-tracking-chart-range {
+  gap: 12px;
+  margin-bottom: 2px;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.stock-tracking-chart-range span:last-child {
+  color: #475569;
+  font-weight: 700;
+  text-align: right;
+}
+
+.stock-tracking-chart-scroll {
+  border-color: #e2e8f0;
+  border-radius: 16px;
+  background: #fff;
+  scrollbar-color: #94a3b8 #f1f5f9;
+  scrollbar-width: thin;
+}
+
+.stock-tracking-chart-scroll::-webkit-scrollbar {
+  height: 10px;
+}
+
+.stock-tracking-chart-scroll::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: #f1f5f9;
+}
+
+.stock-tracking-chart-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #94a3b8;
+}
+
+.stock-tracking-chart-inner {
+  background: #fff;
+}
+
+.chart-grid-line {
+  stroke: #eef2f7;
+  stroke-width: 1;
+}
+
+.chart-axis-text {
+  fill: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.chart-candle-wick {
+  stroke-width: 1.3;
+}
+
+.chart-base-line {
+  stroke-width: 1.4;
+  stroke-dasharray: 5 5;
+}
+
+.chart-base-label {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.chart-volume-bar {
+  opacity: 0.5;
+}
+
+.stock-tracking-chart-legend {
+  gap: 10px 16px;
+  padding-top: 2px;
+}
+
+.stock-tracking-chart-legend span {
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.stock-tracking-chart-legend span::before {
+  width: 9px;
+  height: 9px;
+  margin-right: 6px;
+}
+
+.stock-tracking-review-field {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.stock-tracking-review-field .select-control {
+  height: 44px;
+  border-radius: 14px;
+  font-size: 14px;
+}
+
+.stock-tracking-review-field textarea {
+  min-height: 138px;
+  border-radius: 14px;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.stock-tracking-review-help {
+  margin-top: 12px;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.stock-tracking-image-placeholder {
+  min-height: 92px;
+  border-color: #cbd5e1;
+  border-radius: 16px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.stock-tracking-detail-card.open .stock-tracking-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  justify-content: space-between;
+  padding: 18px 32px;
+  border-top: 1px solid #dfe6ef;
+  background: #fff;
+}
+
+.stock-tracking-detail-card.open .stock-tracking-actions .btn {
+  height: 46px;
+  min-width: 96px;
+  border-radius: 14px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.stock-tracking-detail-card.open .stock-tracking-actions .btn-danger {
+  border-color: #fecdd3;
+  background: #fff1f2;
+  color: #be123c;
+}
+
+.stock-tracking-detail-card.open .stock-tracking-actions .btn-primary {
+  margin-left: auto;
+  border-color: #111827;
+  background: #111827;
+  color: #fff;
+}
+
+@media (max-width: 900px) {
+  .stock-tracking-detail-card.open .stock-tracking-detail-head,
+  .stock-tracking-detail-card.open .stock-tracking-actions {
+    padding-right: 20px;
+    padding-left: 20px;
+  }
+
+  .stock-tracking-detail-card.open .stock-tracking-info-card,
+  .stock-tracking-detail-card.open .stock-tracking-chart-card {
+    margin-right: 20px;
+    margin-left: 20px;
+  }
+}
+
+
+/* 56-C-2 stock tracking image attachments */
+.stock-tracking-image-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.stock-tracking-image-title .btn {
+  flex: 0 0 auto;
+  height: 36px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.stock-tracking-image-placeholder {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding: 18px;
+  border: 1px dashed #cbd5e1;
+}
+
+.stock-tracking-image-placeholder strong {
+  color: #1e293b;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.stock-tracking-image-placeholder p {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.stock-tracking-image-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.stock-tracking-image-card {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: #fff;
+}
+
+.stock-tracking-image-thumb {
+  width: 112px;
+  height: 88px;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+  cursor: pointer;
+}
+
+.stock-tracking-image-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.stock-tracking-image-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.stock-tracking-image-meta-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.stock-tracking-image-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: #eef6ff;
+  color: #0f4a8a;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.stock-tracking-image-meta > strong {
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stock-tracking-image-caption {
+  min-height: 20px;
+  margin: 0;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.stock-tracking-image-caption.muted {
+  color: #94a3b8;
+}
+
+.stock-tracking-image-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: auto;
+}
+
+.stock-tracking-image-actions .btn {
+  height: 30px;
+  min-width: 66px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.stock-tracking-image-modal {
+  width: min(720px, calc(100vw - 40px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+}
+
+.stock-tracking-image-form {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap: 16px;
+  padding-top: 10px;
+}
+
+.stock-tracking-image-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.stock-tracking-image-form .wide {
+  grid-column: 1 / -1;
+}
+
+.stock-tracking-image-form textarea {
+  min-height: 110px;
+  line-height: 1.55;
+}
+
+.stock-tracking-image-help {
+  grid-column: 1 / -1;
+  margin: -4px 0 0;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.stock-tracking-modal-actions {
+  position: static !important;
+  padding: 18px 0 0 !important;
+  border-top: 0 !important;
+}
+
+.stock-tracking-image-preview-modal {
+  width: min(1040px, calc(100vw - 44px));
+  max-height: calc(100vh - 44px);
+  overflow: auto;
+}
+
+.stock-tracking-image-preview-modal .trade-journal-detail-header p {
+  margin: 4px 0 0;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.stock-tracking-image-preview {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 360px;
+  padding: 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: #f8fafc;
+}
+
+.stock-tracking-image-preview img {
+  max-width: 100%;
+  max-height: calc(100vh - 240px);
+  object-fit: contain;
+  border-radius: 10px;
+}
+
+.stock-tracking-image-preview-caption {
+  margin: 12px 0 0;
+  color: #334155;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 720px) {
+  .stock-tracking-image-card,
+  .stock-tracking-image-form {
+    grid-template-columns: 1fr;
+  }
+
+  .stock-tracking-image-thumb {
+    width: 100%;
+    height: 180px;
+  }
+
+  .stock-tracking-image-title {
+    flex-direction: column;
+  }
+}
+
+
+/* Stock tracking detail sticky header overlap fix */
+.stock-tracking-detail-card.open .stock-tracking-detail-head {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  isolation: isolate;
+  background: #fff;
+  box-shadow: 0 1px 0 #dfe6ef, 0 10px 18px rgba(248, 250, 252, 0.96);
+}
+
+.stock-tracking-detail-card.open .stock-tracking-detail-head::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: -18px;
+  left: 0;
+  height: 18px;
+  pointer-events: none;
+  background: linear-gradient(180deg, #f8fafc 0%, rgba(248, 250, 252, 0));
+}
+
+.stock-tracking-candle-chart,
+.stock-tracking-chart-card,
+.stock-tracking-chart-legend {
+  position: relative;
+  z-index: 0;
+}
+
+.stock-tracking-chart-legend {
+  isolation: isolate;
+}
+
+
+/* 56-C-3 stock tracking return summary */
+.stock-tracking-return-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-bottom: 12px;
+  padding: 9px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.stock-tracking-return-summary.muted {
+  color: #64748b;
+}
+
+.stock-tracking-return-summary-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.stock-tracking-return-summary-item:not(:last-child)::after {
+  content: "·";
+  margin-left: 6px;
+  color: #cbd5e1;
+  font-weight: 800;
+}
+
+.stock-tracking-return-summary-item strong {
+  font-weight: 800;
+}
+
+.stock-tracking-return-positive {
+  color: #dc2626;
+}
+
+.stock-tracking-return-negative {
+  color: #2563eb;
+}
+
+.stock-tracking-return-neutral {
+  color: #64748b;
+}
+
+.stock-tracking-return-summary-item.muted {
+  color: #64748b;
+}
+
+@media (max-width: 720px) {
+  .stock-tracking-return-summary-item {
+    white-space: normal;
+  }
+}
+
+
+/* 56-D stock tracking group analysis */
+.stock-tracking-analysis {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.stock-tracking-analysis-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.stock-tracking-analysis-card {
+  min-height: 86px;
+  padding: 16px 18px;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: #fff;
+}
+
+.stock-tracking-analysis-card span {
+  display: block;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.stock-tracking-analysis-card strong {
+  display: block;
+  margin-top: 8px;
+  color: #0f172a;
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.stock-tracking-analysis-table-shell {
+  overflow-x: auto;
+}
+
+.stock-tracking-analysis-table th,
+.stock-tracking-analysis-table td {
+  white-space: nowrap;
+}
+
+.stock-tracking-analysis-table tbody tr {
+  cursor: pointer;
+}
+
+.stock-tracking-analysis-row-selected td,
+.stock-tracking-analysis-table tr.selected td {
+  background: #eef6ff;
+}
+
+.analysis-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.analysis-count-badge.success {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.analysis-count-badge.fail {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.stock-tracking-analysis-detail {
+  padding: 24px;
+}
+
+.stock-tracking-analysis-compare {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.stock-tracking-analysis-compare > div {
+  padding: 14px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.stock-tracking-analysis-compare span {
+  display: block;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.stock-tracking-analysis-compare strong {
+  display: block;
+  margin-top: 8px;
+  color: #0f172a;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.stock-tracking-analysis-note {
+  margin: 14px 0 0;
+  color: #475569;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.stock-tracking-analysis-samples {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.stock-tracking-analysis-sample-card {
+  padding: 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: #fff;
+}
+
+.stock-tracking-analysis-sample-card h4 {
+  margin: 0 0 12px;
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.stock-tracking-analysis-sample-empty {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.stock-tracking-analysis-sample-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stock-tracking-analysis-sample-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.9fr) minmax(0, 1.4fr);
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid #edf2f7;
+}
+
+.stock-tracking-analysis-sample-row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.stock-tracking-analysis-sample-row strong,
+.stock-tracking-analysis-sample-row span {
+  display: block;
+}
+
+.stock-tracking-analysis-sample-row strong {
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.stock-tracking-analysis-sample-row > div:first-child span {
+  margin-top: 3px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.stock-tracking-analysis-sample-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 8px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+@media (max-width: 980px) {
+  .stock-tracking-analysis-summary,
+  .stock-tracking-analysis-compare,
+  .stock-tracking-analysis-samples {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* 56-E stock tracking GPT prompt copy */
+.stock-tracking-analysis-detail-head {
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.stock-tracking-analysis-detail-head .btn {
+  flex: 0 0 auto;
+  height: 42px;
+  border-radius: 14px;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.stock-tracking-analysis-copy-notice {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border: 1px solid #dbeafe;
+  border-radius: 12px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.stock-tracking-analysis-copy-notice.disabled {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+  color: #64748b;
+}
+
+@media (max-width: 720px) {
+  .stock-tracking-analysis-detail-head {
+    flex-direction: column;
+  }
+
+  .stock-tracking-analysis-detail-head .btn {
+    width: 100%;
+  }
+}
+
+
+.stock-tracking-analysis-reliability {
+  display: block;
+  margin-top: 3px;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+
+/* Stock tracking compact alerts and pagination */
+.stock-tracking-page.space-y-4 {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.stock-tracking-page > .page-header {
+  margin-bottom: 4px;
+}
+
+.stock-tracking-page > .inline-result {
+  margin: 0 0 2px;
+}
+
+.stock-tracking-page > .inline-result + .stock-tracking-tabs-card,
+.stock-tracking-page > .stock-tracking-tabs-card {
+  margin-top: 0;
+}
+
+.stock-tracking-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 14px;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.stock-tracking-pagination-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.stock-tracking-pagination-buttons .btn {
+  min-width: 42px;
+  height: 34px;
+  border-radius: 10px;
+}
+
+.stock-tracking-pagination-buttons .btn.active,
+.stock-tracking-pagination-buttons .btn:disabled.active {
+  border-color: #111827;
+  background: #111827;
+  color: #fff;
+  opacity: 1;
+}
+
+@media (max-width: 720px) {
+  .stock-tracking-pagination {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .stock-tracking-pagination-buttons {
+    justify-content: flex-start;
+  }
+}
+
+/* Stock tracking group base metric comparison */
+.stock-tracking-analysis-metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: #fff;
+}
+
+.stock-tracking-analysis-metric-table-shell {
+  overflow-x: auto;
+}
+
+.stock-tracking-analysis-metric-table {
+  min-width: 820px;
+}
+
+.stock-tracking-analysis-metric-table th {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.stock-tracking-analysis-metric-table td {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.stock-tracking-analysis-metric-table td:first-child {
+  color: #111827;
+}
+
+.stock-tracking-analysis-metric-interpretation {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* Stock tracking status badge final colors */
+.stock-tracking-table .tracking-status-badge,
+.stock-tracking-detail-badges .tracking-status-badge {
+  border-width: 1px;
+  font-weight: 800;
+}
+
+.stock-tracking-table .tracking-status-badge.status-tracking,
+.stock-tracking-detail-badges .tracking-status-badge.status-tracking {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #2563eb;
+}
+
+.stock-tracking-table .tracking-status-badge.status-success,
+.stock-tracking-detail-badges .tracking-status-badge.status-success {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+  color: #047857;
+}
+
+.stock-tracking-table .tracking-status-badge.status-fail,
+.stock-tracking-detail-badges .tracking-status-badge.status-fail {
+  background: #fff1f2;
+  border-color: #fecdd3;
+  color: #be123c;
+}
+
+.stock-tracking-table .tracking-status-badge.status-hold,
+.stock-tracking-detail-badges .tracking-status-badge.status-hold {
+  background: #fffbeb;
+  border-color: #fde68a;
+  color: #b45309;
+}
+
+.stock-tracking-table .tracking-status-badge.status-excluded,
+.stock-tracking-detail-badges .tracking-status-badge.status-excluded {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #475569;
+}
+
+/* Stock price analysis segmented tabs */
+.price-summary-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 0 18px;
+  padding: 6px;
+  border: 1px solid #dbe3ee;
+  border-radius: 999px;
+  background: #eef3f8;
+  box-shadow: inset 0 1px 1px rgba(15, 23, 42, 0.03);
+}
+
+.price-summary-tab {
+  min-width: 108px;
+  height: 42px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 22px;
+  background: transparent;
+  color: #64748b;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0;
+  cursor: pointer;
+  transition: background-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.price-summary-tab:hover {
+  color: #111827;
+}
+
+.price-summary-tab.active {
+  background: #ffffff;
+  color: #111827;
+  box-shadow: 0 2px 7px rgba(15, 23, 42, 0.16);
+}
+
+.price-summary-tab:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.22);
+  outline-offset: 2px;
+}
+
+@media (max-width: 720px) {
+  .price-summary-tabs {
+    width: 100%;
+    overflow-x: auto;
+    border-radius: 22px;
+  }
+
+  .price-summary-tab {
+    flex: 1 0 auto;
+    min-width: 96px;
+    padding: 0 14px;
+    font-size: 14px;
+  }
+}
+
+/* Watchlist view segmented control */
+.watchlist-view-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 0 16px;
+  padding: 6px;
+  border: 1px solid #dbe3ee;
+  border-radius: 999px;
+  background: #eef3f8;
+  box-shadow: inset 0 1px 1px rgba(15, 23, 42, 0.03);
+}
+
+.watchlist-view-tab {
+  min-width: 104px;
+  height: 40px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 20px;
+  background: transparent;
+  color: #64748b;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0;
+  cursor: pointer;
+  transition: background-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.watchlist-view-tab:hover {
+  color: #111827;
+}
+
+.watchlist-view-tab.active {
+  background: #ffffff;
+  color: #111827;
+  border-color: transparent;
+  box-shadow: 0 2px 7px rgba(15, 23, 42, 0.16);
+}
+
+.watchlist-view-tabs .hint-icon {
+  margin-left: 8px;
+}
+
+.watchlist-view-tab:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.22);
+  outline-offset: 2px;
+}
+
+@media (max-width: 720px) {
+  .watchlist-view-tabs {
+    width: 100%;
+    overflow-x: auto;
+    border-radius: 22px;
+  }
+
+  .watchlist-view-tab {
+    flex: 1 0 auto;
+    min-width: 96px;
+    padding: 0 14px;
+    font-size: 14px;
+  }
+}
+
+/* Stock data analysis typography and spacing polish */
+.stock-data-analysis-page {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.stock-data-analysis-page .page-header {
+  padding: 30px 32px;
+  border-radius: 18px;
+}
+
+.stock-data-analysis-page .page-title {
+  margin-bottom: 8px;
+  font-size: 34px;
+  font-weight: 800;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.stock-data-analysis-page .page-description {
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.stock-data-analysis-page .card {
+  border-radius: 18px;
+}
+
+.stock-data-analysis-page .section-title {
+  margin-bottom: 18px;
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.stock-data-analysis-page .price-page-content {
+  grid-template-columns: 400px minmax(0, 1fr);
+  gap: 18px;
+}
+
+.stock-data-analysis-page .price-stock-list-card,
+.stock-data-analysis-page .price-daily-table-card {
+  padding: 24px;
+}
+
+.stock-data-analysis-page .price-list-title-row {
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 0;
+  margin: -4px 0 12px;
+  color: #0f172a;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.stock-data-analysis-page .price-list-search-row {
+  grid-template-columns: 124px minmax(0, 1fr) 86px;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.stock-data-analysis-page .input-control,
+.stock-data-analysis-page .select-control,
+.stock-data-analysis-page .btn {
+  min-height: 42px;
+  font-size: 14px;
+}
+
+.stock-data-analysis-page .btn {
+  font-weight: 700;
+}
+
+.stock-data-analysis-page .input-control::placeholder {
+  font-size: 14px;
+}
+
+.stock-data-analysis-page .price-stock-card-list {
+  gap: 10px;
+}
+
+.stock-data-analysis-page .price-stock-card-item {
+  gap: 5px;
+  padding: 15px 16px;
+  border-radius: 15px;
+}
+
+.stock-data-analysis-page .price-stock-card-item strong {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.stock-data-analysis-page .price-stock-card-item p {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.stock-data-analysis-page .price-stock-card-item.selected {
+  background: #f1f8ff;
+  border-color: #93c5fd;
+  box-shadow: inset 4px 0 0 #0ea5e9;
+}
+
+.stock-data-analysis-page .pagination-bar {
+  margin-top: 14px;
+  font-size: 13px;
+}
+
+.stock-data-analysis-page .pagination-info {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.stock-data-analysis-page .pagination-actions .btn {
+  min-height: 38px;
+}
+
+.stock-data-analysis-page .price-workspace-head {
+  margin-bottom: 16px;
+  padding: 17px 18px;
+  border-radius: 16px;
+  background: #f8fafc;
+}
+
+.stock-data-analysis-page .price-workspace-head h3 {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.stock-data-analysis-page .price-workspace-head p,
+.stock-data-analysis-page .price-workspace-meta {
+  margin: 7px 0 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.stock-data-analysis-page .price-workspace-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+
+.stock-data-analysis-page .price-workspace-meta > span:not(:first-child)::before {
+  content: "·";
+  margin-right: 7px;
+  color: #94a3b8;
+}
+
+.stock-data-analysis-page .price-workspace-meta .price-source-badge::before {
+  content: none;
+  margin: 0;
+}
+
+.stock-data-analysis-page .price-source-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 5px 10px;
+  border: 1px solid #dbe3ee;
+  border-radius: 9px;
+  background: #fff;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.stock-data-analysis-page .price-summary-tabs {
+  min-height: 52px;
+  margin-bottom: 18px;
+}
+
+.stock-data-analysis-page .price-summary-tab {
+  height: 42px;
+  min-width: 112px;
+  padding: 0 24px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.stock-data-analysis-page .price-detail-stack {
+  gap: 16px;
+}
+
+.stock-data-analysis-page .price-detail-section {
+  gap: 12px;
+}
+
+.stock-data-analysis-page .price-detail-header h3 {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.stock-data-analysis-page .price-detail-actions {
+  align-items: center;
+}
+
+.stock-data-analysis-page .price-meta-grid {
+  gap: 12px;
+}
+
+.stock-data-analysis-page .price-meta-card {
+  min-height: 84px;
+  padding: 15px 16px;
+  border-radius: 15px;
+  background: #f8fafc;
+}
+
+.stock-data-analysis-page .price-meta-label {
+  margin-bottom: 7px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.stock-data-analysis-page .price-meta-card strong {
+  overflow-wrap: anywhere;
+  color: #0f172a;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.stock-data-analysis-page .price-card-note,
+.stock-data-analysis-page .evidence-note-list,
+.stock-data-analysis-page .text-sm {
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.stock-data-analysis-page .price-card-note,
+.stock-data-analysis-page .evidence-note-list {
+  color: #64748b;
+}
+
+.stock-data-analysis-page .evidence-note-block,
+.stock-data-analysis-page .price-detail-section .rounded-lg.border {
+  border-color: #dbe3ee;
+  border-radius: 15px;
+  background: #f8fafc;
+  padding: 16px 18px;
+}
+
+.stock-data-analysis-page .evidence-note-title {
+  margin-bottom: 10px;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.stock-data-analysis-page .price-detail-section .rounded-lg.border span {
+  color: #475569;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.stock-data-analysis-page .evidence-actions .btn,
+.stock-data-analysis-page .price-detail-header .btn {
+  min-height: 42px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.stock-data-analysis-page .empty-state,
+.stock-data-analysis-page .price-detail-section .empty-state {
+  padding: 26px;
+  color: #64748b;
+  font-size: 14px;
+}
+
+.stock-data-analysis-page .price-daily-table-shell {
+  border-radius: 14px;
+  scrollbar-color: #94a3b8 #f1f5f9;
+  scrollbar-width: thin;
+}
+
+.stock-data-analysis-page .price-daily-table th {
+  padding: 11px 12px;
+  background: #f8fafc;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.stock-data-analysis-page .price-daily-table td {
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.stock-data-analysis-page .price-daily-table tbody tr {
+  min-height: 44px;
+}
+
+.stock-data-analysis-page .evidence-json-view {
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+@media (max-width: 1200px) {
+  .stock-data-analysis-page .price-page-content {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .stock-data-analysis-page .price-meta-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .stock-data-analysis-page .page-header {
+    padding: 24px;
+  }
+
+  .stock-data-analysis-page .page-title {
+    font-size: 30px;
+  }
+
+  .stock-data-analysis-page .price-stock-list-card,
+  .stock-data-analysis-page .price-daily-table-card {
+    padding: 20px;
+  }
+
+  .stock-data-analysis-page .price-list-search-row,
+  .stock-data-analysis-page .price-meta-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .stock-data-analysis-page .price-summary-tabs {
+    width: 100%;
+  }
+}
+
+/* Watchlist view/action compact row */
+.watchlist-view-action-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 0 0 16px;
+}
+
+.watchlist-view-action-row .watchlist-view-tabs {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.watchlist-view-action-row .watchlist-selection-bar {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.watchlist-view-action-row .watchlist-selection-count {
+  flex: 0 0 auto;
+  max-width: 360px;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.watchlist-view-action-row .watchlist-selection-actions {
+  flex: 1 1 auto;
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.watchlist-view-action-row .watchlist-selection-actions .btn {
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+@media (max-width: 1280px) {
+  .watchlist-view-action-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .watchlist-view-action-row .watchlist-selection-bar {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid var(--color-hairline-cloud);
+    border-radius: 14px;
+    background: #f8fafc;
+  }
+}
+
+@media (max-width: 760px) {
+  .watchlist-view-action-row .watchlist-selection-bar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .watchlist-view-action-row .watchlist-selection-count {
+    max-width: 100%;
+    white-space: normal;
+  }
+}
+
+/* Stock data analysis compact tab-to-card spacing */
+
+.stock-data-analysis-page .price-summary-tabs {
+  margin-bottom: 8px;
+}
+
+.stock-data-analysis-page .price-detail-stack {
+  gap: 10px;
+}
+
+.stock-data-analysis-page .price-detail-section {
+  gap: 8px;
+}
+
+.stock-data-analysis-page .price-detail-section > .price-detail-header:has(.badge:only-child) {
+  min-height: 0;
+  margin-bottom: -2px;
+}
+
+.stock-data-analysis-page .price-detail-section > .price-detail-header:has(.badge:only-child) .badge {
+  font-size: 12px;
+  line-height: 1.2;
+}

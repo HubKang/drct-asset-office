@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,6 +29,7 @@ from backend.app.api.routes_reports import router as reports_router
 from backend.app.api.routes_schema_comments import router as schema_comments_router
 from backend.app.api.routes_stocks import router as stocks_router
 from backend.app.api.routes_stock_prices import router as stock_prices_router
+from backend.app.api.routes_stock_tracking import router as stock_tracking_router
 from backend.app.api.routes_telegram import router as telegram_router
 from backend.app.api.routes_trade_training import router as trade_training_router
 from backend.app.api.routes_trade_journals import router as trade_journals_router
@@ -56,6 +57,7 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(stocks_router)
 app.include_router(stock_prices_router)
+app.include_router(stock_tracking_router)
 app.include_router(market_metrics_router)
 app.include_router(market_calendar_router)
 app.include_router(market_themes_router)
@@ -84,3 +86,4 @@ app.include_router(trade_journals_router)
 app.include_router(trade_reviews_router)
 app.include_router(architecture_router)
 app.mount("/static", StaticFiles(directory=str(PROJECT_ROOT / "data")), name="static")
+app.mount("/uploads", StaticFiles(directory=str(PROJECT_ROOT / "backend" / "uploads"), check_dir=False), name="uploads")

@@ -1,4 +1,4 @@
-import { advisoryPackageApiRepository } from "@/services/api/advisoryPackageApiRepository";
+﻿import { advisoryPackageApiRepository } from "@/services/api/advisoryPackageApiRepository";
 import { analysisIndicatorApiRepository } from "@/services/api/analysisIndicatorApiRepository";
 import { architectureApiRepository } from "@/services/api/architectureApiRepository";
 import { backtestApiRepository } from "@/services/api/backtestApiRepository";
@@ -16,6 +16,7 @@ import { gptPromptTemplateApiRepository } from "@/services/api/gptPromptTemplate
 import { schemaCommentApiRepository } from "@/services/api/schemaCommentApiRepository";
 import { stockApiRepository } from "@/services/api/stockApiRepository";
 import { stockPriceApiRepository } from "@/services/api/stockPriceApiRepository";
+import { stockTrackingApiRepository } from "@/services/api/stockTrackingApiRepository";
 import { tradeJournalApiRepository } from "@/services/api/tradeJournalApiRepository";
 import { tradeReviewApiRepository } from "@/services/api/tradeReviewApiRepository";
 import { tradeTrainingApiRepository } from "@/services/api/tradeTrainingApiRepository";
@@ -31,6 +32,7 @@ import { gptPromptTemplateMockRepository } from "@/services/mock/gptPromptTempla
 import { schemaCommentMockRepository } from "@/services/mock/schemaCommentMockRepository";
 import { stockMockRepository } from "@/services/mock/stockMockRepository";
 import { stockPriceMockRepository } from "@/services/mock/stockPriceMockRepository";
+import { stockTrackingMockRepository } from "@/services/mock/stockTrackingMockRepository";
 import { watchlistMockRepository } from "@/services/mock/watchlistMockRepository";
 import { appConfig } from "@/services/config/appConfig";
 
@@ -42,6 +44,7 @@ export const repositories = {
   backtest: backtestApiRepository,
   stocks: useMock ? stockMockRepository : stockApiRepository,
   stockPrices: useMock ? stockPriceMockRepository : stockPriceApiRepository,
+  stockTracking: useMock ? stockTrackingMockRepository : stockTrackingApiRepository,
   watchlist: useMock ? watchlistMockRepository : watchlistApiRepository,
   schemaComments: useMock ? schemaCommentMockRepository : schemaCommentApiRepository,
   news: useMock ? newsMockRepository : newsApiRepository,

@@ -532,7 +532,7 @@ function StockPricesPage() {
   const executiveSummary = (advisoryPackage?.executive_summary_for_gpt ?? null) as Record<string, unknown> | null;
 
   return (
-    <div className="space-y-4">
+    <div className="stock-data-analysis-page space-y-4">
       <PageHeader title="관심종목 Data분석" description="관심종목의 가격·시장지표를 확인하고 GPT 분석 근거를 구성합니다." />
 
       <div className="price-page-content">
@@ -615,27 +615,26 @@ function StockPricesPage() {
             <>
               <div className="price-workspace-head">
                 <h3>{`${selectedStock.stock_name} 분석`}</h3>
-                <p>{`${selectedStock.stock_code} · ${selectedStock.market || "-"} · ${PRICE_WORKSPACE_SOURCE_LABEL}`}</p>
+                <div className="price-workspace-meta">
+                  <span>{selectedStock.stock_code}</span>
+                  <span>{selectedStock.market || "-"}</span>
+                  <span className="price-source-badge">{PRICE_WORKSPACE_SOURCE_LABEL}</span>
+                </div>
               </div>
-              <div className="tab-group">
-                <button type="button" className={summaryTab === "price" ? "btn btn-primary" : "btn btn-secondary"} onClick={() => setSummaryTab("price")}>
+              <div className="price-summary-tabs" role="tablist" aria-label="관심 종목 분석 탭">
+                <button type="button" role="tab" aria-selected={summaryTab === "price"} className={summaryTab === "price" ? "price-summary-tab active" : "price-summary-tab"} onClick={() => setSummaryTab("price")}>
                   가격 요약
                 </button>
-                <button type="button" className={summaryTab === "market" ? "btn btn-primary" : "btn btn-secondary"} onClick={() => setSummaryTab("market")}>
+                <button type="button" role="tab" aria-selected={summaryTab === "market"} className={summaryTab === "market" ? "price-summary-tab active" : "price-summary-tab"} onClick={() => setSummaryTab("market")}>
                   시장지표
                 </button>
-                <button type="button" className={summaryTab === "gpt" ? "btn btn-primary" : "btn btn-secondary"} onClick={() => setSummaryTab("gpt")}>
+                <button type="button" role="tab" aria-selected={summaryTab === "gpt"} className={summaryTab === "gpt" ? "price-summary-tab active" : "price-summary-tab"} onClick={() => setSummaryTab("gpt")}>
                   GPT 패키지
                 </button>
               </div>
 
               <div className="price-detail-stack">
                 {summaryTab === "price" ? <section className="price-detail-section">
-                  <div className="price-detail-header">
-                    <div className="ml-auto">
-                      <span className="badge badge-blue">{PRICE_WORKSPACE_SOURCE_LABEL}</span>
-                    </div>
-                  </div>
                   {summaryLoading ? <p className="text-sm text-muted">가격 요약을 불러오는 중입니다.</p> : null}
                   {!summaryLoading && summaryError ? <p className="text-sm text-rose-600">{summaryError}</p> : null}
                   {!summaryLoading && !summaryError && selectedSummary ? (

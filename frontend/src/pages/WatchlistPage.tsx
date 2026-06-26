@@ -466,49 +466,47 @@ function WatchlistPage() {
           </button>
         </form>
 
-        <div className="watchlist-view-tabs">
-          <button type="button" className={`watchlist-view-tab ${viewMode === "list" ? "active" : ""}`} onClick={() => setViewMode("list")}>
-            전체 목록
-          </button>
-          <button type="button" className={`watchlist-view-tab ${viewMode === "theme" ? "active" : ""}`} onClick={() => setViewMode("theme")}>
-            테마별 보기
-          </button>
-          <span className="hint-icon" title="관심종목을 연결된 테마 기준으로 그룹화하여 보여줍니다. 테마가 없는 종목은 ‘테마 미지정’ 그룹에 표시됩니다.">
-            ⓘ
-          </span>
-        </div>
+        <div className="watchlist-view-action-row">
+          <div className="watchlist-view-tabs">
+            <button type="button" className={`watchlist-view-tab ${viewMode === "list" ? "active" : ""}`} onClick={() => setViewMode("list")}>
+              전체 목록
+            </button>
+            <button type="button" className={`watchlist-view-tab ${viewMode === "theme" ? "active" : ""}`} onClick={() => setViewMode("theme")}>
+              테마별 보기
+            </button>
+            <span className="hint-icon" title="관심종목을 연결된 테마 기준으로 그룹화하여 보여줍니다. 테마가 없는 종목은 ‘테마 미지정’ 그룹에 표시됩니다.">
+              ⓘ
+            </span>
+          </div>
 
-        <div className="watchlist-selection-bar">
-          <div className="watchlist-selection-count">
-            {selectedWatchlistStockIds.length > 0 ? `선택 ${selectedWatchlistStockIds.length}건` : "관심종목을 선택하면 작업을 실행할 수 있습니다."}
-            {selectedWatchlistStockIds.length === 0 ? (
-              <span className="hint-icon" title="선택한 관심종목을 대상으로 뉴스, 공시, 가격 데이터를 수집하거나 GPT 자료 패키지를 생성합니다.">
-                ⓘ
-              </span>
+          <div className="watchlist-selection-bar">
+            {selectedWatchlistStockIds.length > 0 ? (
+              <div className="watchlist-selection-count">선택 {selectedWatchlistStockIds.length}건</div>
             ) : null}
+            <div className="watchlist-selection-actions">
+              <button className="btn btn-primary" disabled={selectedWatchlistStockIds.length === 0 || actionLoading === "collect-selected-news"} onClick={() => void onCollectSelectedNews()}>
+                뉴스 수집
+              </button>
+              <button className="btn btn-primary" disabled={selectedWatchlistStockIds.length === 0 || actionLoading === "collect-selected-disclosures"} onClick={() => void onCollectSelectedDisclosures()}>
+                공시 수집
+              </button>
+              <button
+                className="btn btn-secondary"
+                title="가격 데이터를 갱신하면 기술지표가 자동으로 재계산됩니다. 이어서 시장지표도 함께 갱신합니다."
+                disabled={selectedWatchlistStockIds.length === 0 || actionLoading === "refresh-selected-price-market-metrics"}
+                onClick={() => void onRefreshSelectedPriceAndMarketMetrics()}
+              >
+                {actionLoading === "refresh-selected-price-market-metrics" ? "가격·시장지표 갱신 중..." : "가격·시장지표 갱신"}
+              </button>
+              <button className="btn btn-secondary" disabled={selectedWatchlistStockIds.length === 0} onClick={() => navigate("/advisory-packages")}>
+                GPT 자료 패키지
+              </button>
+              <button className="btn btn-secondary" disabled={selectedWatchlistStockIds.length === 0} onClick={() => navigate("/stock-prices")}>
+                Data분석 이동
+              </button>
+            </div>
           </div>
-          <div className="watchlist-selection-actions">
-            <button className="btn btn-primary" disabled={selectedWatchlistStockIds.length === 0 || actionLoading === "collect-selected-news"} onClick={() => void onCollectSelectedNews()}>
-              뉴스 수집
-            </button>
-            <button className="btn btn-primary" disabled={selectedWatchlistStockIds.length === 0 || actionLoading === "collect-selected-disclosures"} onClick={() => void onCollectSelectedDisclosures()}>
-              공시 수집
-            </button>
-            <button
-              className="btn btn-secondary"
-              title="가격 데이터를 갱신하면 기술지표가 자동으로 재계산됩니다. 이어서 시장지표도 함께 갱신합니다."
-              disabled={selectedWatchlistStockIds.length === 0 || actionLoading === "refresh-selected-price-market-metrics"}
-              onClick={() => void onRefreshSelectedPriceAndMarketMetrics()}
-            >
-              {actionLoading === "refresh-selected-price-market-metrics" ? "가격·시장지표 갱신 중..." : "가격·시장지표 갱신"}
-            </button>
-            <button className="btn btn-secondary" disabled={selectedWatchlistStockIds.length === 0} onClick={() => navigate("/advisory-packages")}>
-              GPT 자료 패키지
-            </button>
-            <button className="btn btn-secondary" disabled={selectedWatchlistStockIds.length === 0} onClick={() => navigate("/stock-prices")}>
-              Data분석 이동
-            </button>
-          </div>
+
         </div>
 
         {actionMessage ? <div className="inline-result inline-success">{actionMessage}</div> : null}

@@ -21,13 +21,19 @@
   },
   {
     "menuKey": "stocks",
-    "title": "관심종목 Data수집",
-    "routeKey": "watchlist"
+    "title": "관심 종목",
+    "routeKey": "watchlist",
+    "children": [
+      {
+        "title": "관심 종목 분석",
+        "routeKey": "stock-prices"
+      }
+    ]
   },
   {
     "menuKey": "stocks",
-    "title": "관심종목 Data분석",
-    "routeKey": "stock-prices"
+    "title": "종목 트래킹",
+    "routeKey": "stock-tracking"
   },
   {
     "menuKey": "market",
@@ -36,7 +42,7 @@
   },
   {
     "menuKey": "market",
-    "title": "시장 트렌드 분석",
+    "title": "시장 수급 분석",
     "routeKey": "market-trends"
   },
   {
