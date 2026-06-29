@@ -78,6 +78,41 @@ export type RegisterTrackingItemsFromCandidatesResponse = {
   message: string;
 };
 
+export type CreateTrackingFromConditionResultItem = {
+  stock_code: string;
+  stock_name?: string | null;
+  market?: string | null;
+  current_price?: number | null;
+  change_rate?: number | null;
+  volume?: number | null;
+  trading_value?: number | null;
+};
+
+export type CreateTrackingFromConditionResultsPayload = {
+  group_id: number;
+  condition_no?: string | null;
+  condition_name?: string | null;
+  detected_date: string;
+  items: CreateTrackingFromConditionResultItem[];
+};
+
+export type CreateTrackingFromConditionResultStatus = {
+  stock_code: string | null;
+  stock_name: string | null;
+  status: "CREATED" | "SKIPPED";
+  tracking_item_id?: number | null;
+  reason?: string | null;
+};
+
+export type CreateTrackingFromConditionResultsResponse = {
+  requested_count?: number;
+  success: boolean;
+  created_count: number;
+  skipped_count: number;
+  item_ids: number[];
+  items?: CreateTrackingFromConditionResultStatus[];
+  message: string;
+};
 export type UpdateStockTrackingReviewPayload = {
   status: StockTrackingStatus;
   review_note?: string | null;

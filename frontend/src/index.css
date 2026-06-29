@@ -17561,9 +17561,9 @@ button.chip-light {
 
 .stock-data-analysis-page .page-title {
   margin-bottom: 8px;
-  font-size: 34px;
-  font-weight: 800;
-  line-height: 1.25;
+  font-size: 31px;
+  font-weight: 600;
+  line-height: 1.15;
   letter-spacing: 0;
 }
 
@@ -17990,4 +17990,365 @@ button.chip-light {
 .stock-data-analysis-page .price-detail-section > .price-detail-header:has(.badge:only-child) .badge {
   font-size: 12px;
   line-height: 1.2;
+}
+
+/* Market supply condition result actions */
+.market-trend-result-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.market-trend-result-actions-left,
+.market-trend-result-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.market-trend-result-actions-right {
+  margin-left: auto;
+}
+
+.market-trend-result-actions .btn {
+  min-height: 40px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+@media (max-width: 720px) {
+  .market-trend-result-actions,
+  .market-trend-result-actions-left,
+  .market-trend-result-actions-right {
+    width: 100%;
+  }
+
+  .market-trend-result-actions-right {
+    margin-left: 0;
+  }
+}
+/* Stock data analysis title and KPI compact final polish */
+.stock-data-analysis-page .page-title {
+  font-size: 31px;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: 0;
+}
+
+.stock-data-analysis-page .price-stock-list-card .section-title {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.stock-data-analysis-page .price-stock-card-item strong {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.stock-data-analysis-page .price-stock-card-item p {
+  font-size: 13px;
+}
+
+.stock-data-analysis-page .price-analysis-workspace-card {
+  padding-top: 28px;
+}
+
+.stock-data-analysis-page .price-workspace-head {
+  margin-bottom: 14px;
+}
+
+.stock-data-analysis-page .price-workspace-head h3 {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.stock-data-analysis-page .price-workspace-meta {
+  font-size: 13px;
+}
+
+.stock-data-analysis-page .price-summary-tab {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.stock-data-analysis-page .price-meta-grid {
+  gap: 10px;
+}
+
+.stock-data-analysis-page .price-meta-card {
+  min-height: 72px;
+  padding: 12px 14px;
+  border-radius: 14px;
+}
+
+.stock-data-analysis-page .price-meta-label {
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.stock-data-analysis-page .price-meta-card strong {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.stock-data-analysis-page .data-table th {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.stock-data-analysis-page .data-table td {
+  font-size: 13px;
+}
+
+/* Fixed treemap frames */
+.theme-treemap {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: var(--theme-treemap-height, 520px);
+  min-height: var(--theme-treemap-height, 520px);
+  max-height: var(--theme-treemap-height, 520px);
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: #111827;
+  isolation: isolate;
+}
+
+.dashboard-theme-treemap-frame {
+  --theme-treemap-height: 460px;
+  background: #f8fafc;
+}
+
+.monthly-theme-treemap-card {
+  --theme-treemap-height: 620px;
+  min-height: var(--theme-treemap-height);
+  max-height: var(--theme-treemap-height);
+  background: #ffffff;
+}
+
+.theme-treemap-tile,
+.theme-treemap-tile.large,
+.theme-treemap-tile.medium,
+.theme-treemap-tile.small,
+.theme-treemap-tile.tiny {
+  position: absolute;
+  min-width: 0;
+  min-height: 0;
+  grid-column: auto;
+  grid-row: auto;
+  flex: none;
+  justify-content: space-between;
+  gap: 5px;
+  margin: 0;
+  border-radius: 7px;
+  padding: clamp(5px, 0.85vw, 13px);
+  outline-offset: -2px;
+  cursor: pointer;
+}
+
+.theme-treemap-tile:hover {
+  z-index: 3;
+  transform: none;
+  outline: 2px solid rgba(255, 255, 255, 0.85);
+}
+
+.theme-treemap-tile.selected {
+  z-index: 4;
+  outline-width: 3px;
+  outline-offset: -3px;
+}
+
+.theme-treemap-tile.label-full .theme-treemap-title {
+  font-size: clamp(18px, 1.65vw, 30px);
+}
+
+.theme-treemap-tile.label-compact .theme-treemap-title,
+.theme-treemap-tile.label-title .theme-treemap-title {
+  display: -webkit-box;
+  font-size: 13px;
+  line-height: 1.12;
+  -webkit-line-clamp: 2;
+}
+
+.theme-treemap-tile.label-title {
+  justify-content: center;
+  padding: 5px 7px;
+}
+
+.theme-treemap-tile.label-title .theme-treemap-subthemes,
+.theme-treemap-tile.label-title .theme-treemap-stock-count,
+.theme-treemap-tile.label-compact .theme-treemap-subthemes,
+.theme-treemap-tile.label-none .theme-treemap-title,
+.theme-treemap-tile.label-none .theme-treemap-subthemes,
+.theme-treemap-tile.label-none .theme-treemap-stock-count {
+  display: none;
+}
+
+.theme-treemap-tooltip {
+  position: fixed;
+  z-index: 80;
+  width: min(320px, calc(100vw - 28px));
+  pointer-events: none;
+  border: 1px solid rgba(15, 23, 42, 0.16);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.2);
+  color: var(--text-color);
+  padding: 12px 14px;
+  text-shadow: none;
+}
+
+.theme-treemap-tooltip strong {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text-color);
+  font-size: 15px;
+  font-weight: 900;
+  line-height: 1.3;
+}
+
+.theme-treemap-tooltip dl {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+}
+
+.theme-treemap-tooltip dl div {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+}
+
+.theme-treemap-tooltip dt,
+.theme-treemap-tooltip dd {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.theme-treemap-tooltip dt {
+  color: var(--muted-text);
+  font-weight: 800;
+}
+
+.theme-treemap-tooltip dd {
+  color: var(--text-color);
+  font-weight: 700;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 768px) {
+  .dashboard-theme-treemap-frame {
+    --theme-treemap-height: 420px;
+  }
+
+  .monthly-theme-treemap-card {
+    --theme-treemap-height: 520px;
+  }
+}
+
+
+/* Unified calendar period controls */
+.calendar-period-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.calendar-period-nav .calendar-nav-button,
+.calendar-period-nav .calendar-today-button,
+.market-calendar-month-nav.calendar-period-nav .calendar-nav-button,
+.market-calendar-month-nav.calendar-period-nav .calendar-today-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  border-radius: 10px;
+  padding: 9px 14px;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.calendar-period-nav .calendar-nav-button,
+.market-calendar-month-nav.calendar-period-nav .calendar-nav-button {
+  width: 52px;
+  min-width: 52px;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.calendar-period-input.input-control,
+.calendar-period-nav .calendar-period-input,
+.market-calendar-month-nav.calendar-period-nav .calendar-period-input {
+  width: 184px;
+  min-width: 184px;
+  min-height: 42px;
+  border: 1px solid #d8dee9;
+  border-radius: 10px;
+  padding: 9px 12px;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.calendar-period-nav .calendar-today-button,
+.market-calendar-month-nav.calendar-period-nav .calendar-today-button {
+  min-width: 86px;
+}
+
+.monthly-flow-controls.calendar-period-nav,
+.daily-flow-controls.calendar-period-nav,
+.candidate-date-nav.calendar-period-nav,
+.training-calendar-month-control.calendar-period-nav,
+.trade-calendar-toolbar.calendar-period-nav,
+.market-calendar-month-nav.calendar-period-nav {
+  gap: 8px;
+}
+
+.monthly-flow-controls.calendar-period-nav .calendar-period-input,
+.training-calendar-month-control.calendar-period-nav .calendar-period-input,
+.trade-calendar-toolbar.calendar-period-nav .calendar-period-input,
+.market-calendar-month-nav.calendar-period-nav .calendar-period-input {
+  width: 188px;
+  min-width: 188px;
+}
+
+.daily-flow-controls.calendar-period-nav .calendar-period-input,
+.candidate-date-nav.calendar-period-nav .calendar-period-input {
+  width: 184px;
+  min-width: 184px;
+}
+
+@media (max-width: 720px) {
+  .calendar-period-nav,
+  .monthly-flow-controls.calendar-period-nav,
+  .daily-flow-controls.calendar-period-nav,
+  .candidate-date-nav.calendar-period-nav,
+  .training-calendar-month-control.calendar-period-nav,
+  .trade-calendar-toolbar.calendar-period-nav,
+  .market-calendar-month-nav.calendar-period-nav {
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .calendar-period-nav .calendar-period-input,
+  .calendar-period-nav .calendar-nav-button,
+  .calendar-period-nav .calendar-today-button {
+    flex: 1 1 auto;
+  }
 }

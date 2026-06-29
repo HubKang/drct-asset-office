@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import type { CSSProperties } from "react";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
+import { buildTreemapLayout, getTreemapLabelClass } from "@/utils/treemapLayout";
 import { repositories } from "@/services";
 import type {
   AddMarketEventThemeLinkRequest,
@@ -26,6 +27,7 @@ type ConditionOrderMode = "number" | "name";
 type ResultSortKey = "stock_code" | "stock_name" | "current_price" | "change_rate" | "volume" | "estimated_trading_value";
 type ThemeFlowViewMode = "THEME" | "THEME_GROUP";
 type SelectedDayDetailTab = "themes" | "memos";
+type TrackingRegisterSource = "saved-candidates" | "condition-results";
 type MarketTrendThemeOption = Pick<MarketTheme, "id" | "theme_name" | "latest_return">;
 type MonthlyThemeTreemapItem = {
   marketThemeId: number;
@@ -118,6 +120,11 @@ const getConditionResultMarket = (row: KiwoomConditionResultItem) => {
   return "-";
 };
 const getMonthInput = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+const shiftMonthInput = (month: string, offset: number) => {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const next = new Date(year, monthNumber - 1 + offset, 1);
+  return getMonthInput(next);
+};
 const formatInputDate = (d: Date) => {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
@@ -282,6 +289,7 @@ function MarketTrendsPage() {
   const [monthlyTrendThemes, setMonthlyTrendThemes] = useState<MonthlyThemeFlowTrendTheme[]>([]);
   const [monthlyTrendResponses, setMonthlyTrendResponses] = useState<MonthlyThemeFlowTrendResponse[]>([]);
   const [selectedMonthlyTreemapId, setSelectedMonthlyTreemapId] = useState<number | null>(null);
+  const [monthlyTreemapTooltip, setMonthlyTreemapTooltip] = useState<{ x: number; y: number; item: MonthlyThemeTreemapItem; share: number } | null>(null);
   const [monthlyTrendViewMode, setMonthlyTrendViewMode] = useState<ThemeFlowViewMode>("THEME");
   const [monthlyStartDate, setMonthlyStartDate] = useState<string>("");
   const [monthlyEndDate, setMonthlyEndDate] = useState<string>("");
@@ -298,6 +306,7 @@ function MarketTrendsPage() {
   const [selectedTrackingCandidateIds, setSelectedTrackingCandidateIds] = useState<number[]>([]);
   const [trackingGroups, setTrackingGroups] = useState<StockTrackingGroup[]>([]);
   const [trackingRegisterOpen, setTrackingRegisterOpen] = useState(false);
+  const [trackingRegisterSource, setTrackingRegisterSource] = useState<TrackingRegisterSource>("saved-candidates");
   const [trackingGroupId, setTrackingGroupId] = useState("");
   const [trackingRegisterSaving, setTrackingRegisterSaving] = useState(false);
   const [trackingRegisterCompleted, setTrackingRegisterCompleted] = useState(false);
@@ -687,44 +696,83 @@ ${tableRows}
     setSelectedTrackingCandidateIds(checked ? sortedEvents.map((item) => item.event_id) : []);
   };
 
-  const openTrackingRegisterModal = async () => {
-    if (selectedTrackingCandidateIds.length === 0) {
-      setError("\uC885\uBAA9\uD2B8\uB798\uD0B9\uC5D0 \uB4F1\uB85D\uD560 \uD6C4\uBCF4\uB97C \uC120\uD0DD\uD574 \uC8FC\uC138\uC694.");
-      return;
-    }
-    setError("");
-    setMessage("");
-    setTrackingRegisterCompleted(false);
+  const loadActiveTrackingGroupsForModal = async () => {
     const rows = await repositories.stockTracking.listGroups({ active_only: true });
     setTrackingGroups(rows);
     setTrackingGroupId(rows[0] ? String(rows[0].id) : "");
     setTrackingRegisterOpen(true);
   };
 
+  const openTrackingRegisterModal = async () => {
+    if (selectedTrackingCandidateIds.length === 0) {
+      setError("종목트래킹에 등록할 후보를 선택해 주세요.");
+      return;
+    }
+    setError("");
+    setMessage("");
+    setTrackingRegisterSource("saved-candidates");
+    setTrackingRegisterCompleted(false);
+    await loadActiveTrackingGroupsForModal();
+  };
+
+  const openConditionResultTrackingRegisterModal = async () => {
+    if (selectedItems.length === 0) {
+      setError("종목트래킹에 등록할 조건검색 결과 종목을 선택해 주세요.");
+      return;
+    }
+    setError("");
+    setMessage("");
+    setTrackingRegisterSource("condition-results");
+    setTrackingRegisterCompleted(false);
+    await loadActiveTrackingGroupsForModal();
+  };
   const registerTrackingCandidates = async () => {
     if (!trackingGroupId) {
-      setError("\uB4F1\uB85D\uD560 \uADF8\uB8F9\uC744 \uC120\uD0DD\uD574 \uC8FC\uC138\uC694.");
+      setError("등록할 그룹을 선택해 주세요.");
       return;
     }
     setError("");
     setMessage("");
     setTrackingRegisterSaving(true);
     try {
-      const res = await repositories.stockTracking.registerFromCandidates({
-        group_id: Number(trackingGroupId),
-        candidate_ids: selectedTrackingCandidateIds,
-      });
-      setMessage(res.message || `????? ?? ??: ?? ${res.created_count}?, ?? ?? ${res.skipped_count}?`);
-      setSelectedTrackingCandidateIds([]);
+      const groupId = Number(trackingGroupId);
+      if (trackingRegisterSource === "condition-results") {
+        const res = await repositories.stockTracking.registerFromConditionResults({
+          group_id: groupId,
+          condition_no: selectedConditionSeq || null,
+          condition_name: selectedConditionName || null,
+          detected_date: tradeDate || todayInKst(),
+          items: selectedItems.map((row) => {
+            const market = getConditionResultMarket(row);
+            return {
+              stock_code: normalizeStockCode(row.stock_code) || row.stock_code,
+              stock_name: row.stock_name ?? null,
+              market: market === "-" ? null : market,
+              current_price: row.current_price ?? null,
+              change_rate: row.change_rate ?? null,
+              volume: row.volume ?? null,
+              trading_value: estimatedTradingValue(row),
+            };
+          }),
+        });
+        setMessage(res.message || `조건검색 결과에서 선택한 종목을 종목트래킹에 등록했습니다. 신규 ${res.created_count}건, 중복 ${res.skipped_count}건`);
+        setCheckedMap({});
+      } else {
+        const res = await repositories.stockTracking.registerFromCandidates({
+          group_id: groupId,
+          candidate_ids: selectedTrackingCandidateIds,
+        });
+        setMessage(res.message || `종목트래킹 등록 완료: 신규 ${res.created_count}건, 중복 제외 ${res.skipped_count}건`);
+        setSelectedTrackingCandidateIds([]);
+      }
       setTrackingRegisterCompleted(true);
       setTrackingRegisterOpen(false);
     } catch (e) {
-      setError(toErr(e, "\uC885\uBAA9\uD2B8\uB798\uD0B9 \uB4F1\uB85D\uC5D0 \uC2E4\uD328\uD588\uC2B5\uB2C8\uB2E4."));
+      setError(toErr(e, "종목트래킹 등록에 실패했습니다."));
     } finally {
       setTrackingRegisterSaving(false);
     }
   };
-
   const openManualCandidateModal = () => {
     setManualModalOpen(true);
     setManualStockKeyword("");
@@ -941,8 +989,8 @@ ${tableRows}
     await Promise.all([loadEvents(nextDate), loadFlow(nextDate)]);
   };
 
-  const loadMonthlyFlow = async () => {
-    if (!monthlyBaseMonth) {
+  const loadMonthlyFlow = async (targetMonth = monthlyBaseMonth) => {
+    if (!targetMonth) {
       setError("기준월(YYYY-MM)을 선택해 주세요.");
       return;
     }
@@ -954,8 +1002,8 @@ ${tableRows}
       const treemapStartDate = subtractOneMonth(today);
       const treemapMonths = getMonthKeysBetween(treemapStartDate, today);
       const [calendarRes, trendRes, treemapTrendResponses] = await Promise.all([
-        repositories.marketTrends.getExternalMonthlyThemeFlowCalendar(monthlyBaseMonth),
-        repositories.marketTrends.getExternalMonthlyThemeFlowTrend(monthlyBaseMonth, { view_mode: monthlyTrendViewMode }),
+        repositories.marketTrends.getExternalMonthlyThemeFlowCalendar(targetMonth),
+        repositories.marketTrends.getExternalMonthlyThemeFlowTrend(targetMonth, { view_mode: monthlyTrendViewMode }),
         Promise.all(treemapMonths.map((month) => repositories.marketTrends.getExternalMonthlyThemeFlowTrend(month, { view_mode: monthlyTrendViewMode }))),
       ]);
       setMonthlyCalendarDays(calendarRes.days ?? []);
@@ -975,6 +1023,12 @@ ${tableRows}
       setMonthlyLoading(false);
     }
   };
+  const applyMonthlyFlowMonth = async (nextMonth: string) => {
+    if (!/^\d{4}-\d{2}$/.test(nextMonth)) return;
+    setMonthlyBaseMonth(nextMonth);
+    await loadMonthlyFlow(nextMonth);
+  };
+
   const saveDailyRanks = async () => {
     if (flowSummaries.length === 0) return;
     const used = new Set<number>();
@@ -1116,6 +1170,14 @@ ${tableRows}
     [monthlyTrendResponses, monthlyTreemapPeriodStart, todayDate, monthlyTrendViewMode],
   );
   const monthlyTreemapMaxScore = useMemo(() => Math.max(1, ...monthlyTreemapItems.map((item) => item.scoreSum)), [monthlyTreemapItems]);
+  const monthlyTreemapRects = useMemo(
+    () => buildTreemapLayout(monthlyTreemapItems.map((item) => ({ id: `${item.viewMode}-${item.marketThemeId}`, value: item.scoreSum }))),
+    [monthlyTreemapItems],
+  );
+  const monthlyTreemapRectMap = useMemo(
+    () => new Map(monthlyTreemapRects.map((rect) => [rect.id, rect])),
+    [monthlyTreemapRects],
+  );
   const selectedMonthlyTreemapItem = useMemo(
     () => monthlyTreemapItems.find((item) => item.marketThemeId === selectedMonthlyTreemapId) ?? monthlyTreemapItems[0] ?? null,
     [monthlyTreemapItems, selectedMonthlyTreemapId],
@@ -1252,10 +1314,23 @@ ${tableRows}
                     : "조건식을 선택해 주세요."}
                 </div>
                 {resultPanelStatus ? <div className="text-xs text-muted">{resultPanelStatus}</div> : null}
-                <div className="flex gap-2 flex-wrap">
-                  <button type="button" className="btn btn-secondary" onClick={() => void loadConditionResults()} disabled={!selectedConditionSeq}>결과 조회</button>
-                  <button type="button" className="btn btn-primary" onClick={() => void saveSelectedAsEvents()} disabled={selectedItems.length === 0}>선택 후보 저장</button>
-                  <button type="button" className="btn btn-secondary condition-issue-copy-button" onClick={() => void copyIssueSummaryPrompt()} disabled={sortedResults.length === 0}>GPT 이슈정리 복사</button>
+                <div className="market-trend-result-actions">
+                  <div className="market-trend-result-actions-left">
+                    <button type="button" className="btn btn-secondary" onClick={() => void loadConditionResults()} disabled={!selectedConditionSeq}>결과 조회</button>
+                    <button type="button" className="btn btn-primary" onClick={() => void saveSelectedAsEvents()} disabled={selectedItems.length === 0}>선택 후보 저장</button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => void openConditionResultTrackingRegisterModal()}
+                      disabled={selectedItems.length === 0}
+                      title={selectedItems.length === 0 ? "등록할 조건검색 결과 종목을 선택해 주세요." : "선택한 조건검색 결과 종목을 종목트래킹 그룹에 바로 등록합니다."}
+                    >
+                      {selectedItems.length > 0 ? `선택 ${selectedItems.length}건 트래킹 등록` : "종목트래킹 등록"}
+                    </button>
+                  </div>
+                  <div className="market-trend-result-actions-right">
+                    <button type="button" className="btn btn-secondary condition-issue-copy-button" onClick={() => void copyIssueSummaryPrompt()} disabled={sortedResults.length === 0}>GPT 이슈정리 복사</button>
+                  </div>
                 </div>
               </div>
               <div className="table-shell max-h-[420px] overflow-auto">
@@ -1325,10 +1400,10 @@ ${tableRows}
               <span className="hint-icon" title="저장된 후보는 일별·월별 테마 수급 흐름 분석의 기초 데이터로 활용됩니다.">i</span>
             </div>
             <div className="theme-event-candidate-toolbar">
-              <div className="candidate-date-nav">
-                <button type="button" className="btn btn-secondary" onClick={() => void applyFlowDate(shiftDate(tradeDate, -1))}>이전</button>
+              <div className="candidate-date-nav calendar-period-nav">
+                <button type="button" className="btn btn-secondary calendar-nav-button" onClick={() => void applyFlowDate(shiftDate(tradeDate, -1))} aria-label="이전 날짜">◀</button>
                 <input
-                  className="input-control candidate-date-input"
+                  className="input-control candidate-date-input calendar-period-input"
                   type="date"
                   value={tradeDate}
                   onChange={(e) => void applyFlowDate(e.target.value)}
@@ -1341,11 +1416,10 @@ ${tableRows}
                   }}
                   aria-label="수급 이벤트 후보 날짜"
                 />
-                <button type="button" className="btn btn-secondary" onClick={() => void applyFlowDate(shiftDate(tradeDate, 1))}>다음</button>
-                <button type="button" className="btn btn-primary" onClick={() => void applyFlowDate(todayInKst())}>오늘</button>
+                <button type="button" className="btn btn-secondary calendar-nav-button" onClick={() => void applyFlowDate(shiftDate(tradeDate, 1))} aria-label="다음 날짜">▶</button>
+                <button type="button" className="btn btn-primary calendar-today-button" onClick={() => void applyFlowDate(todayInKst())}>오늘</button>
               </div>
               <div className="theme-event-candidate-actions">
-                <button type="button" className="btn btn-secondary" onClick={() => void loadEvents()}>조회</button>
                 <button
                   type="button"
                   className="btn btn-secondary"
@@ -1482,8 +1556,8 @@ ${tableRows}
               <h3>종목트래킹 등록</h3>
               <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => setTrackingRegisterOpen(false)}>닫기</button>
             </div>
-            <p className="text-sm text-muted mb-3">선택한 후보 종목을 종목트래킹 그룹에 등록합니다.</p>
-            <div className="tracking-register-count">선택 후보: {selectedTrackingCandidateIds.length}건</div>
+            <p className="text-sm text-muted mb-3">{trackingRegisterSource === "condition-results" ? "선택한 조건검색 결과 종목을 후보 저장 없이 바로 종목트래킹 그룹에 등록합니다." : "선택한 후보 종목을 종목트래킹 그룹에 등록합니다."}</p>
+            <div className="tracking-register-count">{trackingRegisterSource === "condition-results" ? `선택 결과: ${selectedItems.length}건` : `선택 후보: ${selectedTrackingCandidateIds.length}건`}</div>
             <label className="manual-candidate-field">
               <span>등록 그룹</span>
               <select className="input-control" value={trackingGroupId} onChange={(e) => setTrackingGroupId(e.target.value)}>
@@ -1650,8 +1724,8 @@ ${tableRows}
               <span className="hint-icon" title="선택한 날짜의 저장된 수급 이벤트 후보를 테마별로 집계합니다. 날짜를 선택하면 즉시 조회됩니다.">i</span>
             </div>
             <div className="daily-flow-toolbar">
-              <div className="daily-flow-controls">
-                <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => void applyFlowDate(shiftDate(tradeDate, -1))}>◀</button>
+              <div className="daily-flow-controls calendar-period-nav">
+                <button type="button" className="btn btn-secondary btn-table-sm calendar-nav-button" onClick={() => void applyFlowDate(shiftDate(tradeDate, -1))} aria-label="이전 날짜">◀</button>
                 <input
                   className="input-control"
                   type="date"
@@ -1665,8 +1739,8 @@ ${tableRows}
                     }
                   }}
                 />
-                <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => void applyFlowDate(shiftDate(tradeDate, 1))}>▶</button>
-                <button type="button" className="btn btn-secondary" onClick={() => void applyFlowDate(todayInKst())}>오늘</button>
+                <button type="button" className="btn btn-secondary btn-table-sm calendar-nav-button" onClick={() => void applyFlowDate(shiftDate(tradeDate, 1))} aria-label="다음 날짜">▶</button>
+                <button type="button" className="btn btn-secondary calendar-today-button" onClick={() => void applyFlowDate(todayInKst())}>오늘</button>
                 <button type="button" className="btn btn-secondary" title="자동 순위와 다르게 체감 주도 테마를 직접 조정할 수 있습니다." onClick={() => setRankEditMode((p) => !p)}>{rankEditMode ? "편집 취소" : "순위 편집"}</button>
                 {rankEditMode ? <button type="button" className="btn btn-primary" onClick={() => void saveDailyRanks()}>순위 저장</button> : null}
                 {rankEditMode ? <button type="button" className="btn btn-secondary" onClick={() => void resetDailyRanks()}>수동 순위 초기화</button> : null}
@@ -1838,10 +1912,11 @@ ${tableRows}
               <span className="hint-icon" title="저장된 수급 이벤트 후보를 월 단위로 집계하여 날짜별·테마별 수급 흐름을 보여줍니다.">i</span>
             </div>
             <div className="monthly-flow-toolbar">
-              <div className="monthly-flow-controls">
-                <input className="input-control" style={{ width: "140px", minWidth: "140px" }} type="month" value={monthlyBaseMonth} onChange={(e) => setMonthlyBaseMonth(e.target.value)} />
-                <button type="button" className="btn btn-primary" onClick={() => void loadMonthlyFlow()}>조회</button>
-                <button type="button" className="btn btn-secondary" onClick={() => { const currentMonth = getMonthInput(); setMonthlyBaseMonth(currentMonth); void loadMonthlyFlow(); }}>이번 달</button>
+              <div className="monthly-flow-controls calendar-period-nav">
+                <button type="button" className="btn btn-secondary calendar-nav-button" onClick={() => void applyMonthlyFlowMonth(shiftMonthInput(monthlyBaseMonth, -1))} aria-label="이전 월">◀</button>
+                <input className="input-control calendar-period-input" type="month" value={monthlyBaseMonth} onChange={(e) => void applyMonthlyFlowMonth(e.target.value)} />
+                <button type="button" className="btn btn-secondary calendar-nav-button" onClick={() => void applyMonthlyFlowMonth(shiftMonthInput(monthlyBaseMonth, 1))} aria-label="다음 월">▶</button>
+                <button type="button" className="btn btn-secondary calendar-today-button" onClick={() => void applyMonthlyFlowMonth(getMonthInput())}>이번달</button>
               </div>
 
               <div className="monthly-flow-compact-stats">
@@ -2026,7 +2101,7 @@ ${tableRows}
               <div className="watchlist-card-title-wrap monthly-theme-treemap-title-wrap">
                 <div>
                   <h3 className="section-title m-0">최근 1개월 테마 수급 트리맵</h3>
-                  <p className="monthly-theme-treemap-description">시장트렌드분석의 월간 테마 누적 흐름 점수를 최근 1개월 기준으로 합산하여, 테마별 수급 집중도를 면적으로 표현합니다.</p>
+                  <p className="monthly-theme-treemap-description">최근 1개월 기준 월간 테마 누적 흐름 점수를 합산하여, 테마별 수급 집중도를 면적과 색상으로 표현합니다. 작은 타일은 롤오버로 상세를 확인할 수 있습니다.</p>
                 </div>
                 <span className="hint-icon" title="월간 테마 누적 흐름의 daily_score를 최근 1개월 기준으로 합산합니다. 타일 면적은 종목수가 아니라 점수 합산값 기준입니다.">i</span>
               </div>
@@ -2056,19 +2131,34 @@ ${tableRows}
               </div>
             ) : (
               <div className="monthly-theme-treemap-section">
-                <div className="theme-treemap monthly-theme-treemap-card">
+                <div className="theme-treemap monthly-theme-treemap-card" onMouseLeave={() => setMonthlyTreemapTooltip(null)}>
                   {monthlyTreemapItems.map((item) => {
+                    const rect = monthlyTreemapRectMap.get(`${item.viewMode}-${item.marketThemeId}`);
                     const sizeClass = getThemeTreemapSizeClass(item, monthlyTreemapMaxScore);
+                    const labelClass = getTreemapLabelClass(rect);
                     const intensity = Math.max(0.22, Math.min(1, item.scoreSum / monthlyTreemapMaxScore));
                     const share = monthlyTreemapTotalScore > 0 ? Math.round((item.scoreSum / monthlyTreemapTotalScore) * 1000) / 10 : 0;
+                    const style = {
+                      "--theme-intensity": intensity,
+                      left: `calc(${rect?.x ?? 0}% + 2px)`,
+                      top: `calc(${rect?.y ?? 0}% + 2px)`,
+                      width: `calc(${rect?.width ?? 0}% - 4px)`,
+                      height: `calc(${rect?.height ?? 0}% - 4px)`,
+                    } as CSSProperties;
                     return (
                       <button
-                        key={item.marketThemeId}
+                        key={`${item.viewMode}-${item.marketThemeId}`}
                         type="button"
                         title={`${item.themeName} · 최근 1개월 누적 ${item.scoreSum}점 · ${item.stockCount}종목 · 비중 ${share}% · 기간 ${monthlyTreemapPeriodStart} ~ ${todayDate}`}
-                        className={`theme-treemap-tile monthly-theme-treemap-tile ${sizeClass} ${selectedMonthlyTreemapItem?.marketThemeId === item.marketThemeId ? "selected" : ""}`}
-                        style={{ "--theme-intensity": intensity } as CSSProperties}
+                        className={`theme-treemap-tile monthly-theme-treemap-tile ${sizeClass} ${labelClass} ${selectedMonthlyTreemapItem?.marketThemeId === item.marketThemeId ? "selected" : ""}`}
+                        style={style}
                         onClick={() => setSelectedMonthlyTreemapId(item.marketThemeId)}
+                        onMouseMove={(event) => setMonthlyTreemapTooltip({ x: event.clientX, y: event.clientY, item, share })}
+                        onFocus={(event) => {
+                          const box = event.currentTarget.getBoundingClientRect();
+                          setMonthlyTreemapTooltip({ x: box.left + box.width / 2, y: box.top + 12, item, share });
+                        }}
+                        onBlur={() => setMonthlyTreemapTooltip(null)}
                       >
                         <span className="theme-treemap-title">{item.themeName}</span>
                         {item.viewMode === "THEME_GROUP" && item.topChildThemes.length ? (
@@ -2080,6 +2170,25 @@ ${tableRows}
                       </button>
                     );
                   })}
+                  {monthlyTreemapTooltip ? (
+                    <div
+                      className="theme-treemap-tooltip"
+                      style={{
+                        left: Math.max(8, Math.min(monthlyTreemapTooltip.x + 14, (typeof window === "undefined" ? 1440 : window.innerWidth) - 340)),
+                        top: Math.max(8, Math.min(monthlyTreemapTooltip.y + 14, (typeof window === "undefined" ? 900 : window.innerHeight) - 230)),
+                      }}
+                    >
+                      <strong>{monthlyTreemapTooltip.item.themeName}</strong>
+                      <dl>
+                        <div><dt>기간</dt><dd>{monthlyTreemapPeriodStart} ~ {todayDate}</dd></div>
+                        <div><dt>누적 점수</dt><dd>{monthlyTreemapTooltip.item.scoreSum}점</dd></div>
+                        <div><dt>비중</dt><dd>{monthlyTreemapTooltip.share}%</dd></div>
+                        <div><dt>관련 종목</dt><dd>{monthlyTreemapTooltip.item.stockCount}종목 · 이벤트 {monthlyTreemapTooltip.item.eventCount}건</dd></div>
+                        <div><dt>최근 등장</dt><dd>{monthlyTreemapTooltip.item.latestDate ?? "-"}</dd></div>
+                        <div><dt>대표 종목</dt><dd>{monthlyTreemapTooltip.item.relatedStocks.length ? monthlyTreemapTooltip.item.relatedStocks.slice(0, 5).join(", ") : "-"}</dd></div>
+                      </dl>
+                    </div>
+                  ) : null}
                 </div>
 
                 {selectedMonthlyTreemapItem ? (

@@ -85,20 +85,21 @@ function TradeTrainingCalendarPage() {
     void load(month);
   }, []);
 
-  const moveMonth = (delta: number) => {
-    const [year, monthNumber] = month.split("-").map(Number);
-    const next = new Date(year, monthNumber - 1 + delta, 1);
-    const nextMonth = formatMonth(next);
+  const applyMonth = (nextMonth: string, nextSelectedDate = `${nextMonth}-01`) => {
+    if (!/^\d{4}-\d{2}$/.test(nextMonth)) return;
     setMonth(nextMonth);
-    setSelectedDate(`${nextMonth}-01`);
+    setSelectedDate(nextSelectedDate);
     void load(nextMonth);
   };
 
+  const moveMonth = (delta: number) => {
+    const [year, monthNumber] = month.split("-").map(Number);
+    const next = new Date(year, monthNumber - 1 + delta, 1);
+    applyMonth(formatMonth(next));
+  };
+
   const goThisMonth = () => {
-    const nextMonth = todayMonth();
-    setMonth(nextMonth);
-    setSelectedDate(todayDate());
-    void load(nextMonth);
+    applyMonth(todayMonth(), todayDate());
   };
 
   return (
@@ -135,14 +136,11 @@ function TradeTrainingCalendarPage() {
 
       <SectionCard title="월간 훈련 조회">
         <div className="training-calendar-toolbar">
-          <div className="training-calendar-month-control">
-            <button type="button" className="btn btn-secondary" onClick={() => moveMonth(-1)}>이전 달</button>
-            <input className="input-control" type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
-            <button type="button" className="btn btn-primary" onClick={() => void load(month)} disabled={loading}>
-              {loading ? "조회 중" : "조회"}
-            </button>
-            <button type="button" className="btn btn-secondary" onClick={goThisMonth}>이번 달</button>
-            <button type="button" className="btn btn-secondary" onClick={() => moveMonth(1)}>다음 달</button>
+          <div className="training-calendar-month-control calendar-period-nav">
+            <button type="button" className="btn btn-secondary calendar-nav-button" onClick={() => moveMonth(-1)} aria-label="이전 월">◀</button>
+            <input className="input-control calendar-period-input" type="month" value={month} onChange={(e) => applyMonth(e.target.value)} />
+            <button type="button" className="btn btn-secondary calendar-nav-button" onClick={() => moveMonth(1)} aria-label="다음 월">▶</button>
+            <button type="button" className="btn btn-secondary calendar-today-button" onClick={goThisMonth} disabled={loading}>이번달</button>
           </div>
         </div>
         {error ? <div className="inline-result inline-error">{error}</div> : null}

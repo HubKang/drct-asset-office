@@ -401,8 +401,8 @@ function WatchlistPage() {
     <div className="space-y-4">
       <div className="watchlist-top-compact">
         <div className="watchlist-top-main">
-          <h1 className="watchlist-top-title">관심종목 Data수집</h1>
-          <p className="watchlist-top-description">관심종목을 운영하고, 활성 종목의 뉴스·공시·가격 데이터를 수집합니다.</p>
+          <h1 className="watchlist-top-title">관심 종목</h1>
+          <p className="watchlist-top-description">관심 종목을 운영하고, 활성 종목의 뉴스·공시·가격 데이터를 수집합니다.</p>
           <div className="watchlist-top-actions">
             <button className="btn btn-primary" onClick={() => setModalOpen(true)}>
               + 관심종목 등록

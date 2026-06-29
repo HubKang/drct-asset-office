@@ -12,9 +12,12 @@ from sqlalchemy.orm import Session
 from backend.app.core.config import PROJECT_ROOT, now_kst
 from backend.app.repositories.stock_repository import StockRepository
 from backend.app.services.stock_price_service import StockPriceService
+from backend.app.utils.stock_code import normalize_stock_code
 from backend.app.schemas.stock_tracking_schema import (
     CollectStockTrackingPricesRequest,
     CollectStockTrackingPricesResponse,
+    CreateTrackingFromConditionResultsRequest,
+    CreateTrackingFromConditionResultsResponse,
     RegisterTrackingItemsFromCandidatesRequest,
     RegisterTrackingItemsFromCandidatesResponse,
     StockTrackingBaseMetricSummary,
@@ -67,6 +70,18 @@ def _today() -> str:
 def _normalize_text(value: str | None) -> str | None:
     text_value = (value or "").strip()
     return text_value or None
+
+
+def _normalize_market_value(value: str | None) -> str | None:
+    text_value = (value or "").strip()
+    if not text_value or text_value == "-":
+        return None
+    upper_value = text_value.upper()
+    if "KOSDAQ" in upper_value:
+        return "KOSDAQ"
+    if "KOSPI" in upper_value or upper_value in {"KRX", "K"}:
+        return "KOSPI"
+    return text_value[:20]
 
 
 def _sanitize_filename(value: str) -> str:
@@ -432,6 +447,144 @@ class StockTrackingService:
             item_ids=created_ids,
             items=register_results,
             message=f"\uC885\uBAA9\uD2B8\uB798\uD0B9 \uB4F1\uB85D \uC644\uB8CC: \uC2E0\uADDC {len(created_ids)}\uAC74, \uC911\uBCF5 \uC81C\uC678 {skipped_count}\uAC74",
+        )
+
+
+    def register_from_condition_results(self, payload: CreateTrackingFromConditionResultsRequest) -> CreateTrackingFromConditionResultsResponse:
+        group = self._group_row(payload.group_id)
+        if int(group.get("is_active") or 0) != 1:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="비활성 그룹에는 등록할 수 없습니다.")
+        base_date = (payload.detected_date or _today()).strip()[:10] or _today()
+        normalized_items = []
+        seen_codes: set[str] = set()
+        for item in payload.items:
+            code = normalize_stock_code(item.stock_code)
+            if not code or code in seen_codes:
+                continue
+            seen_codes.add(code)
+            normalized_items.append((code, item))
+        if not normalized_items:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="종목트래킹에 등록할 조건검색 결과 종목을 선택해 주세요.")
+
+        now = now_kst()
+        created_ids: list[int] = []
+        register_results: list[dict[str, object]] = []
+        skipped_count = 0
+        for stock_code, item in normalized_items:
+            stock_name = _normalize_text(item.stock_name) or stock_code
+            duplicate = self.db.execute(
+                text(
+                    """
+                    SELECT id
+                    FROM stock_tracking_items
+                    WHERE group_id = :group_id
+                      AND stock_code = :stock_code
+                      AND tracking_base_date = :tracking_base_date
+                    LIMIT 1
+                    """
+                ),
+                {"group_id": payload.group_id, "stock_code": stock_code, "tracking_base_date": base_date},
+            ).mappings().first()
+            if duplicate:
+                skipped_count += 1
+                register_results.append({"stock_code": stock_code, "stock_name": stock_name, "status": "SKIPPED", "tracking_item_id": int(duplicate["id"]), "reason": "이미 같은 그룹/기준일로 등록된 종목입니다."})
+                continue
+
+            market = _normalize_market_value(item.market)
+            stock_row = self.db.execute(text("SELECT id, stock_name, market FROM stocks WHERE stock_code = :stock_code LIMIT 1"), {"stock_code": stock_code}).mappings().first()
+            if stock_row:
+                stock_id = int(stock_row["id"])
+                update_values: dict[str, object] = {"stock_id": stock_id, "updated_at": now}
+                update_sets = ["updated_at = :updated_at"]
+                if stock_name and stock_name != stock_code and stock_name != stock_row.get("stock_name"):
+                    update_values["stock_name"] = stock_name
+                    update_sets.append("stock_name = :stock_name")
+                if market and not stock_row.get("market"):
+                    update_values["market"] = market
+                    update_sets.append("market = :market")
+                if len(update_sets) > 1:
+                    self.db.execute(text(f"UPDATE stocks SET {', '.join(update_sets)} WHERE id = :stock_id"), update_values)
+            else:
+                result = self.db.execute(
+                    text(
+                        """
+                        INSERT INTO stocks
+                        (stock_code, stock_name, market, sector, industry, isin_code, corp_name, corp_reg_no,
+                         last_synced_at, source, security_type, is_active, created_at, updated_at)
+                        VALUES
+                        (:stock_code, :stock_name, :market, NULL, NULL, NULL, NULL, NULL,
+                         NULL, 'condition_search', 'STOCK', 1, :created_at, :updated_at)
+                        """
+                    ),
+                    {"stock_code": stock_code, "stock_name": stock_name, "market": market, "created_at": now, "updated_at": now},
+                )
+                stock_id = int(result.lastrowid)
+
+            base_trading_value = int(item.trading_value) if item.trading_value is not None else None
+            base_volume = int(item.volume) if item.volume is not None else None
+            result = self.db.execute(
+                text(
+                    """
+                    INSERT INTO stock_tracking_items
+                    (group_id, candidate_id, condition_no, condition_name, stock_id, stock_code, stock_name,
+                     detected_date, tracking_base_date, base_price, base_change_rate, base_volume, base_trading_value,
+                     status, review_date, review_note, price_status, created_at, updated_at)
+                    VALUES
+                    (:group_id, NULL, :condition_no, :condition_name, :stock_id, :stock_code, :stock_name,
+                     :detected_date, :tracking_base_date, :base_price, :base_change_rate, :base_volume, :base_trading_value,
+                     'TRACKING', NULL, NULL, 'NOT_COLLECTED', :created_at, :updated_at)
+                    """
+                ),
+                {
+                    "group_id": payload.group_id,
+                    "condition_no": _normalize_text(payload.condition_no),
+                    "condition_name": _normalize_text(payload.condition_name),
+                    "stock_id": stock_id,
+                    "stock_code": stock_code,
+                    "stock_name": stock_name,
+                    "detected_date": base_date,
+                    "tracking_base_date": base_date,
+                    "base_price": item.current_price,
+                    "base_change_rate": item.change_rate,
+                    "base_volume": base_volume,
+                    "base_trading_value": base_trading_value,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            item_id = int(result.lastrowid)
+            created_ids.append(item_id)
+            register_results.append({"stock_code": stock_code, "stock_name": stock_name, "status": "CREATED", "tracking_item_id": item_id, "reason": None})
+            self.db.execute(
+                text(
+                    """
+                    INSERT INTO price_collection_targets
+                    (source_type, source_id, stock_id, stock_code, base_date, start_date, end_date, status,
+                     last_collected_date, error_message, created_at, updated_at)
+                    VALUES
+                    ('STOCK_TRACKING', :source_id, :stock_id, :stock_code, :base_date, :start_date, NULL, 'ACTIVE',
+                     NULL, NULL, :created_at, :updated_at)
+                    """
+                ),
+                {
+                    "source_id": item_id,
+                    "stock_id": stock_id,
+                    "stock_code": stock_code,
+                    "base_date": base_date,
+                    "start_date": _target_start_date(base_date),
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+        self.db.commit()
+        return CreateTrackingFromConditionResultsResponse(
+            success=True,
+            requested_count=len(normalized_items),
+            created_count=len(created_ids),
+            skipped_count=skipped_count,
+            item_ids=created_ids,
+            items=register_results,
+            message=f"\uc885\ubaa9\ud2b8\ub798\ud0b9 \ub4f1\ub85d \uc644\ub8cc: \uc2e0\uaddc {len(created_ids)}\uac74, \uc911\ubcf5 \uc81c\uc678 {skipped_count}\uac74",
         )
 
 

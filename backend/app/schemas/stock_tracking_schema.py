@@ -61,6 +61,42 @@ class RegisterTrackingItemsFromCandidatesResponse(BaseModel):
     message: str
 
 
+class CreateTrackingFromConditionResultItem(BaseModel):
+    stock_code: str
+    stock_name: str | None = None
+    market: str | None = None
+    current_price: float | None = None
+    change_rate: float | None = None
+    volume: int | None = None
+    trading_value: float | None = None
+
+
+class CreateTrackingFromConditionResultsRequest(BaseModel):
+    group_id: int
+    condition_no: str | None = None
+    condition_name: str | None = None
+    detected_date: str
+    items: list[CreateTrackingFromConditionResultItem] = Field(default_factory=list)
+
+
+class CreateTrackingFromConditionResultStatus(BaseModel):
+    stock_code: str | None = None
+    stock_name: str | None = None
+    status: str
+    tracking_item_id: int | None = None
+    reason: str | None = None
+
+
+class CreateTrackingFromConditionResultsResponse(BaseModel):
+    requested_count: int = 0
+    success: bool
+    created_count: int
+    skipped_count: int
+    item_ids: list[int] = Field(default_factory=list)
+    items: list[CreateTrackingFromConditionResultStatus] = Field(default_factory=list)
+    message: str
+
+
 class UpdateStockTrackingReviewRequest(BaseModel):
     status: str
     review_note: str | None = None

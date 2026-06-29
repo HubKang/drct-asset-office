@@ -7,6 +7,8 @@ from backend.app.core.database import get_db
 from backend.app.schemas.stock_tracking_schema import (
     CollectStockTrackingPricesRequest,
     CollectStockTrackingPricesResponse,
+    CreateTrackingFromConditionResultsRequest,
+    CreateTrackingFromConditionResultsResponse,
     RegisterTrackingItemsFromCandidatesRequest,
     RegisterTrackingItemsFromCandidatesResponse,
     StockTrackingGroupAnalysisListResponse,
@@ -85,6 +87,14 @@ def register_stock_tracking_items_from_candidates(
     db: Session = Depends(get_db),
 ) -> RegisterTrackingItemsFromCandidatesResponse:
     return StockTrackingService(db).register_from_candidates(payload)
+
+
+@router.post("/stock-tracking/items/from-condition-results", response_model=CreateTrackingFromConditionResultsResponse)
+def register_stock_tracking_items_from_condition_results(
+    payload: CreateTrackingFromConditionResultsRequest,
+    db: Session = Depends(get_db),
+) -> CreateTrackingFromConditionResultsResponse:
+    return StockTrackingService(db).register_from_condition_results(payload)
 
 
 @router.get("/stock-tracking/analysis/groups", response_model=StockTrackingGroupAnalysisListResponse)

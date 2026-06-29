@@ -533,7 +533,7 @@ function StockPricesPage() {
 
   return (
     <div className="stock-data-analysis-page space-y-4">
-      <PageHeader title="관심종목 Data분석" description="관심종목의 가격·시장지표를 확인하고 GPT 분석 근거를 구성합니다." />
+      <PageHeader title="관심 종목 분석" description="관심 종목의 가격·시장지표를 확인하고 GPT 분석 근거를 구성합니다." />
 
       <div className="price-page-content">
         <SectionCard title="분석 종목 목록" className="price-stock-list-card">
@@ -608,7 +608,7 @@ function StockPricesPage() {
           ) : null}
         </SectionCard>
 
-        <SectionCard title={selectedStock ? `${selectedStock.stock_name} 분석` : "종목 분석 워크스페이스"} className="price-daily-table-card">
+        <SectionCard title="" className="price-daily-table-card price-analysis-workspace-card">
           {!selectedStock ? <EmptyState message="분석할 종목을 선택하세요. 좌측 목록에서 종목을 선택하면 가격 요약, 시장지표, GPT 패키지 옵션을 확인할 수 있습니다." /> : null}
 
           {selectedStock ? (

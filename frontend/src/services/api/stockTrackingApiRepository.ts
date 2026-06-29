@@ -3,6 +3,8 @@ import type {
   CollectStockTrackingPricesPayload,
   CollectStockTrackingPricesResponse,
   CreateStockTrackingGroupPayload,
+  CreateTrackingFromConditionResultsPayload,
+  CreateTrackingFromConditionResultsResponse,
   RegisterTrackingItemsFromCandidatesPayload,
   RegisterTrackingItemsFromCandidatesResponse,
   StockTrackingGroup,
@@ -65,6 +67,8 @@ export const stockTrackingApiRepository = {
   },
   registerFromCandidates: (payload: RegisterTrackingItemsFromCandidatesPayload) =>
     apiRequest<RegisterTrackingItemsFromCandidatesResponse>("/stock-tracking/items/from-candidates", { method: "POST", body: JSON.stringify(payload) }),
+  registerFromConditionResults: (payload: CreateTrackingFromConditionResultsPayload) =>
+    apiRequest<CreateTrackingFromConditionResultsResponse>("/stock-tracking/items/from-condition-results", { method: "POST", body: JSON.stringify(payload) }),
   collectPrices: (payload: CollectStockTrackingPricesPayload) =>
     apiRequest<CollectStockTrackingPricesResponse>("/stock-tracking/items/collect-prices", { method: "POST", body: JSON.stringify(payload) }),
   getItem: (itemId: number) => apiRequest<StockTrackingItem>(`/stock-tracking/items/${itemId}`),

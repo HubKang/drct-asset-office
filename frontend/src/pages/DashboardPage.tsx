@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { useNavigate } from "react-router-dom";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import StatusBadge from "@/components/common/StatusBadge";
+import { buildTreemapLayout, getTreemapLabelClass } from "@/utils/treemapLayout";
 import { dataSourceLabel, repositories } from "@/services";
 import type { CollectionRun } from "@/types/collectionRun";
 import type { Disclosure } from "@/types/disclosure";
@@ -420,7 +421,8 @@ function DashboardPage() {
   const [detailSource, setDetailSource] = useState<SourceKey | null>(null);
   const [detailFilter, setDetailFilter] = useState<DetailFilter>("all");
   const [selectedThemeId, setSelectedThemeId] = useState<number | null>(null);
-  const [treemapViewMode, setTreemapViewMode] = useState<ThemeFlowViewMode>("THEME_GROUP");
+  const [treemapViewMode, setTreemapViewMode] = useState<ThemeFlowViewMode>("THEME");
+  const [treemapTooltip, setTreemapTooltip] = useState<{ x: number; y: number; item: ThemeTreemapItem } | null>(null);
 
   const loadDashboard = useCallback(async () => {
     setIsLoading(true);
@@ -673,6 +675,14 @@ function DashboardPage() {
   const themePeriodStart = subtractOneMonth(dashboard?.today ?? todayInKst());
   const themePeriodEnd = dashboard?.today ?? todayInKst();
   const maxThemeScore = Math.max(...themeItems.map((item) => item.sizeValue), 1);
+  const themeTreemapRects = useMemo(
+    () => buildTreemapLayout(themeItems.map((item) => ({ id: `${item.viewMode}-${item.marketThemeId}`, value: item.sizeValue }))),
+    [themeItems],
+  );
+  const themeTreemapRectMap = useMemo(
+    () => new Map(themeTreemapRects.map((rect) => [rect.id, rect])),
+    [themeTreemapRects],
+  );
   const topThemeSummary = themeItems.length
     ? `최근 1개월 누적 등락률 변동폭 상위 테마는 ${themeItems
         .slice(0, 3)
@@ -746,18 +756,34 @@ function DashboardPage() {
                 </span>
               ))}
             </div>
-            <div className="theme-treemap">
+            <div className="theme-treemap dashboard-theme-treemap-frame" onMouseLeave={() => setTreemapTooltip(null)}>
               {themeItems.map((item) => {
+                const rect = themeTreemapRectMap.get(`${item.viewMode}-${item.marketThemeId}`);
                 const sizeClass = getThemeTreemapSizeClass(item, maxThemeScore);
+                const labelClass = getTreemapLabelClass(rect);
                 const intensity = Math.max(0.22, Math.min(1, item.sizeValue / maxThemeScore));
+                const style = {
+                  "--theme-intensity": intensity,
+                  "--return-color": getDashboardThemeReturnTreemapColor(item.returnSum),
+                  left: `calc(${rect?.x ?? 0}% + 2px)`,
+                  top: `calc(${rect?.y ?? 0}% + 2px)`,
+                  width: `calc(${rect?.width ?? 0}% - 4px)`,
+                  height: `calc(${rect?.height ?? 0}% - 4px)`,
+                } as CSSProperties;
                 return (
                   <button
-                    key={item.marketThemeId}
+                    key={`${item.viewMode}-${item.marketThemeId}`}
                     type="button"
-                    title={`${item.themeName} · 기간 ${themePeriodStart} ~ ${themePeriodEnd} · 합산 등락률 ${formatSignedPct(item.returnSum)} · 거래대금 ${formatEok(item.tradingValue100m)} · 상승일 ${item.risingDays}일 / 하락일 ${item.fallingDays}일 / 보합 ${item.flatDays}일 · 데이터 ${item.dataDays}일 · 종목 ${item.stockCount}개`}
-                    className={`theme-treemap-tile dashboard-return-treemap-tile ${getDashboardThemeReturnTreemapToneClass(item.returnSum)} ${sizeClass} ${selectedTheme?.marketThemeId === item.marketThemeId ? "selected" : ""}`}
-                    style={{ "--theme-intensity": intensity, "--return-color": getDashboardThemeReturnTreemapColor(item.returnSum) } as CSSProperties}
+                    title={`${item.themeName} · 기간 ${themePeriodStart} ~ ${themePeriodEnd} · 합산 등락률 ${formatSignedPct(item.returnSum)} · 거래대금 ${formatEok(item.tradingValue100m)}`}
+                    className={`theme-treemap-tile dashboard-return-treemap-tile ${getDashboardThemeReturnTreemapToneClass(item.returnSum)} ${sizeClass} ${labelClass} ${selectedTheme?.marketThemeId === item.marketThemeId ? "selected" : ""}`}
+                    style={style}
                     onClick={() => setSelectedThemeId(item.marketThemeId)}
+                    onMouseMove={(event) => setTreemapTooltip({ x: event.clientX, y: event.clientY, item })}
+                    onFocus={(event) => {
+                      const box = event.currentTarget.getBoundingClientRect();
+                      setTreemapTooltip({ x: box.left + box.width / 2, y: box.top + 12, item });
+                    }}
+                    onBlur={() => setTreemapTooltip(null)}
                   >
                     <span className="theme-treemap-title">{item.themeName}</span>
                     {item.viewMode === "THEME_GROUP" && item.topChildThemes.length ? (
@@ -769,6 +795,24 @@ function DashboardPage() {
                   </button>
                 );
               })}
+              {treemapTooltip ? (
+                <div
+                  className="theme-treemap-tooltip"
+                  style={{
+                    left: Math.max(8, Math.min(treemapTooltip.x + 14, (typeof window === "undefined" ? 1440 : window.innerWidth) - 340)),
+                    top: Math.max(8, Math.min(treemapTooltip.y + 14, (typeof window === "undefined" ? 900 : window.innerHeight) - 220)),
+                  }}
+                >
+                  <strong>{treemapTooltip.item.themeName}</strong>
+                  <dl>
+                    <div><dt>기간</dt><dd>{themePeriodStart} ~ {themePeriodEnd}</dd></div>
+                    <div><dt>합산 등락률</dt><dd>{formatSignedPct(treemapTooltip.item.returnSum)}</dd></div>
+                    <div><dt>거래대금</dt><dd>{formatEok(treemapTooltip.item.tradingValue100m)}</dd></div>
+                    <div><dt>상승/하락/보합</dt><dd>{treemapTooltip.item.risingDays}일 / {treemapTooltip.item.fallingDays}일 / {treemapTooltip.item.flatDays}일</dd></div>
+                    <div><dt>데이터</dt><dd>{treemapTooltip.item.dataDays}일 · {treemapTooltip.item.stockCount}종목</dd></div>
+                  </dl>
+                </div>
+              ) : null}
             </div>
 
             {selectedTheme ? (

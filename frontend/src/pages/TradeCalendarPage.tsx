@@ -126,6 +126,16 @@ export default function TradeCalendarPage() {
     void run();
   }, []);
 
+  const handleSelectMonth = async (monthValue: string) => {
+    if (!/^\d{4}-\d{2}$/.test(monthValue)) return;
+    const [year, monthNumber] = monthValue.split("-").map(Number);
+    const target = new Date(year, monthNumber - 1, 1);
+    setSelectedMonth(target);
+    setSelectedDate(`${monthValue}-01`);
+    setMessage("");
+    await Promise.all([loadMonthlySummary(monthValue), loadDailyItems(`${monthValue}-01`)]);
+  };
+
   const handleMoveMonth = async (offset: number) => {
     const next = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + offset, 1);
     setSelectedMonth(next);
@@ -229,11 +239,11 @@ export default function TradeCalendarPage() {
 
       <div className="trade-calendar-top">
         <SectionCard title="월간 매매일지 캘린더">
-          <div className="trade-calendar-toolbar">
-            <button type="button" className="btn btn-secondary" onClick={() => void handleMoveMonth(-1)}>이전</button>
-            <strong>{selectedMonth.getFullYear()}년 {selectedMonth.getMonth() + 1}월</strong>
-            <button type="button" className="btn btn-secondary" onClick={() => void handleMoveMonth(1)}>다음</button>
-            <button type="button" className="btn btn-primary" onClick={() => void handleToday()}>오늘</button>
+          <div className="trade-calendar-toolbar calendar-period-nav">
+            <button type="button" className="btn btn-secondary calendar-nav-button" onClick={() => void handleMoveMonth(-1)} aria-label="이전 월">◀</button>
+            <input className="input-control calendar-period-input" type="month" value={monthKey} onChange={(e) => void handleSelectMonth(e.target.value)} aria-label="매매일지 월" />
+            <button type="button" className="btn btn-secondary calendar-nav-button" onClick={() => void handleMoveMonth(1)} aria-label="다음 월">▶</button>
+            <button type="button" className="btn btn-primary calendar-today-button" onClick={() => void handleToday()}>이번달</button>
           </div>
           <div className="trade-calendar-weekdays">
             {WEEKDAYS.map((day) => (

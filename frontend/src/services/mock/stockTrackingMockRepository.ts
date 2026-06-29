@@ -1,6 +1,7 @@
 ﻿import type {
   CollectStockTrackingPricesPayload,
   CreateStockTrackingGroupPayload,
+  CreateTrackingFromConditionResultsPayload,
   RegisterTrackingItemsFromCandidatesPayload,
   StockTrackingChartPrice,
   StockTrackingChartResponse,
@@ -297,6 +298,56 @@ export const stockTrackingMockRepository = {
     const offset = params?.offset ?? 0;
     const limit = params?.limit ?? total;
     return { items: rows.slice(offset, offset + limit), total };
+  },
+  registerFromConditionResults: async (payload: CreateTrackingFromConditionResultsPayload) => {
+    const group = groups.find((row) => row.id === payload.group_id);
+    const createdIds: number[] = [];
+    let skippedCount = 0;
+    const resultItems = payload.items.map((source) => {
+      const stockCode = String(source.stock_code || "").replace(/[^0-9]/g, "").slice(-6).padStart(6, "0");
+      const duplicate = items.find((item) => item.group_id === payload.group_id && item.stock_code === stockCode && item.tracking_base_date === payload.detected_date);
+      if (duplicate) {
+        skippedCount += 1;
+        return { stock_code: stockCode, stock_name: source.stock_name ?? null, status: "SKIPPED" as const, tracking_item_id: duplicate.id, reason: "이미 같은 그룹/기준일로 등록된 종목입니다." };
+      }
+      const id = nextItemId++;
+      const row: StockTrackingItem = {
+        id,
+        group_id: payload.group_id,
+        group_name: group?.name ?? "Mock 그룹",
+        candidate_id: null,
+        condition_no: payload.condition_no ?? null,
+        condition_name: payload.condition_name ?? null,
+        stock_id: id,
+        stock_code: stockCode,
+        stock_name: source.stock_name ?? stockCode,
+        detected_date: payload.detected_date,
+        tracking_base_date: payload.detected_date,
+        base_price: source.current_price ?? null,
+        base_change_rate: source.change_rate ?? null,
+        base_volume: source.volume ?? null,
+        base_trading_value: source.trading_value ?? null,
+        status: "TRACKING",
+        review_date: null,
+        review_note: null,
+        price_status: "NOT_COLLECTED",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      items = [row, ...items];
+      createdIds.push(id);
+      return { stock_code: stockCode, stock_name: row.stock_name, status: "CREATED" as const, tracking_item_id: id, reason: null };
+    });
+    refreshGroupCounts();
+    return {
+      success: true,
+      requested_count: payload.items.length,
+      created_count: createdIds.length,
+      skipped_count: skippedCount,
+      item_ids: createdIds,
+      items: resultItems,
+      message: `종목트래킹 등록 완료: 신규 ${createdIds.length}건, 중복 제외 ${skippedCount}건`,
+    };
   },
   registerFromCandidates: async (payload: RegisterTrackingItemsFromCandidatesPayload) => {
     const group = groups.find((row) => row.id === payload.group_id);

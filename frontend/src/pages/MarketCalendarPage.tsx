@@ -362,11 +362,11 @@ function MarketCalendarPage() {
       />
       <SectionCard className="market-calendar-card">
         <div className="market-calendar-toolbar">
-          <div className="market-calendar-month-nav">
-            <button type="button" className="btn-secondary" onClick={() => setMonth(shiftMonth(month, -1))}>이전</button>
-            <strong>{formatMonthLabel(month)}</strong>
-            <button type="button" className="btn-secondary" onClick={() => setMonth(shiftMonth(month, 1))}>다음</button>
-            <button type="button" className="btn-primary" onClick={() => setMonth(toMonth(new Date(today + "T00:00:00")))}>오늘</button>
+          <div className="market-calendar-month-nav calendar-period-nav">
+            <button type="button" className="btn-secondary calendar-nav-button" onClick={() => setMonth(shiftMonth(month, -1))} aria-label="이전 월">◀</button>
+            <input className="input-control calendar-period-input" type="month" value={month} onChange={(event) => setMonth(event.target.value)} aria-label="증시 캘린더 월" />
+            <button type="button" className="btn-secondary calendar-nav-button" onClick={() => setMonth(shiftMonth(month, 1))} aria-label="다음 월">▶</button>
+            <button type="button" className="btn-primary calendar-today-button" onClick={() => setMonth(toMonth(new Date(today + "T00:00:00")))}>이번달</button>
           </div>
           <div className="market-calendar-filters">
             <select value={themeGroupId} onChange={(event) => setThemeGroupId(event.target.value ? Number(event.target.value) : "")}> 
