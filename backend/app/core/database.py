@@ -120,6 +120,140 @@ def ensure_runtime_schema() -> None:
         )
         conn.exec_driver_sql(
             """
+            CREATE TABLE IF NOT EXISTS market_indexes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                index_code TEXT NOT NULL UNIQUE,
+                index_name TEXT NOT NULL,
+                category TEXT NOT NULL DEFAULT '국내지수',
+                market TEXT NOT NULL DEFAULT 'KR',
+                currency TEXT NOT NULL DEFAULT 'KRW',
+                provider TEXT NOT NULL DEFAULT 'KIWOOM_REST',
+                provider_symbol TEXT,
+                description TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                display_order INTEGER NOT NULL DEFAULT 0,
+                last_collected_date TEXT,
+                collection_status TEXT NOT NULL DEFAULT 'NOT_COLLECTED',
+                error_message TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_index_daily_prices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                index_code TEXT NOT NULL,
+                price_date TEXT NOT NULL,
+                open_price REAL,
+                high_price REAL,
+                low_price REAL,
+                close_price REAL,
+                volume INTEGER,
+                trading_value INTEGER,
+                change_rate REAL,
+                ma5 REAL,
+                ma20 REAL,
+                ma60 REAL,
+                ma120 REAL,
+                source_provider TEXT NOT NULL DEFAULT 'KIWOOM_REST',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(index_code, price_date),
+                FOREIGN KEY (index_code) REFERENCES market_indexes(index_code) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_index_daily_prices_code_date "
+            "ON market_index_daily_prices(index_code, price_date)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_indexes_active_order "
+            "ON market_indexes(is_active, display_order)"
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_index_theme_mappings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                index_code TEXT NOT NULL,
+                theme_id INTEGER,
+                theme_group_id INTEGER,
+                mapping_type TEXT NOT NULL DEFAULT 'reference',
+                description TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (index_code) REFERENCES market_indexes(index_code) ON DELETE CASCADE,
+                FOREIGN KEY (theme_id) REFERENCES market_themes(id) ON DELETE SET NULL
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_index_theme_mappings_index "
+            "ON market_index_theme_mappings(index_code, is_active)"
+        )
+
+        for row in (
+            ("KOSPI", "코스피", "국내대표지수", "KOSPI", "KRW", "KIWOOM_REST", "KOSPI", "한국거래소 유가증권시장 대표 지수", 1, 1),
+            ("KOSDAQ", "코스닥", "국내대표지수", "KOSDAQ", "KRW", "KIWOOM_REST", "KOSDAQ", "한국거래소 코스닥시장 대표 지수", 1, 2),
+            ("KOSPI200", "코스피200", "국내보조지수", "KOSPI", "KRW", "KIWOOM_REST", None, "코스피200 보조지수. 키움 provider mapping 확인 필요", 1, 3),
+            ("KOSDAQ150", "코스닥150", "국내보조지수", "KOSDAQ", "KRW", "KIWOOM_REST", None, "코스닥150 보조지수. 키움 provider mapping 확인 필요", 1, 4),
+            ("KOSPI_ELECTRONICS", "코스피 전기전자", "업종지수", "KOSPI", "KRW", "KIWOOM_REST", None, "코스피 전기전자 업종지수. 키움 provider mapping 확인 필요", 1, 10),
+            ("KOSPI_PHARMA", "코스피 의약품", "업종지수", "KOSPI", "KRW", "KIWOOM_REST", None, "코스피 의약품 업종지수. 키움 provider mapping 확인 필요", 1, 11),
+            ("KOSPI_CHEMICAL", "코스피 화학", "업종지수", "KOSPI", "KRW", "KIWOOM_REST", None, "코스피 화학 업종지수. 키움 provider mapping 확인 필요", 1, 12),
+            ("KOSPI_MACHINERY", "코스피 기계", "업종지수", "KOSPI", "KRW", "KIWOOM_REST", None, "코스피 기계 업종지수. 키움 provider mapping 확인 필요", 1, 13),
+            ("KOSPI_TRANSPORT_EQUIPMENT", "코스피 운수장비", "업종지수", "KOSPI", "KRW", "KIWOOM_REST", None, "코스피 운수장비 업종지수. 키움 provider mapping 확인 필요", 1, 14),
+            ("KOSPI_STEEL_METAL", "코스피 철강금속", "업종지수", "KOSPI", "KRW", "KIWOOM_REST", None, "코스피 철강금속 업종지수. 키움 provider mapping 확인 필요", 1, 15),
+            ("KOSPI_FINANCE", "코스피 금융업", "업종지수", "KOSPI", "KRW", "KIWOOM_REST", None, "코스피 금융업 업종지수. 키움 provider mapping 확인 필요", 1, 16),
+            ("KOSPI_CONSTRUCTION", "코스피 건설업", "업종지수", "KOSPI", "KRW", "KIWOOM_REST", None, "코스피 건설업 업종지수. 키움 provider mapping 확인 필요", 1, 17),
+            ("KOSPI_TRANSPORT_WAREHOUSE", "코스피 운수창고", "업종지수", "KOSPI", "KRW", "KIWOOM_REST", None, "코스피 운수창고 업종지수. 키움 provider mapping 확인 필요", 1, 18),
+            ("KOSPI_SERVICE", "코스피 서비스업", "업종지수", "KOSPI", "KRW", "KIWOOM_REST", None, "코스피 서비스업 업종지수. 키움 provider mapping 확인 필요", 1, 19),
+            ("KOSDAQ_SEMICONDUCTOR", "코스닥 반도체", "업종지수", "KOSDAQ", "KRW", "KIWOOM_REST", None, "코스닥 반도체 업종지수. 키움 provider mapping 확인 필요", 1, 30),
+            ("KOSDAQ_IT_HW", "코스닥 IT H/W", "업종지수", "KOSDAQ", "KRW", "KIWOOM_REST", None, "코스닥 IT H/W 업종지수. 키움 provider mapping 확인 필요", 1, 31),
+            ("KOSDAQ_IT_SW_SVC", "코스닥 IT S/W & SVC", "업종지수", "KOSDAQ", "KRW", "KIWOOM_REST", None, "코스닥 IT S/W & SVC 업종지수. 키움 provider mapping 확인 필요", 1, 32),
+            ("KOSDAQ_PHARMA", "코스닥 제약", "업종지수", "KOSDAQ", "KRW", "KIWOOM_REST", None, "코스닥 제약 업종지수. 키움 provider mapping 확인 필요", 1, 33),
+            ("KOSDAQ_GENERAL_ELECTRONICS", "코스닥 일반전기전자", "업종지수", "KOSDAQ", "KRW", "KIWOOM_REST", None, "코스닥 일반전기전자 업종지수. 키움 provider mapping 확인 필요", 1, 34),
+            ("KOSDAQ_MACHINE_EQUIPMENT", "코스닥 기계·장비", "업종지수", "KOSDAQ", "KRW", "KIWOOM_REST", None, "코스닥 기계·장비 업종지수. 키움 provider mapping 확인 필요", 1, 35),
+            ("KOSDAQ_CHEMICAL", "코스닥 화학", "업종지수", "KOSDAQ", "KRW", "KIWOOM_REST", None, "코스닥 화학 업종지수. 키움 provider mapping 확인 필요", 1, 36),
+            ("KOSDAQ_MEDICAL_PRECISION", "코스닥 의료·정밀기기", "업종지수", "KOSDAQ", "KRW", "KIWOOM_REST", None, "코스닥 의료·정밀기기 업종지수. 키움 provider mapping 확인 필요", 1, 37),
+            ("GOLD_KRX", "KRX 금 현물", "금현물", "KRX", "KRW", "KIWOOM_REST", None, "KRX 금 현물. 키움 provider mapping 확인 필요", 1, 50),
+        ):
+            conn.exec_driver_sql(
+                """
+                INSERT OR IGNORE INTO market_indexes
+                (index_code, index_name, category, market, currency, provider, provider_symbol, description, is_active, display_order, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                row,
+            )
+            conn.exec_driver_sql(
+                """
+                UPDATE market_indexes
+                SET index_name = CASE WHEN index_name IS NULL OR TRIM(index_name) = '' OR index_name LIKE '%?%' THEN ? ELSE index_name END,
+                    category = ?,
+                    market = ?,
+                    currency = ?,
+                    provider = ?,
+                    provider_symbol = ?,
+                    description = CASE WHEN description IS NULL OR TRIM(description) = '' OR description LIKE '%?%' THEN ? ELSE description END,
+                    is_active = ?,
+                    display_order = ?,
+                    collection_status = CASE
+                        WHEN collection_status IN ('ready', 'READY', '', 'success', 'SUCCESS') OR collection_status IS NULL THEN
+                            CASE WHEN last_collected_date IS NULL THEN 'NOT_COLLECTED' ELSE 'LATEST' END
+                        WHEN collection_status IN ('failed', 'FAILED') THEN 'ERROR'
+                        ELSE collection_status
+                    END,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE index_code = ?
+                """,
+                (row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9], row[0]),
+            )
+
+        conn.exec_driver_sql(
+            """
             CREATE TABLE IF NOT EXISTS gpt_prompt_templates (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 domain TEXT NOT NULL DEFAULT 'common',

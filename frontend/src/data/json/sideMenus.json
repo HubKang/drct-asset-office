@@ -46,6 +46,11 @@
     "routeKey": "market-trends"
   },
   {
+    "menuKey": "market",
+    "title": "시장 지표 관리",
+    "routeKey": "market-indicators"
+  },
+  {
     "menuKey": "collection",
     "title": "뉴스 관리",
     "routeKey": "news"

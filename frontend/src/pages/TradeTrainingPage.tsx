@@ -1,9 +1,11 @@
 import { Fragment, FormEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { BarChart3, PauseCircle, Play, Search, Settings, ShoppingCart, StepForward, X } from "lucide-react";
 import EmptyState from "@/components/common/EmptyState";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import { repositories } from "@/services";
+import type { MarketIndexDailyPriceItem } from "@/types/marketIndex";
 import type { TradeMethod, TradeMethodSaveRequest } from "@/types/tradeJournal";
 import type {
   SimulationReview,
@@ -19,6 +21,7 @@ import type {
 } from "@/types/tradeTraining";
 
 type OrderMode = "BUY" | "SELL";
+type MarketIndexCode = "KOSPI" | "KOSDAQ";
 type TradeMarkerSide = "BUY" | "SELL";
 type DrawingTool = "horizontal" | "trend" | null;
 type TrendPoint = {
@@ -39,6 +42,13 @@ type ChartDrawing =
       endIndex: number;
       endPrice: number;
     };
+type TrainingChartLayout = {
+  pad: { top: number; right: number; bottom: number; left: number };
+  slot: number;
+  chartWidth: number;
+  width: number;
+  visibleDays: number;
+};
 type TradeMarker = {
   key: string;
   tradeDate: string;
@@ -60,6 +70,7 @@ type ReasonQualityGrade = "충분" | "보통" | "부족" | "미작성";
 
 const DEFAULT_MA_TEXT = "5,10,20,60,120";
 const STOCKS_PAGE_SIZE = 6;
+const MARKET_INDEX_LABELS: Record<MarketIndexCode, string> = { KOSPI: "\ucf54\uc2a4\ud53c", KOSDAQ: "\ucf54\uc2a4\ub2e5" };
 const BUY_REVIEW_TAGS = [
   { value: "planned", label: "계획 매수" },
   { value: "confirmation", label: "확인 매수" },
@@ -355,6 +366,8 @@ function CandleChart({
   highlightedTradeDate,
   highlightedTradeId,
   onMarkerClick,
+  marketIndexControls,
+  renderMarketIndexPanel,
 }: {
   sessionId?: number | string | null;
   candles: TrainingCandle[];
@@ -365,6 +378,8 @@ function CandleChart({
   highlightedTradeDate?: string | null;
   highlightedTradeId?: number | null;
   onMarkerClick?: (tradeDate: string, tradeId: number | null) => void;
+  marketIndexControls?: ReactNode;
+  renderMarketIndexPanel?: (layout: TrainingChartLayout) => ReactNode;
 }) {
   const [tooltip, setTooltip] = useState<{ candle: TrainingCandle; x: number; y: number; changeRate: number | null } | null>(null);
   const [markerTooltip, setMarkerTooltip] = useState<TradeMarkerTooltip | null>(null);
@@ -384,6 +399,7 @@ function CandleChart({
   const chartWidth = Math.max(baseChartWidth, candles.length * slot);
   const width = Math.ceil(chartWidth + pad.left + pad.right);
   const height = pad.top + priceHeight + volumeHeight + pad.bottom + 22;
+  const chartLayout: TrainingChartLayout = { pad, slot, chartWidth, width, visibleDays };
 
   const priced = candles.filter((candle) => candle.high !== null && candle.low !== null);
   const minPrice = priced.length ? Math.min(...priced.map((candle) => Number(candle.low))) : 0;
@@ -594,7 +610,9 @@ function CandleChart({
         <button className="training-chart-tool-btn" type="button" onClick={handleClearAllDrawings} disabled={chartDrawings.length === 0 && !pendingTrendStart}>
           전체삭제
         </button>
+        {marketIndexControls}
       </div>
+      {renderMarketIndexPanel?.(chartLayout)}
       <div className="training-chart-viewport" ref={scrollRef}>
         <div className="training-chart-track" style={{ width }}>
           <svg
@@ -824,6 +842,163 @@ function CandleChart({
           </svg>
         </div>
       </div>
+    </div>
+  );
+}
+
+
+function MarketIndexReplayChart({
+  indexCode,
+  indexName,
+  currentDate,
+  prices,
+  sharedDates,
+  chartLayout,
+  loading,
+  error,
+}: {
+  indexCode: MarketIndexCode;
+  indexName: string;
+  currentDate: string;
+  prices: MarketIndexDailyPriceItem[];
+  sharedDates: string[];
+  chartLayout: TrainingChartLayout;
+  loading: boolean;
+  error: string | null;
+}) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const priceHeight = 142;
+  const volumeHeight = 40;
+  const pad = { top: 14, right: chartLayout.pad.right, bottom: 24, left: chartLayout.pad.left };
+  const slot = chartLayout.slot;
+  const chartWidth = chartLayout.chartWidth;
+  const width = chartLayout.width;
+  const height = pad.top + priceHeight + volumeHeight + pad.bottom + 16;
+  const priceByDate = new Map(prices.map((item) => [item.price_date, item]));
+  const alignedPrices = sharedDates.map((date) => ({ date, price: priceByDate.get(date) ?? null }));
+  const priced = alignedPrices
+    .map((item) => item.price)
+    .filter((item): item is MarketIndexDailyPriceItem => !!item && item.high_price != null && item.low_price != null && item.close_price != null);
+  const minPrice = priced.length ? Math.min(...priced.map((item) => Number(item.low_price))) : 0;
+  const maxPrice = priced.length ? Math.max(...priced.map((item) => Number(item.high_price))) : 1;
+  const span = Math.max(1, maxPrice - minPrice);
+  const maxVolume = Math.max(1, ...priced.map((item) => Number(item.volume || 0)));
+  const bodyWidth = Math.max(4, Math.min(13, slot * 0.58));
+  const firstPrice = priced[0]?.close_price ?? null;
+  const lastPrice = priced[priced.length - 1]?.close_price ?? null;
+  const fiveBasePrice = priced.length > 5 ? priced[priced.length - 6]?.close_price ?? null : null;
+  const currentRow = priced[priced.length - 1] ?? null;
+  const sinceStartReturn = firstPrice && lastPrice ? ((Number(lastPrice) / Number(firstPrice)) - 1) * 100 : null;
+  const fiveDayReturn = fiveBasePrice && lastPrice ? ((Number(lastPrice) / Number(fiveBasePrice)) - 1) * 100 : null;
+  const ma20State = currentRow?.ma20 && currentRow.close_price
+    ? Number(currentRow.close_price) >= Number(currentRow.ma20)
+      ? "MA20 \uc704"
+      : "MA20 \uc544\ub798"
+    : "MA20 -";
+
+  const yPrice = (value: number | null | undefined) => {
+    if (value === null || value === undefined || !Number.isFinite(value)) return pad.top + priceHeight;
+    return pad.top + ((maxPrice - value) / span) * priceHeight;
+  };
+  const xAt = (idx: number) => pad.left + idx * slot + slot / 2;
+  const linePoints = (key: "ma5" | "ma20" | "ma60") => alignedPrices
+    .map((item, idx) => {
+      const value = item.price?.[key];
+      return value == null ? null : `${xAt(idx)},${yPrice(Number(value))}`;
+    })
+    .filter(Boolean)
+    .join(" ");
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    requestAnimationFrame(() => {
+      el.scrollLeft = el.scrollWidth;
+    });
+  }, [alignedPrices.length, alignedPrices[alignedPrices.length - 1]?.date]);
+
+  const maSeries = [
+    { key: "ma5" as const, label: "MA5", color: "#111827", width: 1.3 },
+    { key: "ma20" as const, label: "MA20", color: "#eab308", width: 1.6 },
+    { key: "ma60" as const, label: "MA60", color: "#16a34a", width: 1.4 },
+  ];
+
+  return (
+    <div className="training-market-index-panel">
+      <div className="training-market-index-head">
+        <div>
+          <strong>{indexName}</strong>
+          <span>{indexCode}{" \u00b7 "}{currentDate}</span>
+        </div>
+        <div className="training-market-index-summary">
+          <span>{"\uc2dc\uc791 \ub300\ube44"} <b className={profitClass(sinceStartReturn)}>{sinceStartReturn == null ? "-" : fmtPercent(sinceStartReturn)}</b></span>
+          <span>{"5\uac70\ub798\uc77c"} <b className={profitClass(fiveDayReturn)}>{fiveDayReturn == null ? "-" : fmtPercent(fiveDayReturn)}</b></span>
+          <span>{ma20State}</span>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="training-market-index-empty">{"\uc9c0\uc218 \ucc28\ud2b8\ub97c \ubd88\ub7ec\uc624\ub294 \uc911\uc785\ub2c8\ub2e4."}</div>
+      ) : error ? (
+        <div className="training-market-index-empty warning">{error}</div>
+      ) : priced.length === 0 ? (
+        <div className="training-market-index-empty">{"\uc218\uc9d1\ub41c "}{indexName}{" \uc9c0\uc218 \ub370\uc774\ud130\uac00 \uc5c6\uc2b5\ub2c8\ub2e4."}</div>
+      ) : (
+        <div className="training-market-index-viewport" ref={scrollRef}>
+          <div className="training-market-index-track" style={{ width }}>
+            <svg className="training-market-index-svg" width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${indexName} \uc9c0\uc218 \ucc28\ud2b8`}>
+              <rect x={0} y={0} width={width} height={height} rx={10} fill="#ffffff" />
+              {[0, 0.5, 1].map((rate) => {
+                const y = pad.top + priceHeight * rate;
+                const price = maxPrice - span * rate;
+                return (
+                  <g key={rate}>
+                    <line x1={pad.left} x2={width - pad.right} y1={y} y2={y} stroke="#e2e8f0" />
+                    <text x={width - pad.right + 6} y={y + 4} fontSize="10" fill="#64748b">{fmtNumber(price)}</text>
+                  </g>
+                );
+              })}
+              {maSeries.map((line) => {
+                const points = linePoints(line.key);
+                return points ? <polyline key={line.key} points={points} fill="none" stroke={line.color} strokeWidth={line.width} /> : null;
+              })}
+              {alignedPrices.map(({ date, price }, idx) => {
+                const x = xAt(idx);
+                if (!price) {
+                  return date === currentDate ? <rect key={date} x={x - slot / 2} y={pad.top} width={slot} height={priceHeight + 12 + volumeHeight} fill="#fef3c7" opacity={0.24} /> : null;
+                }
+                const open = Number(price.open_price || 0);
+                const close = Number(price.close_price || 0);
+                const high = Number(price.high_price || 0);
+                const low = Number(price.low_price || 0);
+                const isUp = close >= open;
+                const color = isUp ? "#ef4444" : "#2563eb";
+                const top = yPrice(Math.max(open, close));
+                const bottom = yPrice(Math.min(open, close));
+                const bodyHeight = Math.max(2, bottom - top);
+                const volumeBarHeight = (Number(price.volume || 0) / maxVolume) * volumeHeight;
+                return (
+                  <g key={date}>
+                    {date === currentDate ? <rect x={x - slot / 2} y={pad.top} width={slot} height={priceHeight + 12 + volumeHeight} fill="#fef3c7" opacity={0.38} /> : null}
+                    <line x1={x} x2={x} y1={yPrice(high)} y2={yPrice(low)} stroke={color} strokeWidth={1.1} />
+                    <rect x={x - bodyWidth / 2} y={top} width={bodyWidth} height={bodyHeight} fill={isUp ? "#ef4444" : "#2563eb"} stroke={color} strokeWidth={0.8} />
+                    <rect x={x - bodyWidth / 2} y={pad.top + priceHeight + 12 + volumeHeight - volumeBarHeight} width={bodyWidth} height={volumeBarHeight} fill={isUp ? "#fecaca" : "#bfdbfe"} />
+                  </g>
+                );
+              })}
+              <line x1={pad.left} x2={width - pad.right} y1={pad.top + priceHeight + 12 + volumeHeight} y2={pad.top + priceHeight + 12 + volumeHeight} stroke="#cbd5e1" />
+              <text x={pad.left} y={height - 7} fontSize="10" fill="#64748b">{sharedDates[0]}</text>
+              <text x={width - pad.right - 76} y={height - 7} fontSize="10" fill="#64748b">{sharedDates[sharedDates.length - 1]}</text>
+              {maSeries.map((line, idx) => (
+                <g key={line.key} transform={`translate(${pad.left + idx * 70}, 10)`}>
+                  <line x1={0} x2={16} y1={0} y2={0} stroke={line.color} strokeWidth={line.width} />
+                  <text x={20} y={4} fontSize="10" fill="#475569">{line.label}</text>
+                </g>
+              ))}
+            </svg>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2089,6 +2264,10 @@ function TradeTrainingPage() {
   const [highlightedTradeDate, setHighlightedTradeDate] = useState<string | null>(null);
   const [highlightedTradeId, setHighlightedTradeId] = useState<number | null>(null);
   const [showMethodPrinciples, setShowMethodPrinciples] = useState(false);
+  const [selectedMarketIndex, setSelectedMarketIndex] = useState<MarketIndexCode | null>(null);
+  const [marketIndexPriceMap, setMarketIndexPriceMap] = useState<Partial<Record<MarketIndexCode, MarketIndexDailyPriceItem[]>>>({});
+  const [marketIndexLoadingCode, setMarketIndexLoadingCode] = useState<MarketIndexCode | null>(null);
+  const [marketIndexError, setMarketIndexError] = useState<string | null>(null);
 
   const selectedTrainingMethod = useMemo(
     () => tradeMethods.find((method) => method.id === selectedMethodId) ?? null,
@@ -2165,6 +2344,10 @@ function TradeTrainingPage() {
       setHighlightedTradeDate(null);
       setHighlightedTradeId(null);
       setShowMethodPrinciples(false);
+      setSelectedMarketIndex(null);
+      setMarketIndexPriceMap({});
+      setMarketIndexError(null);
+      setMarketIndexLoadingCode(null);
       setSettingsOpen(false);
       setMessage("훈련 세션을 시작했습니다.");
     } catch (nextError) {
@@ -2277,6 +2460,39 @@ function TradeTrainingPage() {
     setShowAvgPriceLine((prev) => !prev);
   };
 
+
+  const handleToggleMarketIndex = async (indexCode: MarketIndexCode) => {
+    if (!detail) return;
+    if (selectedMarketIndex === indexCode) {
+      setSelectedMarketIndex(null);
+      setMarketIndexError(null);
+      return;
+    }
+    setSelectedMarketIndex(indexCode);
+    setMarketIndexError(null);
+    if (marketIndexPriceMap[indexCode]) return;
+
+    setMarketIndexLoadingCode(indexCode);
+    try {
+      const response = await repositories.marketIndexes.listDailyPrices(indexCode, {
+        start_date: detail.session.start_date,
+        end_date: detail.session.end_date,
+      });
+      setMarketIndexPriceMap((prev) => ({ ...prev, [indexCode]: response.items || [] }));
+    } catch (nextError) {
+      setMarketIndexError(nextError instanceof Error ? nextError.message : "\uc9c0\uc218 \ub370\uc774\ud130\ub97c \ubd88\ub7ec\uc624\uc9c0 \ubabb\ud588\uc2b5\ub2c8\ub2e4.");
+    } finally {
+      setMarketIndexLoadingCode((current) => (current === indexCode ? null : current));
+    }
+  };
+
+  const currentTrainingDate = detail?.session.current_date || detail?.current_candle?.trade_date || "";
+  const sharedVisibleDates = useMemo(() => detail?.candles.map((candle) => candle.trade_date) ?? [], [detail?.candles]);
+  const visibleMarketIndexPrices = useMemo(() => {
+    if (!detail || !selectedMarketIndex || !currentTrainingDate) return [];
+    return (marketIndexPriceMap[selectedMarketIndex] || []).filter((item) => item.price_date <= currentTrainingDate);
+  }, [currentTrainingDate, detail, marketIndexPriceMap, selectedMarketIndex]);
+
   const progressText = useMemo(() => {
     if (!detail) return "-";
     return `${fmtNumber(detail.session.current_index + 1)}일차 · ${detail.session.start_date} ~ ${detail.session.end_date}`;
@@ -2367,6 +2583,33 @@ function TradeTrainingPage() {
                 highlightedTradeDate={highlightedTradeDate}
                 highlightedTradeId={highlightedTradeId}
                 onMarkerClick={highlightTradeMarker}
+                marketIndexControls={
+                  <>
+                    {(["KOSPI", "KOSDAQ"] as MarketIndexCode[]).map((indexCode) => (
+                      <button
+                        key={indexCode}
+                        className={`training-chart-tool-btn training-market-index-toggle ${selectedMarketIndex === indexCode ? "active" : ""}`}
+                        type="button"
+                        disabled={marketIndexLoadingCode === indexCode}
+                        onClick={() => void handleToggleMarketIndex(indexCode)}
+                      >
+                        {MARKET_INDEX_LABELS[indexCode]}
+                      </button>
+                    ))}
+                  </>
+                }
+                renderMarketIndexPanel={(chartLayout) => selectedMarketIndex ? (
+                  <MarketIndexReplayChart
+                    indexCode={selectedMarketIndex}
+                    indexName={MARKET_INDEX_LABELS[selectedMarketIndex]}
+                    currentDate={currentTrainingDate}
+                    prices={visibleMarketIndexPrices}
+                    sharedDates={sharedVisibleDates}
+                    chartLayout={chartLayout}
+                    loading={marketIndexLoadingCode === selectedMarketIndex}
+                    error={marketIndexError}
+                  />
+                ) : null}
               />
               <TrainingChartSummary detail={detail} onNext={handleNextDay} nextDisabled={!canTrade || loading} />
             </SectionCard>

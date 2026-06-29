@@ -1,4 +1,4 @@
-import AdvisoryPackagePage from "@/pages/AdvisoryPackagePage";
+﻿import AdvisoryPackagePage from "@/pages/AdvisoryPackagePage";
 import AnalysisIndicatorSettingsPage from "@/pages/AnalysisIndicatorSettingsPage";
 import BacktestPage from "@/pages/BacktestPage";
 import ClassificationRulesPage from "@/pages/ClassificationRulesPage";
@@ -16,6 +16,7 @@ import TradeReviewsPage from "@/pages/TradeReviewsPage";
 import TradeTrainingCalendarPage from "@/pages/TradeTrainingCalendarPage";
 import TradeTrainingPage from "@/pages/TradeTrainingPage";
 import MarketCalendarPage from "@/pages/MarketCalendarPage";
+import MarketIndexesPage from "@/pages/MarketIndexesPage";
 import MarketThemesPage from "@/pages/MarketThemesPage";
 import MarketTrendsPage from "@/pages/MarketTrendsPage";
 import NewsPage from "@/pages/NewsPage";
@@ -58,6 +59,8 @@ export const routeRegistry: RouteItem[] = [
   { routeKey: "classification-rules", path: "/classification-rules", title: "분류 규칙 관리", description: "뉴스/공시 자동 분류 규칙 관리", component: <ClassificationRulesPage /> },
   { routeKey: "market-themes", path: "/market-themes", title: "시장 테마 관리", description: "테마 등록/종목 매핑 관리", component: <MarketThemesPage /> },
   { routeKey: "market-trends", path: "/market-trends", title: "시장 수급 분석", description: "수급 이벤트 감지/테마 흐름 집계", component: <MarketTrendsPage /> },
+  { routeKey: "market-indicators", path: "/market-indicators", title: "시장 지표 관리", description: "코스피, 코스닥, 업종지수, 금 현물 등 주요 시장지표를 수집하고 시장 흐름을 비교합니다.", component: <MarketIndexesPage /> },
+  { routeKey: "market-indexes", path: "/market-indexes", title: "시장 지표 관리", description: "코스피, 코스닥, 업종지수, 금 현물 등 주요 시장지표를 수집하고 시장 흐름을 비교합니다.", component: <MarketIndexesPage /> },
   { routeKey: "economic-briefing", path: "/economic-briefing", title: "경제 브리핑", description: "경제 영상 메타데이터/요약 관리", component: <EconomicBriefingPage /> },
   { routeKey: "telegram-briefing", path: "/telegram-briefing", title: "텔레그램 브리핑", description: "텔레그램 채널 수집/요약 관리", component: <TelegramBriefingPage /> },
   { routeKey: "trade-methods", path: "/trade-methods", title: "매매기법", description: "매매기법 등록/수정/비활성화 관리", component: <TradeMethodsPage /> },

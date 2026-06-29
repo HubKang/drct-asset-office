@@ -1,10 +1,40 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from backend.app.clients.kiwoom import KiwoomRestClient
 from backend.app.core import config
+
+class UnsupportedMarketIndicatorError(ValueError):
+    pass
+
+
+KIWOOM_MARKET_INDICATOR_SYMBOLS: dict[str, dict[str, Any]] = {
+    "KOSPI": {"provider_symbol_config": "KIWOOM_REST_MARKET_KOSPI_CODE", "supported": True},
+    "KOSDAQ": {"provider_symbol_config": "KIWOOM_REST_MARKET_KOSDAQ_CODE", "supported": True},
+    "KOSPI200": {"provider_symbol": None, "supported": False},
+    "KOSDAQ150": {"provider_symbol": None, "supported": False},
+    "GOLD_KRX": {"provider_symbol": None, "supported": False},
+    "KOSPI_ELECTRONICS": {"provider_symbol": None, "supported": False},
+    "KOSPI_PHARMA": {"provider_symbol": None, "supported": False},
+    "KOSPI_CHEMICAL": {"provider_symbol": None, "supported": False},
+    "KOSPI_MACHINERY": {"provider_symbol": None, "supported": False},
+    "KOSPI_TRANSPORT_EQUIPMENT": {"provider_symbol": None, "supported": False},
+    "KOSPI_STEEL_METAL": {"provider_symbol": None, "supported": False},
+    "KOSPI_FINANCE": {"provider_symbol": None, "supported": False},
+    "KOSPI_CONSTRUCTION": {"provider_symbol": None, "supported": False},
+    "KOSPI_TRANSPORT_WAREHOUSE": {"provider_symbol": None, "supported": False},
+    "KOSPI_SERVICE": {"provider_symbol": None, "supported": False},
+    "KOSDAQ_SEMICONDUCTOR": {"provider_symbol": None, "supported": False},
+    "KOSDAQ_IT_HW": {"provider_symbol": None, "supported": False},
+    "KOSDAQ_IT_SW_SVC": {"provider_symbol": None, "supported": False},
+    "KOSDAQ_PHARMA": {"provider_symbol": None, "supported": False},
+    "KOSDAQ_GENERAL_ELECTRONICS": {"provider_symbol": None, "supported": False},
+    "KOSDAQ_MACHINE_EQUIPMENT": {"provider_symbol": None, "supported": False},
+    "KOSDAQ_CHEMICAL": {"provider_symbol": None, "supported": False},
+    "KOSDAQ_MEDICAL_PRECISION": {"provider_symbol": None, "supported": False},
+}
 
 
 class KiwoomRestMarketIndicatorProvider:
@@ -49,6 +79,54 @@ class KiwoomRestMarketIndicatorProvider:
             "kospi": kospi,
             "kosdaq": kosdaq,
             "message": message,
+        }
+
+    def get_index_daily_prices(
+        self,
+        *,
+        index_code: str,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> dict[str, Any]:
+        provider_code = self._resolve_provider_index_code(index_code)
+        end_dt = self._parse_date(end_date) if end_date else date.today()
+        start_dt = self._parse_date(start_date) if start_date else end_dt - timedelta(days=365 * 2)
+        payload = self._post(
+            path=self.daily_path,
+            api_id=self.daily_api_id,
+            body={
+                self.code_field: provider_code,
+                "base_dt": end_dt.strftime("%Y%m%d"),
+            },
+        )
+        rows = self._extract_daily_rows(payload)
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            trade_date = self._normalize_date(self._get_first_str(row, ("dt", "date", "trade_date", "base_date")))
+            if not trade_date or trade_date < start_dt.isoformat() or trade_date > end_dt.isoformat():
+                continue
+            items.append(
+                {
+                    "price_date": trade_date,
+                    "open_price": self._get_first_float(row, ("open_pric", "open", "opnprc", "open_price")),
+                    "high_price": self._get_first_float(row, ("high_pric", "high", "hgprc", "high_price")),
+                    "low_price": self._get_first_float(row, ("low_pric", "low", "lwprc", "low_price")),
+                    "close_price": self._get_first_float(row, ("cur_prc", "close_pric", "close_price", "clsprc")),
+                    "volume": self._get_first_int(row, ("trde_qty", "volume", "acml_vol")),
+                    "trading_value": self._to_krw_from_million_unit(
+                        self._get_first_int(row, ("trde_prica", "acml_tr_pbmn", "trading_value"))
+                    ),
+                    "change_rate": self._get_first_float(row, ("flu_rt", "change_rate", "chg_rt")),
+                }
+            )
+        items.sort(key=lambda item: str(item["price_date"]))
+        return {
+            "provider": "kiwoom_rest",
+            "index_code": index_code,
+            "provider_symbol": provider_code,
+            "requested_start_date": start_dt.isoformat(),
+            "requested_end_date": end_dt.isoformat(),
+            "items": items,
         }
 
     def get_stock_market_metrics(self, *, stock_code: str, market: str | None = None, base_dt: str | None = None) -> dict[str, Any]:
@@ -217,6 +295,30 @@ class KiwoomRestMarketIndicatorProvider:
         return self._normalize_date(raw)
 
     @staticmethod
+    def _parse_date(value: str) -> date:
+        cleaned = value.strip()
+        for fmt in ("%Y-%m-%d", "%Y%m%d"):
+            try:
+                return datetime.strptime(cleaned, fmt).date()
+            except ValueError:
+                continue
+        raise ValueError(f"invalid date: {value}")
+
+    @staticmethod
+    def _resolve_provider_index_code(index_code: str) -> str:
+        upper = index_code.strip().upper()
+        mapping = KIWOOM_MARKET_INDICATOR_SYMBOLS.get(upper)
+        if not mapping or not mapping.get("supported"):
+            raise UnsupportedMarketIndicatorError("키움 provider mapping이 아직 설정되지 않은 지표입니다.")
+        config_key = mapping.get("provider_symbol_config")
+        if config_key:
+            return str(getattr(config, str(config_key)))
+        provider_symbol = mapping.get("provider_symbol")
+        if provider_symbol:
+            return str(provider_symbol)
+        raise UnsupportedMarketIndicatorError("키움 provider_symbol이 아직 확인되지 않은 지표입니다.")
+
+    @staticmethod
     def _extract_first_row(payload: dict[str, Any]) -> dict[str, Any] | None:
         # ka20001 may return fields directly at top-level.
         if any(key in payload for key in ("cur_prc", "pred_pre", "flu_rt", "trde_qty", "trde_prica", "inds_cur_prc_tm")):
@@ -240,6 +342,18 @@ class KiwoomRestMarketIndicatorProvider:
                     if isinstance(nested, list) and nested and isinstance(nested[0], dict):
                         return nested[0]
         return None
+
+    @staticmethod
+    def _extract_daily_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
+        for key in ("inds_dt_pole_qry", "output", "output1", "items", "data"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return [row for row in value if isinstance(row, dict)]
+            if isinstance(value, dict):
+                for nested in value.values():
+                    if isinstance(nested, list):
+                        return [row for row in nested if isinstance(row, dict)]
+        return []
 
     @staticmethod
     def _extract_stock_daily_trade_row(payload: dict[str, Any]) -> dict[str, Any] | None:

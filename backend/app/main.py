@@ -19,6 +19,7 @@ from backend.app.api.routes_gpt_prompt_templates import router as gpt_prompt_tem
 from backend.app.api.routes_health import router as health_router
 from backend.app.api.routes_market_metrics import router as market_metrics_router
 from backend.app.api.routes_market_calendar import router as market_calendar_router
+from backend.app.api.routes_market_indexes import router as market_indexes_router
 from backend.app.api.routes_market_theme_candidates import router as market_theme_candidates_router
 from backend.app.api.routes_market_themes import router as market_themes_router
 from backend.app.api.routes_market_trends import router as market_trends_router
@@ -60,6 +61,7 @@ app.include_router(stock_prices_router)
 app.include_router(stock_tracking_router)
 app.include_router(market_metrics_router)
 app.include_router(market_calendar_router)
+app.include_router(market_indexes_router)
 app.include_router(market_themes_router)
 app.include_router(market_theme_candidates_router)
 app.include_router(market_trends_router)
