@@ -17,6 +17,7 @@ import type {
   MarketThemeReturnRefreshResponse,
   MarketThemeStock,
   MarketThemeStockCreateInput,
+  MarketThemeStockMemoResponse,
   MarketThemeStockUpdateInput,
   MarketThemeUpdateInput,
 } from "@/types/marketTheme";
@@ -74,6 +75,8 @@ export const marketThemeApiRepository = {
     apiRequest<MarketThemeStock>(`/market-theme-stocks/${mappingId}/deactivate`, { method: "PATCH" }),
   listThemesByStockCode: (stockCode: string) =>
     apiRequest<MarketThemeByStockResponse>(`/market-themes/by-stock/${encodeURIComponent(stockCode)}`),
+  listStockMemos: (stockCode: string) =>
+    apiRequest<MarketThemeStockMemoResponse>(`/market-themes/stocks/${encodeURIComponent(stockCode)}/memos`),
   listCandidates: (params?: { status?: string; theme_id?: number; stock_id?: number; candidate_source?: string; limit?: number; offset?: number }) => {
     const search = new URLSearchParams();
     if (params?.status) search.set("status", params.status);

@@ -349,6 +349,10 @@ class DailyThemeFlowSummaryItem(BaseModel):
     auto_rank: int | None = None
     manual_rank: int | None = None
     final_rank: int | None = None
+    theme_strength_score: float = 0
+    return_score: float = 0
+    trading_value_score: float = 0
+    breadth_score: float = 0
     rank_score: float = 0
     rank_basis: str = "auto"
 
@@ -410,6 +414,10 @@ class MonthlyThemeFlowCalendarThemeItem(BaseModel):
     auto_rank: int | None = None
     manual_rank: int | None = None
     final_rank: int | None = None
+    theme_strength_score: float = 0
+    return_score: float = 0
+    trading_value_score: float = 0
+    breadth_score: float = 0
     rank_score: float = 0
     rank_basis: str = "auto"
     stocks: list[MonthlyThemeFlowStockItem] = Field(default_factory=list)

@@ -417,6 +417,10 @@ export type DailyThemeFlowSummary = {
   auto_rank: number | null;
   manual_rank: number | null;
   final_rank: number | null;
+  theme_strength_score?: number;
+  return_score?: number;
+  trading_value_score?: number;
+  breadth_score?: number;
   rank_score: number;
   rank_basis: "auto" | "manual";
 };
@@ -478,6 +482,10 @@ export type MonthlyThemeFlowCalendarTheme = {
   auto_rank: number | null;
   manual_rank: number | null;
   final_rank: number | null;
+  theme_strength_score?: number;
+  return_score?: number;
+  trading_value_score?: number;
+  breadth_score?: number;
   rank_score: number;
   rank_basis: "auto" | "manual";
   stocks: MonthlyThemeFlowStock[];

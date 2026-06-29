@@ -11,6 +11,7 @@ import type {
   MarketThemeCandidateStatus,
   MarketThemeLevel,
   MarketThemeStock,
+  MarketThemeStockMemo,
   MarketThemeType,
 } from "@/types/marketTheme";
 import type { Stock } from "@/types/stock";
@@ -179,6 +180,11 @@ function MarketThemesPage() {
   const [returnDetailLoading, setReturnDetailLoading] = useState(false);
   const [returnDetailError, setReturnDetailError] = useState("");
   const [selectedReturnDetail, setSelectedReturnDetail] = useState<MarketThemeLatestReturnDetail | null>(null);
+  const [stockDrawerOpen, setStockDrawerOpen] = useState(false);
+  const [selectedLinkedStock, setSelectedLinkedStock] = useState<MarketThemeStock | null>(null);
+  const [stockMemos, setStockMemos] = useState<MarketThemeStockMemo[]>([]);
+  const [stockMemoLoading, setStockMemoLoading] = useState(false);
+  const [stockMemoError, setStockMemoError] = useState("");
   const [updatingPrimaryMappingId, setUpdatingPrimaryMappingId] = useState<number | null>(null);
   const mappingThemePickerRef = useRef<HTMLDivElement | null>(null);
 
@@ -404,6 +410,30 @@ function MarketThemesPage() {
     setSelectedReturnDetail(null);
   };
 
+  const closeStockDrawer = () => {
+    setStockDrawerOpen(false);
+    setSelectedLinkedStock(null);
+    setStockMemos([]);
+    setStockMemoLoading(false);
+    setStockMemoError("");
+  };
+
+  const openLinkedStockDrawer = async (row: MarketThemeStock) => {
+    setSelectedLinkedStock(row);
+    setStockDrawerOpen(true);
+    setStockMemoLoading(true);
+    setStockMemoError("");
+    setStockMemos([]);
+    try {
+      const res = await repositories.marketThemes.listStockMemos(row.stock_code);
+      setStockMemos(res.items ?? []);
+    } catch (e) {
+      setStockMemoError(toErrorMessage(e, "종목 메모를 불러오지 못했습니다."));
+    } finally {
+      setStockMemoLoading(false);
+    }
+  };
+
   const toggleThemeReturnSort = () => {
     setThemeReturnSort((prev) => (prev === "default" ? "desc" : prev === "desc" ? "asc" : "default"));
   };
@@ -427,6 +457,21 @@ function MarketThemesPage() {
   useEffect(() => {
     void loadThemeStocks(selectedThemeId);
   }, [selectedThemeId]);
+
+  useEffect(() => {
+    if (!stockDrawerOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeStockDrawer();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [stockDrawerOpen]);
+
+  useEffect(() => {
+    if (!selectedLinkedStock) return;
+    const stillActive = activeThemeStocks.some((row) => row.mapping_id === selectedLinkedStock.mapping_id);
+    if (!stillActive) closeStockDrawer();
+  }, [activeThemeStocks, selectedLinkedStock]);
 
   useEffect(() => {
     setThemePage(1);
@@ -664,6 +709,7 @@ function MarketThemesPage() {
     if (!ok) return;
     try {
       await repositories.marketThemes.deactivateThemeStock(mappingId);
+      if (selectedLinkedStock?.mapping_id === mappingId) closeStockDrawer();
       await Promise.all([loadThemeStocks(selectedThemeId), loadThemes()]);
       setMessage("테마 연결이 해제되었습니다.");
     } catch (e) {
@@ -1108,7 +1154,14 @@ function MarketThemesPage() {
                 <thead><tr><th>종목</th><th>시장</th><th>대표</th><th>출처</th><th>신뢰도</th><th>상태</th><th>작업</th></tr></thead>
                 <tbody>
                   {activeThemeStocks.map((row) => (
-                    <tr key={row.mapping_id}>
+                    <tr
+                      key={row.mapping_id}
+                      className={`market-theme-stock-row ${selectedLinkedStock?.mapping_id === row.mapping_id ? "selected" : ""}`}
+                      onClick={(e) => {
+                        if ((e.target as HTMLElement).closest("button,input,label")) return;
+                        void openLinkedStockDrawer(row);
+                      }}
+                    >
                       <td><div className="stock-cell"><strong>{row.stock_name}</strong><span>{row.stock_code}</span></div></td>
                       <td>{row.market ?? "-"}</td>
                       <td><label className="inline-flex items-center gap-2"><input type="checkbox" checked={row.is_primary === 1} disabled={updatingPrimaryMappingId === row.mapping_id} onChange={(e) => void onTogglePrimary(row.mapping_id, e.target.checked)} /><span>{row.is_primary === 1 ? "대표" : "일반"}</span></label></td>
@@ -1181,6 +1234,54 @@ function MarketThemesPage() {
             </table>
           </div>
         </SectionCard>
+      ) : null}
+      {stockDrawerOpen && selectedLinkedStock ? (
+        <div className="market-theme-stock-drawer-backdrop" onClick={closeStockDrawer}>
+          <aside className="market-theme-stock-drawer" onClick={(e) => e.stopPropagation()}>
+            <div className="market-theme-stock-drawer-header">
+              <div>
+                <h3 className="market-theme-stock-drawer-title">{selectedLinkedStock.stock_name}</h3>
+                <p className="market-theme-stock-drawer-subtitle">
+                  {selectedLinkedStock.stock_code} · {selectedLinkedStock.market ?? "-"}
+                </p>
+              </div>
+              <button type="button" className="btn btn-secondary btn-table-sm" onClick={closeStockDrawer}>닫기</button>
+            </div>
+
+            <div className="market-theme-stock-drawer-body">
+              <section>
+                <h4 className="market-theme-stock-section-title">연결 정보</h4>
+                <div className="market-theme-stock-detail-grid">
+                  <div className="market-theme-stock-detail-card"><span>테마그룹</span><strong>{selectedThemeGroup?.theme_name || selectedTheme?.parent_theme_name || "미지정"}</strong></div>
+                  <div className="market-theme-stock-detail-card"><span>테마</span><strong>{selectedTheme?.theme_name || "-"}</strong></div>
+                  <div className="market-theme-stock-detail-card"><span>종목명</span><strong>{selectedLinkedStock.stock_name}</strong></div>
+                  <div className="market-theme-stock-detail-card"><span>종목코드</span><strong>{selectedLinkedStock.stock_code}</strong></div>
+                  <div className="market-theme-stock-detail-card"><span>시장</span><strong>{selectedLinkedStock.market ?? "-"}</strong></div>
+                  <div className="market-theme-stock-detail-card"><span>대표 여부</span><strong>{selectedLinkedStock.is_primary === 1 ? "대표" : "일반"}</strong></div>
+                </div>
+              </section>
+
+              <section className="market-theme-stock-memo-section">
+                <h4 className="market-theme-stock-section-title">종목 메모</h4>
+                {stockMemoLoading ? <p className="selected-empty-message">메모를 불러오는 중입니다.</p> : null}
+                {stockMemoError ? <p className="text-sm text-red-600">{stockMemoError}</p> : null}
+                {!stockMemoLoading && !stockMemoError && stockMemos.length === 0 ? (
+                  <p className="selected-empty-message">등록된 종목 메모가 없습니다.</p>
+                ) : null}
+                {!stockMemoLoading && !stockMemoError && stockMemos.length > 0 ? (
+                  <div className="market-theme-stock-memo-list">
+                    {stockMemos.map((memo, index) => (
+                      <div key={`${memo.memo_date}-${index}`} className="market-theme-stock-memo-row">
+                        <span className="market-theme-stock-memo-date">{memo.memo_date}</span>
+                        <span className="market-theme-stock-memo-text">{memo.memo}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </section>
+            </div>
+          </aside>
+        </div>
       ) : null}
       {returnDrawerOpen ? (
         <div className="theme-return-drawer-backdrop" onClick={closeReturnDrawer}>

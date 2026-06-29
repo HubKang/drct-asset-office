@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from calendar import monthrange
 from datetime import date, datetime, timedelta
 
@@ -697,16 +698,8 @@ class ExternalKiwoomService:
     def _apply_rank_overrides(self, trade_date: str, items: list[DailyThemeFlowSummaryItem]) -> list[DailyThemeFlowSummaryItem]:
         if not items:
             return []
-        sorted_auto = sorted(
-            items,
-            key=lambda x: (
-                -999999 if x.avg_change_rate is None else -float(x.avg_change_rate),
-                -int(x.stock_count),
-                -int(x.event_count),
-                -int(x.estimated_trading_value_sum),
-                str(x.theme_name),
-            ),
-        )
+        scored_items = self._with_theme_strength_scores(items)
+        sorted_auto = sorted(scored_items, key=self._auto_theme_rank_sort_key)
         auto_rank_map = {item.market_theme_id: idx + 1 for idx, item in enumerate(sorted_auto)}
         rank_rows = self.db.execute(
             text(
@@ -728,7 +721,7 @@ class ExternalKiwoomService:
                 manual_map[int(row["market_theme_id"])] = value
 
         ranked = []
-        for item in items:
+        for item in scored_items:
             auto_rank = auto_rank_map.get(item.market_theme_id)
             manual_rank = manual_map.get(item.market_theme_id)
             final_rank = manual_rank if manual_rank is not None else auto_rank
@@ -746,20 +739,95 @@ class ExternalKiwoomService:
                     auto_rank=auto_rank,
                     manual_rank=manual_rank,
                     final_rank=final_rank,
-                    rank_score=float(self._rank_score(final_rank)),
+                    theme_strength_score=item.theme_strength_score,
+                    return_score=item.return_score,
+                    trading_value_score=item.trading_value_score,
+                    breadth_score=item.breadth_score,
+                    rank_score=item.theme_strength_score,
                     rank_basis=rank_basis,
                 )
             )
         ranked.sort(
             key=lambda x: (
-                999999 if x.final_rank is None else int(x.final_rank),
-                -float(x.rank_score or 0),
+                0 if x.manual_rank is not None else 1,
+                999999 if x.manual_rank is None else int(x.manual_rank),
+                -float(x.theme_strength_score or 0),
                 -999999 if x.avg_change_rate is None else -float(x.avg_change_rate),
+                -int(x.estimated_trading_value_sum),
                 -int(x.stock_count),
                 str(x.theme_name),
             )
         )
         return ranked
+
+    @staticmethod
+    def _clamp_score(value: float) -> float:
+        return max(0.0, min(100.0, value))
+
+    @classmethod
+    def _return_score(cls, avg_change_rate: float | None) -> float:
+        if avg_change_rate is None or avg_change_rate <= 0:
+            return 0.0
+        return cls._clamp_score((float(avg_change_rate) / 10.0) * 100.0)
+
+    @classmethod
+    def _breadth_score(cls, stock_count: int) -> float:
+        return cls._clamp_score((max(0, int(stock_count)) / 8.0) * 100.0)
+
+    @classmethod
+    def _with_theme_strength_scores(cls, items: list[DailyThemeFlowSummaryItem]) -> list[DailyThemeFlowSummaryItem]:
+        positive_logs = [
+            math.log10(float(item.estimated_trading_value_sum) + 1.0)
+            for item in items
+            if float(item.estimated_trading_value_sum or 0) > 0
+        ]
+        min_log = min(positive_logs) if positive_logs else 0.0
+        max_log = max(positive_logs) if positive_logs else 0.0
+        scored: list[DailyThemeFlowSummaryItem] = []
+        for item in items:
+            trading_value = float(item.estimated_trading_value_sum or 0)
+            if trading_value <= 0:
+                trading_value_score = 0.0
+            elif max_log == min_log:
+                trading_value_score = 50.0
+            else:
+                log_value = math.log10(trading_value + 1.0)
+                trading_value_score = cls._clamp_score(((log_value - min_log) / (max_log - min_log)) * 100.0)
+            return_score = cls._return_score(item.avg_change_rate)
+            breadth_score = cls._breadth_score(item.stock_count)
+            strength = (0.50 * return_score) + (0.35 * trading_value_score) + (0.15 * breadth_score)
+            scored.append(
+                DailyThemeFlowSummaryItem(
+                    market_theme_id=item.market_theme_id,
+                    theme_name=item.theme_name,
+                    event_count=item.event_count,
+                    stock_count=item.stock_count,
+                    avg_change_rate=item.avg_change_rate,
+                    max_change_rate=item.max_change_rate,
+                    estimated_trading_value_sum=item.estimated_trading_value_sum,
+                    representative_stocks=item.representative_stocks,
+                    auto_rank=item.auto_rank,
+                    manual_rank=item.manual_rank,
+                    final_rank=item.final_rank,
+                    theme_strength_score=round(strength, 1),
+                    return_score=round(return_score, 1),
+                    trading_value_score=round(trading_value_score, 1),
+                    breadth_score=round(breadth_score, 1),
+                    rank_score=round(strength, 1),
+                    rank_basis=item.rank_basis,
+                )
+            )
+        return scored
+
+    @staticmethod
+    def _auto_theme_rank_sort_key(item: DailyThemeFlowSummaryItem) -> tuple[float, float, int, int, str]:
+        return (
+            -float(item.theme_strength_score or 0),
+            -999999 if item.avg_change_rate is None else -float(item.avg_change_rate),
+            -int(item.estimated_trading_value_sum or 0),
+            -int(item.stock_count or 0),
+            str(item.theme_name),
+        )
 
     def update_daily_theme_flow_ranks(self, payload: DailyThemeRanksUpdateRequest) -> DailyThemeRanksUpdateResponse:
         daily = self.get_daily_theme_flow(payload.trade_date)
@@ -788,7 +856,8 @@ class ExternalKiwoomService:
             manual_rank = int(row.manual_rank) if row.manual_rank is not None else None
             final_rank = manual_rank if manual_rank is not None else auto_rank
             rank_basis = "manual" if manual_rank is not None else "auto"
-            rank_score = float(self._rank_score(final_rank))
+            source_item = next((x for x in daily.items if x.market_theme_id == row.market_theme_id), None)
+            rank_score = float(source_item.theme_strength_score if source_item is not None else 0)
 
             if existing:
                 self.db.execute(
@@ -1125,6 +1194,10 @@ class ExternalKiwoomService:
                     auto_rank=item.auto_rank,
                     manual_rank=item.manual_rank,
                     final_rank=item.final_rank,
+                    theme_strength_score=item.theme_strength_score,
+                    return_score=item.return_score,
+                    trading_value_score=item.trading_value_score,
+                    breadth_score=item.breadth_score,
                     rank_score=float(item.rank_score),
                     rank_basis=item.rank_basis,
                     theme_group_id=theme_group_meta.get((key, item.market_theme_id), {}).get("theme_group_id"),
@@ -1825,7 +1898,9 @@ class ExternalKiwoomService:
             total_success_count += len(success_results)
             total_failed_count += failed_count
 
-            if stock_count > 0 and not success_results:
+            self._delete_market_theme_stock_daily_returns(theme_id=theme_id, return_date=return_date)
+            if not success_results:
+                self._delete_market_theme_daily_return(theme_id=theme_id, return_date=return_date)
                 items.append(MarketThemeReturnRefreshItem(
                     theme_id=theme_id,
                     theme_name=str(theme["theme_name"]),
@@ -2444,6 +2519,29 @@ class ExternalKiwoomService:
             {"theme_id": theme_id, "return_date": return_date},
         ).mappings().first()["id"])
         return daily_return_id, "inserted"
+
+    def _delete_market_theme_stock_daily_returns(self, *, theme_id: int, return_date: str) -> None:
+        self.db.execute(
+            text(
+                """
+                DELETE FROM market_theme_stock_daily_returns
+                WHERE theme_id=:theme_id AND return_date=:return_date
+                """
+            ),
+            {"theme_id": theme_id, "return_date": return_date},
+        )
+
+    def _delete_market_theme_daily_return(self, *, theme_id: int, return_date: str) -> None:
+        self._delete_market_theme_stock_daily_returns(theme_id=theme_id, return_date=return_date)
+        self.db.execute(
+            text(
+                """
+                DELETE FROM market_theme_daily_returns
+                WHERE theme_id=:theme_id AND return_date=:return_date
+                """
+            ),
+            {"theme_id": theme_id, "return_date": return_date},
+        )
 
     def _upsert_market_theme_stock_daily_return(self, *, daily_return_id: int, theme_id: int, return_date: str, row: dict[str, object], now: str) -> None:
         existing = self.db.execute(

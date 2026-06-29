@@ -213,6 +213,20 @@ export type MarketThemeStock = {
   updated_at: string;
 };
 
+export type MarketThemeStockMemo = {
+  memo_date: string;
+  memo: string;
+  source?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type MarketThemeStockMemoResponse = {
+  stock_code: string;
+  stock_name: string | null;
+  items: MarketThemeStockMemo[];
+};
+
 export type MarketThemeStockCreateInput = {
   stock_id: number;
   is_primary?: boolean;

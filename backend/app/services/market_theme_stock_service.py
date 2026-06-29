@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import HTTPException, status
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import now_kst
@@ -11,14 +12,18 @@ from backend.app.repositories.stock_repository import StockRepository
 from backend.app.schemas.market_theme_stock_schema import (
     MarketThemeByStockItem,
     MarketThemeByStockResponse,
+    MarketThemeStockMemoItem,
+    MarketThemeStockMemoResponse,
     MarketThemeStockCreateRequest,
     MarketThemeStockResponse,
     MarketThemeStockUpdateRequest,
 )
+from backend.app.utils.stock_code import normalize_stock_code
 
 
 class MarketThemeStockService:
     def __init__(self, db: Session) -> None:
+        self.db = db
         self.repo = MarketThemeStockRepository(db)
         self.theme_repo = MarketThemeRepository(db)
         self.stock_repo = StockRepository(db)
@@ -134,4 +139,54 @@ class MarketThemeStockService:
             stock_code=(stock_code or "").strip(),
             stock_name=stock_name,
             themes=themes,
+        )
+
+    def list_stock_memos(self, stock_code: str) -> MarketThemeStockMemoResponse:
+        normalized_code = normalize_stock_code(stock_code)
+        if len(normalized_code) != 6:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid stock_code")
+        stock = self.stock_repo.get_by_code(normalized_code)
+        rows = self.db.execute(
+            text(
+                """
+                SELECT trade_date AS memo_date,
+                       TRIM(user_memo) AS memo,
+                       COALESCE(detection_source, 'market_trend_event') AS source,
+                       created_at,
+                       updated_at
+                FROM market_trend_events
+                WHERE stock_code=:stock_code
+                  AND TRIM(COALESCE(user_memo, '')) <> ''
+                  AND COALESCE(is_active, 1) = 1
+                  AND COALESCE(deleted_at, '') = ''
+                ORDER BY trade_date DESC, updated_at DESC, id DESC
+                LIMIT 100
+                """
+            ),
+            {"stock_code": normalized_code},
+        ).mappings().all()
+        seen: set[tuple[str, str]] = set()
+        items: list[MarketThemeStockMemoItem] = []
+        for row in rows:
+            memo_date = str(row["memo_date"] or "")[:10]
+            memo = str(row["memo"] or "").strip()
+            if not memo_date or not memo:
+                continue
+            key = (memo_date, memo)
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append(
+                MarketThemeStockMemoItem(
+                    memo_date=memo_date,
+                    memo=memo,
+                    source=row["source"],
+                    created_at=row["created_at"],
+                    updated_at=row["updated_at"],
+                )
+            )
+        return MarketThemeStockMemoResponse(
+            stock_code=normalized_code,
+            stock_name=stock.stock_name if stock else None,
+            items=items,
         )

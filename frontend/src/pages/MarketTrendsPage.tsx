@@ -1,6 +1,6 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import type { CSSProperties } from "react";
+import type { CSSProperties, DragEvent } from "react";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import { buildTreemapLayout, getTreemapLabelClass } from "@/utils/treemapLayout";
@@ -58,6 +58,8 @@ type ManualCandidateForm = {
 
 const fmtNumber = (value: number | null | undefined) => (value == null ? "-" : value.toLocaleString("ko-KR"));
 const fmtPct = (value: number | null | undefined) => (value == null ? "-" : `${value.toFixed(2)}%`);
+const fmtSignedPct = (value: number | null | undefined) => (value == null ? "-" : `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`);
+const fmtScore = (value: number | null | undefined) => (value == null ? "0.0" : value.toLocaleString("ko-KR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }));
 const fmtEokShort = (value: number | null | undefined) => (value == null ? "-" : `${(value / 100000000).toLocaleString("ko-KR", { maximumFractionDigits: 1 })}억`);
 const fmtEok2 = (value: number | null | undefined) => (value == null ? "-" : (value / 100000000).toLocaleString("ko-KR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 const toErr = (e: unknown, fallback: string) => {
@@ -281,6 +283,9 @@ function MarketTrendsPage() {
   const [flowStocksLoading, setFlowStocksLoading] = useState(false);
   const [rankEditMode, setRankEditMode] = useState(false);
   const [rankDraftMap, setRankDraftMap] = useState<Record<number, string>>({});
+  const [rankDraftItems, setRankDraftItems] = useState<DailyThemeFlowSummary[]>([]);
+  const [draggingThemeId, setDraggingThemeId] = useState<number | null>(null);
+  const [flowRankInfoOpen, setFlowRankInfoOpen] = useState(false);
   const [chartSidcode, setChartSidcode] = useState<number>(Date.now());
   const [brokenCharts, setBrokenCharts] = useState<Record<string, boolean>>({});
   const [zoomedChart, setZoomedChart] = useState<{ url: string; alt: string } | null>(null);
@@ -392,6 +397,7 @@ function MarketTrendsPage() {
       unclassified: "-",
     };
   }, [flowSummaries]);
+  const visibleFlowSummaries = rankEditMode ? rankDraftItems : flowSummaries;
   const selectedThemeMeta = useMemo(() => {
     if (!selectedFlowTheme) return null;
     const summary = flowSummaries.find((x) => x.market_theme_id === selectedFlowTheme.id);
@@ -952,6 +958,7 @@ ${tableRows}
       const res = await repositories.marketTrends.getExternalDailyThemeFlow(baseDate);
       const items = res.items ?? [];
       setFlowSummaries(items);
+      setRankDraftItems(items);
       setRankDraftMap(
         Object.fromEntries(items.map((x) => [x.market_theme_id, x.manual_rank != null ? String(x.manual_rank) : ""])),
       );
@@ -1029,34 +1036,71 @@ ${tableRows}
     await loadMonthlyFlow(nextMonth);
   };
 
-  const saveDailyRanks = async () => {
+  const beginRankEdit = () => {
     if (flowSummaries.length === 0) return;
-    const used = new Set<number>();
-    for (const item of flowSummaries) {
-      const raw = rankDraftMap[item.market_theme_id];
-      if (!raw) continue;
-      const n = Number(raw);
-      if (!Number.isInteger(n) || n <= 0) {
-        setError("순위는 1 이상의 정수만 입력할 수 있습니다.");
-        return;
-      }
-      if (used.has(n)) {
-        setError("수동 순위가 중복되었습니다. 각 테마 순위를 다르게 지정해 주세요.");
-        return;
-      }
-      used.add(n);
-    }
+    setRankDraftItems(flowSummaries);
+    setDraggingThemeId(null);
+    setRankEditMode(true);
+  };
+
+  const cancelRankEdit = () => {
+    setRankDraftItems(flowSummaries);
+    setDraggingThemeId(null);
+    setRankEditMode(false);
+  };
+
+  const moveRankDraftItem = (sourceId: number, targetId: number) => {
+    if (sourceId === targetId) return;
+    setRankDraftItems((prev) => {
+      const sourceIndex = prev.findIndex((x) => x.market_theme_id === sourceId);
+      const targetIndex = prev.findIndex((x) => x.market_theme_id === targetId);
+      if (sourceIndex < 0 || targetIndex < 0) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(sourceIndex, 1);
+      next.splice(targetIndex, 0, moved);
+      return next;
+    });
+  };
+
+  const handleRankDragStart = (event: DragEvent<HTMLButtonElement>, themeId: number) => {
+    setDraggingThemeId(themeId);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", String(themeId));
+  };
+
+  const handleRankDragOver = (event: DragEvent<HTMLButtonElement>, targetId: number) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    const raw = event.dataTransfer.getData("text/plain");
+    const sourceId = Number(raw || draggingThemeId);
+    if (Number.isFinite(sourceId)) moveRankDraftItem(sourceId, targetId);
+  };
+
+  const handleRankDrop = (event: DragEvent<HTMLButtonElement>, targetId: number) => {
+    event.preventDefault();
+    const sourceId = Number(event.dataTransfer.getData("text/plain") || draggingThemeId);
+    if (Number.isFinite(sourceId)) moveRankDraftItem(sourceId, targetId);
+    setDraggingThemeId(null);
+  };
+
+  const saveDailyRanks = async () => {
+    const itemsToSave = rankDraftItems.length > 0 ? rankDraftItems : flowSummaries;
+    if (itemsToSave.length === 0) return;
     setError("");
     try {
       const res = await repositories.marketTrends.updateDailyThemeRanks({
         trade_date: tradeDate,
-        items: flowSummaries.map((x) => ({
+        items: itemsToSave.map((x, index) => ({
           market_theme_id: x.market_theme_id,
-          manual_rank: rankDraftMap[x.market_theme_id] ? Number(rankDraftMap[x.market_theme_id]) : null,
+          manual_rank: index + 1,
         })),
       });
       setFlowSummaries(res.items ?? []);
-      setMessage(`일별 테마 순위를 저장했습니다. (${res.updated_count}건)`);
+      setRankDraftItems(res.items ?? []);
+      setRankDraftMap(
+        Object.fromEntries((res.items ?? []).map((x) => [x.market_theme_id, x.manual_rank != null ? String(x.manual_rank) : ""])),
+      );
+      setMessage(`테마 순위를 저장했습니다. (${res.updated_count}건)`);
       setRankEditMode(false);
     } catch (e) {
       setError(toErr(e, "일별 테마 순위 저장에 실패했습니다."));
@@ -1072,8 +1116,9 @@ ${tableRows}
         items: flowSummaries.map((x) => ({ market_theme_id: x.market_theme_id, manual_rank: null })),
       });
       setFlowSummaries(res.items ?? []);
+      setRankDraftItems(res.items ?? []);
       setRankDraftMap(Object.fromEntries((res.items ?? []).map((x) => [x.market_theme_id, ""])));
-      setMessage("수동 순위를 초기화했습니다. 자동 순위(평균등락률 기준)로 복원되었습니다.");
+      setMessage("자동 산정 순위로 초기화했습니다.");
       setRankEditMode(false);
     } catch (e) {
       setError(toErr(e, "수동 순위 초기화에 실패했습니다."));
@@ -1721,7 +1766,28 @@ ${tableRows}
           <SectionCard title="" className="daily-theme-flow-section">
             <div className="watchlist-card-title-wrap">
               <h3 className="section-title m-0">일별 테마 수급 흐름</h3>
-              <span className="hint-icon" title="선택한 날짜의 저장된 수급 이벤트 후보를 테마별로 집계합니다. 날짜를 선택하면 즉시 조회됩니다.">i</span>
+              <button
+                type="button"
+                className="hint-icon hint-icon-button"
+                aria-expanded={flowRankInfoOpen}
+                aria-label="테마 순위 산정 기준"
+                onClick={() => setFlowRankInfoOpen((prev) => !prev)}
+              >
+                i
+              </button>
+              {flowRankInfoOpen ? (
+                <div className="daily-flow-rank-popover" role="dialog" aria-label="테마 순위 산정 기준">
+                  <strong>오늘의 테마 순위 산정 기준</strong>
+                  <p>Theme Strength Score는 저장된 수급 후보를 기준으로 테마별 강도를 0~100점으로 계산합니다.</p>
+                  <p>최종 점수 = 평균등락률 50% + 거래대금 35% + 종목확산 15%</p>
+                  <dl>
+                    <div><dt>평균등락률</dt><dd>평균 상승률 10% 이상을 100점으로 제한합니다.</dd></div>
+                    <div><dt>거래대금</dt><dd>테마별 거래대금을 log 정규화해 자금 유입 강도를 비교합니다.</dd></div>
+                    <div><dt>종목확산</dt><dd>상승 종목 수 8개 이상을 100점으로 제한합니다.</dd></div>
+                  </dl>
+                  <p>이 순위는 매수 추천이 아니라 오늘 시장에서 상대적으로 강하게 움직인 테마를 정렬하기 위한 참고 지표입니다.</p>
+                </div>
+              ) : null}
             </div>
             <div className="daily-flow-toolbar">
               <div className="daily-flow-controls calendar-period-nav">
@@ -1741,9 +1807,10 @@ ${tableRows}
                 />
                 <button type="button" className="btn btn-secondary btn-table-sm calendar-nav-button" onClick={() => void applyFlowDate(shiftDate(tradeDate, 1))} aria-label="다음 날짜">▶</button>
                 <button type="button" className="btn btn-secondary calendar-today-button" onClick={() => void applyFlowDate(todayInKst())}>오늘</button>
-                <button type="button" className="btn btn-secondary" title="자동 순위와 다르게 체감 주도 테마를 직접 조정할 수 있습니다." onClick={() => setRankEditMode((p) => !p)}>{rankEditMode ? "편집 취소" : "순위 편집"}</button>
+                {!rankEditMode ? <button type="button" className="btn btn-secondary" title="카드를 드래그해서 체감 주도 테마 순서를 직접 조정합니다." onClick={beginRankEdit}>순위 편집</button> : null}
                 {rankEditMode ? <button type="button" className="btn btn-primary" onClick={() => void saveDailyRanks()}>순위 저장</button> : null}
-                {rankEditMode ? <button type="button" className="btn btn-secondary" onClick={() => void resetDailyRanks()}>수동 순위 초기화</button> : null}
+                {rankEditMode ? <button type="button" className="btn btn-secondary" onClick={cancelRankEdit}>취소</button> : null}
+                {rankEditMode ? <button type="button" className="btn btn-secondary" onClick={() => void resetDailyRanks()}>자동순위로 초기화</button> : null}
               </div>
 
               <div className="daily-flow-compact-stats">
@@ -1759,34 +1826,35 @@ ${tableRows}
             {!flowLoading && flowSummaries.length === 0 ? <p className="text-sm text-muted">이 날짜에 저장된 수급 이벤트 후보가 없습니다.</p> : null}
 
             {flowSummaries.length > 0 ? (
-              <div className="daily-theme-rank-grid">
-                {flowSummaries.map((item) => {
+              <div className={`daily-theme-rank-grid ${rankEditMode ? "is-editing" : ""}`}>
+                {visibleFlowSummaries.map((item, index) => {
                   const selected = selectedFlowTheme?.id === item.market_theme_id;
+                  const displayRank = rankEditMode ? index + 1 : item.final_rank ?? index + 1;
+                  const strengthScore = item.theme_strength_score ?? item.rank_score;
                   return (
                     <button
                       key={item.market_theme_id}
                       type="button"
-                      className={`daily-theme-rank-card ${selected ? "selected" : ""}`}
-                      onClick={() => void loadFlowStocks(item)}
+                      className={`daily-theme-rank-card ${selected ? "selected" : ""} ${rankEditMode ? "rank-editing" : ""} ${draggingThemeId === item.market_theme_id ? "dragging" : ""}`}
+                      draggable={rankEditMode}
+                      onDragStart={(e) => handleRankDragStart(e, item.market_theme_id)}
+                      onDragOver={(e) => handleRankDragOver(e, item.market_theme_id)}
+                      onDrop={(e) => handleRankDrop(e, item.market_theme_id)}
+                      onDragEnd={() => setDraggingThemeId(null)}
+                      onClick={() => {
+                        if (!rankEditMode) void loadFlowStocks(item);
+                      }}
+                      title={rankEditMode ? "드래그해서 순서를 바꿀 수 있습니다." : `상승 ${fmtScore(item.return_score)} · 거래대금 ${fmtScore(item.trading_value_score)} · 확산 ${fmtScore(item.breadth_score)}`}
                     >
-                      <div className="daily-theme-rank-title">{item.final_rank ?? "-"}위 {item.theme_name}</div>
-                      <div className="daily-theme-rank-meta">점수 {item.rank_score} · {item.stock_count}종목 · 이벤트 {item.event_count}</div>
-                      <div className="daily-theme-rank-meta">평균 {fmtPct(item.avg_change_rate)} · 최고 {fmtPct(item.max_change_rate)}</div>
+                      <div className="daily-theme-rank-title">
+                        {rankEditMode ? <span className="daily-theme-drag-handle" aria-hidden="true">↕</span> : null}
+                        <span>{displayRank}위 {item.theme_name}</span>
+                        {item.rank_basis === "manual" ? <span className="daily-theme-rank-badge">수동순위</span> : null}
+                      </div>
+                      <div className="daily-theme-rank-meta">강도점수 {fmtScore(strengthScore)} · {item.stock_count}종목 · 이벤트 {item.event_count}</div>
+                      <div className="daily-theme-rank-meta">평균 {fmtSignedPct(item.avg_change_rate)} · 최고 {fmtSignedPct(item.max_change_rate)}</div>
                       <div className="daily-theme-rank-meta truncate">대표 {item.representative_stocks.length > 0 ? item.representative_stocks[0] : "-"} · 거래대금 {fmtEokShort(item.estimated_trading_value_sum)}</div>
-                      {rankEditMode ? (
-                        <div className="mt-2">
-                          <label className="text-xs text-slate-600 mr-1">수동 순위</label>
-                          <select
-                            className="input-control"
-                            value={rankDraftMap[item.market_theme_id] ?? ""}
-                            onClick={(e) => e.stopPropagation()}
-                            onChange={(e) => setRankDraftMap((prev) => ({ ...prev, [item.market_theme_id]: e.target.value }))}
-                          >
-                            <option value="">자동</option>
-                            {flowSummaries.map((_, i) => <option key={i + 1} value={String(i + 1)}>{i + 1}위</option>)}
-                          </select>
-                        </div>
-                      ) : null}
+                      <div className="daily-theme-rank-breakdown">상승 {fmtScore(item.return_score)} · 거래대금 {fmtScore(item.trading_value_score)} · 확산 {fmtScore(item.breadth_score)}</div>
                     </button>
                   );
                 })}

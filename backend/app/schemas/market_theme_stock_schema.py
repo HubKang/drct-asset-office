@@ -41,3 +41,17 @@ class MarketThemeByStockResponse(BaseModel):
     stock_code: str
     stock_name: str | None
     themes: list[MarketThemeByStockItem]
+
+
+class MarketThemeStockMemoItem(BaseModel):
+    memo_date: str
+    memo: str
+    source: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class MarketThemeStockMemoResponse(BaseModel):
+    stock_code: str
+    stock_name: str | None = None
+    items: list[MarketThemeStockMemoItem]

@@ -16,6 +16,7 @@ import type {
   MarketThemeReturnRefreshResponse,
   MarketThemeStock,
   MarketThemeStockCreateInput,
+  MarketThemeStockMemoResponse,
   MarketThemeStockUpdateInput,
   MarketThemeUpdateInput,
 } from "@/types/marketTheme";
@@ -135,6 +136,13 @@ export const marketThemeMockRepository = {
       stock_code: stockCode,
       stock_name: null,
       themes: [],
+    };
+  },
+  async listStockMemos(stockCode: string): Promise<MarketThemeStockMemoResponse> {
+    return {
+      stock_code: stockCode,
+      stock_name: null,
+      items: [],
     };
   },
   async listCandidates(): Promise<MarketThemeCandidate[]> {
