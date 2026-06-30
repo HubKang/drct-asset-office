@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
@@ -80,6 +80,9 @@ class MarketIndexCollectResponse(BaseModel):
     requested_count: int
     success_count: int
     failed_count: int
+    waiting_count: int = 0
+    excluded_count: int = 0
+    custom_index_required_count: int = 0
     saved_count: int
     message: str
     results: list[MarketIndexCollectItemResult] = Field(default_factory=list)
@@ -96,4 +99,115 @@ class MarketIndexCompareResponse(BaseModel):
     start_date: str | None = None
     end_date: str | None = None
     series: list[MarketIndexCompareSeries] = Field(default_factory=list)
+
+
+
+class MarketIndexProviderMappingItem(BaseModel):
+    id: int | None = None
+    index_code: str
+    index_name: str | None = None
+    provider: str = "KIWOOM_REST"
+    api_type: str | None = None
+    provider_symbol: str | None = None
+    market_type: str | None = None
+    indicator_type: str | None = None
+    request_params_json: str | None = None
+    api_id: str | None = None
+    endpoint_url: str | None = None
+    is_enabled: bool = False
+    is_verified: bool = False
+    verified_at: str | None = None
+    last_test_status: str | None = None
+    last_test_message: str | None = None
+    last_tested_at: str | None = None
+
+
+class MarketIndexProviderMappingListResponse(BaseModel):
+    items: list[MarketIndexProviderMappingItem] = Field(default_factory=list)
+
+
+class MarketIndexProviderMappingUpsertRequest(BaseModel):
+    provider: str = "KIWOOM_REST"
+    api_type: str | None = None
+    provider_symbol: str | None = None
+    market_type: str | None = None
+    indicator_type: str | None = None
+    request_params_json: str | None = None
+    api_id: str | None = None
+    endpoint_url: str | None = None
+    is_enabled: bool = False
+
+
+class MarketIndexProviderMappingTestRequest(BaseModel):
+    provider: str = "KIWOOM_REST"
+    api_type: str | None = None
+    provider_symbol: str | None = None
+    market_type: str | None = None
+    request_params_json: str | None = None
+    api_id: str | None = None
+    endpoint_url: str | None = None
+    start_date: str | None = None
+    end_date: str | None = None
+    save_result: bool = False
+
+
+class MarketIndexProviderMappingTestResponse(BaseModel):
+    index_code: str
+    status: str
+    sample_count: int = 0
+    first_date: str | None = None
+    last_date: str | None = None
+    message: str
+    sample: list[dict] = Field(default_factory=list)
+
+class MarketIndexProviderCodeCollectRequest(BaseModel):
+    provider: str = "KIWOOM_REST"
+    market_types: list[str] = Field(default_factory=lambda: ["0", "1", "2"])
+
+
+class MarketIndexProviderCodeCollectResult(BaseModel):
+    market_type: str
+    count: int = 0
+    status: str
+    error_message: str | None = None
+
+
+class MarketIndexProviderCodeCollectResponse(BaseModel):
+    requested_count: int
+    success_count: int
+    failed_count: int
+    results: list[MarketIndexProviderCodeCollectResult] = Field(default_factory=list)
+
+
+class MarketIndexProviderCodeItem(BaseModel):
+    id: int | None = None
+    provider: str = "KIWOOM_REST"
+    market_type: str
+    market_code: str | None = None
+    code: str
+    name: str
+    group_name: str | None = None
+    source_api_id: str | None = None
+    is_active: bool = True
+    matched_index_code: str | None = None
+    matched_index_name: str | None = None
+
+
+class MarketIndexProviderCodeListResponse(BaseModel):
+    items: list[MarketIndexProviderCodeItem] = Field(default_factory=list)
+
+
+class MarketIndexSectorCodeAutoMatchResult(BaseModel):
+    index_code: str
+    index_name: str | None = None
+    matched_code: str | None = None
+    matched_name: str | None = None
+    status: str
+    message: str | None = None
+
+
+class MarketIndexSectorCodeAutoMatchResponse(BaseModel):
+    matched_count: int = 0
+    waiting_count: int = 0
+    results: list[MarketIndexSectorCodeAutoMatchResult] = Field(default_factory=list)
 

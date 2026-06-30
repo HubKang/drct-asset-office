@@ -11,6 +11,7 @@ import { patternResearchApiRepository } from "@/services/api/patternResearchApiR
 import { telegramApiRepository } from "@/services/api/telegramApiRepository";
 import { marketCalendarApiRepository } from "@/services/api/marketCalendarApiRepository";
 import { marketIndexApiRepository } from "@/services/api/marketIndexApiRepository";
+import { marketIndicatorApiRepository } from "@/services/api/marketIndicatorApiRepository";
 import { marketThemeApiRepository } from "@/services/api/marketThemeApiRepository";
 import { marketTrendApiRepository } from "@/services/api/marketTrendApiRepository";
 import { gptPromptTemplateApiRepository } from "@/services/api/gptPromptTemplateApiRepository";
@@ -30,6 +31,7 @@ import { newsMockRepository } from "@/services/mock/newsMockRepository";
 import { marketThemeMockRepository } from "@/services/mock/marketThemeMockRepository";
 import { marketCalendarMockRepository } from "@/services/mock/marketCalendarMockRepository";
 import { marketIndexMockRepository } from "@/services/mock/marketIndexMockRepository";
+import { marketIndicatorMockRepository } from "@/services/mock/marketIndicatorMockRepository";
 import { gptPromptTemplateMockRepository } from "@/services/mock/gptPromptTemplateMockRepository";
 import { schemaCommentMockRepository } from "@/services/mock/schemaCommentMockRepository";
 import { stockMockRepository } from "@/services/mock/stockMockRepository";
@@ -53,6 +55,7 @@ export const repositories = {
   marketThemes: useMock ? marketThemeMockRepository : marketThemeApiRepository,
   marketCalendar: useMock ? marketCalendarMockRepository : marketCalendarApiRepository,
   marketIndexes: useMock ? marketIndexMockRepository : marketIndexApiRepository,
+  marketIndicators: useMock ? marketIndicatorMockRepository : marketIndicatorApiRepository,
   marketTrends: marketTrendApiRepository,
   disclosures: useMock ? disclosureMockRepository : disclosureApiRepository,
   economicBriefing: economicBriefingApiRepository,

@@ -1,11 +1,11 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from collections.abc import Generator
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
-from backend.app.core.config import DATABASE_URL, SQLITE_BUSY_TIMEOUT_MS, SQLITE_JOURNAL_MODE, SQLITE_SYNCHRONOUS
+from backend.app.core.config import DATABASE_URL, SQLITE_BUSY_TIMEOUT_MS, SQLITE_JOURNAL_MODE, SQLITE_SYNCHRONOUS, KIWOOM_REST_MARKET_KOSPI_CODE, KIWOOM_REST_MARKET_KOSDAQ_CODE, KIWOOM_REST_MARKET_KOSPI_TYPE, KIWOOM_REST_MARKET_KOSDAQ_TYPE
 from backend.app.services.analysis_indicator_defaults import (
     BASE_OPERATORS,
     DEFAULT_ANALYSIS_ALIASES,
@@ -175,6 +175,73 @@ def ensure_runtime_schema() -> None:
         )
         conn.exec_driver_sql(
             """
+            CREATE TABLE IF NOT EXISTS market_index_provider_mappings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                index_code TEXT NOT NULL,
+                provider TEXT NOT NULL DEFAULT 'KIWOOM_REST',
+                api_type TEXT,
+                provider_symbol TEXT,
+                market_type TEXT,
+                indicator_type TEXT,
+                request_params_json TEXT,
+                api_id TEXT,
+                endpoint_url TEXT,
+                is_enabled INTEGER NOT NULL DEFAULT 0,
+                is_verified INTEGER NOT NULL DEFAULT 0,
+                verified_at TEXT,
+                last_test_status TEXT,
+                last_test_message TEXT,
+                last_tested_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(index_code, provider),
+                FOREIGN KEY (index_code) REFERENCES market_indexes(index_code) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_index_provider_mappings_index "
+            "ON market_index_provider_mappings(index_code, provider)"
+        )
+        mapping_columns = {str(row[1]) for row in conn.exec_driver_sql("PRAGMA table_info(market_index_provider_mappings)").fetchall()}
+        if "api_id" not in mapping_columns:
+            conn.exec_driver_sql("ALTER TABLE market_index_provider_mappings ADD COLUMN api_id TEXT")
+        if "endpoint_url" not in mapping_columns:
+            conn.exec_driver_sql("ALTER TABLE market_index_provider_mappings ADD COLUMN endpoint_url TEXT")
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_index_provider_mappings_enabled "
+            "ON market_index_provider_mappings(provider, is_enabled, is_verified)"
+        )
+
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_index_provider_codes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider TEXT NOT NULL DEFAULT 'KIWOOM_REST',
+                market_type TEXT NOT NULL,
+                market_code TEXT,
+                code TEXT NOT NULL,
+                name TEXT NOT NULL,
+                group_name TEXT,
+                source_api_id TEXT NOT NULL DEFAULT 'ka10101',
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(provider, market_type, code)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_index_provider_codes_market "
+            "ON market_index_provider_codes(provider, market_type, code)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_index_provider_codes_name "
+            "ON market_index_provider_codes(provider, name)"
+        )
+
+        conn.exec_driver_sql(
+            """
             CREATE TABLE IF NOT EXISTS market_index_theme_mappings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 index_code TEXT NOT NULL,
@@ -196,30 +263,30 @@ def ensure_runtime_schema() -> None:
         )
 
         for row in (
-            ("KOSPI", "코스피", "국내대표지수", "KOSPI", "KRW", "KIWOOM_REST", "KOSPI", "한국거래소 유가증권시장 대표 지수", 1, 1),
-            ("KOSDAQ", "코스닥", "국내대표지수", "KOSDAQ", "KRW", "KIWOOM_REST", "KOSDAQ", "한국거래소 코스닥시장 대표 지수", 1, 2),
-            ("KOSPI200", "코스피200", "국내보조지수", "KOSPI", "KRW", "KIWOOM_REST", None, "코스피200 보조지수. 키움 provider mapping 확인 필요", 1, 3),
-            ("KOSDAQ150", "코스닥150", "국내보조지수", "KOSDAQ", "KRW", "KIWOOM_REST", None, "코스닥150 보조지수. 키움 provider mapping 확인 필요", 1, 4),
-            ("KOSPI_ELECTRONICS", "코스피 전기전자", "업종지수", "KOSPI", "KRW", "KIWOOM_REST", None, "코스피 전기전자 업종지수. 키움 provider mapping 확인 필요", 1, 10),
-            ("KOSPI_PHARMA", "코스피 의약품", "업종지수", "KOSPI", "KRW", "KIWOOM_REST", None, "코스피 의약품 업종지수. 키움 provider mapping 확인 필요", 1, 11),
-            ("KOSPI_CHEMICAL", "코스피 화학", "업종지수", "KOSPI", "KRW", "KIWOOM_REST", None, "코스피 화학 업종지수. 키움 provider mapping 확인 필요", 1, 12),
-            ("KOSPI_MACHINERY", "코스피 기계", "업종지수", "KOSPI", "KRW", "KIWOOM_REST", None, "코스피 기계 업종지수. 키움 provider mapping 확인 필요", 1, 13),
-            ("KOSPI_TRANSPORT_EQUIPMENT", "코스피 운수장비", "업종지수", "KOSPI", "KRW", "KIWOOM_REST", None, "코스피 운수장비 업종지수. 키움 provider mapping 확인 필요", 1, 14),
-            ("KOSPI_STEEL_METAL", "코스피 철강금속", "업종지수", "KOSPI", "KRW", "KIWOOM_REST", None, "코스피 철강금속 업종지수. 키움 provider mapping 확인 필요", 1, 15),
-            ("KOSPI_FINANCE", "코스피 금융업", "업종지수", "KOSPI", "KRW", "KIWOOM_REST", None, "코스피 금융업 업종지수. 키움 provider mapping 확인 필요", 1, 16),
-            ("KOSPI_CONSTRUCTION", "코스피 건설업", "업종지수", "KOSPI", "KRW", "KIWOOM_REST", None, "코스피 건설업 업종지수. 키움 provider mapping 확인 필요", 1, 17),
-            ("KOSPI_TRANSPORT_WAREHOUSE", "코스피 운수창고", "업종지수", "KOSPI", "KRW", "KIWOOM_REST", None, "코스피 운수창고 업종지수. 키움 provider mapping 확인 필요", 1, 18),
-            ("KOSPI_SERVICE", "코스피 서비스업", "업종지수", "KOSPI", "KRW", "KIWOOM_REST", None, "코스피 서비스업 업종지수. 키움 provider mapping 확인 필요", 1, 19),
-            ("KOSDAQ_SEMICONDUCTOR", "코스닥 반도체", "업종지수", "KOSDAQ", "KRW", "KIWOOM_REST", None, "코스닥 반도체 업종지수. 키움 provider mapping 확인 필요", 1, 30),
-            ("KOSDAQ_IT_HW", "코스닥 IT H/W", "업종지수", "KOSDAQ", "KRW", "KIWOOM_REST", None, "코스닥 IT H/W 업종지수. 키움 provider mapping 확인 필요", 1, 31),
-            ("KOSDAQ_IT_SW_SVC", "코스닥 IT S/W & SVC", "업종지수", "KOSDAQ", "KRW", "KIWOOM_REST", None, "코스닥 IT S/W & SVC 업종지수. 키움 provider mapping 확인 필요", 1, 32),
-            ("KOSDAQ_PHARMA", "코스닥 제약", "업종지수", "KOSDAQ", "KRW", "KIWOOM_REST", None, "코스닥 제약 업종지수. 키움 provider mapping 확인 필요", 1, 33),
-            ("KOSDAQ_GENERAL_ELECTRONICS", "코스닥 일반전기전자", "업종지수", "KOSDAQ", "KRW", "KIWOOM_REST", None, "코스닥 일반전기전자 업종지수. 키움 provider mapping 확인 필요", 1, 34),
-            ("KOSDAQ_MACHINE_EQUIPMENT", "코스닥 기계·장비", "업종지수", "KOSDAQ", "KRW", "KIWOOM_REST", None, "코스닥 기계·장비 업종지수. 키움 provider mapping 확인 필요", 1, 35),
-            ("KOSDAQ_CHEMICAL", "코스닥 화학", "업종지수", "KOSDAQ", "KRW", "KIWOOM_REST", None, "코스닥 화학 업종지수. 키움 provider mapping 확인 필요", 1, 36),
-            ("KOSDAQ_MEDICAL_PRECISION", "코스닥 의료·정밀기기", "업종지수", "KOSDAQ", "KRW", "KIWOOM_REST", None, "코스닥 의료·정밀기기 업종지수. 키움 provider mapping 확인 필요", 1, 37),
-            ("GOLD_KRX", "KRX 금 현물", "금현물", "KRX", "KRW", "KIWOOM_REST", None, "KRX 금 현물. 키움 provider mapping 확인 필요", 1, 50),
-        ):
+            ('KOSPI', '코스피', '국내대표지수', 'KOSPI', 'KRW', 'KIWOOM_REST', 'KOSPI', '한국거래소 유가증권시장 대표 지수', 1, 1),
+            ('KOSDAQ', '코스닥', '국내대표지수', 'KOSDAQ', 'KRW', 'KIWOOM_REST', 'KOSDAQ', '한국거래소 코스닥시장 대표 지수', 1, 2),
+            ('KOSPI200', '코스피200', '국내보조지수', 'KOSPI', 'KRW', 'KIWOOM_REST', None, '코스피200 보조지수. 키움 provider mapping 확인 필요', 1, 3),
+            ('KOSDAQ150', '코스닥150', '국내보조지수', 'KOSDAQ', 'KRW', 'KIWOOM_REST', None, '코스닥150 보조지수. 키움 provider mapping 확인 필요', 1, 4),
+            ('KRX100', 'KRX100', '국내보조지수', 'KRX', 'KRW', 'KIWOOM_REST', None, 'KRX100 보조지수. 키움 provider mapping 확인 필요', 1, 5),
+            ('KOSPI_ELECTRONICS', '코스피 전기전자', '업종지수', 'KOSPI', 'KRW', 'KIWOOM_REST', None, '코스피 전기전자 업종지수. 키움 provider mapping 확인 필요', 1, 10),
+            ('KOSPI_PHARMA', '코스피 의약품', '업종지수', 'KOSPI', 'KRW', 'KIWOOM_REST', None, '코스피 의약품 업종지수. 키움 provider mapping 확인 필요', 1, 11),
+            ('KOSPI_CHEMICAL', '코스피 화학', '업종지수', 'KOSPI', 'KRW', 'KIWOOM_REST', None, '코스피 화학 업종지수. 키움 provider mapping 확인 필요', 1, 12),
+            ('KOSPI_MACHINERY', '코스피 기계', '업종지수', 'KOSPI', 'KRW', 'KIWOOM_REST', None, '코스피 기계 업종지수. 키움 provider mapping 확인 필요', 1, 13),
+            ('KOSPI_TRANSPORT_EQUIPMENT', '코스피 운수장비', '업종지수', 'KOSPI', 'KRW', 'KIWOOM_REST', None, '코스피 운수장비 업종지수. 키움 provider mapping 확인 필요', 1, 14),
+            ('KOSPI_STEEL_METAL', '코스피 철강금속', '업종지수', 'KOSPI', 'KRW', 'KIWOOM_REST', None, '코스피 철강금속 업종지수. 키움 provider mapping 확인 필요', 1, 15),
+            ('KOSPI_FINANCE', '코스피 금융업', '업종지수', 'KOSPI', 'KRW', 'KIWOOM_REST', None, '코스피 금융업 업종지수. 키움 provider mapping 확인 필요', 1, 16),
+            ('KOSPI_CONSTRUCTION', '코스피 건설업', '업종지수', 'KOSPI', 'KRW', 'KIWOOM_REST', None, '코스피 건설업 업종지수. 키움 provider mapping 확인 필요', 1, 17),
+            ('KOSPI_TRANSPORT_WAREHOUSE', '코스피 운수창고', '업종지수', 'KOSPI', 'KRW', 'KIWOOM_REST', None, '코스피 운수창고 업종지수. 키움 provider mapping 확인 필요', 1, 18),
+            ('KOSPI_SERVICE', '코스피 서비스업', '업종지수', 'KOSPI', 'KRW', 'KIWOOM_REST', None, '코스피 서비스업 업종지수. 키움 provider mapping 확인 필요', 1, 19),
+            ('KOSDAQ_SEMICONDUCTOR', '코스닥 반도체', '업종지수', 'KOSDAQ', 'KRW', 'KIWOOM_REST', None, '코스닥 반도체 업종지수. 키움 provider mapping 확인 필요', 1, 30),
+            ('KOSDAQ_IT_HW', '코스닥 IT H/W', '업종지수', 'KOSDAQ', 'KRW', 'KIWOOM_REST', None, '코스닥 IT H/W 업종지수. 키움 provider mapping 확인 필요', 1, 31),
+            ('KOSDAQ_IT_SW_SVC', '코스닥 IT S/W & SVC', '업종지수', 'KOSDAQ', 'KRW', 'KIWOOM_REST', None, '코스닥 IT S/W & SVC 업종지수. 키움 provider mapping 확인 필요', 1, 32),
+            ('KOSDAQ_PHARMA', '코스닥 제약', '업종지수', 'KOSDAQ', 'KRW', 'KIWOOM_REST', None, '코스닥 제약 업종지수. 키움 provider mapping 확인 필요', 1, 33),
+            ('KOSDAQ_GENERAL_ELECTRONICS', '코스닥 일반전기전자', '업종지수', 'KOSDAQ', 'KRW', 'KIWOOM_REST', None, '코스닥 일반전기전자 업종지수. 키움 provider mapping 확인 필요', 1, 34),
+            ('KOSDAQ_MACHINE_EQUIPMENT', '코스닥 기계·장비', '업종지수', 'KOSDAQ', 'KRW', 'KIWOOM_REST', None, '코스닥 기계·장비 업종지수. 키움 provider mapping 확인 필요', 1, 35),
+            ('KOSDAQ_CHEMICAL', '코스닥 화학', '업종지수', 'KOSDAQ', 'KRW', 'KIWOOM_REST', None, '코스닥 화학 업종지수. 키움 provider mapping 확인 필요', 1, 36),
+            ('KOSDAQ_MEDICAL_PRECISION', '코스닥 의료·정밀기기', '업종지수', 'KOSDAQ', 'KRW', 'KIWOOM_REST', None, '코스닥 의료·정밀기기 업종지수. 키움 provider mapping 확인 필요', 1, 37),
+            ('GOLD_KRX', 'KRX 금 현물', '금현물', 'KRX', 'KRW', 'KIWOOM_REST', None, 'KRX 금 현물. 키움 provider mapping 확인 필요', 1, 50),        ):
             conn.exec_driver_sql(
                 """
                 INSERT OR IGNORE INTO market_indexes
@@ -250,6 +317,340 @@ def ensure_runtime_schema() -> None:
                 WHERE index_code = ?
                 """,
                 (row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9], row[0]),
+            )
+
+        provider_mapping_rows = (
+            ("KOSPI", "KIWOOM_REST", "MARKET_INDEX_DAILY", KIWOOM_REST_MARKET_KOSPI_CODE, KIWOOM_REST_MARKET_KOSPI_TYPE, "국내대표지수", '{"inds_cd":"001"}', "ka20006", "/api/dostk/chart", 1, 1, "SUCCESS", None),
+            ("KOSDAQ", "KIWOOM_REST", "MARKET_INDEX_DAILY", KIWOOM_REST_MARKET_KOSDAQ_CODE, KIWOOM_REST_MARKET_KOSDAQ_TYPE, "국내대표지수", '{"inds_cd":"101"}', "ka20006", "/api/dostk/chart", 1, 1, "SUCCESS", None),
+            ("KOSPI200", "KIWOOM_REST", "MARKET_INDEX_DAILY", "201", "2", "국내보조지수", '{"inds_cd":"201"}', "ka20006", "/api/dostk/chart", 0, 0, "WAITING", "provider mapping은 설정되었지만 아직 검증되지 않았습니다."),
+            ("KRX100", "KIWOOM_REST", "MARKET_INDEX_DAILY", "701", "7", "국내보조지수", '{"inds_cd":"701"}', "ka20006", "/api/dostk/chart", 0, 0, "WAITING", "provider mapping은 설정되었지만 아직 검증되지 않았습니다."),
+            ("GOLD_KRX", "KIWOOM_REST", "GOLD_SPOT_DAILY", "M04020000", "KRX", "금현물", '{"stk_cd":"M04020000","upd_stkpc_tp":"1"}', "ka50081", "/api/dostk/chart", 0, 0, "WAITING", "provider mapping은 설정되었지만 아직 검증되지 않았습니다."),
+        )
+        for row in provider_mapping_rows:
+            conn.exec_driver_sql(
+                """
+                INSERT OR IGNORE INTO market_index_provider_mappings
+                (index_code, provider, api_type, provider_symbol, market_type, indicator_type, request_params_json,
+                 api_id, endpoint_url, is_enabled, is_verified, verified_at, last_test_status, last_test_message, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                row,
+            )
+            conn.exec_driver_sql(
+                """
+                UPDATE market_index_provider_mappings
+                SET api_type = ?, provider_symbol = ?, market_type = ?, indicator_type = ?, request_params_json = ?,
+                    api_id = ?, endpoint_url = ?,
+                    is_enabled = CASE WHEN ? = 1 THEN 1 ELSE is_enabled END,
+                    is_verified = CASE WHEN ? = 1 THEN 1 ELSE is_verified END,
+                    verified_at = CASE WHEN ? = 1 AND verified_at IS NULL THEN CURRENT_TIMESTAMP ELSE verified_at END,
+                    last_test_status = CASE WHEN ? = 1 THEN ? WHEN is_verified = 1 THEN last_test_status ELSE COALESCE(last_test_status, ?) END,
+                    last_test_message = CASE WHEN ? = 1 THEN ? WHEN is_verified = 1 THEN last_test_message ELSE COALESCE(last_test_message, ?) END,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE index_code = ? AND provider = ?
+                """,
+                (row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9], row[10], row[10], row[10], row[11], row[11], row[10], row[12], row[12], row[0], row[1]),
+            )
+
+        conn.exec_driver_sql(
+            """
+            INSERT OR IGNORE INTO market_index_provider_mappings
+            (index_code, provider, api_type, provider_symbol, market_type, indicator_type, request_params_json,
+             api_id, endpoint_url, is_enabled, is_verified, last_test_status, last_test_message, created_at, updated_at)
+            SELECT index_code, provider,
+                   CASE
+                       WHEN category = '업종지수' THEN 'SECTOR_INDEX'
+                       WHEN category = '금현물' THEN 'GOLD_SPOT'
+                       ELSE 'MARKET_INDEX'
+                   END,
+                   NULL, market, category, '{}',
+                   CASE WHEN category = '금현물' THEN 'ka50081' ELSE 'ka20006' END,
+                   '/api/dostk/chart', 0, 0, 'WAITING',
+                   '키움 provider mapping이 아직 설정되지 않은 지표입니다.',
+                   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            FROM market_indexes
+            WHERE provider = 'KIWOOM_REST'
+              AND index_code NOT IN ('KOSPI', 'KOSDAQ')
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            UPDATE market_index_provider_mappings
+            SET is_enabled = 0, is_verified = 0,
+                last_test_status = CASE WHEN last_test_status IS NULL OR last_test_status = '' THEN 'WAITING' ELSE last_test_status END,
+                last_test_message = CASE
+                    WHEN last_test_message IS NULL OR TRIM(last_test_message) = '' THEN '키움 provider mapping이 아직 설정되지 않은 지표입니다.'
+                    ELSE last_test_message
+                END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE provider = 'KIWOOM_REST'
+              AND index_code NOT IN ('KOSPI', 'KOSDAQ')
+              AND is_verified = 0
+            """
+        )
+
+        conn.exec_driver_sql(
+            """
+            UPDATE market_indexes
+            SET collection_status = CASE
+                    WHEN last_collected_date IS NULL THEN 'WAITING'
+                    ELSE collection_status
+                END,
+                error_message = CASE
+                    WHEN error_message IS NULL OR TRIM(error_message) = '' THEN '키움 provider mapping이 아직 설정되지 않은 지표입니다.'
+                    ELSE error_message
+                END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE provider = 'KIWOOM_REST'
+              AND provider_symbol IS NULL
+              AND index_code NOT IN ('KOSPI', 'KOSDAQ')
+            """
+        )
+
+        sector_policy_rows = (
+            ('KOSPI_MACHINERY', '코스피 기계/장비', '코스피 기계/장비. 키움 ka10101 기계/장비 업종지수 기반', '012', '0', '{"inds_cd":"012"}'),
+            ('KOSPI_CONSTRUCTION', '코스피 건설', '코스피 건설. 키움 ka10101 건설 업종지수 기반', '018', '0', '{"inds_cd":"018"}'),
+            ('KOSPI_TRANSPORT_WAREHOUSE', '코스피 운송/창고', '코스피 운송/창고. 키움 ka10101 운송/창고 업종지수 기반', '019', '0', '{"inds_cd":"019"}'),
+            ('KOSPI_SERVICE', '코스피 일반서비스', '코스피 일반서비스. 키움 ka10101 일반서비스 업종지수 기반', '026', '0', '{"inds_cd":"026"}'),
+            ('KOSPI_STEEL_METAL', '코스피 금속', '코스피 금속. 키움 ka10101 금속 업종지수 기반', '011', '0', '{"inds_cd":"011"}'),
+            ('KOSDAQ_GENERAL_ELECTRONICS', '코스닥 전기/전자', '코스닥 전기/전자. 키움 ka10101 전기/전자 업종지수 기반', '124', '1', '{"inds_cd":"124"}'),
+            ('KOSDAQ_MACHINE_EQUIPMENT', '코스닥 기계/장비', '코스닥 기계/장비. 키움 ka10101 기계/장비 업종지수 기반', '123', '1', '{"inds_cd":"123"}'),
+            ('KOSDAQ_CHEMICAL', '코스닥 화학', '코스닥 화학. 키움 ka10101 화학 업종지수 기반', '119', '1', '{"inds_cd":"119"}'),
+            ('KOSDAQ_MEDICAL_PRECISION', '코스닥 의료/정밀기기', '코스닥 의료/정밀기기. 키움 ka10101 의료/정밀기기 업종지수 기반', '125', '1', '{"inds_cd":"125"}'),
+        )
+        for index_code, index_name, description, provider_symbol, market_type, request_params_json in sector_policy_rows:
+            conn.exec_driver_sql(
+                """
+                UPDATE market_indexes
+                SET index_name = ?, description = ?, is_active = 1,
+                    collection_status = CASE WHEN collection_status IN ('CUSTOM_INDEX_REQUIRED', 'NO_OFFICIAL_INDEX', 'EXCLUDED') THEN 'NOT_COLLECTED' ELSE collection_status END,
+                    error_message = CASE WHEN collection_status IN ('CUSTOM_INDEX_REQUIRED', 'NO_OFFICIAL_INDEX', 'EXCLUDED') THEN NULL ELSE error_message END,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE index_code = ?
+                """,
+                (index_name, description, index_code),
+            )
+            conn.exec_driver_sql(
+                """
+                INSERT INTO market_index_provider_mappings (
+                    index_code, provider, api_type, provider_symbol, market_type, indicator_type, request_params_json,
+                    api_id, endpoint_url, is_enabled, is_verified, last_test_status, last_test_message, created_at, updated_at
+                )
+                VALUES (?, 'KIWOOM_REST', 'SECTOR_DAILY', ?, ?, '????', ?, 'ka20006', '/api/dostk/chart', 0, 0, 'WAITING', 'provider mapping ??? ?????.', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(index_code, provider) DO UPDATE SET
+                    api_type = excluded.api_type,
+                    provider_symbol = excluded.provider_symbol,
+                    market_type = excluded.market_type,
+                    indicator_type = excluded.indicator_type,
+                    request_params_json = excluded.request_params_json,
+                    api_id = excluded.api_id,
+                    endpoint_url = excluded.endpoint_url,
+                    is_enabled = CASE WHEN market_index_provider_mappings.is_verified = 1 THEN market_index_provider_mappings.is_enabled ELSE 0 END,
+                    is_verified = market_index_provider_mappings.is_verified,
+                    last_test_status = CASE WHEN market_index_provider_mappings.is_verified = 1 THEN market_index_provider_mappings.last_test_status ELSE 'WAITING' END,
+                    last_test_message = CASE WHEN market_index_provider_mappings.is_verified = 1 THEN market_index_provider_mappings.last_test_message ELSE 'provider mapping ??? ?????.' END,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (index_code, provider_symbol, market_type, request_params_json),
+            )
+
+        custom_index_rows = (
+            ('KOSDAQ_SEMICONDUCTOR', '키움 ka10101 코스닥 업종코드에 공식 반도체 업종지수가 없어 공식 업종지수 수집 대상에서 제외했습니다. DrCT 자체 반도체 테마지수 후보입니다.'),
+            ('KOSDAQ_IT_HW', '키움 ka10101 코스닥 업종코드에 공식 IT H/W 업종지수가 없어 공식 업종지수 수집 대상에서 제외했습니다. DrCT 자체 IT H/W 테마지수 후보입니다.'),
+        )
+        for index_code, reason in custom_index_rows:
+            conn.exec_driver_sql(
+                """
+                UPDATE market_indexes
+                SET is_active = 0, collection_status = 'CUSTOM_INDEX_REQUIRED', description = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE index_code = ?
+                """,
+                (reason, reason, index_code),
+            )
+            conn.exec_driver_sql(
+                """
+                UPDATE market_index_provider_mappings
+                SET is_enabled = 0, is_verified = 0, provider_symbol = NULL, api_id = NULL, endpoint_url = NULL,
+                    last_test_status = 'CUSTOM_INDEX_REQUIRED', last_test_message = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE index_code = ? AND provider = 'KIWOOM_REST'
+                """,
+                (reason, index_code),
+            )
+
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_indicators (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                indicator_code TEXT UNIQUE NOT NULL,
+                indicator_name TEXT NOT NULL,
+                category TEXT NOT NULL,
+                subcategory TEXT,
+                data_frequency TEXT NOT NULL,
+                chart_type TEXT NOT NULL,
+                unit TEXT,
+                unit_label TEXT,
+                value_label TEXT,
+                base_line_value REAL,
+                display_order INTEGER DEFAULT 0,
+                priority_rank INTEGER DEFAULT 0,
+                description TEXT,
+                interpretation_note TEXT,
+                higher_value_meaning TEXT,
+                lower_value_meaning TEXT,
+                is_active INTEGER DEFAULT 1,
+                collection_status TEXT DEFAULT 'WAITING',
+                latest_value REAL,
+                latest_value_date TEXT,
+                latest_change_value REAL,
+                latest_change_pct REAL,
+                latest_yoy_pct REAL,
+                latest_mom_pct REAL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_indicators_category_order "
+            "ON market_indicators(category, is_active, display_order)"
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_indicator_values (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                indicator_code TEXT NOT NULL,
+                value_date TEXT NOT NULL,
+                period_label TEXT,
+                value REAL,
+                open_value REAL,
+                high_value REAL,
+                low_value REAL,
+                close_value REAL,
+                change_value REAL,
+                change_pct REAL,
+                mom_pct REAL,
+                yoy_pct REAL,
+                normalized_value REAL,
+                source_provider TEXT,
+                source_unit TEXT,
+                is_preliminary INTEGER DEFAULT 0,
+                release_date TEXT,
+                raw_payload_json TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(indicator_code, value_date),
+                FOREIGN KEY (indicator_code) REFERENCES market_indicators(indicator_code) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_indicator_values_code_date "
+            "ON market_indicator_values(indicator_code, value_date)"
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_indicator_provider_mappings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                indicator_code TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                api_type TEXT,
+                api_id TEXT,
+                endpoint_url TEXT,
+                provider_symbol TEXT,
+                request_params_json TEXT,
+                is_enabled INTEGER DEFAULT 0,
+                is_verified INTEGER DEFAULT 0,
+                verified_at TEXT,
+                last_test_status TEXT,
+                last_test_message TEXT,
+                last_tested_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(indicator_code, provider),
+                FOREIGN KEY (indicator_code) REFERENCES market_indicators(indicator_code) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_indicator_provider_mappings_indicator "
+            "ON market_indicator_provider_mappings(indicator_code, provider)"
+        )
+
+        market_indicator_rows = (
+            ('USD_KRW', '\ub2ec\ub7ec/\uc6d0 \ud658\uc728', 'FX', 'USD', 'DAILY', 'LINE', 'KRW', '\uc6d0', '\ud658\uc728', None, 10, 1, '\uc6d0/\ub2ec\ub7ec \ud658\uc728. 59-B\uc5d0\uc11c BOK ECOS \ub610\ub294 \uacf5\uacf5\ub370\uc774\ud130 provider \uc5f0\uacb0 \uc608\uc815', None, '\uc6d0\ud654 \uc57d\uc138, \uc678\uad6d\uc778 \uc218\uae09 \ubd80\ub2f4 \uac00\ub2a5', '\uc6d0\ud654 \uac15\uc138, \uc704\ud5d8\uc790\uc0b0 \uc120\ud638 \uc644\ud654 \uac00\ub2a5', 1, 'WAITING'),
+            ('JPY_KRW', '\uc5d4/\uc6d0 \ud658\uc728', 'FX', 'JPY', 'DAILY', 'LINE', 'KRW', '\uc6d0', '\ud658\uc728', None, 11, 2, '\uc5d4/\uc6d0 \ud658\uc728. 59-B\uc5d0\uc11c BOK ECOS \ub610\ub294 \uacf5\uacf5\ub370\uc774\ud130 provider \uc5f0\uacb0 \uc608\uc815', None, None, None, 1, 'WAITING'),
+            ('CNY_KRW', '\uc704\uc548/\uc6d0 \ud658\uc728', 'FX', 'CNY', 'DAILY', 'LINE', 'KRW', '\uc6d0', '\ud658\uc728', None, 12, 3, '\uc704\uc548/\uc6d0 \ud658\uc728. 59-B\uc5d0\uc11c BOK ECOS \ub610\ub294 \uacf5\uacf5\ub370\uc774\ud130 provider \uc5f0\uacb0 \uc608\uc815', None, None, None, 1, 'WAITING'),
+            ('BASE_RATE', '\uae30\uc900\uae08\ub9ac', 'RATE', 'POLICY_RATE', 'MONTHLY', 'LINE', 'PCT', '%', '\uae08\ub9ac', None, 20, 1, '\ud55c\uad6d\uc740\ud589 \uae30\uc900\uae08\ub9ac. ECOS provider \uc6b0\uc120 \ud6c4\ubcf4', None, '\ud560\uc778\uc728 \uc0c1\uc2b9, \uc131\uc7a5\uc8fc \ubd80\ub2f4 \uac00\ub2a5', '\uc720\ub3d9\uc131 \uc644\ud654, \uc131\uc7a5\uc8fc \ubd80\ub2f4 \uc644\ud654 \uac00\ub2a5', 1, 'WAITING'),
+            ('CALL_RATE', '\ucf5c\uae08\ub9ac', 'RATE', 'MARKET_RATE', 'DAILY', 'LINE', 'PCT', '%', '\uae08\ub9ac', None, 21, 2, '\ucf5c\uae08\ub9ac. ECOS provider \uc6b0\uc120 \ud6c4\ubcf4', None, None, None, 1, 'WAITING'),
+            ('KTB_3Y', '\uad6d\uace0\ucc44 3\ub144', 'RATE', 'BOND_YIELD', 'DAILY', 'LINE', 'PCT', '%', '\uae08\ub9ac', None, 22, 3, '\uad6d\uace0\ucc44 3\ub144 \uae08\ub9ac. ECOS provider \uc6b0\uc120 \ud6c4\ubcf4', None, None, None, 1, 'WAITING'),
+            ('KTB_10Y', '\uad6d\uace0\ucc44 10\ub144', 'RATE', 'BOND_YIELD', 'DAILY', 'LINE', 'PCT', '%', '\uae08\ub9ac', None, 23, 4, '\uad6d\uace0\ucc44 10\ub144 \uae08\ub9ac. ECOS provider \uc6b0\uc120 \ud6c4\ubcf4', None, '\uc7a5\uae30 \ud560\uc778\uc728 \uc0c1\uc2b9, \uc131\uc7a5\uc8fc\uc640 2\ucc28\uc804\uc9c0 \ubd80\ub2f4 \uac00\ub2a5', '\uc131\uc7a5\uc8fc \ubd80\ub2f4 \uc644\ud654 \uac00\ub2a5', 1, 'WAITING'),
+            ('CPI', '\uc18c\ube44\uc790\ubb3c\uac00\uc9c0\uc218', 'INFLATION', 'CPI', 'MONTHLY', 'BAR_LINE', 'INDEX', '\uc9c0\uc218', '\ubc1c\ud45c\uac12', None, 30, 1, '\uc18c\ube44\uc790\ubb3c\uac00\uc9c0\uc218. KOSIS \ub610\ub294 ECOS provider \ud6c4\ubcf4', None, '\ubb3c\uac00 \uc555\ub825 \uc0c1\uc2b9, \uae08\ub9ac \ubd80\ub2f4 \uac00\ub2a5', '\ubb3c\uac00 \uc555\ub825 \uc644\ud654 \uac00\ub2a5', 1, 'WAITING'),
+            ('PPI', '\uc0dd\uc0b0\uc790\ubb3c\uac00\uc9c0\uc218', 'INFLATION', 'PPI', 'MONTHLY', 'BAR_LINE', 'INDEX', '\uc9c0\uc218', '\ubc1c\ud45c\uac12', None, 31, 2, '\uc0dd\uc0b0\uc790\ubb3c\uac00\uc9c0\uc218. KOSIS \ub610\ub294 ECOS provider \ud6c4\ubcf4', None, None, None, 1, 'WAITING'),
+            ('CSI', '\uc18c\ube44\uc790\uc2ec\ub9ac\uc9c0\uc218', 'ECONOMY', 'SENTIMENT', 'MONTHLY', 'LINE_WITH_BASELINE', 'INDEX', '\uc9c0\uc218', '\uc9c0\uc218', 100, 40, 1, '\uc18c\ube44\uc790\uc2ec\ub9ac\uc9c0\uc218. ECOS provider \uc6b0\uc120 \ud6c4\ubcf4', None, '\uc18c\ube44\uc2ec\ub9ac \uac1c\uc120, \uc704\ud5d8\uc120\ud638 \uac1c\uc120 \uac00\ub2a5', '\uc18c\ube44\uc2ec\ub9ac \uc704\ucd95 \uac00\ub2a5', 1, 'WAITING'),
+            ('BSI_MANUFACTURING', '\uc81c\uc870\uc5c5 BSI', 'ECONOMY', 'BSI', 'MONTHLY', 'LINE_WITH_BASELINE', 'INDEX', '\uc9c0\uc218', '\uc9c0\uc218', 100, 41, 2, '\uc81c\uc870\uc5c5 \uc5c5\ud669 BSI. ECOS provider \uc6b0\uc120 \ud6c4\ubcf4', None, None, None, 1, 'WAITING'),
+        )
+        for row in market_indicator_rows:
+            conn.exec_driver_sql(
+                """
+                INSERT INTO market_indicators
+                (indicator_code, indicator_name, category, subcategory, data_frequency, chart_type, unit, unit_label,
+                 value_label, base_line_value, display_order, priority_rank, description, interpretation_note,
+                 higher_value_meaning, lower_value_meaning, is_active, collection_status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(indicator_code) DO UPDATE SET
+                    indicator_name = excluded.indicator_name,
+                    category = excluded.category,
+                    subcategory = excluded.subcategory,
+                    data_frequency = excluded.data_frequency,
+                    chart_type = excluded.chart_type,
+                    unit = excluded.unit,
+                    unit_label = excluded.unit_label,
+                    value_label = excluded.value_label,
+                    base_line_value = excluded.base_line_value,
+                    display_order = excluded.display_order,
+                    priority_rank = excluded.priority_rank,
+                    description = excluded.description,
+                    interpretation_note = excluded.interpretation_note,
+                    higher_value_meaning = excluded.higher_value_meaning,
+                    lower_value_meaning = excluded.lower_value_meaning,
+                    is_active = excluded.is_active,
+                    collection_status = CASE
+                        WHEN market_indicators.collection_status IN ('LATEST', 'PARTIAL', 'ERROR') THEN market_indicators.collection_status
+                        ELSE excluded.collection_status
+                    END,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                row,
+            )
+
+        indicator_provider_candidates = {
+            'USD_KRW': 'BOK_ECOS',
+            'JPY_KRW': 'BOK_ECOS',
+            'CNY_KRW': 'BOK_ECOS',
+            'BASE_RATE': 'BOK_ECOS',
+            'CALL_RATE': 'BOK_ECOS',
+            'KTB_3Y': 'BOK_ECOS',
+            'KTB_10Y': 'BOK_ECOS',
+            'CPI': 'BOK_ECOS',
+            'PPI': 'BOK_ECOS',
+            'CSI': 'BOK_ECOS',
+            'BSI_MANUFACTURING': 'BOK_ECOS',
+        }
+        for indicator_code, provider in indicator_provider_candidates.items():
+            conn.exec_driver_sql(
+                """
+                INSERT INTO market_indicator_provider_mappings
+                (indicator_code, provider, api_type, api_id, endpoint_url, provider_symbol, request_params_json,
+                 is_enabled, is_verified, last_test_status, last_test_message, created_at, updated_at)
+                VALUES (?, ?, 'ECONOMIC_STAT', NULL, NULL, NULL, '{}', 0, 0, 'WAITING', 'provider mapping check required', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(indicator_code, provider) DO UPDATE SET
+                    api_type = COALESCE(market_indicator_provider_mappings.api_type, excluded.api_type),
+                    request_params_json = COALESCE(market_indicator_provider_mappings.request_params_json, excluded.request_params_json),
+                    last_test_status = CASE WHEN market_indicator_provider_mappings.is_verified = 1 THEN market_indicator_provider_mappings.last_test_status ELSE 'WAITING' END,
+                    last_test_message = CASE WHEN market_indicator_provider_mappings.is_verified = 1 THEN market_indicator_provider_mappings.last_test_message ELSE 'provider mapping check required' END,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (indicator_code, provider),
             )
 
         conn.exec_driver_sql(

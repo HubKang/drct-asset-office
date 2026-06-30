@@ -1,10 +1,12 @@
-﻿import type {
+import type {
   MarketIndexCollectRequest,
   MarketIndexCollectResponse,
   MarketIndexCompareResponse,
   MarketIndexDailyPriceItem,
   MarketIndexDailyPriceListResponse,
   MarketIndexListResponse,
+  MarketIndexProviderCode,
+  MarketIndexProviderMapping,
 } from "@/types/marketIndex";
 
 const baseIndexes = [
@@ -13,7 +15,8 @@ const baseIndexes = [
   { index_code: "KOSPI200", index_name: "코스피200", category: "국내보조지수", market: "KOSPI", base: 382, step: 0.9, status: "WAITING" },
   { index_code: "KOSDAQ150", index_name: "코스닥150", category: "국내보조지수", market: "KOSDAQ", base: 1360, step: 3.3, status: "WAITING" },
   { index_code: "KOSPI_ELECTRONICS", index_name: "코스피 전기전자", category: "업종지수", market: "KOSPI", base: 28600, step: 62, status: "WAITING" },
-  { index_code: "KOSDAQ_SEMICONDUCTOR", index_name: "코스닥 반도체", category: "업종지수", market: "KOSDAQ", base: 1840, step: 5.6, status: "WAITING" },
+  { index_code: "KOSDAQ_SEMICONDUCTOR", index_name: "코스닥 반도체", category: "업종지수", market: "KOSDAQ", base: 1840, step: 5.6, status: "CUSTOM_INDEX_REQUIRED", error_message: "키움 ka10101 코스닥 업종코드에 공식 반도체 업종지수가 없어 DrCT 자체 테마지수 후보로 보류했습니다." },
+  { index_code: "KOSDAQ_IT_HW", index_name: "코스닥 IT H/W", category: "업종지수", market: "KOSDAQ", base: 1520, step: 4.9, status: "CUSTOM_INDEX_REQUIRED", error_message: "키움 ka10101 코스닥 업종코드에 공식 IT H/W 업종지수가 없어 DrCT 자체 테마지수 후보로 보류했습니다." },
   { index_code: "KOSDAQ_PHARMA", index_name: "코스닥 제약", category: "업종지수", market: "KOSDAQ", base: 9600, step: 18, status: "NOT_COLLECTED" },
   { index_code: "GOLD_KRX", index_name: "KRX 금 현물", category: "금현물", market: "KRX", base: 142000, step: 120, status: "WAITING" },
 ];
@@ -57,6 +60,15 @@ function buildRows(indexCode: string, days = 260): MarketIndexDailyPriceItem[] {
 }
 
 const dailyRows = Object.fromEntries(baseIndexes.map((item) => [item.index_code, item.status === "LATEST" ? buildRows(item.index_code) : []]));
+
+const mockProviderCodes: MarketIndexProviderCode[] = [
+  { provider: "KIWOOM_REST", market_type: "0", market_code: "0", code: "001", name: "종합(KOSPI)", group_name: "종합", source_api_id: "ka10101", is_active: true, matched_index_code: "KOSPI" },
+  { provider: "KIWOOM_REST", market_type: "0", market_code: "0", code: "201", name: "KOSPI200", group_name: "종합", source_api_id: "ka10101", is_active: true, matched_index_code: "KOSPI200" },
+  { provider: "KIWOOM_REST", market_type: "0", market_code: "0", code: "011", name: "금속", group_name: "업종", source_api_id: "ka10101", is_active: true, matched_index_code: "KOSPI_STEEL_METAL" },
+  { provider: "KIWOOM_REST", market_type: "1", market_code: "1", code: "101", name: "종합(KOSDAQ)", group_name: "종합", source_api_id: "ka10101", is_active: true, matched_index_code: "KOSDAQ" },
+  { provider: "KIWOOM_REST", market_type: "1", market_code: "1", code: "124", name: "전기/전자", group_name: "업종", source_api_id: "ka10101", is_active: true, matched_index_code: "KOSDAQ_GENERAL_ELECTRONICS" },
+];
+
 
 const filterRows = (indexCode: string, params?: { start_date?: string; end_date?: string }) =>
   (dailyRows[indexCode] ?? []).filter((row) => {
@@ -106,25 +118,32 @@ export const marketIndexMockRepository = {
   },
   async collect(payload: MarketIndexCollectRequest): Promise<MarketIndexCollectResponse> {
     const codes = payload.index_codes?.length ? payload.index_codes : baseIndexes.map((item) => item.index_code);
-    const waiting = codes.filter((code) => baseIndexes.find((item) => item.index_code === code)?.status !== "LATEST");
+    const waiting = codes.filter((code) => {
+      const status = baseIndexes.find((item) => item.index_code === code)?.status;
+      return status !== "LATEST" && status !== "CUSTOM_INDEX_REQUIRED";
+    });
+    const excluded = codes.filter((code) => baseIndexes.find((item) => item.index_code === code)?.status === "CUSTOM_INDEX_REQUIRED");
     return {
       requested_count: codes.length,
-      success_count: codes.length - waiting.length,
+      success_count: codes.length - waiting.length - excluded.length,
       failed_count: 0,
-      saved_count: (codes.length - waiting.length) * 260,
+      waiting_count: waiting.length,
+      excluded_count: excluded.length,
+      custom_index_required_count: excluded.length,
+      saved_count: (codes.length - waiting.length - excluded.length) * 260,
       message: "mock market indicator collect complete",
       results: codes.map((code) => {
         const meta = baseIndexes.find((item) => item.index_code === code);
-        const isWaiting = meta?.status !== "LATEST";
+        const status = meta?.status === "CUSTOM_INDEX_REQUIRED" ? "CUSTOM_INDEX_REQUIRED" : meta?.status !== "LATEST" ? "WAITING" : "LATEST";
         return {
           index_code: code,
           index_name: meta?.index_name ?? code,
-          status: isWaiting ? "WAITING" : "LATEST",
-          collected_count: isWaiting ? 0 : 260,
-          saved_count: isWaiting ? 0 : 260,
+          status,
+          collected_count: status === "LATEST" ? 260 : 0,
+          saved_count: status === "LATEST" ? 260 : 0,
           from_date: payload.start_date,
           to_date: payload.end_date,
-          message: isWaiting ? "키움 provider mapping이 아직 설정되지 않은 지표입니다." : "mock collect",
+          message: status === "WAITING" ? "키움 provider mapping이 아직 설정되지 않은 지표입니다." : status === "CUSTOM_INDEX_REQUIRED" ? meta?.error_message ?? "자체지수 필요" : "mock collect",
         };
       }),
     };
@@ -134,6 +153,101 @@ export const marketIndexMockRepository = {
       index_code: indexCode,
       index_name: baseIndexes.find((item) => item.index_code === indexCode)?.index_name ?? indexCode,
       items: filterRows(indexCode, params),
+    };
+  },
+  async collectProviderCodes(payload?: { provider?: string; market_types?: string[] }): Promise<{ requested_count: number; success_count: number; failed_count: number; results: Array<{ market_type: string; count: number; status: string; error_message?: string | null }> }> {
+    const marketTypes = payload?.market_types?.length ? payload.market_types : ["0", "1", "2"];
+    return {
+      requested_count: marketTypes.length,
+      success_count: marketTypes.length,
+      failed_count: 0,
+      results: marketTypes.map((marketType) => ({ market_type: marketType, count: mockProviderCodes.filter((item) => item.market_type === marketType).length, status: "SUCCESS", error_message: null })),
+    };
+  },
+  async listProviderCodes(params?: { provider?: string; market_type?: string; keyword?: string }): Promise<{ items: MarketIndexProviderCode[] }> {
+    const keyword = (params?.keyword || "").trim().toLowerCase();
+    return {
+      items: mockProviderCodes.filter((item) => {
+        if (params?.market_type && item.market_type !== params.market_type) return false;
+        if (!keyword) return true;
+        return item.code.toLowerCase().includes(keyword) || item.name.toLowerCase().includes(keyword) || (item.group_name || "").toLowerCase().includes(keyword);
+      }),
+    };
+  },
+  async autoMatchSectorCodes(): Promise<{ matched_count: number; waiting_count: number; results: Array<{ index_code: string; index_name?: string | null; matched_code?: string | null; matched_name?: string | null; status: string; message?: string | null }> }> {
+    const results = [
+      { index_code: "KOSPI_STEEL_METAL", index_name: "코스피 금속", matched_code: "011", matched_name: "금속", status: "MATCHED", message: "provider mapping 검증이 필요합니다." },
+      { index_code: "KOSDAQ_GENERAL_ELECTRONICS", index_name: "코스닥 전기/전자", matched_code: "124", matched_name: "전기/전자", status: "MATCHED", message: "provider mapping 검증이 필요합니다." },
+    ];
+    return { matched_count: results.length, waiting_count: 0, results };
+  },
+  async listProviderMappings(): Promise<{ items: MarketIndexProviderMapping[] }> {
+    return {
+      items: baseIndexes.map((item, idx) => {
+        const enabled = item.index_code === "KOSPI" || item.index_code === "KOSDAQ";
+        return {
+          id: idx + 1,
+          index_code: item.index_code,
+          index_name: item.index_name,
+          provider: "KIWOOM_REST",
+          api_type: item.category === "업종지수" ? "SECTOR_INDEX" : item.category === "금현물" ? "GOLD_SPOT" : "MARKET_INDEX",
+          provider_symbol: enabled ? item.index_code : null,
+          market_type: item.market,
+          indicator_type: item.category,
+          request_params_json: "{}",
+          is_enabled: enabled,
+          is_verified: enabled,
+          verified_at: enabled ? "2026-06-30 09:00:00" : null,
+          last_test_status: enabled ? "SUCCESS" : "WAITING",
+          last_test_message: enabled ? null : "키움 provider mapping이 아직 설정되지 않은 지표입니다.",
+          last_tested_at: enabled ? "2026-06-30 09:00:00" : null,
+        };
+      }),
+    };
+  },
+  async upsertProviderMapping(indexCode: string, payload: Partial<MarketIndexProviderMapping>): Promise<MarketIndexProviderMapping> {
+    const meta = baseIndexes.find((item) => item.index_code === indexCode) ?? baseIndexes[0];
+    return {
+      index_code: indexCode,
+      index_name: meta.index_name,
+      provider: payload.provider || "KIWOOM_REST",
+      api_type: payload.api_type || null,
+      provider_symbol: payload.provider_symbol || null,
+      market_type: payload.market_type || meta.market,
+      indicator_type: payload.indicator_type || meta.category,
+      request_params_json: payload.request_params_json || "{}",
+      is_enabled: Boolean(payload.is_enabled),
+      is_verified: false,
+      last_test_status: "WAITING",
+      last_test_message: "provider mapping 저장 후 검증이 필요합니다.",
+    };
+  },
+  async testProviderMapping(indexCode: string): Promise<{ index_code: string; status: string; sample_count: number; message: string; sample: Array<Record<string, unknown>> }> {
+    const enabled = indexCode === "KOSPI" || indexCode === "KOSDAQ";
+    const rows = enabled ? filterRows(indexCode).slice(-5) : [];
+    return {
+      index_code: indexCode,
+      status: enabled ? "SUCCESS" : "WAITING",
+      sample_count: rows.length,
+      message: enabled ? "provider mapping 검증 성공" : "키움 provider mapping이 아직 설정되지 않은 지표입니다.",
+      sample: rows,
+    };
+  },
+  async activateProviderMapping(indexCode: string): Promise<MarketIndexProviderMapping> {
+    const meta = baseIndexes.find((item) => item.index_code === indexCode) ?? baseIndexes[0];
+    return {
+      index_code: indexCode,
+      index_name: meta.index_name,
+      provider: "KIWOOM_REST",
+      api_type: "MARKET_INDEX",
+      provider_symbol: indexCode,
+      market_type: meta.market,
+      indicator_type: meta.category,
+      request_params_json: "{}",
+      is_enabled: true,
+      is_verified: true,
+      last_test_status: "SUCCESS",
+      last_test_message: null,
     };
   },
   async compare(params?: { index_codes?: string[]; start_date?: string; end_date?: string; normalize?: boolean }): Promise<MarketIndexCompareResponse> {

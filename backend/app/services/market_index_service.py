@@ -1,5 +1,6 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
+import json
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -24,6 +25,10 @@ STATUS_NOT_COLLECTED = "NOT_COLLECTED"
 STATUS_LATEST = "LATEST"
 STATUS_ERROR = "ERROR"
 STATUS_WAITING = "WAITING"
+STATUS_NO_OFFICIAL_INDEX = "NO_OFFICIAL_INDEX"
+STATUS_CUSTOM_INDEX_REQUIRED = "CUSTOM_INDEX_REQUIRED"
+STATUS_EXCLUDED = "EXCLUDED"
+EXCLUDED_COLLECT_STATUSES = {STATUS_NO_OFFICIAL_INDEX, STATUS_CUSTOM_INDEX_REQUIRED, STATUS_EXCLUDED}
 
 
 class MarketIndexService:
@@ -61,7 +66,7 @@ class MarketIndexService:
             return STATUS_LATEST
         if status_value in {"FAILED", "ERROR"}:
             return STATUS_ERROR
-        if status_value in {"COLLECTING", "PARTIAL", "WAITING", STATUS_NOT_COLLECTED}:
+        if status_value in {"COLLECTING", "PARTIAL", "WAITING", STATUS_NOT_COLLECTED, STATUS_NO_OFFICIAL_INDEX, STATUS_CUSTOM_INDEX_REQUIRED, STATUS_EXCLUDED}:
             return status_value
         return STATUS_LATEST if latest_date else STATUS_NOT_COLLECTED
 
@@ -183,19 +188,45 @@ class MarketIndexService:
         end_dt = self._parse_date(end_date, today)
         start_dt = self._parse_date(start_date, end_dt - timedelta(days=365 * 2))
         masters = self._target_indexes(index_codes)
+        include_inactive_policy_rows = index_codes is None
         results = []
         saved_total = 0
         success_count = 0
         failed_count = 0
+        waiting_count = 0
+        excluded_count = 0
         for master in masters:
             code = master["index_code"]
             index_name = self._display_name(code, master.get("index_name"))
+            current_status = self._normalize_status(master.get("collection_status"), master.get("last_collected_date"))
+            if current_status in EXCLUDED_COLLECT_STATUSES or not bool(master.get("is_active", 1)):
+                excluded_count += 1
+                message = master.get("error_message") or master.get("description") or '공식 업종지수 수집 대상이 아닙니다.'
+                results.append(
+                    {
+                        "index_code": code,
+                        "index_name": index_name,
+                        "status": current_status,
+                        "collected_count": 0,
+                        "saved_count": 0,
+                        "from_date": start_dt.isoformat(),
+                        "to_date": end_dt.isoformat(),
+                        "last_collected_date": master.get("last_collected_date"),
+                        "error_message": message,
+                        "message": message,
+                    }
+                )
+                continue
             try:
                 self._update_collect_status(code, "COLLECTING", None, None)
+                mapping = self._get_enabled_provider_mapping(code)
+                if mapping is None and code.upper() not in {"KOSPI", "KOSDAQ"}:
+                    raise UnsupportedMarketIndicatorError("키움 provider mapping이 아직 설정되지 않은 지표입니다.")
                 response = self.provider.get_index_daily_prices(
                     index_code=code,
                     start_date=start_dt.isoformat(),
                     end_date=end_dt.isoformat(),
+                    mapping=mapping,
                 )
                 rows = response.get("items", [])
                 if not rows:
@@ -223,6 +254,7 @@ class MarketIndexService:
                     }
                 )
             except UnsupportedMarketIndicatorError as exc:
+                waiting_count += 1
                 message = str(exc)[:900]
                 self._update_collect_status(code, STATUS_WAITING, None, message)
                 results.append(
@@ -257,13 +289,483 @@ class MarketIndexService:
                         "message": message,
                     }
                 )
+        if include_inactive_policy_rows:
+            excluded_rows = self._excluded_policy_indexes()
+            existing_codes = {str(item.get("index_code", "")).upper() for item in results}
+            for master in excluded_rows:
+                code = str(master["index_code"]).upper()
+                if code in existing_codes:
+                    continue
+                index_name = self._display_name(code, master.get("index_name"))
+                current_status = self._normalize_status(master.get("collection_status"), master.get("last_collected_date"))
+                excluded_count += 1
+                message = master.get("error_message") or master.get("description") or '공식 업종지수 수집 대상이 아닙니다.'
+                results.append(
+                    {
+                        "index_code": code,
+                        "index_name": index_name,
+                        "status": current_status,
+                        "collected_count": 0,
+                        "saved_count": 0,
+                        "from_date": start_dt.isoformat(),
+                        "to_date": end_dt.isoformat(),
+                        "last_collected_date": master.get("last_collected_date"),
+                        "error_message": message,
+                        "message": message,
+                    }
+                )
+        custom_index_required_count = sum(1 for item in results if item.get("status") == STATUS_CUSTOM_INDEX_REQUIRED)
         return {
             "requested_count": len(masters),
             "success_count": success_count,
             "failed_count": failed_count,
+            "waiting_count": waiting_count,
+            "excluded_count": excluded_count,
+            "custom_index_required_count": custom_index_required_count,
             "saved_count": saved_total,
-            "message": f"지수 데이터 갱신 완료: 성공 {success_count}건, 실패 {failed_count}건",
+            "message": f"지수 데이터 갱신 완료: 성공 {success_count}건, 대기 {waiting_count}건, 제외 {excluded_count}건, 실패 {failed_count}건",
             "results": results,
+        }
+
+    def list_provider_mappings(self) -> dict[str, Any]:
+        rows = self.db.execute(
+            text(
+                """
+                SELECT mi.index_code, mi.index_name, m.id, m.provider, m.api_type, m.provider_symbol,
+                       m.market_type, m.indicator_type, m.request_params_json, m.api_id, m.endpoint_url,
+                       m.is_enabled, m.is_verified, m.verified_at, m.last_test_status, m.last_test_message, m.last_tested_at
+                FROM market_indexes mi
+                LEFT JOIN market_index_provider_mappings m
+                  ON m.index_code = mi.index_code AND m.provider = mi.provider
+                WHERE mi.is_active = 1
+                ORDER BY mi.display_order, mi.index_name
+                """
+            )
+        ).mappings().all()
+        return {
+            "items": [
+                {
+                    **dict(row),
+                    "index_name": self._display_name(str(row["index_code"]), row.get("index_name")),
+                    "provider": row.get("provider") or "KIWOOM_REST",
+                    "is_enabled": bool(row.get("is_enabled") or 0),
+                    "is_verified": bool(row.get("is_verified") or 0),
+                    "last_test_status": row.get("last_test_status") or "WAITING",
+                    "last_test_message": row.get("last_test_message") or (None if row.get("is_verified") else "키움 provider mapping이 아직 설정되지 않은 지표입니다."),
+                }
+                for row in rows
+            ]
+        }
+
+    def upsert_provider_mapping(self, index_code: str, payload: Any) -> dict[str, Any]:
+        master = self._get_index(index_code)
+        if not master:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="market index not found")
+        provider = (payload.provider or "KIWOOM_REST").strip().upper()
+        request_params_json = self._normalize_request_params_json(payload.request_params_json)
+        api_id = (payload.api_id or self._infer_api_id(payload.api_type, master.get("category"))).strip()
+        endpoint_url = (payload.endpoint_url or "/api/dostk/chart").strip()
+        self.db.execute(
+            text(
+                """
+                INSERT OR IGNORE INTO market_index_provider_mappings
+                (index_code, provider, api_type, provider_symbol, market_type, indicator_type, request_params_json,
+                 api_id, endpoint_url, is_enabled, is_verified, last_test_status, last_test_message, created_at, updated_at)
+                VALUES (:index_code, :provider, :api_type, :provider_symbol, :market_type, :indicator_type,
+                        :request_params_json, :api_id, :endpoint_url, :is_enabled, 0, 'WAITING', :message, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """
+            ),
+            {
+                "index_code": master["index_code"],
+                "provider": provider,
+                "api_type": payload.api_type,
+                "provider_symbol": payload.provider_symbol,
+                "market_type": payload.market_type,
+                "indicator_type": payload.indicator_type or master.get("category"),
+                "request_params_json": request_params_json,
+                "api_id": api_id,
+                "endpoint_url": endpoint_url,
+                "is_enabled": 1 if payload.is_enabled else 0,
+                "message": "provider mapping 저장 후 검증이 필요합니다.",
+            },
+        )
+        self.db.execute(
+            text(
+                """
+                UPDATE market_index_provider_mappings
+                SET api_type = :api_type, provider_symbol = :provider_symbol, market_type = :market_type,
+                    indicator_type = :indicator_type, request_params_json = :request_params_json,
+                    api_id = :api_id, endpoint_url = :endpoint_url,
+                    is_enabled = :is_enabled,
+                    is_verified = CASE WHEN provider_symbol = :provider_symbol AND is_verified = 1 THEN 1 ELSE 0 END,
+                    last_test_status = CASE WHEN provider_symbol = :provider_symbol AND is_verified = 1 THEN last_test_status ELSE 'WAITING' END,
+                    last_test_message = CASE WHEN provider_symbol = :provider_symbol AND is_verified = 1 THEN last_test_message ELSE 'provider mapping 저장 후 검증이 필요합니다.' END,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE index_code = :index_code AND provider = :provider
+                """
+            ),
+            {
+                "index_code": master["index_code"],
+                "provider": provider,
+                "api_type": payload.api_type,
+                "provider_symbol": payload.provider_symbol,
+                "market_type": payload.market_type,
+                "indicator_type": payload.indicator_type or master.get("category"),
+                "request_params_json": request_params_json,
+                "api_id": api_id,
+                "endpoint_url": endpoint_url,
+                "is_enabled": 1 if payload.is_enabled else 0,
+            },
+        )
+        self.db.commit()
+        return self._get_provider_mapping(master["index_code"], provider) or {}
+
+    def test_provider_mapping(self, index_code: str, payload: Any) -> dict[str, Any]:
+        master = self._get_index(index_code)
+        if not master:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="market index not found")
+        provider = (payload.provider or "KIWOOM_REST").strip().upper()
+        stored_mapping = self._get_provider_mapping(master["index_code"], provider)
+        mapping = dict(stored_mapping or {})
+        for key in ("api_type", "provider_symbol", "market_type", "request_params_json", "api_id", "endpoint_url"):
+            value = getattr(payload, key, None)
+            if value not in (None, ""):
+                mapping[key] = value
+        mapping["index_code"] = master["index_code"]
+        mapping["provider"] = provider
+        mapping["is_enabled"] = bool(mapping.get("provider_symbol"))
+
+        if provider != "KIWOOM_REST":
+            return self._record_mapping_test(master["index_code"], provider, "ERROR", "지원하지 않는 provider입니다.", [])
+        if not mapping.get("provider_symbol"):
+            return self._record_mapping_test(master["index_code"], provider, STATUS_WAITING, "키움 provider mapping이 아직 설정되지 않은 지표입니다.", [])
+
+        try:
+            end_dt = self._parse_date(payload.end_date, self._today())
+            start_dt = self._parse_date(payload.start_date, end_dt - timedelta(days=30))
+            response = self.provider.get_index_daily_prices(
+                index_code=master["index_code"],
+                start_date=start_dt.isoformat(),
+                end_date=end_dt.isoformat(),
+                mapping=mapping,
+            )
+            rows = response.get("items", [])
+            if not rows:
+                return self._record_mapping_test(master["index_code"], provider, "ERROR", "provider mapping 검증 실패: 파싱된 일봉 데이터가 없습니다.", [])
+            if payload.save_result:
+                saved = self._upsert_daily_rows(master["index_code"], rows, source_provider=provider)
+                if saved:
+                    self._recalculate_moving_averages(master["index_code"])
+            return self._record_mapping_test(master["index_code"], provider, "SUCCESS", "provider mapping 검증 성공", rows, verified=True)
+        except UnsupportedMarketIndicatorError as exc:
+            return self._record_mapping_test(master["index_code"], provider, STATUS_WAITING, str(exc), [])
+        except Exception as exc:
+            return self._record_mapping_test(master["index_code"], provider, "ERROR", str(exc)[:900], [])
+
+    def activate_provider_mapping(self, index_code: str, provider: str = "KIWOOM_REST") -> dict[str, Any]:
+        master = self._get_index(index_code)
+        if not master:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="market index not found")
+        mapping = self._get_provider_mapping(master["index_code"], provider.upper())
+        if not mapping or not mapping.get("is_verified"):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="검증 성공한 provider mapping만 활성화할 수 있습니다.")
+        self.db.execute(
+            text(
+                """
+                UPDATE market_index_provider_mappings
+                SET is_enabled = 1, updated_at = CURRENT_TIMESTAMP
+                WHERE index_code = :index_code AND provider = :provider
+                """
+            ),
+            {"index_code": master["index_code"], "provider": provider.upper()},
+        )
+        self.db.execute(
+            text(
+                """
+                UPDATE market_indexes
+                SET collection_status = CASE WHEN collection_status = 'WAITING' THEN 'NOT_COLLECTED' ELSE collection_status END,
+                    error_message = CASE WHEN collection_status = 'WAITING' THEN NULL ELSE error_message END,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE index_code = :index_code
+                """
+            ),
+            {"index_code": master["index_code"]},
+        )
+        self.db.commit()
+        return self._get_provider_mapping(master["index_code"], provider.upper()) or {}
+
+    def collect_provider_codes(self, *, provider: str = "KIWOOM_REST", market_types: list[str] | None = None) -> dict[str, Any]:
+        provider = (provider or "KIWOOM_REST").strip().upper()
+        targets = [str(item).strip() for item in (market_types or ["0", "1", "2"]) if str(item).strip()]
+        results = []
+        success_count = 0
+        failed_count = 0
+        for market_type in targets:
+            try:
+                if provider != "KIWOOM_REST":
+                    raise ValueError("지원하지 않는 provider입니다.")
+                rows = self.provider.fetch_sector_code_list(market_type)
+                saved = self._upsert_provider_codes(provider, market_type, rows)
+                success_count += 1
+                results.append({"market_type": market_type, "count": saved, "status": "SUCCESS", "error_message": None})
+            except Exception as exc:
+                failed_count += 1
+                results.append({"market_type": market_type, "count": 0, "status": "ERROR", "error_message": str(exc)[:900]})
+        return {"requested_count": len(targets), "success_count": success_count, "failed_count": failed_count, "results": results}
+
+    def list_provider_codes(self, *, provider: str = "KIWOOM_REST", market_type: str | None = None, keyword: str | None = None) -> dict[str, Any]:
+        clauses = ["pc.provider = :provider"]
+        params: dict[str, Any] = {"provider": provider.strip().upper()}
+        if market_type:
+            clauses.append("pc.market_type = :market_type")
+            params["market_type"] = market_type.strip()
+        if keyword:
+            clauses.append("(pc.code LIKE :keyword OR pc.name LIKE :keyword OR COALESCE(pc.group_name, '') LIKE :keyword)")
+            params["keyword"] = f"%{keyword.strip()}%"
+        rows = self.db.execute(
+            text(
+                f"""
+                SELECT pc.*, m.index_code AS matched_index_code, mi.index_name AS matched_index_name
+                FROM market_index_provider_codes pc
+                LEFT JOIN market_index_provider_mappings m
+                  ON m.provider = pc.provider AND m.provider_symbol = pc.code AND COALESCE(m.api_id, '') = 'ka20006'
+                LEFT JOIN market_indexes mi ON mi.index_code = m.index_code
+                WHERE {' AND '.join(clauses)}
+                ORDER BY pc.market_type, pc.code, pc.name
+                """
+            ),
+            params,
+        ).mappings().all()
+        return {"items": [{**dict(row), "is_active": bool(row.get("is_active"))} for row in rows]}
+
+    def auto_match_sector_codes(self, *, provider: str = "KIWOOM_REST") -> dict[str, Any]:
+        provider = provider.strip().upper()
+        targets = self._sector_match_targets()
+        results = []
+        matched_count = 0
+        waiting_count = 0
+        for index_code, spec in targets.items():
+            master = self._get_index(index_code)
+            if not master:
+                continue
+            current_status = self._normalize_status(master.get("collection_status"), master.get("last_collected_date"))
+            if current_status in EXCLUDED_COLLECT_STATUSES or not bool(master.get("is_active", 1)):
+                results.append({"index_code": index_code, "index_name": self._display_name(index_code, master.get("index_name")), "matched_code": None, "matched_name": None, "status": current_status, "message": master.get("error_message") or master.get("description")})
+                continue
+            candidates = self._find_provider_code_candidates(provider, spec["market_type"], spec["keywords"])
+            if len(candidates) == 1:
+                candidate = candidates[0]
+                request_params_json = json.dumps({"inds_cd": candidate["code"]}, ensure_ascii=False)
+                self._upsert_mapping_direct(
+                    index_code=index_code,
+                    provider=provider,
+                    api_type="SECTOR_DAILY",
+                    provider_symbol=candidate["code"],
+                    market_type=spec["market_type"],
+                    indicator_type=master.get("category"),
+                    request_params_json=request_params_json,
+                    api_id="ka20006",
+                    endpoint_url="/api/dostk/chart",
+                    message="업종코드 자동 매칭 완료. provider mapping 검증이 필요합니다.",
+                )
+                matched_count += 1
+                results.append({"index_code": index_code, "index_name": self._display_name(index_code, master.get("index_name")), "matched_code": candidate["code"], "matched_name": candidate["name"], "status": "MATCHED", "message": "provider mapping 검증이 필요합니다."})
+            else:
+                waiting_count += 1
+                message = "업종코드 자동 매칭 실패"
+                if len(candidates) > 1:
+                    message = "업종코드 자동 매칭 실패: 후보가 2개 이상입니다."
+                self._mark_mapping_waiting(index_code, provider, message)
+                results.append({"index_code": index_code, "index_name": self._display_name(index_code, master.get("index_name")), "matched_code": None, "matched_name": None, "status": "WAITING", "message": message})
+        return {"matched_count": matched_count, "waiting_count": waiting_count, "results": results}
+
+    @staticmethod
+    def _normalize_request_params_json(value: str | None) -> str:
+        if not value or not str(value).strip():
+            return "{}"
+        try:
+            parsed = json.loads(str(value))
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="request_params_json must be valid JSON") from exc
+        if not isinstance(parsed, dict):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="request_params_json must be a JSON object")
+        return json.dumps(parsed, ensure_ascii=False)
+
+    @staticmethod
+    def _infer_api_id(api_type: str | None, category: str | None = None) -> str:
+        value = (api_type or "").upper()
+        if "GOLD" in value or category == "금현물":
+            return "ka50081"
+        return "ka20006"
+
+    def _upsert_provider_codes(self, provider: str, market_type: str, rows: list[dict[str, Any]]) -> int:
+        saved = 0
+        for row in rows:
+            if not row.get("code") or not row.get("name"):
+                continue
+            result = self.db.execute(
+                text(
+                    """
+                    INSERT INTO market_index_provider_codes
+                    (provider, market_type, market_code, code, name, group_name, source_api_id, is_active, created_at, updated_at)
+                    VALUES (:provider, :market_type, :market_code, :code, :name, :group_name, 'ka10101', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT(provider, market_type, code) DO UPDATE SET
+                        market_code = excluded.market_code,
+                        name = excluded.name,
+                        group_name = excluded.group_name,
+                        source_api_id = excluded.source_api_id,
+                        is_active = 1,
+                        updated_at = CURRENT_TIMESTAMP
+                    """
+                ),
+                {"provider": provider, "market_type": market_type, "market_code": row.get("market_code"), "code": row.get("code"), "name": row.get("name"), "group_name": row.get("group_name")},
+            )
+            saved += max(int(result.rowcount or 0), 0)
+        self.db.commit()
+        return saved
+
+    def _upsert_mapping_direct(self, *, index_code: str, provider: str, api_type: str, provider_symbol: str, market_type: str | None, indicator_type: str | None, request_params_json: str, api_id: str, endpoint_url: str, message: str) -> None:
+        self.db.execute(
+            text(
+                """
+                INSERT OR IGNORE INTO market_index_provider_mappings
+                (index_code, provider, api_type, provider_symbol, market_type, indicator_type, request_params_json, api_id, endpoint_url,
+                 is_enabled, is_verified, last_test_status, last_test_message, created_at, updated_at)
+                VALUES (:index_code, :provider, :api_type, :provider_symbol, :market_type, :indicator_type, :request_params_json, :api_id, :endpoint_url,
+                        0, 0, 'WAITING', :message, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """
+            ),
+            {"index_code": index_code, "provider": provider, "api_type": api_type, "provider_symbol": provider_symbol, "market_type": market_type, "indicator_type": indicator_type, "request_params_json": request_params_json, "api_id": api_id, "endpoint_url": endpoint_url, "message": message},
+        )
+        self.db.execute(
+            text(
+                """
+                UPDATE market_index_provider_mappings
+                SET api_type = :api_type, provider_symbol = :provider_symbol, market_type = :market_type,
+                    indicator_type = :indicator_type, request_params_json = :request_params_json,
+                    api_id = :api_id, endpoint_url = :endpoint_url, is_enabled = 0, is_verified = 0,
+                    last_test_status = 'WAITING', last_test_message = :message, updated_at = CURRENT_TIMESTAMP
+                WHERE index_code = :index_code AND provider = :provider
+                """
+            ),
+            {"index_code": index_code, "provider": provider, "api_type": api_type, "provider_symbol": provider_symbol, "market_type": market_type, "indicator_type": indicator_type, "request_params_json": request_params_json, "api_id": api_id, "endpoint_url": endpoint_url, "message": message},
+        )
+        self.db.commit()
+
+    def _mark_mapping_waiting(self, index_code: str, provider: str, message: str) -> None:
+        self.db.execute(
+            text(
+                """
+                UPDATE market_index_provider_mappings
+                SET is_enabled = 0, is_verified = 0, last_test_status = 'WAITING', last_test_message = :message, updated_at = CURRENT_TIMESTAMP
+                WHERE index_code = :index_code AND provider = :provider AND is_verified = 0
+                """
+            ),
+            {"index_code": index_code, "provider": provider, "message": message},
+        )
+        self.db.commit()
+
+    def _find_provider_code_candidates(self, provider: str, market_type: str, keywords: tuple[str, ...]) -> list[dict[str, Any]]:
+        rows = self.db.execute(
+            text(
+                """
+                SELECT * FROM market_index_provider_codes
+                WHERE provider = :provider AND market_type = :market_type AND is_active = 1
+                ORDER BY code
+                """
+            ),
+            {"provider": provider, "market_type": market_type},
+        ).mappings().all()
+        candidates = []
+        for row in rows:
+            normalized_name = self._normalize_match_text(str(row.get("name") or ""))
+            if any(self._normalize_match_text(keyword) in normalized_name for keyword in keywords):
+                candidates.append(dict(row))
+        return candidates
+
+    @staticmethod
+    def _normalize_match_text(value: str) -> str:
+        return value.replace(" ", "").replace("\u00b7", "").replace("/", "").replace("&", "").upper()
+
+    @staticmethod
+    def _sector_match_targets() -> dict[str, dict[str, Any]]:
+        return {
+            "KOSPI_ELECTRONICS": {"market_type": "0", "keywords": ("전기전자",)},
+            "KOSPI_PHARMA": {"market_type": "0", "keywords": ("의약품", "제약")},
+            "KOSPI_CHEMICAL": {"market_type": "0", "keywords": ("화학",)},
+            "KOSPI_MACHINERY": {"market_type": "0", "keywords": ("기계", "기계장비")},
+            "KOSPI_TRANSPORT_EQUIPMENT": {"market_type": "0", "keywords": ("운수장비", "운송장비부품")},
+            "KOSPI_STEEL_METAL": {"market_type": "0", "keywords": ("??",)},
+            "KOSPI_FINANCE": {"market_type": "0", "keywords": ("금융업", "금융")},
+            "KOSPI_CONSTRUCTION": {"market_type": "0", "keywords": ("건설업", "건설")},
+            "KOSPI_TRANSPORT_WAREHOUSE": {"market_type": "0", "keywords": ("운수창고", "운송창고")},
+            "KOSPI_SERVICE": {"market_type": "0", "keywords": ("서비스업", "일반서비스")},
+            "KOSDAQ_SEMICONDUCTOR": {"market_type": "1", "keywords": ("반도체",)},
+            "KOSDAQ_IT_HW": {"market_type": "1", "keywords": ("ITHW", "IT하드웨어", "IT부품")},
+            "KOSDAQ_IT_SW_SVC": {"market_type": "1", "keywords": ("ITSW", "소프트웨어", "ITSWSVC", "IT서비스")},
+            "KOSDAQ_PHARMA": {"market_type": "1", "keywords": ("제약",)},
+            "KOSDAQ_GENERAL_ELECTRONICS": {"market_type": "1", "keywords": ("일반전기전자", "전기전자")},
+            "KOSDAQ_MACHINE_EQUIPMENT": {"market_type": "1", "keywords": ("기계장비",)},
+            "KOSDAQ_CHEMICAL": {"market_type": "1", "keywords": ("화학",)},
+            "KOSDAQ_MEDICAL_PRECISION": {"market_type": "1", "keywords": ("의료정밀기기",)},
+        }
+
+    def _get_provider_mapping(self, index_code: str, provider: str = "KIWOOM_REST") -> dict[str, Any] | None:
+        row = self.db.execute(
+            text("SELECT * FROM market_index_provider_mappings WHERE UPPER(index_code) = :code AND provider = :provider"),
+            {"code": index_code.strip().upper(), "provider": provider.strip().upper()},
+        ).mappings().first()
+        if not row:
+            return None
+        row_dict = dict(row)
+        row_dict["is_enabled"] = bool(row_dict.get("is_enabled"))
+        row_dict["is_verified"] = bool(row_dict.get("is_verified"))
+        return row_dict
+
+    def _get_enabled_provider_mapping(self, index_code: str, provider: str = "KIWOOM_REST") -> dict[str, Any] | None:
+        mapping = self._get_provider_mapping(index_code, provider)
+        if not mapping or not mapping.get("is_enabled") or not mapping.get("is_verified"):
+            return None
+        return mapping
+
+    def _record_mapping_test(self, index_code: str, provider: str, status_value: str, message: str, rows: list[dict[str, Any]], *, verified: bool = False) -> dict[str, Any]:
+        sample = rows[:5]
+        first_date = rows[0].get("price_date") if rows else None
+        last_date = rows[-1].get("price_date") if rows else None
+        self.db.execute(
+            text(
+                """
+                INSERT OR IGNORE INTO market_index_provider_mappings
+                (index_code, provider, is_enabled, is_verified, last_test_status, last_test_message, last_tested_at, created_at, updated_at)
+                VALUES (:index_code, :provider, 0, 0, :status, :message, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """
+            ),
+            {"index_code": index_code, "provider": provider, "status": status_value, "message": message},
+        )
+        self.db.execute(
+            text(
+                """
+                UPDATE market_index_provider_mappings
+                SET is_verified = CASE WHEN :verified = 1 THEN 1 ELSE is_verified END,
+                    verified_at = CASE WHEN :verified = 1 THEN CURRENT_TIMESTAMP ELSE verified_at END,
+                    last_test_status = :status,
+                    last_test_message = :message,
+                    last_tested_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE index_code = :index_code AND provider = :provider
+                """
+            ),
+            {"index_code": index_code, "provider": provider, "status": status_value, "message": message, "verified": 1 if verified else 0},
+        )
+        self.db.commit()
+        return {
+            "index_code": index_code,
+            "status": status_value,
+            "sample_count": len(rows),
+            "first_date": first_date,
+            "last_date": last_date,
+            "message": message,
+            "sample": sample,
         }
 
     def _get_index(self, index_code: str) -> dict[str, Any] | None:
@@ -287,6 +789,21 @@ class MarketIndexService:
             dict(row)
             for row in self.db.execute(
                 text("SELECT * FROM market_indexes WHERE is_active = 1 ORDER BY display_order, index_name")
+            ).mappings().all()
+        ]
+
+    def _excluded_policy_indexes(self) -> list[dict[str, Any]]:
+        return [
+            dict(row)
+            for row in self.db.execute(
+                text(
+                    """
+                    SELECT *
+                    FROM market_indexes
+                    WHERE collection_status IN ('NO_OFFICIAL_INDEX', 'CUSTOM_INDEX_REQUIRED', 'EXCLUDED')
+                    ORDER BY display_order, index_name
+                    """
+                )
             ).mappings().all()
         ]
 
@@ -317,7 +834,10 @@ class MarketIndexService:
 
     def _overview_fallback_row(self, index_code: str, start_dt: date, end_dt: date) -> list[dict[str, Any]]:
         overview = self.provider.get_market_overview()
-        key = "kospi" if index_code.upper() == "KOSPI" else "kosdaq"
+        upper_code = index_code.upper()
+        if upper_code not in {"KOSPI", "KOSDAQ"}:
+            return []
+        key = "kospi" if upper_code == "KOSPI" else "kosdaq"
         row = overview.get(key, {}) if isinstance(overview, dict) else {}
         base_date = row.get("base_date") or end_dt.isoformat()
         if base_date < start_dt.isoformat() or base_date > end_dt.isoformat() or row.get("index_value") is None:
@@ -419,5 +939,4 @@ class MarketIndexService:
             {"code": index_code, "status": status_value, "latest_date": latest_date, "message": message},
         )
         self.db.commit()
-
 

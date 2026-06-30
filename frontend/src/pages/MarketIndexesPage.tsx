@@ -1,8 +1,9 @@
-﻿import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import { repositories } from "@/services";
-import type { MarketIndexCompareResponse, MarketIndexDailyPriceItem, MarketIndexItem } from "@/types/marketIndex";
+import type { MarketIndexCompareResponse, MarketIndexDailyPriceItem, MarketIndexItem, MarketIndexProviderCode, MarketIndexProviderMapping } from "@/types/marketIndex";
+import type { ExternalProviderStatus, ExternalProviderStatusListResponse } from "@/types/marketIndicator";
 
 const PERIOD_OPTIONS = [
   { label: "1M", days: 31 },
@@ -12,7 +13,32 @@ const PERIOD_OPTIONS = [
   { label: "ALL", days: null },
 ] as const;
 
-const CATEGORY_OPTIONS = ["전체", "국내대표지수", "국내보조지수", "업종지수", "금현물"] as const;
+const CATEGORY_OPTIONS = ["전체", "주식시장", "업종", "금현물", "보류/제외"] as const;
+
+const MARKET_INDEX_CHART_HEIGHT = 520;
+const MARKET_INDEX_PRICE_AREA_HEIGHT = 350;
+const MARKET_INDEX_VOLUME_AREA_HEIGHT = 90;
+const MARKET_INDEX_CHART_TOP_PADDING = 40;
+const MARKET_INDEX_PRICE_VOLUME_GAP = 24;
+const MARKET_INDEX_CHART_BOTTOM_PADDING = MARKET_INDEX_CHART_HEIGHT - MARKET_INDEX_CHART_TOP_PADDING - MARKET_INDEX_PRICE_AREA_HEIGHT - MARKET_INDEX_PRICE_VOLUME_GAP - MARKET_INDEX_VOLUME_AREA_HEIGHT;
+const MARKET_INDEX_DEFAULT_VISIBLE_CANDLES = 80;
+const MARKET_INDEX_VISIBLE_CANDLE_COUNT = {
+  "1M": 22,
+  "3M": 66,
+  "6M": 132,
+  "1Y": 250,
+  ALL: 250,
+} as const;
+
+const ADMIN_DRAWER_TABS = [
+  { key: "mapping", label: "매핑 상태" },
+  { key: "kiwoom", label: "키움 업종코드" },
+  { key: "deferred", label: "보류/제외" },
+  { key: "provider", label: "대체 provider" },
+  { key: "external", label: "\uC678\uBD80 API \uC0C1\uD0DC" },
+] as const;
+
+type AdminDrawerTab = (typeof ADMIN_DRAWER_TABS)[number]["key"];
 
 type PeriodLabel = (typeof PERIOD_OPTIONS)[number]["label"];
 type CategoryFilter = (typeof CATEGORY_OPTIONS)[number];
@@ -63,14 +89,75 @@ const STATUS_LABELS: Record<string, string> = {
   SUCCESS: "최신",
   FAILED: "오류",
   READY: "미수집",
+  NO_OFFICIAL_INDEX: "공식지수 없음",
+  CUSTOM_INDEX_REQUIRED: "자체지수 필요",
+  EXCLUDED: "제외",
 };
 
-const COMPARE_PRESETS = [
-  { label: "국내 대표", codes: ["KOSPI", "KOSDAQ", "KOSPI200", "KOSDAQ150"] },
-  { label: "반도체", codes: ["KOSDAQ_SEMICONDUCTOR", "KOSPI_ELECTRONICS", "KOSDAQ", "KOSPI200"] },
-  { label: "바이오", codes: ["KOSDAQ_PHARMA", "KOSPI_PHARMA", "KOSDAQ"] },
-  { label: "위험회피", codes: ["GOLD_KRX", "KOSPI", "KOSDAQ"] },
+type CompareGroupKey = string;
+
+type CompareGroupConfig = {
+  key: CompareGroupKey;
+  label: string;
+  indexCodes: readonly string[];
+  prefix?: string;
+};
+
+const COMPARE_GROUPS: CompareGroupConfig[] = [
+  {
+    key: "DOMESTIC",
+    label: "국내 대표/보조",
+    indexCodes: ["KOSPI", "KOSDAQ", "KOSPI200", "KOSDAQ150", "KRX100"],
+  },
+  {
+    key: "KOSPI_SECTOR",
+    label: "코스피 업종",
+    prefix: "KOSPI_",
+    indexCodes: [
+      "KOSPI_ELECTRONICS",
+      "KOSPI_PHARMA",
+      "KOSPI_CHEMICAL",
+      "KOSPI_MACHINERY",
+      "KOSPI_TRANSPORT_EQUIPMENT",
+      "KOSPI_STEEL_METAL",
+      "KOSPI_FINANCE",
+      "KOSPI_CONSTRUCTION",
+      "KOSPI_TRANSPORT_WAREHOUSE",
+      "KOSPI_SERVICE",
+    ],
+  },
+  {
+    key: "KOSDAQ_SECTOR",
+    label: "코스닥 업종",
+    prefix: "KOSDAQ_",
+    indexCodes: [
+      "KOSDAQ_IT_SW_SVC",
+      "KOSDAQ_PHARMA",
+      "KOSDAQ_GENERAL_ELECTRONICS",
+      "KOSDAQ_MACHINE_EQUIPMENT",
+      "KOSDAQ_CHEMICAL",
+      "KOSDAQ_MEDICAL_PRECISION",
+    ],
+  },
+  {
+    key: "SAFE_ASSET",
+    label: "안전자산/기타",
+    indexCodes: ["GOLD_KRX"],
+  },
 ];
+
+const FIRST_SECTOR_CANDIDATES = [
+  "KOSPI_ELECTRONICS",
+  "KOSPI_PHARMA",
+  "KOSPI_CHEMICAL",
+  "KOSPI_TRANSPORT_EQUIPMENT",
+  "KOSPI_FINANCE",
+  "KOSDAQ_SEMICONDUCTOR",
+  "KOSDAQ_PHARMA",
+  "KOSDAQ_IT_HW",
+  "KOSDAQ_IT_SW_SVC",
+  "KOSDAQ_GENERAL_ELECTRONICS",
+] as const;
 
 const today = () => new Date().toISOString().slice(0, 10);
 const daysAgo = (days: number) => {
@@ -90,11 +177,14 @@ const getStatusValue = (raw?: string | null, hasPrice = false) => {
   const status = (raw ?? "").toUpperCase();
   if (status === "SUCCESS") return "LATEST";
   if (status === "FAILED") return "ERROR";
+  if (status === "NO_OFFICIAL_INDEX" || status === "CUSTOM_INDEX_REQUIRED" || status === "EXCLUDED") return status;
   if (status === "READY" || !status) return hasPrice ? "LATEST" : "NOT_COLLECTED";
   return STATUS_LABELS[status] ? status : hasPrice ? "LATEST" : "NOT_COLLECTED";
 };
 
 const getStatusLabel = (raw?: string | null, hasPrice = false) => STATUS_LABELS[getStatusValue(raw, hasPrice)] ?? TEXT.notCollected;
+const getStatusClass = (status: string) => status.toLowerCase().replace(/_/g, "-");
+const isDeferredStatus = (status: string) => ["NO_OFFICIAL_INDEX", "CUSTOM_INDEX_REQUIRED", "EXCLUDED"].includes(status);
 
 const formatNumber = (value?: number | null, fraction = 0) => {
   if (value === null || value === undefined || Number.isNaN(value)) return "-";
@@ -125,86 +215,183 @@ function minMax(values: Array<number | null | undefined>) {
   return { min: min - pad, max: max + pad };
 }
 
-function CandleChart({ rows, indexName }: { rows: MarketIndexDailyPriceItem[]; indexName: string }) {
-  const visibleRows = rows.filter((row) => row.close_price !== null && row.close_price !== undefined);
-  const candleSlot = 24;
-  const width = Math.max(720, visibleRows.length * candleSlot + 96);
-  const priceHeight = 520;
-  const volumeHeight = 130;
-  const height = priceHeight + volumeHeight + 52;
+function CandleChart({ rows, indexName, period, statusValue, errorMessage }: { rows: MarketIndexDailyPriceItem[]; indexName: string; period: PeriodLabel; statusValue?: string; errorMessage?: string | null }) {
+  const visibleRows = rows.filter((row) => row.close_price !== null && row.close_price !== undefined && Number.isFinite(row.close_price));
+  const chartScrollRef = useRef<HTMLDivElement | null>(null);
+  const [viewportWidth, setViewportWidth] = useState(0);
+  const [scrollMetrics, setScrollMetrics] = useState({ scrollLeft: 0, scrollWidth: 0, clientWidth: 0 });
+  const priceHeight = MARKET_INDEX_PRICE_AREA_HEIGHT;
+  const volumeHeight = MARKET_INDEX_VOLUME_AREA_HEIGHT;
+  const height = MARKET_INDEX_CHART_HEIGHT;
   const chartX = 44;
   const chartRight = 28;
+  const minChartWidth = 720;
+  const measuredWidth = Math.max(viewportWidth, minChartWidth);
+  const configuredVisibleCount = MARKET_INDEX_VISIBLE_CANDLE_COUNT[period] ?? Math.max(visibleRows.length, MARKET_INDEX_DEFAULT_VISIBLE_CANDLES);
+  const targetVisibleCount = Math.max(1, configuredVisibleCount);
+  const candleSlot = (measuredWidth - chartX - chartRight) / targetVisibleCount;
+  const width = Math.max(minChartWidth, chartX + chartRight + Math.max(visibleRows.length, targetVisibleCount) * candleSlot);
   const chartWidth = width - chartX - chartRight;
   const gap = visibleRows.length > 1 ? chartWidth / visibleRows.length : chartWidth;
-  const candleWidth = Math.max(8, Math.min(14, gap * 0.58));
+  const candleWidth = Math.max(4, Math.min(14, gap * 0.58));
   const priceRange = minMax(visibleRows.flatMap((row) => [row.open_price, row.high_price, row.low_price, row.close_price, row.ma5, row.ma20, row.ma60, row.ma120]));
   const volumeMax = Math.max(...visibleRows.map((row) => row.volume ?? 0), 1);
+  const priceTop = MARKET_INDEX_CHART_TOP_PADDING;
+  const priceBottom = priceTop + priceHeight;
+  const volumeTop = priceBottom + MARKET_INDEX_PRICE_VOLUME_GAP;
+  const volumeBaseline = volumeTop + volumeHeight;
   const y = (value?: number | null) => {
-    if (value === null || value === undefined) return priceHeight;
-    return 16 + ((priceRange.max - value) / (priceRange.max - priceRange.min)) * (priceHeight - 32);
+    if (value === null || value === undefined || !Number.isFinite(value)) return priceBottom;
+    const domain = priceRange.max - priceRange.min || 1;
+    return priceTop + ((priceRange.max - value) / domain) * priceHeight;
   };
   const x = (idx: number) => chartX + idx * gap + gap / 2;
-  const linePath = (key: "ma5" | "ma20" | "ma60" | "ma120") =>
-    visibleRows
-      .map((row, idx) => (row[key] === null || row[key] === undefined ? null : `${idx === 0 ? "M" : "L"}${x(idx).toFixed(1)},${y(row[key]).toFixed(1)}`))
-      .filter(Boolean)
-      .join(" ");
+  const linePath = (key: "ma5" | "ma20" | "ma60" | "ma120") => {
+    const points = visibleRows
+      .map((row, idx) => {
+        const value = row[key];
+        return value === null || value === undefined ? null : { idx, value };
+      })
+      .filter((point): point is { idx: number; value: number } => Boolean(point));
+    return points.map((point, pathIdx) => `${pathIdx === 0 ? "M" : "L"}${x(point.idx).toFixed(1)},${y(point.value).toFixed(1)}`).join(" ");
+  };
+  const latestDate = visibleRows[visibleRows.length - 1]?.price_date;
+  const updateScrollMetrics = useCallback(() => {
+    const scrollElement = chartScrollRef.current;
+    if (!scrollElement) return;
+    setViewportWidth(scrollElement.clientWidth || 0);
+    setScrollMetrics({
+      scrollLeft: scrollElement.scrollLeft,
+      scrollWidth: scrollElement.scrollWidth,
+      clientWidth: scrollElement.clientWidth,
+    });
+  }, []);
+  const maxScrollLeft = Math.max(scrollMetrics.scrollWidth - scrollMetrics.clientWidth, 0);
+  const thumbWidthPercent = scrollMetrics.scrollWidth > 0 ? Math.max(7, Math.min(100, (scrollMetrics.clientWidth / scrollMetrics.scrollWidth) * 100)) : 100;
+  const thumbLeftPercent = maxScrollLeft > 0 ? (scrollMetrics.scrollLeft / maxScrollLeft) * (100 - thumbWidthPercent) : 0;
+
+  useEffect(() => {
+    const scrollElement = chartScrollRef.current;
+    if (!scrollElement) return;
+    updateScrollMetrics();
+    scrollElement.addEventListener("scroll", updateScrollMetrics, { passive: true });
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateScrollMetrics);
+      return () => {
+        scrollElement.removeEventListener("scroll", updateScrollMetrics);
+        window.removeEventListener("resize", updateScrollMetrics);
+      };
+    }
+    const observer = new ResizeObserver(updateScrollMetrics);
+    observer.observe(scrollElement);
+    return () => {
+      scrollElement.removeEventListener("scroll", updateScrollMetrics);
+      observer.disconnect();
+    };
+  }, [updateScrollMetrics]);
+
+  useEffect(() => {
+    const scrollElement = chartScrollRef.current;
+    if (!scrollElement) return;
+    scrollElement.scrollLeft = scrollElement.scrollWidth;
+    window.requestAnimationFrame(updateScrollMetrics);
+  }, [indexName, latestDate, visibleRows.length, width, updateScrollMetrics]);
+
+  const handleScrollbarPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    const scrollElement = chartScrollRef.current;
+    if (!scrollElement) return;
+    const trackElement = event.currentTarget;
+    const trackRect = trackElement.getBoundingClientRect();
+    const maxScroll = Math.max(scrollElement.scrollWidth - scrollElement.clientWidth, 0);
+    const thumbWidth = (thumbWidthPercent / 100) * trackRect.width;
+    const maxThumbLeft = Math.max(trackRect.width - thumbWidth, 1);
+    const moveTo = (clientX: number) => {
+      const nextThumbLeft = Math.min(Math.max(clientX - trackRect.left - thumbWidth / 2, 0), maxThumbLeft);
+      scrollElement.scrollLeft = maxScroll > 0 ? (nextThumbLeft / maxThumbLeft) * maxScroll : 0;
+      updateScrollMetrics();
+    };
+    moveTo(event.clientX);
+    const handlePointerMove = (moveEvent: PointerEvent) => moveTo(moveEvent.clientX);
+    const handlePointerUp = () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp, { once: true });
+  };
 
   if (!visibleRows.length) {
+    const emptyText =
+      statusValue === "WAITING"
+        ? { title: "이 지표는 아직 provider mapping 검증 또는 활성화가 필요합니다.", body: errorMessage || "키움 provider mapping 확인 후 수집할 수 있습니다." }
+        : statusValue === "NO_OFFICIAL_INDEX"
+          ? { title: "공식 업종지수에 대응되는 항목이 없습니다.", body: errorMessage || "공식 provider 매핑 없이 보류된 지표입니다." }
+          : statusValue === "CUSTOM_INDEX_REQUIRED"
+            ? { title: "이 지표는 DrCT 자체 테마지수로 계산이 필요한 항목입니다.", body: errorMessage || "공식 업종지수 수집 대상에서 제외되었습니다." }
+            : statusValue === "ERROR"
+              ? { title: "최근 수집 중 오류가 발생했습니다.", body: errorMessage || "카드의 오류 메시지를 확인해 주세요." }
+              : { title: `수집된 ${indexName} 일봉 데이터가 없습니다.`, body: "상단의 선택 지표 갱신 또는 전체 지표 갱신을 실행해 주세요." };
     return (
-      <div className="market-index-chart-empty">
-        <strong>{`수집된 ${indexName} 일봉 데이터가 없습니다.`}</strong>
-        <span>상단의 선택 지표 갱신 또는 전체 지표 갱신을 실행해 주세요.</span>
+      <div className="market-index-chart-viewport">
+        <div className="market-index-chart-empty fixed">
+          <strong>{emptyText.title}</strong>
+          <span>{emptyText.body}</span>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="market-index-chart-scroll">
-      <svg className="market-index-candle-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${indexName} 일봉 차트`}>
-        {[0, 1, 2, 3, 4].map((grid) => {
-          const yy = 18 + (grid * (priceHeight - 36)) / 4;
-          return <line key={grid} x1={chartX} x2={width - chartRight} y1={yy} y2={yy} className="market-index-grid" />;
-        })}
-        <line x1={chartX} x2={width - chartRight} y1={priceHeight + volumeHeight + 18} y2={priceHeight + volumeHeight + 18} className="market-index-volume-baseline" />
-        {visibleRows.map((row, idx) => {
-          const cx = x(idx);
-          const openY = y(row.open_price ?? row.close_price);
-          const closeY = y(row.close_price);
-          const highY = y(row.high_price ?? row.close_price);
-          const lowY = y(row.low_price ?? row.close_price);
-          const up = (row.close_price ?? 0) >= (row.open_price ?? row.close_price ?? 0);
-          const bodyY = Math.min(openY, closeY);
-          const bodyH = Math.max(Math.abs(closeY - openY), 2);
-          const volumeH = ((row.volume ?? 0) / volumeMax) * (volumeHeight - 12);
-          return (
-            <g key={`${row.index_code}-${row.price_date}`}>
-              <line x1={cx} x2={cx} y1={highY} y2={lowY} className={up ? "market-index-candle-up" : "market-index-candle-down"} />
-              <rect x={cx - candleWidth / 2} y={bodyY} width={candleWidth} height={bodyH} rx="0" className={up ? "market-index-candle-up-fill" : "market-index-candle-down-fill"} />
-              <rect x={cx - candleWidth / 2} y={priceHeight + 18 + (volumeHeight - volumeH)} width={candleWidth} height={volumeH} rx="0" className={up ? "market-index-volume-up" : "market-index-volume-down"} />
-            </g>
-          );
-        })}
-        <path d={linePath("ma5")} className="market-index-ma ma5" />
-        <path d={linePath("ma20")} className="market-index-ma ma20" />
-        <path d={linePath("ma60")} className="market-index-ma ma60" />
-        <path d={linePath("ma120")} className="market-index-ma ma120" />
-        <text x={chartX} y={height - 8} className="market-index-axis-label">{visibleRows[0]?.price_date}</text>
-        <text x={width - 24} y={height - 8} textAnchor="end" className="market-index-axis-label">{visibleRows[visibleRows.length - 1]?.price_date}</text>
-      </svg>
+    <div className="market-index-chart-viewport">
+      <div className="market-index-chart-scroll" ref={chartScrollRef}>
+        <svg className="market-index-candle-svg" style={{ width: `${width}px` }} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="img" aria-label={`${indexName} 일봉 차트`}>
+          {[0, 1, 2, 3, 4].map((grid) => {
+            const yy = priceTop + (grid * priceHeight) / 4;
+            return <line key={grid} x1={chartX} x2={width - chartRight} y1={yy} y2={yy} className="market-index-grid" />;
+          })}
+          <line x1={chartX} x2={width - chartRight} y1={volumeBaseline} y2={volumeBaseline} className="market-index-volume-baseline" />
+          {visibleRows.map((row, idx) => {
+            const cx = x(idx);
+            const openY = y(row.open_price ?? row.close_price);
+            const closeY = y(row.close_price);
+            const highY = y(row.high_price ?? row.close_price);
+            const lowY = y(row.low_price ?? row.close_price);
+            const up = (row.close_price ?? 0) >= (row.open_price ?? row.close_price ?? 0);
+            const bodyY = Math.min(openY, closeY);
+            const bodyH = Math.max(Math.abs(closeY - openY), 2);
+            const volumeH = ((row.volume ?? 0) / volumeMax) * (volumeHeight - 12);
+            return (
+              <g key={`${row.index_code}-${row.price_date}`}>
+                <line x1={cx} x2={cx} y1={highY} y2={lowY} className={up ? "market-index-candle-up" : "market-index-candle-down"} />
+                <rect x={cx - candleWidth / 2} y={bodyY} width={candleWidth} height={bodyH} rx="0" className={up ? "market-index-candle-up-fill" : "market-index-candle-down-fill"} />
+                <rect x={cx - candleWidth / 2} y={volumeTop + (volumeHeight - volumeH)} width={candleWidth} height={volumeH} rx="0" className={up ? "market-index-volume-up" : "market-index-volume-down"} />
+              </g>
+            );
+          })}
+          <path d={linePath("ma5")} className="market-index-ma ma5" />
+          <path d={linePath("ma20")} className="market-index-ma ma20" />
+          <path d={linePath("ma60")} className="market-index-ma ma60" />
+          <path d={linePath("ma120")} className="market-index-ma ma120" />
+          <text x={chartX} y={height - Math.max(10, MARKET_INDEX_CHART_BOTTOM_PADDING / 2)} className="market-index-axis-label">{visibleRows[0]?.price_date}</text>
+          <text x={width - 24} y={height - Math.max(10, MARKET_INDEX_CHART_BOTTOM_PADDING / 2)} textAnchor="end" className="market-index-axis-label">{visibleRows[visibleRows.length - 1]?.price_date}</text>
+        </svg>
+      </div>
+      <div className="market-index-custom-scrollbar" role="scrollbar" aria-orientation="horizontal" aria-valuemin={0} aria-valuemax={Math.round(maxScrollLeft)} aria-valuenow={Math.round(scrollMetrics.scrollLeft)} onPointerDown={handleScrollbarPointerDown}>
+        <span className="market-index-custom-scrollbar-thumb" style={{ width: `${thumbWidthPercent}%`, left: `${thumbLeftPercent}%` }} />
+      </div>
     </div>
   );
 }
 
 function CompareChart({ compare }: { compare: MarketIndexCompareResponse | null }) {
-  const width = 960;
-  const height = 260;
+  const width = 1440;
+  const height = 408;
   const series = compare?.series ?? [];
   const values = series.flatMap((item) => item.points.map((point) => point.value));
   const range = minMax(values);
   const maxLength = Math.max(...series.map((item) => item.points.length), 0);
-  const x = (idx: number) => 28 + (idx / Math.max(maxLength - 1, 1)) * (width - 52);
-  const y = (value?: number | null) => (value === null || value === undefined ? height - 24 : 18 + ((range.max - value) / (range.max - range.min)) * (height - 48));
+  const x = (idx: number) => 36 + (idx / Math.max(maxLength - 1, 1)) * (width - 72);
+  const y = (value?: number | null) => (value === null || value === undefined ? height - 32 : 24 + ((range.max - value) / (range.max - range.min)) * (height - 64));
   const colors = ["#2563eb", "#ef4444", "#0f9f6e", "#a855f7", "#f59e0b", "#14b8a6"];
 
   if (!series.some((item) => item.points.length)) {
@@ -216,11 +403,20 @@ function CompareChart({ compare }: { compare: MarketIndexCompareResponse | null 
   }
 
   return (
-    <div className="market-index-chart-scroll compact">
-      <svg className="market-index-compare-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={TEXT.compareTitle}>
+    <>
+      <div className="market-index-compare-legend">
+        {series.filter((item) => item.points.length).map((item, idx) => (
+          <span key={item.index_code}>
+            <i style={{ backgroundColor: colors[idx % colors.length] }} />
+            {item.index_name || item.index_code}
+          </span>
+        ))}
+      </div>
+      <div className="market-index-chart-scroll market-index-compare-scroll compact">
+      <svg className="market-index-compare-svg" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="img" aria-label={TEXT.compareTitle}>
         {[0, 1, 2].map((grid) => {
-          const yy = 18 + (grid * (height - 48)) / 2;
-          return <line key={grid} x1={28} x2={width - 24} y1={yy} y2={yy} className="market-index-grid" />;
+          const yy = 24 + (grid * (height - 64)) / 2;
+          return <line key={grid} x1={36} x2={width - 36} y1={yy} y2={yy} className="market-index-grid" />;
         })}
         {series.map((item, idx) => {
           const path = item.points
@@ -230,7 +426,128 @@ function CompareChart({ compare }: { compare: MarketIndexCompareResponse | null 
           return <path key={item.index_code} d={path} fill="none" stroke={colors[idx % colors.length]} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />;
         })}
       </svg>
-    </div>
+      </div>
+    </>
+  );
+}
+
+
+function MappingStatusPanel({ mappings }: { mappings: MarketIndexProviderMapping[] }) {
+  if (!mappings.length) {
+    return <div className="market-index-chart-empty">provider mapping 상태를 불러오지 못했습니다.</div>;
+  }
+  return (
+    <SectionCard className="market-index-mapping-card">
+      <div className="market-index-section-head">
+        <div>
+          <h3>Provider 매핑 상태</h3>
+          <p>실제 수집에 사용할 provider symbol과 검증 상태를 확인합니다.</p>
+        </div>
+      </div>
+      <div className="market-index-mapping-table-wrap">
+        <table className="data-table compact-table market-index-mapping-table">
+          <thead>
+            <tr>
+              <th>지표명</th>
+              <th>코드</th>
+              <th>provider</th>
+              <th>api_type</th>
+              <th>api_id</th>
+              <th>endpoint</th>
+              <th>symbol</th>
+              <th>enabled</th>
+              <th>verified</th>
+              <th>최근 검증</th>
+            </tr>
+          </thead>
+          <tbody>
+            {mappings.map((mapping) => (
+              <tr key={`${mapping.index_code}-${mapping.provider}`}>
+                <td>{mapping.index_name || mapping.index_code}</td>
+                <td className="mono-cell">{mapping.index_code}</td>
+                <td>{mapping.provider}</td>
+                <td>{mapping.api_type || "-"}</td>
+                <td className="mono-cell">{mapping.api_id || "-"}</td>
+                <td className="mono-cell">{mapping.endpoint_url || "-"}</td>
+                <td className="mono-cell">{mapping.provider_symbol || "-"}</td>
+                <td>{mapping.is_enabled ? "ON" : "OFF"}</td>
+                <td>{mapping.is_verified ? "검증됨" : "미검증"}</td>
+                <td>
+                  <span className={`status-badge status-${String(mapping.last_test_status || "WAITING").toLowerCase()}`}>
+                    {mapping.last_test_status || "WAITING"}
+                  </span>
+                  {mapping.last_test_message ? <p className="market-index-mapping-message">{mapping.last_test_message}</p> : null}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </SectionCard>
+  );
+}
+
+function ProviderCodePanel({
+  codes,
+  marketType,
+  onMarketTypeChange,
+  onCollect,
+  onAutoMatch,
+  onTestCandidates,
+  onActivateVerified,
+  autoMatchMessage,
+  loading,
+}: {
+  codes: MarketIndexProviderCode[];
+  marketType: string;
+  onMarketTypeChange: (value: string) => void;
+  onCollect: () => void;
+  onAutoMatch: () => void;
+  onTestCandidates: () => void;
+  onActivateVerified: () => void;
+  autoMatchMessage: string | null;
+  loading: boolean;
+}) {
+  const labels: Record<string, string> = { "0": "코스피", "1": "코스닥", "2": "KOSPI200", "4": "KOSPI100", "7": "KRX100" };
+  const filteredCodes = marketType === "ALL" ? codes : codes.filter((item) => item.market_type === marketType);
+  return (
+    <SectionCard className="market-index-provider-code-card">
+      <div className="market-index-section-head">
+        <div>
+          <h3>키움 업종코드 후보</h3>
+          <p>ka10101 업종코드 후보를 수집하고 DrCT 지표와 매핑합니다.</p>
+        </div>
+        <div className="market-index-header-actions">
+          <button className="btn btn-secondary" type="button" disabled={loading} onClick={onCollect}>업종코드 수집</button>
+          <button className="btn btn-secondary" type="button" disabled={loading} onClick={onAutoMatch}>자동매칭 실행</button>
+          <button className="btn btn-secondary" type="button" disabled={loading} onClick={onTestCandidates}>1차 후보 검증</button>
+          <button className="btn btn-primary" type="button" disabled={loading} onClick={onActivateVerified}>검증 매핑 활성화</button>
+        </div>
+      </div>
+      <div className="market-index-filter-pills compact">
+        {["ALL", "0", "1", "2"].map((value) => (
+          <button key={value} className={`market-index-filter-pill ${marketType === value ? "active" : ""}`} type="button" onClick={() => onMarketTypeChange(value)}>{value === "ALL" ? "전체" : labels[value] || value}</button>
+        ))}
+      </div>
+      {autoMatchMessage ? <p className="market-index-provider-code-message">{autoMatchMessage}</p> : null}
+      <div className="market-index-mapping-table-wrap">
+        <table className="data-table compact-table market-index-provider-code-table">
+          <thead><tr><th>시장</th><th>코드</th><th>명칭</th><th>그룹</th><th>매칭 DrCT 지표</th><th>상태</th></tr></thead>
+          <tbody>
+            {filteredCodes.length ? filteredCodes.map((code) => (
+              <tr key={`${code.market_type}-${code.code}`}>
+                <td>{labels[code.market_type] || code.market_type}</td>
+                <td className="mono-cell">{code.code}</td>
+                <td>{code.name}</td>
+                <td>{code.group_name || "-"}</td>
+                <td className="mono-cell">{code.matched_index_code || "-"}</td>
+                <td><span className={`status-badge status-${code.matched_index_code ? "success" : "waiting"}`}>{code.matched_index_code ? "MATCHED" : "WAITING"}</span></td>
+              </tr>
+            )) : <tr><td colSpan={6}>수집된 후보가 없습니다.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </SectionCard>
   );
 }
 
@@ -238,45 +555,109 @@ function MarketIndexesPage() {
   const [indexes, setIndexes] = useState<MarketIndexItem[]>([]);
   const [selectedCode, setSelectedCode] = useState("KOSPI");
   const [selectedCompareCodes, setSelectedCompareCodes] = useState<string[]>(["KOSPI", "KOSDAQ"]);
+  const [openCompareGroups, setOpenCompareGroups] = useState<CompareGroupKey[]>(["DOMESTIC"]);
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("전체");
   const [searchText, setSearchText] = useState("");
-  const [period, setPeriod] = useState<PeriodLabel>("ALL");
+  const [period, setPeriod] = useState<PeriodLabel>("6M");
   const [dailyRows, setDailyRows] = useState<MarketIndexDailyPriceItem[]>([]);
   const [compare, setCompare] = useState<MarketIndexCompareResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [noticeType, setNoticeType] = useState<"success" | "error">("success");
+  const [providerMappings, setProviderMappings] = useState<MarketIndexProviderMapping[]>([]);
+  const [providerCodes, setProviderCodes] = useState<MarketIndexProviderCode[]>([]);
+  const [providerCodeMarketType, setProviderCodeMarketType] = useState("ALL");
+  const [autoMatchMessage, setAutoMatchMessage] = useState<string | null>(null);
+  const [showAdminTools, setShowAdminTools] = useState(false);
+  const [adminDrawerTab, setAdminDrawerTab] = useState<AdminDrawerTab>("mapping");
+  const [showDeferredIndicators, setShowDeferredIndicators] = useState(false);
+  const [externalProviderStatuses, setExternalProviderStatuses] = useState<ExternalProviderStatus[]>([]);
 
   const range = useMemo(() => getRange(period), [period]);
   const selectedIndex = indexes.find((item) => item.index_code === selectedCode) ?? indexes[0];
   const selectedIndexName = getIndexName(selectedIndex ?? { index_code: selectedCode, index_name: selectedCode });
+  const selectedStatusValue = getStatusValue(selectedIndex?.collection_status, Boolean(selectedIndex?.latest_price_date));
+  const chartRows = useMemo(
+    () => dailyRows.filter((row) => row.close_price !== null && row.close_price !== undefined && Number.isFinite(row.close_price)),
+    [dailyRows]
+  );
+  const chartRangeLabel = chartRows.length
+    ? `${chartRows[0]?.price_date} ~ ${chartRows[chartRows.length - 1]?.price_date}`
+    : `${range.startDate ?? TEXT.allPeriod} ~ ${range.endDate}`;
   const normalizedQuery = searchText.trim().toLowerCase();
+  const deferredIndexes = useMemo(
+    () => indexes.filter((item) => isDeferredStatus(getStatusValue(item.collection_status, Boolean(item.latest_price_date)))),
+    [indexes]
+  );
+
   const filteredIndexes = useMemo(
     () =>
       indexes.filter((item) => {
-        const categoryMatched = categoryFilter === "전체" || item.category === categoryFilter;
+        const statusValue = getStatusValue(item.collection_status, Boolean(item.latest_price_date));
+        const deferred = isDeferredStatus(statusValue);
+        const category = item.category || "";
+        const categoryMatched =
+          categoryFilter === "전체"
+            ? !deferred
+            : categoryFilter === "주식시장"
+              ? ["국내대표지수", "국내보조지수"].includes(category)
+              : categoryFilter === "업종"
+                ? category === "업종지수"
+                : categoryFilter === "금현물"
+                  ? category === "금현물"
+                  : deferred;
         const keywordMatched =
           !normalizedQuery ||
           item.index_code.toLowerCase().includes(normalizedQuery) ||
           getIndexName(item).toLowerCase().includes(normalizedQuery) ||
-          (item.category || "").toLowerCase().includes(normalizedQuery);
+          category.toLowerCase().includes(normalizedQuery);
         return categoryMatched && keywordMatched;
       }),
     [categoryFilter, indexes, normalizedQuery]
   );
 
+  const marketSummaryCards = useMemo(() => {
+    const byCode = (code: string) => indexes.find((item) => item.index_code === code);
+    const kospi = byCode("KOSPI");
+    const kosdaq = byCode("KOSDAQ");
+    const kospi5 = kospi?.recent_5d_return_pct ?? kospi?.recent_5d_return ?? null;
+    const kosdaq5 = kosdaq?.recent_5d_return_pct ?? kosdaq?.recent_5d_return ?? null;
+    const marketTone = (kospi5 ?? 0) > 0 && (kosdaq5 ?? 0) > 0 ? "반등" : (kospi5 ?? 0) < 0 && (kosdaq5 ?? 0) < 0 ? "약세" : "혼조";
+    const sectorItems = indexes.filter((item) => item.category === "업종지수" && !isDeferredStatus(getStatusValue(item.collection_status, Boolean(item.latest_price_date))));
+    const risingSectors = sectorItems.filter((item) => (item.recent_5d_return_pct ?? item.recent_5d_return ?? 0) > 0);
+    const fallingSectors = sectorItems.filter((item) => (item.recent_5d_return_pct ?? item.recent_5d_return ?? 0) < 0);
+    const sectorLeaders = [...sectorItems]
+      .sort((a, b) => (b.recent_5d_return_pct ?? b.recent_5d_return ?? -999) - (a.recent_5d_return_pct ?? a.recent_5d_return ?? -999))
+      .slice(0, 2)
+      .map((item) => getIndexName(item))
+      .join(" / ");
+    const gold = byCode("GOLD_KRX");
+    const gold5 = gold?.recent_5d_return_pct ?? gold?.recent_5d_return ?? null;
+    const gold20 = gold?.recent_20d_return_pct ?? gold?.recent_20d_return ?? null;
+    const customRequired = indexes.filter((item) => getStatusValue(item.collection_status, Boolean(item.latest_price_date)) === "CUSTOM_INDEX_REQUIRED").length;
+    const noOfficial = indexes.filter((item) => ["NO_OFFICIAL_INDEX", "EXCLUDED"].includes(getStatusValue(item.collection_status, Boolean(item.latest_price_date)))).length;
+    return [
+      { title: "국내시장", value: marketTone, detail: `${"KOSPI"} ${TEXT.oneDay5} ${formatPercent(kospi5)} / ${"KOSDAQ"} ${TEXT.oneDay5} ${formatPercent(kosdaq5)}`, status: marketTone },
+      { title: "보조지수", value: `KOSPI200 ${formatPercent(byCode("KOSPI200")?.recent_5d_return_pct ?? byCode("KOSPI200")?.recent_5d_return)}`, detail: `KOSDAQ150 ${formatPercent(byCode("KOSDAQ150")?.recent_5d_return_pct ?? byCode("KOSDAQ150")?.recent_5d_return)} / KRX100 ${formatPercent(byCode("KRX100")?.recent_5d_return_pct ?? byCode("KRX100")?.recent_5d_return)}`, status: "참고" },
+      { title: "업종흐름", value: `상승 ${risingSectors.length} / 하락 ${fallingSectors.length}`, detail: sectorLeaders || "-", status: "흐름" },
+      { title: "금현물", value: formatPercent(gold5), detail: `${TEXT.oneDay20} ${formatPercent(gold20)}`, status: (gold5 ?? 0) > 0 ? "상승" : (gold5 ?? 0) < 0 ? "하락" : "보합" },
+      { title: "보류지표", value: `자체지수 필요 ${customRequired}`, detail: `제외/공식없음 ${noOfficial}`, status: "관리" },
+    ];
+  }, [indexes]);
+
+
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await repositories.marketIndexes.list({ active_only: true });
+      const list = await repositories.marketIndexes.list({ active_only: !(showDeferredIndicators || categoryFilter === "보류/제외") });
       const nextIndexes = list.items;
       setIndexes(nextIndexes);
+      repositories.marketIndexes.listProviderMappings?.().then((response) => setProviderMappings(response.items)).catch(() => setProviderMappings([]));
+      repositories.marketIndexes.listProviderCodes?.({ market_type: providerCodeMarketType === "ALL" ? undefined : providerCodeMarketType }).then((response) => setProviderCodes(response.items)).catch(() => setProviderCodes([]));
+      repositories.marketIndicators.providerStatuses?.().then((response: ExternalProviderStatusListResponse) => setExternalProviderStatuses(response.items)).catch(() => setExternalProviderStatuses([]));
       const nextSelected = nextIndexes.some((item) => item.index_code === selectedCode) ? selectedCode : nextIndexes.find((item) => item.index_code === "KOSPI")?.index_code || nextIndexes[0]?.index_code || "KOSPI";
       if (nextSelected !== selectedCode) setSelectedCode(nextSelected);
-      const daily = await repositories.marketIndexes.listDailyPrices(nextSelected, {
-        start_date: range.startDate,
-        end_date: range.endDate,
-      });
+      const daily = await repositories.marketIndexes.listDailyPrices(nextSelected);
       setDailyRows(daily.items);
       const compareResponse = await repositories.marketIndexes.compare({
         index_codes: selectedCompareCodes.length ? selectedCompareCodes : ["KOSPI", "KOSDAQ"],
@@ -288,7 +669,7 @@ function MarketIndexesPage() {
     } finally {
       setLoading(false);
     }
-  }, [range.endDate, range.startDate, selectedCode, selectedCompareCodes]);
+  }, [categoryFilter, providerCodeMarketType, range.endDate, range.startDate, selectedCode, selectedCompareCodes, showDeferredIndicators]);
 
   useEffect(() => {
     loadAll().catch((error) => {
@@ -297,21 +678,32 @@ function MarketIndexesPage() {
     });
   }, [loadAll]);
 
+  useEffect(() => {
+    if (!filteredIndexes.length) return;
+    if (!filteredIndexes.some((item) => item.index_code === selectedCode)) {
+      setSelectedCode(filteredIndexes[0].index_code);
+    }
+  }, [filteredIndexes, selectedCode]);
+
+  useEffect(() => {
+    if (!showAdminTools) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setShowAdminTools(false);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [showAdminTools]);
+
   const handleCollect = async (codes?: string[]) => {
     setLoading(true);
     try {
       const result = await repositories.marketIndexes.collect({ index_codes: codes });
       setNoticeType(result.failed_count > 0 ? "error" : "success");
-      const waitingCount = result.results.filter((item) => String(item.status).toUpperCase() === "WAITING").length;
-      if (result.failed_count > 0 && result.success_count > 0) {
-        setNotice("일부 시장 지표 데이터 갱신에 실패했습니다. 오류 상태를 확인해 주세요.");
-      } else if (result.failed_count > 0) {
-        setNotice("시장 지표 데이터 갱신 중 오류가 발생했습니다.");
-      } else if (waitingCount > 0) {
-        setNotice(`시장 지표 갱신 요청을 처리했습니다. ${waitingCount}개 지표는 provider mapping 확인 전까지 수집대기 상태입니다.`);
-      } else {
-        setNotice(result.message);
-      }
+      const waitingCount = result.waiting_count ?? result.results.filter((item) => String(item.status).toUpperCase() === "WAITING").length;
+      const excludedCount = result.excluded_count ?? result.results.filter((item) => isDeferredStatus(String(item.status).toUpperCase())).length;
+      const customCount = result.custom_index_required_count ?? result.results.filter((item) => String(item.status).toUpperCase() === "CUSTOM_INDEX_REQUIRED").length;
+      const scopeLabel = codes?.length === 1 ? "선택 지표" : "전체 지표";
+      setNotice(`${scopeLabel} 갱신 완료: 성공 ${result.success_count}개, 대기 ${waitingCount}개, 자체지수 필요/제외 ${excludedCount}개(${customCount}개), 오류 ${result.failed_count}개`);
       await loadAll();
     } catch (error) {
       setNoticeType("error");
@@ -321,13 +713,131 @@ function MarketIndexesPage() {
     }
   };
 
-  const toggleCompareCode = (code: string) => {
-    setSelectedCompareCodes((prev) => (prev.includes(code) ? prev.filter((item) => item !== code) : [...prev, code]));
+
+  const handleCollectProviderCodes = async () => {
+    setLoading(true);
+    try {
+      const marketTypes = providerCodeMarketType === "ALL" ? ["0", "1", "2"] : [providerCodeMarketType];
+      const result = await repositories.marketIndexes.collectProviderCodes?.({ provider: "KIWOOM_REST", market_types: marketTypes });
+      setNoticeType(result && result.failed_count > 0 ? "error" : "success");
+      setNotice(result ? `업종코드 수집 완료: 성공 ${result.success_count}개, 오류 ${result.failed_count}개` : "업종코드 수집 API를 사용할 수 없습니다.");
+      await loadAll();
+    } catch (error) {
+      setNoticeType("error");
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const applyPreset = (codes: string[]) => {
-    const available = codes.filter((code) => indexes.some((item) => item.index_code === code));
-    setSelectedCompareCodes(available.length ? available : codes);
+  const handleAutoMatchSectorCodes = async () => {
+    setLoading(true);
+    try {
+      const result = await repositories.marketIndexes.autoMatchSectorCodes?.();
+      const message = result ? `업종코드 자동매칭 완료: 매칭 ${result.matched_count}개, 대기 ${result.waiting_count}개` : "업종코드 자동매칭 API를 사용할 수 없습니다.";
+      setAutoMatchMessage(message);
+      setNoticeType("success");
+      setNotice(message);
+      await loadAll();
+    } catch (error) {
+      setNoticeType("error");
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+
+  const handleTestFirstSectorCandidates = async () => {
+    setLoading(true);
+    try {
+      const targets = FIRST_SECTOR_CANDIDATES.filter((code) => providerMappings.some((mapping) => mapping.index_code === code && mapping.provider_symbol));
+      let success = 0;
+      let waiting = 0;
+      let failed = 0;
+      for (const code of targets) {
+        const result = await repositories.marketIndexes.testProviderMapping(code, { start_date: "2026-06-01", end_date: "2026-06-30", save_result: false });
+        if (result.status === "SUCCESS") success += 1;
+        else if (result.status === "WAITING") waiting += 1;
+        else failed += 1;
+      }
+      const message = `1차 업종 후보 검증 완료: 성공 ${success}개, 대기 ${waiting}개, 오류 ${failed}개`;
+      setAutoMatchMessage(message);
+      setNoticeType(failed > 0 ? "error" : "success");
+      setNotice(message);
+      await loadAll();
+    } catch (error) {
+      setNoticeType("error");
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleActivateVerifiedMappings = async () => {
+    setLoading(true);
+    try {
+      const targets = providerMappings.filter((mapping) => FIRST_SECTOR_CANDIDATES.includes(mapping.index_code as (typeof FIRST_SECTOR_CANDIDATES)[number]) && mapping.is_verified && !mapping.is_enabled);
+      let activated = 0;
+      let failed = 0;
+      for (const mapping of targets) {
+        try {
+          await repositories.marketIndexes.activateProviderMapping(mapping.index_code);
+          activated += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+      const message = `검증 완료 매핑 활성화 완료: 활성 ${activated}개, 오류 ${failed}개`;
+      setAutoMatchMessage(message);
+      setNoticeType(failed > 0 ? "error" : "success");
+      setNotice(message);
+      await loadAll();
+    } catch (error) {
+      setNoticeType("error");
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const compareGroups = useMemo(() => {
+    const selectableItems = indexes.filter((item) => !isDeferredStatus(getStatusValue(item.collection_status, Boolean(item.latest_price_date))));
+    const itemByCode = new Map(selectableItems.map((item) => [item.index_code, item]));
+    const usedCodes = new Set<string>();
+
+    return COMPARE_GROUPS.map((group) => {
+      const orderedItems = group.indexCodes
+        .map((code) => itemByCode.get(code))
+        .filter((item): item is MarketIndexItem => Boolean(item));
+      const orderedCodes = new Set(group.indexCodes);
+      const extraItems = group.prefix
+        ? selectableItems
+            .filter((item) => item.index_code.startsWith(group.prefix ?? "") && !orderedCodes.has(item.index_code) && !usedCodes.has(item.index_code))
+            .sort((a, b) => getIndexName(a).localeCompare(getIndexName(b), "ko-KR"))
+        : [];
+      const items = [...orderedItems, ...extraItems].filter((item) => {
+        if (usedCodes.has(item.index_code)) return false;
+        usedCodes.add(item.index_code);
+        return true;
+      });
+      return { ...group, items };
+    });
+  }, [indexes]);
+
+  const visibleCompareGroups = useMemo(
+    () => compareGroups.filter((group) => openCompareGroups.includes(group.key)),
+    [compareGroups, openCompareGroups]
+  );
+  const selectableCompareCodes = useMemo(() => new Set(compareGroups.flatMap((group) => group.items.map((item) => item.index_code))), [compareGroups]);
+
+  const toggleCompareGroup = (groupKey: CompareGroupKey) => {
+    setOpenCompareGroups((prev) => (prev.includes(groupKey) ? prev.filter((key) => key !== groupKey) : [...prev, groupKey]));
+  };
+
+  const toggleCompareCode = (code: string) => {
+    if (!selectableCompareCodes.has(code)) return;
+    setSelectedCompareCodes((prev) => (prev.includes(code) ? prev.filter((item) => item !== code) : [...prev, code]));
   };
 
   return (
@@ -339,11 +849,23 @@ function MarketIndexesPage() {
           <div className="market-index-header-actions">
             <button className="btn btn-secondary" type="button" disabled={loading || !selectedCode} onClick={() => handleCollect([selectedCode])}>{TEXT.collectSelected}</button>
             <button className="btn btn-primary" type="button" disabled={loading} onClick={() => handleCollect()}>{TEXT.collectAll}</button>
+            <button className={`btn btn-secondary ${showAdminTools ? "active" : ""}`} type="button" onClick={() => setShowAdminTools((prev) => !prev)}>관리 도구</button>
           </div>
         }
       />
 
       {notice ? <div className={`inline-result ${noticeType === "error" ? "inline-error" : "inline-success"}`}>{notice}</div> : null}
+
+      <section className="market-indicator-summary-grid" aria-label="시장환경 요약">
+        {marketSummaryCards.map((card) => (
+          <div key={card.title} className="market-indicator-summary-card">
+            <span className="market-indicator-summary-title">{card.title}</span>
+            <strong className="market-indicator-summary-value">{card.value}</strong>
+            <span className="market-indicator-summary-status">{card.status}</span>
+            <p>{card.detail}</p>
+          </div>
+        ))}
+      </section>
 
       <section className="market-index-toolbar" aria-label="시장 지표 필터">
         <div className="market-index-filter-pills">
@@ -360,53 +882,159 @@ function MarketIndexesPage() {
         />
       </section>
       <p className="market-index-collect-hint">{TEXT.collectHint}</p>
-      {categoryFilter === "업종지수" ? <p className="market-index-guide">{TEXT.industryGuide}</p> : null}
+      {showAdminTools ? (
+        <div className="market-indicator-admin-drawer-backdrop" role="presentation" onMouseDown={() => setShowAdminTools(false)}>
+          <aside className="market-indicator-admin-drawer" role="dialog" aria-modal="true" aria-label="시장 지표 관리 도구" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="market-indicator-admin-drawer-header">
+              <div>
+                <strong>시장 지표 관리 도구</strong>
+                <p>매핑, 업종코드, 보류 지표를 필요할 때만 확인합니다.</p>
+              </div>
+              <button className="btn btn-secondary" type="button" onClick={() => setShowAdminTools(false)}>닫기</button>
+            </div>
+            <div className="market-indicator-admin-drawer-tabs" role="tablist" aria-label="관리 도구 탭">
+              {ADMIN_DRAWER_TABS.map((tab) => (
+                <button key={tab.key} className={`market-indicator-admin-drawer-tab ${adminDrawerTab === tab.key ? "active" : ""}`} type="button" role="tab" aria-selected={adminDrawerTab === tab.key} onClick={() => setAdminDrawerTab(tab.key)}>{tab.label}</button>
+              ))}
+            </div>
+            <div className="market-indicator-admin-drawer-body">
+              {adminDrawerTab === "mapping" ? (
+                <section className="market-indicator-admin-drawer-section">
+                  <h3>provider 매핑 상태</h3>
+                  <MappingStatusPanel mappings={providerMappings} />
+                </section>
+              ) : null}
+              {adminDrawerTab === "kiwoom" ? (
+                <section className="market-indicator-admin-drawer-section">
+                  <h3>키움 업종코드</h3>
+                  <ProviderCodePanel
+                    codes={providerCodes}
+                    marketType={providerCodeMarketType}
+                    onMarketTypeChange={setProviderCodeMarketType}
+                    onCollect={handleCollectProviderCodes}
+                    onAutoMatch={handleAutoMatchSectorCodes}
+                    onTestCandidates={handleTestFirstSectorCandidates}
+                    onActivateVerified={handleActivateVerifiedMappings}
+                    autoMatchMessage={autoMatchMessage}
+                    loading={loading}
+                  />
+                </section>
+              ) : null}
+              {adminDrawerTab === "deferred" ? (
+                <section className="market-indicator-admin-drawer-section">
+                  <h3>보류/제외 지표</h3>
+                  <div className="market-index-deferred-panel">
+                    <strong>자체지수 검토 대상</strong>
+                    <div>
+                      {deferredIndexes.length ? deferredIndexes.map((item) => (
+                        <span key={item.index_code} className={`status-badge status-${getStatusClass(getStatusValue(item.collection_status, Boolean(item.latest_price_date)))}`}>
+                          {getIndexName(item)} / {getStatusLabel(item.collection_status, Boolean(item.latest_price_date))}
+                        </span>
+                      )) : <span>보류/제외 지표가 없습니다.</span>}
+                    </div>
+                  </div>
+                </section>
+              ) : null}
+              {adminDrawerTab === "provider" ? (
+                <section className="market-indicator-admin-drawer-section">
+                  <h3>대체 provider</h3>
+                  <ul className="market-indicator-provider-notes">
+                    <li>KRX Open API 후보</li>
+                    <li>KIWOOM ETF proxy 후보</li>
+                    <li>DrCT 자체 테마지수 후보</li>
+                  </ul>
+                </section>
+              ) : null}
+              {adminDrawerTab === "external" ? (
+                <section className="market-indicator-admin-drawer-section">
+                  <h3>?? API ??</h3>
+                  <div className="market-indicator-provider-status-list">
+                    {externalProviderStatuses.length ? externalProviderStatuses.map((item) => (
+                      <div key={item.provider} className={`market-indicator-provider-status-card ${item.configured ? "configured" : "missing"}`}>
+                        <div>
+                          <strong>{item.display_name}</strong>
+                          <span>{item.provider}</span>
+                        </div>
+                        <span className="market-indicator-provider-status-state">{item.configured ? "\uC124\uC815\uB428" : "\uD0A4 \uC5C6\uC74C"}</span>
+                        <code>{item.masked_key || "-"}</code>
+                        <p>{item.message}</p>
+                      </div>
+                    )) : <div className="market-index-chart-empty compact-empty">외부 API 상태를 불러오지 못했습니다.</div>}
+                  </div>
+                </section>
+              ) : null}
+            </div>
+          </aside>
+        </div>
+      ) : null}
+      <section className="market-indicator-workspace">
+        <aside className="market-indicator-selector-panel">
+          <div className="market-indicator-selector-head">
+            <div>
+              <strong>지표 선택</strong>
+              <span>{filteredIndexes.length}개 표시</span>
+            </div>
+          </div>
+          <div className="market-indicator-compact-list">
+            {filteredIndexes.length ? filteredIndexes.map((item) => {
+              const displayName = getIndexName(item);
+              const statusValue = getStatusValue(item.collection_status, Boolean(item.latest_price_date));
+              const return5 = item.recent_5d_return_pct ?? item.recent_5d_return;
+              const return20 = item.recent_20d_return_pct ?? item.recent_20d_return;
+              return (
+                <button
+                  key={item.index_code}
+                  className={`market-indicator-compact-card ${item.index_code === selectedCode ? "active" : ""}`}
+                  type="button"
+                  onClick={() => setSelectedCode(item.index_code)}
+                >
+                  <div className="market-indicator-compact-head">
+                    <div className="market-indicator-compact-main">
+                      <strong className="market-indicator-compact-name">{displayName}</strong>
+                      <span className="market-indicator-compact-code" title={item.index_code}>{item.index_code}</span>
+                    </div>
+                    <span className={`status-badge market-indicator-compact-status status-${getStatusClass(statusValue)}`}>{getStatusLabel(item.collection_status, Boolean(item.latest_price_date))}</span>
+                  </div>
+                  <div className="market-indicator-compact-metrics">
+                    <span className={`market-indicator-compact-chip ${(return5 ?? 0) >= 0 ? "positive" : "negative"}`}>{TEXT.oneDay5} {formatPercent(return5)}</span>
+                    <span className={`market-indicator-compact-chip ${(return20 ?? 0) >= 0 ? "positive" : "negative"}`}>{TEXT.oneDay20} {formatPercent(return20)}</span>
+                    <span className="market-indicator-compact-chip">{formatNumber(item.latest_close_price, 2)}</span>
+                  </div>
+                </button>
+              );
+            }) : (
+              <div className="market-index-chart-empty compact-empty">표시할 지표가 없습니다.</div>
+            )}
+          </div>
+        </aside>
 
-      <section className="market-index-card-grid">
-        {filteredIndexes.map((item) => {
-          const displayName = getIndexName(item);
-          const statusValue = getStatusValue(item.collection_status, Boolean(item.latest_price_date));
-          return (
-            <button
-              key={item.index_code}
-              className={`market-index-summary-card ${item.index_code === selectedCode ? "selected" : ""}`}
-              type="button"
-              onClick={() => setSelectedCode(item.index_code)}
-            >
-              <span className={`status-badge status-${statusValue.toLowerCase().replace("_", "-")}`}>{getStatusLabel(item.collection_status, Boolean(item.latest_price_date))}</span>
-              <strong>{displayName}</strong>
-              <span className="market-index-code">{item.index_code} / {item.category || "시장지표"} / {item.provider}</span>
-              <dl className="market-index-card-metrics">
-                <div><dt>{TEXT.latestClose}</dt><dd>{formatNumber(item.latest_close_price, 2)}</dd></div>
-                <div><dt>{TEXT.latestDate}</dt><dd>{item.latest_price_date ?? "-"}</dd></div>
-                <div><dt>{TEXT.oneDay5}</dt><dd className={(item.recent_5d_return ?? 0) >= 0 ? "positive" : "negative"}>{formatPercent(item.recent_5d_return)}</dd></div>
-                <div><dt>{TEXT.oneDay20}</dt><dd className={(item.recent_20d_return ?? 0) >= 0 ? "positive" : "negative"}>{formatPercent(item.recent_20d_return)}</dd></div>
-                <div><dt>{TEXT.tradingValue}</dt><dd>{formatTradingValue(item.latest_trading_value)}</dd></div>
-                <div><dt>{TEXT.status}</dt><dd>{getStatusLabel(item.collection_status, Boolean(item.latest_price_date))}</dd></div>
-              </dl>
-              {(statusValue === "ERROR" || statusValue === "WAITING") && item.error_message ? <p className="market-index-error-text">{item.error_message}</p> : null}
-            </button>
-          );
-        })}
+        <SectionCard className="market-index-chart-card market-index-candle-card market-indicator-chart-panel">
+          <div className="market-index-section-head">
+            <div>
+              <h3>{`${selectedIndexName} 일봉 차트`}</h3>
+              <p>{chartRangeLabel}</p>
+            </div>
+            <div className="market-index-periods">
+              {PERIOD_OPTIONS.map((option) => (
+                <button key={option.label} className={`btn btn-secondary ${period === option.label ? "active" : ""}`} type="button" onClick={() => setPeriod(option.label)}>{option.label}</button>
+              ))}
+            </div>
+          </div>
+          {selectedIndex ? (
+            <div className="market-indicator-selected-summary">
+              <div><span>카테고리</span><strong>{selectedIndex.category || "-"}</strong></div>
+              <div><span>최근가</span><strong>{formatNumber(selectedIndex.latest_close_price, 2)}</strong></div>
+              <div><span>5일</span><strong className={(selectedIndex.recent_5d_return ?? 0) >= 0 ? "positive" : "negative"}>{formatPercent(selectedIndex.recent_5d_return_pct ?? selectedIndex.recent_5d_return)}</strong></div>
+              <div><span>20일</span><strong className={(selectedIndex.recent_20d_return ?? 0) >= 0 ? "positive" : "negative"}>{formatPercent(selectedIndex.recent_20d_return_pct ?? selectedIndex.recent_20d_return)}</strong></div>
+              <div><span>상태</span><strong>{getStatusLabel(selectedIndex.collection_status, Boolean(selectedIndex.latest_price_date))}</strong></div>
+            </div>
+          ) : null}
+          <div className="market-index-chart-legend">
+            <span className="ma5">MA5</span><span className="ma20">MA20</span><span className="ma60">MA60</span><span className="ma120">MA120</span>
+          </div>
+          <CandleChart rows={chartRows} indexName={selectedIndexName} period={period} statusValue={selectedStatusValue} errorMessage={selectedIndex?.error_message} />
+        </SectionCard>
       </section>
-
-      <SectionCard className="market-index-chart-card">
-        <div className="market-index-section-head">
-          <div>
-            <h3>{`${selectedIndexName} 일봉 차트`}</h3>
-            <p>{range.startDate ?? TEXT.allPeriod} ~ {range.endDate}</p>
-          </div>
-          <div className="market-index-periods">
-            {PERIOD_OPTIONS.map((option) => (
-              <button key={option.label} className={`btn btn-secondary ${period === option.label ? "active" : ""}`} type="button" onClick={() => setPeriod(option.label)}>{option.label}</button>
-            ))}
-          </div>
-        </div>
-        <div className="market-index-chart-legend">
-          <span className="ma5">MA5</span><span className="ma20">MA20</span><span className="ma60">MA60</span><span className="ma120">MA120</span>
-        </div>
-        <CandleChart rows={dailyRows} indexName={selectedIndexName} />
-      </SectionCard>
 
       <SectionCard className="market-index-chart-card">
         <div className="market-index-section-head">
@@ -415,20 +1043,42 @@ function MarketIndexesPage() {
             <p>{TEXT.compareDescription}</p>
           </div>
         </div>
-        <div className="market-index-compare-toolbar">
-          <div className="market-index-presets">
-            {COMPARE_PRESETS.map((preset) => (
-              <button key={preset.label} className="btn btn-secondary" type="button" onClick={() => applyPreset(preset.codes)}>{preset.label}</button>
-            ))}
-          </div>
-          <div className="market-index-checks market-index-check-scroll">
-            {filteredIndexes.map((item) => (
-              <label key={item.index_code}>
-                <input type="checkbox" checked={selectedCompareCodes.includes(item.index_code)} onChange={() => toggleCompareCode(item.index_code)} />
-                {getIndexName(item)}
-              </label>
-            ))}
-          </div>
+        <div className="market-index-compare-tabs" aria-label="시장 지표 비교 그룹">
+          {compareGroups.map((group) => {
+            const isOpen = openCompareGroups.includes(group.key);
+            return (
+              <button
+                key={group.key}
+                className={`market-index-compare-tab ${isOpen ? "active" : ""}`}
+                type="button"
+                aria-pressed={isOpen}
+                onClick={() => toggleCompareGroup(group.key)}
+              >
+                {group.label}
+              </button>
+            );
+          })}
+        </div>
+        <div className="market-index-compare-panels">
+          {visibleCompareGroups.length ? visibleCompareGroups.map((group) => (
+            <section key={group.key} className="market-index-compare-active-panel" aria-label={group.label}>
+              <div className="market-index-compare-group-title">{group.label}</div>
+              {group.items.length ? (
+                <div className="market-index-compare-check-grid">
+                  {group.items.map((item) => (
+                    <label key={item.index_code} className="market-index-compare-check-pill" title={`${getIndexName(item)} / ${item.index_code}`}>
+                      <input type="checkbox" checked={selectedCompareCodes.includes(item.index_code)} onChange={() => toggleCompareCode(item.index_code)} />
+                      <span>{getIndexName(item)}</span>
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <div className="market-index-compare-empty">이 그룹에 표시할 수집 지표가 아직 없습니다.</div>
+              )}
+            </section>
+          )) : (
+            <div className="market-index-compare-empty-panel">비교할 지표 그룹을 선택해 주세요.</div>
+          )}
         </div>
         <CompareChart compare={compare} />
       </SectionCard>
