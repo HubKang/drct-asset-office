@@ -97,3 +97,155 @@ export interface ExternalProviderStatus {
 export interface ExternalProviderStatusListResponse {
   items: ExternalProviderStatus[];
 }
+
+
+export interface MarketIndicatorProviderMappingUpsertRequest {
+  provider?: string;
+  api_type?: string | null;
+  api_id?: string | null;
+  endpoint_url?: string | null;
+  provider_symbol?: string | null;
+  request_params_json?: Record<string, unknown> | string | null;
+  is_enabled?: boolean;
+}
+
+export interface MarketIndicatorProviderMappingTestRequest {
+  start_date?: string | null;
+  end_date?: string | null;
+  save_result?: boolean;
+}
+
+export interface MarketIndicatorProviderMappingTestResponse {
+  indicator_code: string;
+  provider: string;
+  status: string;
+  message: string;
+  sample_count: number;
+  sample_rows: Record<string, unknown>[];
+}
+
+export interface EcosItemListResponse {
+  stat_code: string;
+  status: string;
+  message: string;
+  list_total_count: number;
+  items: Record<string, unknown>[];
+}
+
+export interface MarketIndicatorCollectRequest {
+  indicator_codes?: string[] | null;
+  start_date?: string | null;
+  end_date?: string | null;
+}
+
+export interface MarketIndicatorCollectResult {
+  indicator_code: string;
+  status: string;
+  message: string;
+  saved_count: number;
+  latest_value?: number | null;
+  latest_value_date?: string | null;
+}
+
+export interface MarketIndicatorCollectResponse {
+  requested_count: number;
+  success_count: number;
+  waiting_count: number;
+  failed_count: number;
+  message: string;
+  results: MarketIndicatorCollectResult[];
+}
+
+
+export interface EcosTableItem {
+  p_stat_code?: string | null;
+  stat_code?: string | null;
+  stat_name?: string | null;
+  cycle?: string | null;
+  srch_yn?: string | null;
+  org_name?: string | null;
+}
+
+export interface EcosTableListResponse {
+  status: string;
+  message: string;
+  total_count: number;
+  items: EcosTableItem[];
+}
+
+export interface EcosTableSearchResponse {
+  keyword: string;
+  status: string;
+  message: string;
+  searched_count: number;
+  items: EcosTableItem[];
+}
+
+export interface EcosDiscoverCandidatesRequest {
+  indicator_codes?: string[] | null;
+  max_depth?: number;
+  cycle?: string | null;
+}
+
+export interface EcosCandidate extends EcosTableItem {
+  score: number;
+  reason?: string | null;
+}
+
+export interface EcosIndicatorCandidates {
+  indicator_code: string;
+  indicator_name?: string | null;
+  keywords: string[];
+  candidates: EcosCandidate[];
+}
+
+export interface EcosDiscoverCandidatesResponse {
+  status: string;
+  message: string;
+  searched_count: number;
+  items: EcosIndicatorCandidates[];
+}
+
+
+export interface EcosMappingCandidate {
+  indicator_code: string;
+  indicator_name?: string | null;
+  stat_code: string;
+  stat_name?: string | null;
+  cycle?: string | null;
+  item_code1: string;
+  item_name1?: string | null;
+  provider_symbol: string;
+  score: number;
+  reason?: string | null;
+  source_unit?: string | null;
+  request_params_json: Record<string, unknown>;
+}
+
+export interface EcosIndicatorMappingCandidates {
+  indicator_code: string;
+  indicator_name?: string | null;
+  candidates: EcosMappingCandidate[];
+}
+
+export interface EcosDiscoverMappingCandidatesRequest {
+  indicator_codes?: string[] | null;
+  top_table_count?: number;
+  max_item_count?: number;
+}
+
+export interface EcosDiscoverMappingCandidatesResponse {
+  status: string;
+  message: string;
+  items: EcosIndicatorMappingCandidates[];
+}
+
+export interface EcosMappingCandidateTestRequest {
+  provider?: string;
+  stat_code: string;
+  cycle?: string;
+  item_code1: string;
+  item_name1?: string | null;
+  scale?: number;
+  source_unit?: string | null;
+}

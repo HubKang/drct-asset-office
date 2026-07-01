@@ -1,4 +1,4 @@
-import type { ExternalProviderStatusListResponse, MarketIndicatorListResponse, MarketIndicatorProviderMappingListResponse, MarketIndicatorValueResponse } from "@/types/marketIndicator";
+import type { EcosDiscoverCandidatesRequest, EcosDiscoverCandidatesResponse, EcosDiscoverMappingCandidatesRequest, EcosDiscoverMappingCandidatesResponse, EcosMappingCandidateTestRequest, EcosItemListResponse, EcosTableListResponse, EcosTableSearchResponse, ExternalProviderStatusListResponse, MarketIndicatorCollectRequest, MarketIndicatorCollectResponse, MarketIndicatorListResponse, MarketIndicatorProviderMapping, MarketIndicatorProviderMappingListResponse, MarketIndicatorProviderMappingTestRequest, MarketIndicatorProviderMappingTestResponse, MarketIndicatorProviderMappingUpsertRequest, MarketIndicatorValueResponse } from "@/types/marketIndicator";
 
 const providerStatuses: ExternalProviderStatusListResponse = {
   items: [
@@ -25,5 +25,35 @@ export const marketIndicatorMockRepository = {
   },
   async providerStatuses(): Promise<ExternalProviderStatusListResponse> {
     return providerStatuses;
+  },
+  async ecosTableList(): Promise<EcosTableListResponse> {
+    return { status: "WAITING", message: "mock", total_count: 0, items: [] };
+  },
+  async ecosTableSearch(params: { keyword: string }): Promise<EcosTableSearchResponse> {
+    return { keyword: params.keyword, status: "WAITING", message: "mock", searched_count: 0, items: [] };
+  },
+  async discoverCandidates(_payload: EcosDiscoverCandidatesRequest = {}): Promise<EcosDiscoverCandidatesResponse> {
+    return { status: "WAITING", message: "mock", searched_count: 0, items: [] };
+  },
+  async discoverMappingCandidates(_payload: EcosDiscoverMappingCandidatesRequest = {}): Promise<EcosDiscoverMappingCandidatesResponse> {
+    return { status: "WAITING", message: "mock", items: [] };
+  },
+  async ecosItemList(params: { stat_code: string }): Promise<EcosItemListResponse> {
+    return { stat_code: params.stat_code, status: "WAITING", message: "mock", list_total_count: 0, items: [] };
+  },
+  async upsertProviderMapping(indicatorCode: string, payload: MarketIndicatorProviderMappingUpsertRequest): Promise<MarketIndicatorProviderMapping> {
+    return { indicator_code: indicatorCode, provider: payload.provider || "BOK_ECOS", api_type: payload.api_type, api_id: payload.api_id, endpoint_url: payload.endpoint_url, provider_symbol: payload.provider_symbol, request_params_json: JSON.stringify(payload.request_params_json || {}), is_enabled: false, is_verified: false, last_test_status: "WAITING", last_test_message: "mock" };
+  },
+  async testProviderMapping(indicatorCode: string, _payload: MarketIndicatorProviderMappingTestRequest): Promise<MarketIndicatorProviderMappingTestResponse> {
+    return { indicator_code: indicatorCode, provider: "BOK_ECOS", status: "WAITING", message: "mock", sample_count: 0, sample_rows: [] };
+  },
+  async testCandidate(indicatorCode: string, _payload: EcosMappingCandidateTestRequest): Promise<MarketIndicatorProviderMappingTestResponse> {
+    return { indicator_code: indicatorCode, provider: "BOK_ECOS", status: "WAITING", message: "mock", sample_count: 0, sample_rows: [] };
+  },
+  async activateProviderMapping(indicatorCode: string): Promise<MarketIndicatorProviderMapping> {
+    return { indicator_code: indicatorCode, provider: "BOK_ECOS", is_enabled: true, is_verified: true };
+  },
+  async collect(_payload: MarketIndicatorCollectRequest = {}): Promise<MarketIndicatorCollectResponse> {
+    return { requested_count: 0, success_count: 0, waiting_count: 0, failed_count: 0, message: "mock", results: [] };
   },
 };

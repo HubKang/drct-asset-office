@@ -20399,3 +20399,728 @@ button.chip-light {
     min-height: 72px;
   }
 }
+
+
+.market-indicator-general-mapping-list {
+  display: grid;
+  gap: 10px;
+}
+
+.market-indicator-general-mapping-card {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(180px, 1.1fr) minmax(190px, auto);
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid #dbe3ef;
+  border-left: 4px solid #94a3b8;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.market-indicator-general-mapping-card.enabled {
+  border-left-color: #2563eb;
+  background: #eff6ff;
+}
+
+.market-indicator-general-mapping-card strong {
+  display: block;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 850;
+}
+
+.market-indicator-general-mapping-card span,
+.market-indicator-general-mapping-card p {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.market-indicator-general-mapping-card p {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.market-indicator-general-mapping-meta,
+.market-indicator-general-mapping-state {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.market-indicator-general-mapping-meta code {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .market-indicator-general-mapping-card {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+.market-indicator-general-mapping-tool {
+  display: grid;
+  gap: 12px;
+}
+
+.market-indicator-ecos-searchbar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.market-indicator-ecos-searchbar input {
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.market-indicator-ecos-table td,
+.market-indicator-ecos-table th {
+  font-size: 11px;
+}
+
+.market-indicator-ecos-candidates {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.market-indicator-ecos-candidates > strong {
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 850;
+}
+
+.market-indicator-ecos-candidate-group {
+  padding: 9px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.market-indicator-ecos-candidate-group div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: #334155;
+  font-size: 12px;
+}
+
+.market-indicator-ecos-candidate-group p {
+  margin: 5px 0 0;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+@media (max-width: 720px) {
+  .market-indicator-ecos-searchbar {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* General market indicator chart integration */
+.market-indicator-compact-card.general {
+  border-left-color: #0f9f6e;
+}
+
+.market-indicator-compact-card.general:hover {
+  border-left-color: #047857;
+}
+
+.market-indicator-compact-card.general.active {
+  border-color: #10b981;
+  border-left-color: #059669;
+  background: #ecfdf5;
+  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.22), 0 8px 18px rgba(5, 150, 105, 0.13);
+}
+
+.market-indicator-compact-card.general.active::after {
+  background: #059669;
+}
+
+.market-indicator-line-chart {
+  width: 100%;
+  height: var(--market-index-chart-height, 520px);
+  overflow: hidden;
+}
+
+.market-indicator-line-svg {
+  display: block;
+  width: 100%;
+  height: var(--market-index-chart-height, 520px);
+}
+
+.market-indicator-line-path {
+  fill: none;
+  stroke: #2563eb;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.market-indicator-line-marker {
+  fill: #ffffff;
+  stroke: #2563eb;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.market-indicator-latest-label {
+  fill: #0f172a;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.market-indicator-line-legend .indicator-line::before {
+  display: inline-block;
+  width: 36px;
+  height: 3px;
+  margin-right: 8px;
+  border-radius: 999px;
+  background: #2563eb;
+  vertical-align: middle;
+  content: "";
+}
+
+
+/* 59-B-5 chart axis safety */
+.market-indicator-line-chart,
+.market-indicator-line-svg,
+.market-index-compare-svg {
+  overflow: visible;
+}
+
+
+/* 59-B-6 market indicator typography normalization */
+.market-index-page .page-header h1,
+.market-index-page .page-title,
+.market-index-page h1 {
+  font-size: clamp(28px, 1.9vw, 30px);
+  font-weight: 750;
+  letter-spacing: 0;
+}
+
+.market-index-page .page-header p,
+.market-index-page .page-description,
+.market-index-collect-hint,
+.market-index-guide {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.55;
+}
+
+.market-indicator-summary-title,
+.market-indicator-summary-status {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.market-indicator-summary-value {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.market-indicator-summary-card p {
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.market-index-filter-pill {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.market-index-filter-pill.active {
+  font-weight: 700;
+}
+
+.market-index-search {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.market-indicator-selector-head strong {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.market-indicator-selector-head span {
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.market-indicator-compact-card .market-indicator-compact-name {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.market-indicator-compact-code {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.market-indicator-compact-status {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.market-indicator-compact-metrics {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.market-indicator-compact-chip {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.market-indicator-compact-card.active .market-indicator-compact-name {
+  font-weight: 700;
+}
+
+.market-indicator-compact-card.active .market-indicator-compact-status,
+.market-indicator-compact-card.active .market-indicator-compact-chip {
+  font-weight: 600;
+}
+
+.market-index-section-head h3 {
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.market-index-section-head p {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.market-indicator-selected-summary span {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.market-indicator-selected-summary strong {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.market-index-chart-legend,
+.market-index-compare-legend {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.market-index-axis-label {
+  font-size: 12px;
+  font-weight: 450;
+}
+
+.market-indicator-latest-label {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.market-index-periods .btn,
+.market-index-header-actions .btn {
+  font-weight: 600;
+}
+
+.market-index-periods .btn.active,
+.market-index-header-actions .btn.active {
+  font-weight: 700;
+}
+
+.market-index-compare-tab {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.market-index-compare-tab.active {
+  font-weight: 700;
+}
+
+.market-index-compare-group-title {
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.market-index-compare-check-pill {
+  font-size: 12px;
+  font-weight: 550;
+  letter-spacing: 0;
+}
+
+.market-index-compare-empty,
+.market-index-compare-empty-panel,
+.market-index-chart-empty,
+.market-index-chart-empty span {
+  font-weight: 500;
+}
+
+.market-index-chart-empty strong {
+  font-weight: 700;
+}
+
+.market-indicator-admin-drawer-header strong,
+.market-indicator-admin-drawer-section h3,
+.market-indicator-admin-head strong,
+.market-indicator-admin-section h3 {
+  font-weight: 700;
+}
+
+.market-indicator-admin-drawer-header p,
+.market-indicator-admin-head p,
+.market-indicator-provider-status-card p,
+.market-indicator-general-mapping-card span,
+.market-indicator-general-mapping-card p {
+  font-weight: 500;
+}
+
+.market-indicator-admin-drawer-tab,
+.market-indicator-provider-status-state,
+.market-indicator-provider-status-card code,
+.market-indicator-ecos-searchbar input,
+.market-indicator-ecos-candidate-group p {
+  font-weight: 600;
+}
+
+
+/* Market indicator admin drawer completion */
+.market-indicator-admin-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.market-indicator-admin-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.market-indicator-admin-tool-card,
+.market-indicator-admin-card {
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px 16px;
+}
+
+.market-indicator-admin-card.enabled {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  box-shadow: inset 4px 0 0 #2563eb;
+}
+
+.market-indicator-admin-card.waiting {
+  border-color: #fde68a;
+  background: #fffbeb;
+  box-shadow: inset 4px 0 0 #f59e0b;
+}
+
+.market-indicator-admin-card.missing {
+  border-color: #fecaca;
+  background: #fff7f7;
+  box-shadow: inset 4px 0 0 #ef4444;
+}
+
+.market-indicator-admin-tool-head,
+.market-indicator-admin-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.market-indicator-admin-tool-head strong,
+.market-indicator-admin-card-head strong {
+  display: block;
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.market-indicator-admin-tool-head p,
+.market-indicator-admin-card-head span {
+  display: block;
+  margin: 3px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.market-indicator-admin-badges {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 180px;
+}
+
+.market-indicator-admin-kv-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.market-indicator-admin-kv-grid.single {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.market-indicator-admin-kv-grid div {
+  min-width: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.74);
+  padding: 8px 10px;
+}
+
+.market-indicator-admin-kv-grid dt {
+  margin: 0 0 4px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.market-indicator-admin-kv-grid dd {
+  margin: 0;
+  color: #0f172a;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.market-indicator-admin-message {
+  margin: 10px 0 0;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.market-indicator-ecos-searchbar.refined {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto auto auto;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.market-indicator-ecos-searchbar.refined input {
+  height: 38px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  padding: 0 12px;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.compact-admin-table {
+  max-height: 280px;
+  overflow: auto;
+}
+
+.market-indicator-ecos-candidates.refined {
+  display: grid;
+  gap: 8px;
+}
+
+.market-indicator-provider-status-list {
+  display: grid;
+  gap: 12px;
+}
+
+.market-indicator-provider-status-card {
+  grid-template-columns: minmax(180px, 1fr) auto minmax(180px, auto);
+}
+
+.market-indicator-provider-status-card strong {
+  font-weight: 700;
+}
+
+.market-indicator-provider-status-card span,
+.market-indicator-provider-status-card p {
+  font-weight: 500;
+}
+
+.market-indicator-provider-status-state,
+.market-indicator-provider-status-card code {
+  font-weight: 600;
+}
+
+@media (max-width: 900px) {
+  .market-indicator-admin-tool-head,
+  .market-indicator-admin-card-head {
+    display: grid;
+  }
+
+  .market-indicator-admin-badges {
+    justify-content: flex-start;
+    min-width: 0;
+  }
+
+  .market-indicator-admin-kv-grid,
+  .market-indicator-admin-kv-grid.single,
+  .market-indicator-ecos-searchbar.refined {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Market indicator admin drawer value cards */
+.market-indicator-admin-card-list {
+  display: grid;
+  gap: 12px;
+}
+
+.market-indicator-admin-value-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+  border: 1px solid #dbe4ef;
+  border-left: 4px solid #94a3b8;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+}
+
+.market-indicator-admin-value-card.enabled {
+  border-left-color: #2563eb;
+  background: #f8fbff;
+}
+
+.market-indicator-admin-value-card.missing {
+  border-left-color: #ef4444;
+  background: #fffafa;
+}
+
+.market-indicator-admin-value-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.market-indicator-admin-value-head strong {
+  display: block;
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: 850;
+  line-height: 1.25;
+}
+
+.market-indicator-admin-value-head span {
+  display: block;
+  margin-top: 4px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 750;
+  overflow-wrap: anywhere;
+}
+
+.market-indicator-admin-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.market-indicator-admin-kv-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.market-indicator-admin-kv-grid.compact {
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 0.5fr);
+}
+
+.market-indicator-admin-kv-grid div {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.market-indicator-admin-kv-grid dt {
+  margin: 0 0 4px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.market-indicator-admin-kv-grid dd {
+  margin: 0;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.market-indicator-admin-message {
+  margin: 0;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+@media (max-width: 900px) {
+  .market-indicator-admin-value-head,
+  .market-indicator-admin-badges {
+    justify-content: flex-start;
+  }
+
+  .market-indicator-admin-value-head {
+    flex-direction: column;
+  }
+
+  .market-indicator-admin-kv-grid,
+  .market-indicator-admin-kv-grid.compact {
+    grid-template-columns: 1fr;
+  }
+}

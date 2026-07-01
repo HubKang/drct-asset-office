@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -85,6 +87,140 @@ class MarketIndicatorProviderMappingListResponse(BaseModel):
     items: list[MarketIndicatorProviderMapping] = Field(default_factory=list)
 
 
+
+
+class MarketIndicatorProviderMappingUpsertRequest(BaseModel):
+    provider: str = "BOK_ECOS"
+    api_type: str | None = "ECONOMIC_STAT"
+    api_id: str | None = None
+    endpoint_url: str | None = None
+    provider_symbol: str | None = None
+    request_params_json: dict[str, Any] | str | None = None
+    is_enabled: bool = False
+
+
+class MarketIndicatorProviderMappingTestRequest(BaseModel):
+    start_date: str | None = None
+    end_date: str | None = None
+    save_result: bool = True
+
+
+class MarketIndicatorProviderMappingTestResponse(BaseModel):
+    indicator_code: str
+    provider: str
+    status: str
+    message: str
+    sample_count: int = 0
+    sample_rows: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class EcosItemListResponse(BaseModel):
+    stat_code: str
+    status: str
+    message: str
+    list_total_count: int = 0
+    items: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class EcosTableItem(BaseModel):
+    p_stat_code: str | None = None
+    stat_code: str | None = None
+    stat_name: str | None = None
+    cycle: str | None = None
+    srch_yn: str | None = None
+    org_name: str | None = None
+
+
+class EcosTableListResponse(BaseModel):
+    status: str
+    message: str
+    total_count: int = 0
+    items: list[EcosTableItem] = Field(default_factory=list)
+
+
+class EcosTableSearchResponse(BaseModel):
+    keyword: str
+    status: str
+    message: str
+    searched_count: int = 0
+    items: list[EcosTableItem] = Field(default_factory=list)
+
+
+class EcosDiscoverCandidatesRequest(BaseModel):
+    indicator_codes: list[str] | None = None
+    max_depth: int = 2
+    cycle: str | None = None
+
+
+class EcosCandidate(BaseModel):
+    p_stat_code: str | None = None
+    stat_code: str | None = None
+    stat_name: str | None = None
+    cycle: str | None = None
+    srch_yn: str | None = None
+    org_name: str | None = None
+    score: int = 0
+    reason: str | None = None
+
+
+class EcosIndicatorCandidates(BaseModel):
+    indicator_code: str
+    indicator_name: str | None = None
+    keywords: list[str] = Field(default_factory=list)
+    candidates: list[EcosCandidate] = Field(default_factory=list)
+
+
+class EcosDiscoverCandidatesResponse(BaseModel):
+    status: str
+    message: str
+    searched_count: int = 0
+    items: list[EcosIndicatorCandidates] = Field(default_factory=list)
+
+
+class EcosMappingCandidate(BaseModel):
+    indicator_code: str
+    indicator_name: str | None = None
+    stat_code: str
+    stat_name: str | None = None
+    cycle: str | None = None
+    item_code1: str
+    item_name1: str | None = None
+    provider_symbol: str
+    score: int = 0
+    reason: str | None = None
+    source_unit: str | None = None
+    request_params_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class EcosIndicatorMappingCandidates(BaseModel):
+    indicator_code: str
+    indicator_name: str | None = None
+    candidates: list[EcosMappingCandidate] = Field(default_factory=list)
+
+
+class EcosDiscoverMappingCandidatesRequest(BaseModel):
+    indicator_codes: list[str] | None = None
+    top_table_count: int = 5
+    max_item_count: int = 200
+
+
+class EcosDiscoverMappingCandidatesResponse(BaseModel):
+    status: str
+    message: str
+    items: list[EcosIndicatorMappingCandidates] = Field(default_factory=list)
+
+
+class EcosMappingCandidateTestRequest(BaseModel):
+    provider: str = "BOK_ECOS"
+    stat_code: str
+    cycle: str = "D"
+    item_code1: str
+    item_name1: str | None = None
+    scale: float = 1
+    source_unit: str | None = None
+
+
+
 class ExternalProviderStatus(BaseModel):
     provider: str
     display_name: str
@@ -101,12 +237,17 @@ class ExternalProviderStatusListResponse(BaseModel):
 
 class MarketIndicatorCollectRequest(BaseModel):
     indicator_codes: list[str] | None = None
+    start_date: str | None = None
+    end_date: str | None = None
 
 
 class MarketIndicatorCollectResult(BaseModel):
     indicator_code: str
     status: str
     message: str
+    saved_count: int = 0
+    latest_value: float | None = None
+    latest_value_date: str | None = None
 
 
 class MarketIndicatorCollectResponse(BaseModel):

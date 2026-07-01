@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+import json
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
@@ -580,7 +581,7 @@ def ensure_runtime_schema() -> None:
             ('USD_KRW', '\ub2ec\ub7ec/\uc6d0 \ud658\uc728', 'FX', 'USD', 'DAILY', 'LINE', 'KRW', '\uc6d0', '\ud658\uc728', None, 10, 1, '\uc6d0/\ub2ec\ub7ec \ud658\uc728. 59-B\uc5d0\uc11c BOK ECOS \ub610\ub294 \uacf5\uacf5\ub370\uc774\ud130 provider \uc5f0\uacb0 \uc608\uc815', None, '\uc6d0\ud654 \uc57d\uc138, \uc678\uad6d\uc778 \uc218\uae09 \ubd80\ub2f4 \uac00\ub2a5', '\uc6d0\ud654 \uac15\uc138, \uc704\ud5d8\uc790\uc0b0 \uc120\ud638 \uc644\ud654 \uac00\ub2a5', 1, 'WAITING'),
             ('JPY_KRW', '\uc5d4/\uc6d0 \ud658\uc728', 'FX', 'JPY', 'DAILY', 'LINE', 'KRW', '\uc6d0', '\ud658\uc728', None, 11, 2, '\uc5d4/\uc6d0 \ud658\uc728. 59-B\uc5d0\uc11c BOK ECOS \ub610\ub294 \uacf5\uacf5\ub370\uc774\ud130 provider \uc5f0\uacb0 \uc608\uc815', None, None, None, 1, 'WAITING'),
             ('CNY_KRW', '\uc704\uc548/\uc6d0 \ud658\uc728', 'FX', 'CNY', 'DAILY', 'LINE', 'KRW', '\uc6d0', '\ud658\uc728', None, 12, 3, '\uc704\uc548/\uc6d0 \ud658\uc728. 59-B\uc5d0\uc11c BOK ECOS \ub610\ub294 \uacf5\uacf5\ub370\uc774\ud130 provider \uc5f0\uacb0 \uc608\uc815', None, None, None, 1, 'WAITING'),
-            ('BASE_RATE', '\uae30\uc900\uae08\ub9ac', 'RATE', 'POLICY_RATE', 'MONTHLY', 'LINE', 'PCT', '%', '\uae08\ub9ac', None, 20, 1, '\ud55c\uad6d\uc740\ud589 \uae30\uc900\uae08\ub9ac. ECOS provider \uc6b0\uc120 \ud6c4\ubcf4', None, '\ud560\uc778\uc728 \uc0c1\uc2b9, \uc131\uc7a5\uc8fc \ubd80\ub2f4 \uac00\ub2a5', '\uc720\ub3d9\uc131 \uc644\ud654, \uc131\uc7a5\uc8fc \ubd80\ub2f4 \uc644\ud654 \uac00\ub2a5', 1, 'WAITING'),
+            ('BASE_RATE', '\uae30\uc900\uae08\ub9ac', 'RATE', 'POLICY_RATE', 'DAILY', 'LINE', 'PCT', '%', '\uae08\ub9ac', None, 20, 1, '\ud55c\uad6d\uc740\ud589 \uae30\uc900\uae08\ub9ac. ECOS provider \uc6b0\uc120 \ud6c4\ubcf4', None, '\ud560\uc778\uc728 \uc0c1\uc2b9, \uc131\uc7a5\uc8fc \ubd80\ub2f4 \uac00\ub2a5', '\uc720\ub3d9\uc131 \uc644\ud654, \uc131\uc7a5\uc8fc \ubd80\ub2f4 \uc644\ud654 \uac00\ub2a5', 1, 'WAITING'),
             ('CALL_RATE', '\ucf5c\uae08\ub9ac', 'RATE', 'MARKET_RATE', 'DAILY', 'LINE', 'PCT', '%', '\uae08\ub9ac', None, 21, 2, '\ucf5c\uae08\ub9ac. ECOS provider \uc6b0\uc120 \ud6c4\ubcf4', None, None, None, 1, 'WAITING'),
             ('KTB_3Y', '\uad6d\uace0\ucc44 3\ub144', 'RATE', 'BOND_YIELD', 'DAILY', 'LINE', 'PCT', '%', '\uae08\ub9ac', None, 22, 3, '\uad6d\uace0\ucc44 3\ub144 \uae08\ub9ac. ECOS provider \uc6b0\uc120 \ud6c4\ubcf4', None, None, None, 1, 'WAITING'),
             ('KTB_10Y', '\uad6d\uace0\ucc44 10\ub144', 'RATE', 'BOND_YIELD', 'DAILY', 'LINE', 'PCT', '%', '\uae08\ub9ac', None, 23, 4, '\uad6d\uace0\ucc44 10\ub144 \uae08\ub9ac. ECOS provider \uc6b0\uc120 \ud6c4\ubcf4', None, '\uc7a5\uae30 \ud560\uc778\uc728 \uc0c1\uc2b9, \uc131\uc7a5\uc8fc\uc640 2\ucc28\uc804\uc9c0 \ubd80\ub2f4 \uac00\ub2a5', '\uc131\uc7a5\uc8fc \ubd80\ub2f4 \uc644\ud654 \uac00\ub2a5', 1, 'WAITING'),
@@ -651,6 +652,46 @@ def ensure_runtime_schema() -> None:
                     updated_at = CURRENT_TIMESTAMP
                 """,
                 (indicator_code, provider),
+            )
+
+        ecos_mapping_defaults = {
+            'USD_KRW': ('731Y001', 'D', '0000001', '\uc6d0/\ubbf8\uad6d\ub2ec\ub7ec(\ub9e4\ub9e4\uae30\uc900\uc728)', '\uc6d0'),
+            'JPY_KRW': ('731Y001', 'D', '0000002', '\uc6d0/\uc77c\ubcf8\uc5d4(100\uc5d4)', '\uc6d0'),
+            'CNY_KRW': ('731Y001', 'D', '0000053', '\uc6d0/\uc704\uc548(\ub9e4\ub9e4\uae30\uc900\uc728)', '\uc6d0'),
+            'BASE_RATE': ('722Y001', 'D', '0101000', '\ud55c\uad6d\uc740\ud589 \uae30\uc900\uae08\ub9ac', '\uc5f0%'),
+            'CALL_RATE': ('817Y002', 'D', '010101000', '\ucf5c\uae08\ub9ac(1\uc77c, \uc804\uccb4\uac70\ub798)', '\uc5f0%'),
+            'KTB_3Y': ('817Y002', 'D', '010200000', '\uad6d\uace0\ucc44(3\ub144)', '\uc5f0%'),
+            'KTB_10Y': ('817Y002', 'D', '010210000', '\uad6d\uace0\ucc44(10\ub144)', '\uc5f0%'),
+        }
+        for indicator_code, (stat_code, cycle, item_code, item_name, source_unit) in ecos_mapping_defaults.items():
+            request_params_json = json.dumps(
+                {
+                    'stat_code': stat_code,
+                    'cycle': cycle,
+                    'item_code1': item_code,
+                    'item_name1': item_name,
+                    'value_field': 'DATA_VALUE',
+                    'scale': 1,
+                    'source_unit': source_unit,
+                    'date_format': 'ECOS_TIME',
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            conn.exec_driver_sql(
+                """
+                UPDATE market_indicator_provider_mappings
+                SET api_type = CASE WHEN is_verified = 1 THEN api_type ELSE 'STATISTIC_SEARCH' END,
+                    api_id = CASE WHEN is_verified = 1 THEN api_id ELSE 'ECOS_STATISTIC_SEARCH' END,
+                    endpoint_url = CASE WHEN is_verified = 1 THEN endpoint_url ELSE '/api/StatisticSearch' END,
+                    provider_symbol = CASE WHEN is_verified = 1 THEN provider_symbol ELSE ? END,
+                    request_params_json = CASE WHEN is_verified = 1 THEN request_params_json ELSE ? END,
+                    last_test_status = CASE WHEN is_verified = 1 THEN last_test_status ELSE 'WAITING' END,
+                    last_test_message = CASE WHEN is_verified = 1 THEN last_test_message ELSE 'ECOS mapping candidate ready; test required' END,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE indicator_code = ? AND provider = 'BOK_ECOS'
+                """,
+                (f'{stat_code}:{item_code}', request_params_json, indicator_code),
             )
 
         conn.exec_driver_sql(
