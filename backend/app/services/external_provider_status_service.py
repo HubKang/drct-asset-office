@@ -19,10 +19,10 @@ class ExternalProviderStatusService:
     PROVIDERS = (
         ProviderKeySpec(
             provider="KIWOOM_REST",
-            display_name="?? REST API",
+            display_name="\ud0a4\uc6c0 REST API",
             values=(config.KIWOOM_REST_APP_KEY, config.KIWOOM_REST_SECRET_KEY, config.KIWOOM_REST_ACCESS_TOKEN),
             configured_message="API credential is configured. Endpoint mapping and token freshness may still be required.",
-            missing_message="KIWOOM_REST_APP_KEY, KIWOOM_REST_SECRET_KEY ?? ACCESS_TOKEN ??? ?????.",
+            missing_message="KIWOOM_REST_APP_KEY, KIWOOM_REST_SECRET_KEY \ub610\ub294 ACCESS_TOKEN \uc124\uc815\uc774 \ud544\uc694\ud569\ub2c8\ub2e4.",
         ),
         ProviderKeySpec(
             provider="KRX_OPEN_API",
@@ -33,7 +33,7 @@ class ExternalProviderStatusService:
         ),
         ProviderKeySpec(
             provider="DATA_GO_KR",
-            display_name="???????",
+            display_name="\uacf5\uacf5\ub370\uc774\ud130\ud3ec\ud138",
             values=(config.DATA_GO_KR_SERVICE_KEY, config.DATA_GO_KR_DECODING_KEY, config.DATA_GO_KR_ENCODING_KEY),
             configured_message="API key is configured. Select a service endpoint before enabling collection.",
             missing_message="DATA_GO_KR_SERVICE_KEY \ub610\ub294 decoding/encoding key \uc124\uc815\uc774 \ud544\uc694\ud569\ub2c8\ub2e4.",
@@ -51,6 +51,13 @@ class ExternalProviderStatusService:
             values=(config.KOSIS_API_KEY,),
             configured_message="KOSIS key is configured. Dataset mapping is still required.",
             missing_message="KOSIS_API_KEY \uc124\uc815\uc774 \ud544\uc694\ud569\ub2c8\ub2e4.",
+        ),
+        ProviderKeySpec(
+            provider="FRED",
+            display_name="FRED",
+            values=(config.FRED_API_KEY,),
+            configured_message="FRED key is configured. US market indicators can be tested and collected.",
+            missing_message="FRED_API_KEY \uc124\uc815\uc774 \ud544\uc694\ud569\ub2c8\ub2e4.",
         ),
     )
 
@@ -74,7 +81,7 @@ class ExternalProviderStatusService:
             key_value = self._first_value(spec.values)
             configured = bool(key_value)
             status = "WAITING_SERVICE_MAPPING" if configured else "MISSING_KEY"
-            if configured and spec.provider in {"KIWOOM_REST", "KRX_OPEN_API", "DATA_GO_KR", "BOK_ECOS", "KOSIS"}:
+            if configured and spec.provider in {"KIWOOM_REST", "KRX_OPEN_API", "DATA_GO_KR", "BOK_ECOS", "KOSIS", "FRED"}:
                 status = "CONFIGURED"
             items.append(
                 {

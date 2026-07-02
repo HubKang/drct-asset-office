@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from backend.app.providers.economic_data.bok_ecos_provider import BokEcosProvider
+from backend.app.providers.economic_data.fred_provider import FredProvider
 
 ECOS_DISCOVERY_TARGETS: dict[str, dict[str, Any]] = {
     "USD_KRW": {
@@ -106,6 +107,7 @@ class MarketIndicatorService:
     def __init__(self, db: Session) -> None:
         self.db = db
         self.bok_ecos = BokEcosProvider()
+        self.fred = FredProvider()
 
     @staticmethod
     def _as_bool(value: Any) -> bool:
@@ -382,8 +384,9 @@ class MarketIndicatorService:
 
     def test_provider_mapping(self, indicator_code: str, payload: Any) -> dict[str, Any]:
         indicator = self.get_indicator(indicator_code)
-        mapping = self._get_mapping(indicator["indicator_code"], "BOK_ECOS")
-        result = self.bok_ecos.test_mapping(mapping, start_date=getattr(payload, "start_date", None), end_date=getattr(payload, "end_date", None))
+        provider = self._preferred_provider(indicator)
+        mapping = self._get_mapping(indicator["indicator_code"], provider)
+        result = self._provider_client(provider).test_mapping(mapping, start_date=getattr(payload, "start_date", None), end_date=getattr(payload, "end_date", None))
         status_value = str(result.get("status") or "ERROR").upper()
         message = str(result.get("message") or "")[:500]
         success = status_value == "SUCCESS"
@@ -398,16 +401,16 @@ class MarketIndicatorService:
                         last_test_message = :message,
                         last_tested_at = CURRENT_TIMESTAMP,
                         updated_at = CURRENT_TIMESTAMP
-                    WHERE indicator_code = :indicator_code AND provider = 'BOK_ECOS'
+                    WHERE indicator_code = :indicator_code AND provider = :provider
                     """
                 ),
-                {"indicator_code": indicator["indicator_code"], "is_verified": 1 if success else 0, "status": status_value, "message": message},
+                {"indicator_code": indicator["indicator_code"], "provider": provider, "is_verified": 1 if success else 0, "status": status_value, "message": message},
             )
             self.db.commit()
         rows = result.get("rows") or []
         return {
             "indicator_code": indicator["indicator_code"],
-            "provider": "BOK_ECOS",
+            "provider": provider,
             "status": status_value,
             "message": message,
             "sample_count": len(rows),
@@ -416,7 +419,8 @@ class MarketIndicatorService:
 
     def activate_provider_mapping(self, indicator_code: str) -> dict[str, Any]:
         indicator = self.get_indicator(indicator_code)
-        mapping = self._get_mapping(indicator["indicator_code"], "BOK_ECOS")
+        provider = self._preferred_provider(indicator)
+        mapping = self._get_mapping(indicator["indicator_code"], provider)
         if not mapping.get("is_verified"):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="provider mapping must be tested successfully before activation")
         self.db.execute(
@@ -424,10 +428,10 @@ class MarketIndicatorService:
                 """
                 UPDATE market_indicator_provider_mappings
                 SET is_enabled = 1, updated_at = CURRENT_TIMESTAMP
-                WHERE indicator_code = :indicator_code AND provider = 'BOK_ECOS'
+                WHERE indicator_code = :indicator_code AND provider = :provider
                 """
             ),
-            {"indicator_code": indicator["indicator_code"]},
+            {"indicator_code": indicator["indicator_code"], "provider": provider},
         )
         self.db.execute(
             text(
@@ -441,7 +445,7 @@ class MarketIndicatorService:
             {"indicator_code": indicator["indicator_code"]},
         )
         self.db.commit()
-        return self._get_mapping(indicator["indicator_code"], "BOK_ECOS")
+        return self._get_mapping(indicator["indicator_code"], provider)
 
     def collect_indicator(self, indicator_codes: list[str] | None = None, *, start_date: str | None = None, end_date: str | None = None) -> dict[str, Any]:
         targets = self._collection_targets(indicator_codes)
@@ -456,13 +460,14 @@ class MarketIndicatorService:
                 mapping = self._get_enabled_mapping(code)
                 if not mapping:
                     waiting_count += 1
-                    results.append({"indicator_code": code, "status": "WAITING", "message": "enabled and verified BOK_ECOS mapping is required", "saved_count": 0})
+                    results.append({"indicator_code": code, "status": "WAITING", "message": "enabled and verified provider mapping is required", "saved_count": 0})
                     continue
-                values = self.bok_ecos.collect_values(code, mapping, start_date=date_from, end_date=date_to)
+                provider = str(mapping.get("provider") or "").upper()
+                values = self._provider_client(provider).collect_values(code, mapping, start_date=date_from, end_date=date_to)
                 if not values:
                     waiting_count += 1
                     self._mark_indicator_status(code, "WAITING")
-                    results.append({"indicator_code": code, "status": "WAITING", "message": "BOK ECOS returned no collectable rows", "saved_count": 0})
+                    results.append({"indicator_code": code, "status": "WAITING", "message": f"{provider} returned no collectable rows", "saved_count": 0})
                     continue
                 for value in values:
                     self._upsert_value(value)
@@ -473,7 +478,7 @@ class MarketIndicatorService:
                     {
                         "indicator_code": code,
                         "status": "SUCCESS",
-                        "message": f"saved {len(values)} BOK ECOS rows",
+                        "message": f"saved {len(values)} {provider} rows",
                         "saved_count": len(values),
                         "latest_value": latest.get("value"),
                         "latest_value_date": latest.get("value_date"),
@@ -489,7 +494,7 @@ class MarketIndicatorService:
             "success_count": success_count,
             "waiting_count": waiting_count,
             "failed_count": failed_count,
-            "message": f"BOK ECOS collection completed: success {success_count}, waiting {waiting_count}, failed {failed_count}.",
+            "message": f"market indicator collection completed: success {success_count}, waiting {waiting_count}, failed {failed_count}.",
             "results": results,
         }
 
@@ -674,12 +679,27 @@ class MarketIndicatorService:
                 """
                 SELECT indicator_code
                 FROM market_indicators
-                WHERE is_active = 1 AND category IN ('FX', 'RATE')
+                WHERE is_active = 1 AND category IN ('FX', 'RATE', 'INFLATION', 'ECONOMY', 'GLOBAL_INDEX', 'GLOBAL_RATE')
                 ORDER BY display_order
                 """
             )
         ).mappings().all()
         return [str(row["indicator_code"]) for row in rows]
+
+    def _preferred_provider(self, indicator: dict[str, Any]) -> str:
+        code = str(indicator.get("indicator_code") or "").upper()
+        category = str(indicator.get("category") or "").upper()
+        if code.startswith("US_") or category in {"GLOBAL_INDEX", "GLOBAL_RATE"}:
+            return "FRED"
+        return "BOK_ECOS"
+
+    def _provider_client(self, provider: str):
+        normalized = str(provider or "").upper()
+        if normalized == "FRED":
+            return self.fred
+        if normalized == "BOK_ECOS":
+            return self.bok_ecos
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"unsupported provider: {provider}")
 
     def _get_mapping(self, indicator_code: str, provider: str) -> dict[str, Any]:
         row = self.db.execute(
@@ -705,9 +725,10 @@ class MarketIndicatorService:
                 FROM market_indicator_provider_mappings m
                 LEFT JOIN market_indicators i ON i.indicator_code = m.indicator_code
                 WHERE m.indicator_code = :indicator_code
-                  AND m.provider = 'BOK_ECOS'
                   AND m.is_enabled = 1
                   AND m.is_verified = 1
+                ORDER BY CASE m.provider WHEN 'FRED' THEN 1 WHEN 'BOK_ECOS' THEN 2 ELSE 9 END
+                LIMIT 1
                 """
             ),
             {"indicator_code": indicator_code.strip().upper()},

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime
 import os
@@ -49,6 +49,9 @@ BOK_ECOS_TIMEOUT_SECONDS = int(os.getenv("BOK_ECOS_TIMEOUT_SECONDS", "15"))
 KOSIS_API_KEY = os.getenv("KOSIS_API_KEY", "").strip()
 KOSIS_BASE_URL = os.getenv("KOSIS_BASE_URL", "https://kosis.kr/openapi").strip()
 KOSIS_TIMEOUT_SECONDS = int(os.getenv("KOSIS_TIMEOUT_SECONDS", "15"))
+FRED_API_KEY = os.getenv("FRED_API_KEY", "").strip()
+FRED_BASE_URL = os.getenv("FRED_BASE_URL", "https://api.stlouisfed.org/fred").strip()
+FRED_TIMEOUT_SECONDS = int(os.getenv("FRED_TIMEOUT_SECONDS", "15"))
 
 LMSTUDIO_BASE_URL = os.getenv("LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1")
 LMSTUDIO_MODEL = os.getenv("LMSTUDIO_MODEL", "google/gemma-4-e2b")

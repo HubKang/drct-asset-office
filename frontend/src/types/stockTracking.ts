@@ -42,6 +42,12 @@ export type StockTrackingItem = {
   base_change_rate: number | null;
   base_volume: number | null;
   base_trading_value: number | null;
+  entry_close_price: number | null;
+  entry_close_date: string | null;
+  latest_close_price: number | null;
+  latest_close_date: string | null;
+  tracking_return_pct: number | null;
+  price_updated_at: string | null;
   status: StockTrackingStatus;
   review_date: string | null;
   review_note: string | null;

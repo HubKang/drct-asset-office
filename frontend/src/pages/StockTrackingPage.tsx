@@ -77,6 +77,11 @@ const getImageUrl = (url?: string | null) => {
   return appConfig.apiBaseUrl + normalized;
 };
 const fmtPct = (value?: number | null) => (value == null ? "-" : `${Number(value).toFixed(2)}%`);
+const fmtSignedPct = (value?: number | null) => {
+  if (value == null || !Number.isFinite(value)) return "-";
+  if (Object.is(value, -0) || Math.abs(value) < 0.005) return "0.00%";
+  return `${value > 0 ? "+" : ""}${Number(value).toFixed(2)}%`;
+};
 const fmtNumber = (value?: number | null) => (value == null ? "-" : Number(value).toLocaleString("ko-KR"));
 const fmtEok = (value?: number | null) => (value == null ? "-" : `${(Number(value) / 100000000).toLocaleString("ko-KR", { maximumFractionDigits: 1 })}억`);
 const canCollectItem = (item: StockTrackingItem) => (item.status === "TRACKING" || item.status === "HOLD") && item.price_status !== "STOPPED";
@@ -603,7 +608,7 @@ function AnalysisSampleList({ title, samples }: { title: string; samples: StockT
 
 function StockTrackingPage() {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<"groups" | "items" | "analysis">("groups");
+  const [activeTab, setActiveTab] = useState<"groups" | "items" | "analysis">("items");
   const [groups, setGroups] = useState<StockTrackingGroup[]>([]);
   const [items, setItems] = useState<StockTrackingItem[]>([]);
   const [itemTotal, setItemTotal] = useState(0);
@@ -1136,7 +1141,7 @@ function StockTrackingPage() {
             {loading ? <p className="text-muted">조회 중...</p> : null}
             <div className="table-shell stock-tracking-list-shell">
               <table className="data-table compact-table stock-tracking-table">
-                <thead><tr><th className="stock-tracking-check-col"><input type="checkbox" className="stock-tracking-checkbox" aria-label="갱신 가능 종목 전체 선택" checked={allCollectableChecked} disabled={collectableItems.length === 0} onChange={toggleAllCheckedItems} onClick={(event) => event.stopPropagation()} /></th><th>상태</th><th>기준일</th><th>종목</th><th>그룹</th><th className="text-right">등락률</th><th>가격상태</th><th>판단일</th></tr></thead>
+                <thead><tr><th className="stock-tracking-check-col"><input type="checkbox" className="stock-tracking-checkbox" aria-label="갱신 가능 종목 전체 선택" checked={allCollectableChecked} disabled={collectableItems.length === 0} onChange={toggleAllCheckedItems} onClick={(event) => event.stopPropagation()} /></th><th>상태</th><th>기준일</th><th>종목</th><th>그룹</th><th className="text-right">트래킹 등락률</th><th>가격상태</th><th>판단일</th></tr></thead>
                 <tbody>
                   {items.map((item) => (
                     <tr key={item.id} className={selectedItem?.id === item.id ? "stock-tracking-row-selected selected" : ""} onClick={() => selectItem(item)}>
@@ -1147,7 +1152,7 @@ function StockTrackingPage() {
                       <td>{fmtDate(item.tracking_base_date)}</td>
                       <td><strong>{item.stock_name || "-"}</strong><small>{item.stock_code || "-"}</small></td>
                       <td>{item.group_name}</td>
-                      <td className="text-right">{fmtPct(item.base_change_rate)}</td>
+                      <td className={`text-right ${getReturnClass(item.tracking_return_pct)}`} title={item.entry_close_date && item.latest_close_date ? `${item.entry_close_date} 종가 대비 ${item.latest_close_date} 종가` : "기준 종가 대비 최신 종가"}>{fmtSignedPct(item.tracking_return_pct)}</td>
                       <td><span className={`tracking-price-badge price-${item.price_status.toLowerCase()}`}>{PRICE_STATUS_LABELS[item.price_status]}</span></td>
                       <td>{fmtDate(item.review_date)}</td>
                     </tr>
@@ -1214,6 +1219,9 @@ function StockTrackingPage() {
                   <div className="stock-tracking-detail-grid">
                     <div className="info-condition"><span>조건식</span><strong>{selectedItem.condition_name || selectedItem.condition_no || "-"}</strong></div>
                     <div><span>기준일</span><strong>{fmtDate(selectedItem.tracking_base_date)}</strong></div>
+                    <div><span>트래킹 등락률</span><strong className={getReturnClass(selectedItem.tracking_return_pct)}>{fmtSignedPct(selectedItem.tracking_return_pct)}</strong></div>
+                    <div><span>기준 종가</span><strong>{fmtNumber(selectedItem.entry_close_price)}{selectedItem.entry_close_date ? ` (${fmtDate(selectedItem.entry_close_date)})` : ""}</strong></div>
+                    <div><span>최신 종가</span><strong>{fmtNumber(selectedItem.latest_close_price)}{selectedItem.latest_close_date ? ` (${fmtDate(selectedItem.latest_close_date)})` : ""}</strong></div>
                     <div><span>당시 등락률</span><strong>{fmtPct(selectedItem.base_change_rate)}</strong></div>
                     <div><span>당시 거래대금</span><strong>{fmtEok(selectedItem.base_trading_value)}</strong></div>
                     <div><span>판단일</span><strong>{fmtDate(selectedItem.review_date)}</strong></div>

@@ -589,6 +589,13 @@ def ensure_runtime_schema() -> None:
             ('PPI', '\uc0dd\uc0b0\uc790\ubb3c\uac00\uc9c0\uc218', 'INFLATION', 'PPI', 'MONTHLY', 'BAR_LINE', 'INDEX', '\uc9c0\uc218', '\ubc1c\ud45c\uac12', None, 31, 2, '\uc0dd\uc0b0\uc790\ubb3c\uac00\uc9c0\uc218. KOSIS \ub610\ub294 ECOS provider \ud6c4\ubcf4', None, None, None, 1, 'WAITING'),
             ('CSI', '\uc18c\ube44\uc790\uc2ec\ub9ac\uc9c0\uc218', 'ECONOMY', 'SENTIMENT', 'MONTHLY', 'LINE_WITH_BASELINE', 'INDEX', '\uc9c0\uc218', '\uc9c0\uc218', 100, 40, 1, '\uc18c\ube44\uc790\uc2ec\ub9ac\uc9c0\uc218. ECOS provider \uc6b0\uc120 \ud6c4\ubcf4', None, '\uc18c\ube44\uc2ec\ub9ac \uac1c\uc120, \uc704\ud5d8\uc120\ud638 \uac1c\uc120 \uac00\ub2a5', '\uc18c\ube44\uc2ec\ub9ac \uc704\ucd95 \uac00\ub2a5', 1, 'WAITING'),
             ('BSI_MANUFACTURING', '\uc81c\uc870\uc5c5 BSI', 'ECONOMY', 'BSI', 'MONTHLY', 'LINE_WITH_BASELINE', 'INDEX', '\uc9c0\uc218', '\uc9c0\uc218', 100, 41, 2, '\uc81c\uc870\uc5c5 \uc5c5\ud669 BSI. ECOS provider \uc6b0\uc120 \ud6c4\ubcf4', None, None, None, 1, 'WAITING'),
+            ('US_NASDAQ', '나스닥 종합지수', 'GLOBAL_INDEX', 'US_INDEX', 'DAILY', 'LINE', 'INDEX', '지수', '지수', None, 70, 1, 'FRED NASDAQCOM 기반 미국 나스닥 종합지수', None, '미국 성장주 위험선호 개선 가능', '미국 성장주 위험선호 약화 가능', 1, 'WAITING'),
+            ('US_SP500', 'S&P 500', 'GLOBAL_INDEX', 'US_INDEX', 'DAILY', 'LINE', 'INDEX', '지수', '지수', None, 71, 2, 'FRED SP500 기반 미국 대표 주가지수', None, '미국 대형주 흐름 개선 가능', '미국 대형주 흐름 약화 가능', 1, 'WAITING'),
+            ('US_DOW', '다우존스 산업평균', 'GLOBAL_INDEX', 'US_INDEX', 'DAILY', 'LINE', 'INDEX', '지수', '지수', None, 72, 3, 'FRED DJIA 기반 미국 다우존스 산업평균', None, '미국 산업주 흐름 개선 가능', '미국 산업주 흐름 약화 가능', 1, 'WAITING'),
+            ('US_SOX', '필라델피아 반도체지수', 'GLOBAL_INDEX', 'US_SEMICONDUCTOR', 'DAILY', 'LINE', 'INDEX', '지수', '지수', None, 73, 4, 'FRED NASDAQSOX 기반 미국 반도체지수', None, '글로벌 반도체 수급 개선 가능', '글로벌 반도체 수급 약화 가능', 1, 'WAITING'),
+            ('US_10Y', '미국 국채 10년', 'GLOBAL_RATE', 'US_TREASURY', 'DAILY', 'LINE', 'PCT', '%', '금리', None, 80, 1, 'FRED DGS10 기반 미국 국채 10년 금리', None, '글로벌 장기금리 부담 가능', '글로벌 장기금리 부담 완화 가능', 1, 'WAITING'),
+            ('US_2Y', '미국 국채 2년', 'GLOBAL_RATE', 'US_TREASURY', 'DAILY', 'LINE', 'PCT', '%', '금리', None, 81, 2, 'FRED DGS2 기반 미국 국채 2년 금리', None, '미국 단기금리 부담 가능', '미국 단기금리 부담 완화 가능', 1, 'WAITING'),
+            ('US_FED_FUNDS', '미국 연방기금금리', 'GLOBAL_RATE', 'US_POLICY_RATE', 'DAILY', 'LINE', 'PCT', '%', '금리', None, 82, 3, 'FRED DFF 기반 미국 연방기금금리', None, '정책금리 부담 가능', '정책금리 부담 완화 가능', 1, 'WAITING'),
         )
         for row in market_indicator_rows:
             conn.exec_driver_sql(
@@ -636,6 +643,13 @@ def ensure_runtime_schema() -> None:
             'PPI': 'BOK_ECOS',
             'CSI': 'BOK_ECOS',
             'BSI_MANUFACTURING': 'BOK_ECOS',
+            'US_NASDAQ': 'FRED',
+            'US_SP500': 'FRED',
+            'US_DOW': 'FRED',
+            'US_SOX': 'FRED',
+            'US_10Y': 'FRED',
+            'US_2Y': 'FRED',
+            'US_FED_FUNDS': 'FRED',
         }
         for indicator_code, provider in indicator_provider_candidates.items():
             conn.exec_driver_sql(
@@ -692,6 +706,45 @@ def ensure_runtime_schema() -> None:
                 WHERE indicator_code = ? AND provider = 'BOK_ECOS'
                 """,
                 (f'{stat_code}:{item_code}', request_params_json, indicator_code),
+            )
+
+
+        fred_mapping_defaults = {
+            'US_NASDAQ': ('NASDAQCOM', 'INDEX'),
+            'US_SP500': ('SP500', 'INDEX'),
+            'US_DOW': ('DJIA', 'INDEX'),
+            'US_SOX': ('NASDAQSOX', 'INDEX'),
+            'US_10Y': ('DGS10', 'PCT'),
+            'US_2Y': ('DGS2', 'PCT'),
+            'US_FED_FUNDS': ('DFF', 'PCT'),
+        }
+        for indicator_code, (series_id, source_unit) in fred_mapping_defaults.items():
+            request_params_json = json.dumps(
+                {
+                    'series_id': series_id,
+                    'frequency': 'd',
+                    'value_field': 'value',
+                    'date_field': 'date',
+                    'scale': 1,
+                    'source_unit': source_unit,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            conn.exec_driver_sql(
+                """
+                UPDATE market_indicator_provider_mappings
+                SET api_type = CASE WHEN is_verified = 1 THEN api_type ELSE 'SERIES_OBSERVATIONS' END,
+                    api_id = CASE WHEN is_verified = 1 THEN api_id ELSE 'FRED_SERIES_OBSERVATIONS' END,
+                    endpoint_url = CASE WHEN is_verified = 1 THEN endpoint_url ELSE '/fred/series/observations' END,
+                    provider_symbol = CASE WHEN is_verified = 1 THEN provider_symbol ELSE ? END,
+                    request_params_json = CASE WHEN is_verified = 1 THEN request_params_json ELSE ? END,
+                    last_test_status = CASE WHEN is_verified = 1 THEN last_test_status ELSE 'WAITING' END,
+                    last_test_message = CASE WHEN is_verified = 1 THEN last_test_message ELSE 'FRED series candidate ready; test required' END,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE indicator_code = ? AND provider = 'FRED'
+                """,
+                (series_id, request_params_json, indicator_code),
             )
 
         conn.exec_driver_sql(
@@ -986,6 +1039,20 @@ def ensure_runtime_schema() -> None:
         conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_stock_tracking_items_base_date ON stock_tracking_items(tracking_base_date)"
         )
+        stock_tracking_item_columns = {
+            str(row[1]) for row in conn.exec_driver_sql("PRAGMA table_info(stock_tracking_items)").fetchall()
+        }
+        for column_sql in (
+            "entry_close_price REAL",
+            "entry_close_date TEXT",
+            "latest_close_price REAL",
+            "latest_close_date TEXT",
+            "tracking_return_pct REAL",
+            "price_updated_at TEXT",
+        ):
+            column_name = column_sql.split()[0]
+            if column_name not in stock_tracking_item_columns:
+                conn.exec_driver_sql(f"ALTER TABLE stock_tracking_items ADD COLUMN {column_sql}")
         conn.exec_driver_sql(
             """
             CREATE TABLE IF NOT EXISTS stock_tracking_images (

@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import { repositories } from "@/services";
+import { buildMarketEnvironmentInsights, getMarketEnvironmentToneLabel } from "@/utils/marketEnvironmentRules";
 import type { MarketIndexCompareResponse, MarketIndexDailyPriceItem, MarketIndexItem, MarketIndexProviderCode, MarketIndexProviderMapping } from "@/types/marketIndex";
 import type { ExternalProviderStatus, ExternalProviderStatusListResponse, MarketIndicator, MarketIndicatorValue } from "@/types/marketIndicator";
 
-const PERIOD_OPTIONS = [
+const DAILY_PERIOD_OPTIONS = [
   { label: "1M", days: 31 },
   { label: "3M", days: 93 },
   { label: "6M", days: 186 },
@@ -13,7 +14,19 @@ const PERIOD_OPTIONS = [
   { label: "ALL", days: null },
 ] as const;
 
-const CATEGORY_OPTIONS = ["전체", "주식시장", "업종", "금현물", "금리/환율", "보류/제외"] as const;
+const MONTHLY_PERIOD_OPTIONS = [
+  { label: "6M", days: 186 },
+  { label: "1Y", days: 365 },
+  { label: "3Y", days: 365 * 3 },
+  { label: "5Y", days: 365 * 5 },
+  { label: "ALL", days: null },
+] as const;
+
+const PERIOD_OPTIONS = [...DAILY_PERIOD_OPTIONS, ...MONTHLY_PERIOD_OPTIONS] as const;
+const DAILY_PERIOD_LABELS: ReadonlySet<PeriodLabel> = new Set(DAILY_PERIOD_OPTIONS.map((item) => item.label));
+const MONTHLY_PERIOD_LABELS: ReadonlySet<PeriodLabel> = new Set(MONTHLY_PERIOD_OPTIONS.map((item) => item.label));
+
+const CATEGORY_OPTIONS = ["전체", "주식시장", "업종", "금현물", "금리/환율", "물가/경기", "미국시장", "보류/제외"] as const;
 
 const MARKET_INDEX_CHART_HEIGHT = 520;
 const MARKET_INDEX_PRICE_AREA_HEIGHT = 350;
@@ -27,6 +40,8 @@ const MARKET_INDEX_VISIBLE_CANDLE_COUNT = {
   "3M": 66,
   "6M": 132,
   "1Y": 250,
+  "3Y": 250,
+  "5Y": 250,
   ALL: 250,
 } as const;
 
@@ -40,7 +55,7 @@ const ADMIN_DRAWER_TABS = [
 
 type AdminDrawerTab = (typeof ADMIN_DRAWER_TABS)[number]["key"];
 
-type PeriodLabel = (typeof PERIOD_OPTIONS)[number]["label"];
+type PeriodLabel = "1M" | "3M" | "6M" | "1Y" | "3Y" | "5Y" | "ALL";
 type CategoryFilter = (typeof CATEGORY_OPTIONS)[number];
 
 type MetricSource = "MARKET_INDEX" | "MARKET_INDICATOR";
@@ -60,6 +75,11 @@ type SelectorMetricItem = {
   return5?: number | null;
   return20?: number | null;
   unitLabel?: string | null;
+  dataFrequency?: string | null;
+  chartType?: string | null;
+  baseLineValue?: number | null;
+  momPct?: number | null;
+  yoyPct?: number | null;
 };
 
 const TEXT = {
@@ -98,6 +118,22 @@ const DEFAULT_INDEX_NAMES: Record<string, string> = {
   WTI: "WTI",
 };
 
+const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
+  KIWOOM_REST: "\uD0A4\uC6C0 REST API",
+  KRX_OPEN_API: "KRX Open API",
+  DATA_GO_KR: "\uACF5\uACF5\uB370\uC774\uD130\uD3EC\uD138",
+  BOK_ECOS: "BOK ECOS",
+  KOSIS: "KOSIS",
+  FRED: "FRED",
+};
+
+const getProviderDisplayName = (item: Pick<ExternalProviderStatus, "provider" | "display_name">) => {
+  const provider = (item.provider ?? "").toUpperCase();
+  const displayName = (item.display_name ?? "").trim();
+  if (displayName && !displayName.includes("?")) return displayName;
+  return PROVIDER_DISPLAY_NAMES[provider] ?? provider;
+};
+
 const STATUS_LABELS: Record<string, string> = {
   NOT_COLLECTED: "미수집",
   COLLECTING: "수집중",
@@ -123,9 +159,12 @@ type CompareGroupConfig = {
   prefix?: string;
 };
 
-const GENERAL_INDICATOR_CODES = ["USD_KRW", "JPY_KRW", "CNY_KRW", "BASE_RATE", "CALL_RATE", "KTB_3Y", "KTB_10Y"] as const;
 const FX_INDICATOR_CODES = ["USD_KRW", "JPY_KRW", "CNY_KRW"] as const;
 const RATE_INDICATOR_CODES = ["BASE_RATE", "CALL_RATE", "KTB_3Y", "KTB_10Y"] as const;
+const RATE_FX_INDICATOR_CODES = [...FX_INDICATOR_CODES, ...RATE_INDICATOR_CODES] as const;
+const INFLATION_ECONOMY_INDICATOR_CODES = ["CPI", "PPI", "CSI", "BSI_MANUFACTURING"] as const;
+const US_MARKET_INDICATOR_CODES = ["US_NASDAQ", "US_SP500", "US_DOW", "US_SOX", "US_10Y", "US_2Y", "US_FED_FUNDS"] as const;
+const GENERAL_INDICATOR_CODES = [...RATE_FX_INDICATOR_CODES, ...INFLATION_ECONOMY_INDICATOR_CODES, ...US_MARKET_INDICATOR_CODES] as const;
 
 const GENERAL_INDICATOR_NAMES: Record<string, string> = {
   USD_KRW: "\uB2EC\uB7EC/\uC6D0 \uD658\uC728",
@@ -135,6 +174,17 @@ const GENERAL_INDICATOR_NAMES: Record<string, string> = {
   CALL_RATE: "\uCF5C\uAE08\uB9AC",
   KTB_3Y: "\uAD6D\uACE0\uCC44 3\uB144",
   KTB_10Y: "\uAD6D\uACE0\uCC44 10\uB144",
+  CPI: "소비자물가지수",
+  PPI: "생산자물가지수",
+  CSI: "소비자심리지수",
+  BSI_MANUFACTURING: "제조업 BSI",
+  US_NASDAQ: "나스닥 종합지수",
+  US_SP500: "S&P 500",
+  US_DOW: "다우존스 산업평균",
+  US_SOX: "필라델피아 반도체지수",
+  US_10Y: "미국 국채 10년",
+  US_2Y: "미국 국채 2년",
+  US_FED_FUNDS: "미국 연방기금금리",
 };
 
 const makeMetricKey = (source: MetricSource, code: string): MetricKey => source + ":" + code;
@@ -191,7 +241,19 @@ const COMPARE_GROUPS: CompareGroupConfig[] = [
     key: "FX_RATE",
     label: "\uAE08\uB9AC/\uD658\uC728",
     indexCodes: [],
-    indicatorCodes: GENERAL_INDICATOR_CODES,
+    indicatorCodes: RATE_FX_INDICATOR_CODES,
+  },
+  {
+    key: "INFLATION_ECONOMY",
+    label: "물가/경기",
+    indexCodes: [],
+    indicatorCodes: INFLATION_ECONOMY_INDICATOR_CODES,
+  },
+  {
+    key: "US_MARKET",
+    label: "미국시장",
+    indexCodes: [],
+    indicatorCodes: US_MARKET_INDICATOR_CODES,
   },
   {
     key: "SAFE_ASSET",
@@ -214,6 +276,24 @@ const FIRST_SECTOR_CANDIDATES = [
 ] as const;
 
 const today = () => new Date().toISOString().slice(0, 10);
+const toUtcTime = (dateText?: string | null) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateText ?? "");
+  if (!match) return NaN;
+  return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+};
+const getEndOfMonthDate = (dateText?: string | null, periodLabel?: string | null) => {
+  const source = periodLabel && /^\d{4}-\d{2}$/.test(periodLabel) ? periodLabel : (dateText ?? "").slice(0, 7);
+  const match = /^(\d{4})-(\d{2})$/.exec(source);
+  if (!match) return dateText || "";
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return match[1] + "-" + match[2] + "-" + String(lastDay).padStart(2, "0");
+};
+const isMonthlyIndicator = (indicator?: Pick<MarketIndicator, "data_frequency"> | null) => (indicator?.data_frequency ?? "").toUpperCase() === "MONTHLY";
+const getIndicatorPlotDate = (row: MarketIndicatorValue, indicator?: Pick<MarketIndicator, "data_frequency"> | null) => {
+  return isMonthlyIndicator(indicator) ? getEndOfMonthDate(row.value_date, row.period_label) : row.value_date;
+};
 const daysAgo = (days: number) => {
   const date = new Date();
   date.setDate(date.getDate() - days);
@@ -253,7 +333,7 @@ const formatTradingValue = (value?: number | null) => {
 };
 
 function getRange(period: PeriodLabel) {
-  const option = PERIOD_OPTIONS.find((item) => item.label === period) ?? PERIOD_OPTIONS[3];
+  const option = PERIOD_OPTIONS.find((item) => item.label === period) ?? DAILY_PERIOD_OPTIONS[2];
   return {
     startDate: option.days === null ? undefined : daysAgo(option.days),
     endDate: today(),
@@ -437,7 +517,7 @@ function CandleChart({ rows, indexName, period, statusValue, errorMessage }: { r
   );
 }
 
-function MarketIndicatorLineChart({ rows, indicatorName, unitLabel }: { rows: MarketIndicatorValue[]; indicatorName: string; unitLabel?: string | null }) {
+function MarketIndicatorLineChart({ rows, indicator, indicatorName, unitLabel }: { rows: MarketIndicatorValue[]; indicator?: MarketIndicator | null; indicatorName: string; unitLabel?: string | null }) {
   const width = 1440;
   const height = 520;
   const chartX = 64;
@@ -445,12 +525,13 @@ function MarketIndicatorLineChart({ rows, indicatorName, unitLabel }: { rows: Ma
   const chartTop = 36;
   const chartBottom = 48;
   const values = rows.map((row) => row.value ?? row.close_value).filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-  const range = minMax(values);
-  const dateValues = rows.map((row) => new Date(row.value_date).getTime()).filter((value) => Number.isFinite(value));
+  const baseLineValue = indicator?.chart_type === "LINE_WITH_BASELINE" && typeof indicator.base_line_value === "number" ? indicator.base_line_value : null;
+  const range = minMax(baseLineValue === null ? values : [...values, baseLineValue]);
+  const dateValues = rows.map((row) => toUtcTime(getIndicatorPlotDate(row, indicator))).filter((value) => Number.isFinite(value));
   const minDate = Math.min(...dateValues);
   const maxDate = Math.max(...dateValues);
   const x = (date: string) => {
-    const time = new Date(date).getTime();
+    const time = toUtcTime(date);
     const domain = maxDate - minDate || 1;
     return chartX + ((time - minDate) / domain) * (width - chartX - chartRight);
   };
@@ -458,10 +539,11 @@ function MarketIndicatorLineChart({ rows, indicatorName, unitLabel }: { rows: Ma
     if (value === null || value === undefined || !Number.isFinite(value)) return height - chartBottom;
     return chartTop + ((range.max - value) / (range.max - range.min || 1)) * (height - chartTop - chartBottom);
   };
+  const formatDateLabel = (row?: MarketIndicatorValue) => row?.period_label || (row?.value_date ?? "").slice(0, 10);
   const path = rows
     .map((row) => {
       const value = row.value ?? row.close_value;
-      return value === null || value === undefined ? null : x(row.value_date).toFixed(1) + "," + y(value).toFixed(1);
+      return value === null || value === undefined ? null : x(getIndicatorPlotDate(row, indicator)).toFixed(1) + "," + y(value).toFixed(1);
     })
     .filter(Boolean)
     .map((point, idx) => (idx === 0 ? "M" : "L") + point)
@@ -479,11 +561,17 @@ function MarketIndicatorLineChart({ rows, indicatorName, unitLabel }: { rows: Ma
           const tickValue = range.max - (grid * (range.max - range.min)) / 3;
           return <g key={grid}><line x1={chartX} x2={width - chartRight} y1={yy} y2={yy} className="market-index-grid" /><text x={chartX - 10} y={yy + 4} textAnchor="end" className="market-index-axis-label">{formatNumber(tickValue, 2)}</text></g>;
         })}
+        {baseLineValue !== null ? (
+          <g>
+            <line x1={chartX} x2={width - chartRight} y1={y(baseLineValue)} y2={y(baseLineValue)} className="market-indicator-baseline" />
+            <text x={width - chartRight} y={y(baseLineValue) - 8} textAnchor="end" className="market-indicator-baseline-label">기준선 {formatNumber(baseLineValue, 0)}</text>
+          </g>
+        ) : null}
         <path d={path} fill="none" stroke="#2563eb" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" />
-        <text x={chartX} y={height - 14} className="market-index-axis-label">{rows[0]?.value_date}</text>
-        <text x={width - chartRight} y={height - 14} textAnchor="end" className="market-index-axis-label">{rows[rows.length - 1]?.value_date}</text>
+        <text x={chartX} y={height - 14} className="market-index-axis-label">{formatDateLabel(rows[0])}</text>
+        <text x={width - chartRight} y={height - 14} textAnchor="end" className="market-index-axis-label">{formatDateLabel(rows[rows.length - 1])}</text>
       </svg>
-      <div className="market-index-compare-legend"><span><i style={{ backgroundColor: "#2563eb" }} />{unitLabel || indicatorName}</span></div>
+      <div className="market-index-compare-legend"><span><i style={{ backgroundColor: "#2563eb" }} />{unitLabel || indicatorName}</span>{baseLineValue !== null ? <span><i className="baseline" />기준선 {formatNumber(baseLineValue, 0)}</span> : null}{isMonthlyIndicator(indicator) ? <span className="market-indicator-chart-note">월간 지표는 발표월의 월말 기준 위치에 표시됩니다.</span> : null}</div>
     </div>
   );
 }
@@ -499,12 +587,13 @@ function CompareChart({ compare }: { compare: MarketIndexCompareResponse | null 
   const values = series.flatMap((item) => item.points.map((point) => point.value));
   const range = minMax(values);
   const dateValues = series
-    .flatMap((item) => item.points.map((point) => new Date(point.date).getTime()))
+    .flatMap((item) => item.points.map((point) => toUtcTime(point.plotDate || point.date)))
     .filter((value) => Number.isFinite(value));
   const minDate = dateValues.length ? Math.min(...dateValues) : 0;
   const maxDate = dateValues.length ? Math.max(...dateValues) : 1;
+  const hasCarryForward = series.some((item) => item.points.some((point) => point.isCarryForward));
   const x = (date: string) => {
-    const time = new Date(date).getTime();
+    const time = toUtcTime(date);
     const domain = maxDate - minDate || 1;
     return chartX + ((time - minDate) / domain) * (width - chartX - chartRight);
   };
@@ -529,6 +618,7 @@ function CompareChart({ compare }: { compare: MarketIndexCompareResponse | null 
           </span>
         ))}
       </div>
+      {hasCarryForward ? <div className="market-indicator-compare-note">월간 지표의 최신 발표값은 비교 기준일까지 표시용으로 연장됩니다.</div> : null}
       <div className="market-index-chart-scroll market-index-compare-scroll compact">
       <svg className="market-index-compare-svg" viewBox={"0 0 " + width + " " + height} preserveAspectRatio="none" role="img" aria-label={TEXT.compareTitle}>
         {[0, 1, 2].map((grid) => {
@@ -539,8 +629,8 @@ function CompareChart({ compare }: { compare: MarketIndexCompareResponse | null 
         {series.map((item, idx) => {
           const path = item.points
             .filter((point) => point.value !== null && point.value !== undefined && Number.isFinite(point.value))
-            .sort((a, b) => a.date.localeCompare(b.date))
-            .map((point, pointIdx) => (pointIdx === 0 ? "M" : "L") + x(point.date).toFixed(1) + "," + y(point.value).toFixed(1))
+            .sort((a, b) => (a.plotDate || a.date).localeCompare(b.plotDate || b.date))
+            .map((point, pointIdx) => (pointIdx === 0 ? "M" : "L") + x(point.plotDate || point.date).toFixed(1) + "," + y(point.value).toFixed(1))
             .join(" ");
           return <path key={item.index_code} d={path} fill="none" stroke={colors[idx % colors.length]} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />;
         })}
@@ -676,11 +766,12 @@ function MarketIndexesPage() {
   const [selectedMetricKey, setSelectedMetricKey] = useState<MetricKey>(makeMetricKey("MARKET_INDEX", "KOSPI"));
   const [selectedCompareCodes, setSelectedCompareCodes] = useState<string[]>([makeMetricKey("MARKET_INDEX", "KOSPI"), makeMetricKey("MARKET_INDEX", "KOSDAQ")]);
   const [openCompareGroups, setOpenCompareGroups] = useState<CompareGroupKey[]>(["DOMESTIC"]);
-  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("전체");
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("주식시장");
   const [searchText, setSearchText] = useState("");
   const [period, setPeriod] = useState<PeriodLabel>("6M");
   const [dailyRows, setDailyRows] = useState<MarketIndexDailyPriceItem[]>([]);
   const [indicatorRows, setIndicatorRows] = useState<MarketIndicatorValue[]>([]);
+  const [environmentIndicatorValues, setEnvironmentIndicatorValues] = useState<Record<string, MarketIndicatorValue[]>>({});
   const [compare, setCompare] = useState<MarketIndexCompareResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -699,6 +790,9 @@ function MarketIndexesPage() {
   const selectedIndex = selectedMetric.source === "MARKET_INDEX" ? indexes.find((item) => item.index_code === selectedMetric.code) ?? null : null;
   const selectedGeneralIndicator = selectedMetric.source === "MARKET_INDICATOR" ? generalIndicators.find((item) => item.indicator_code === selectedMetric.code) ?? null : null;
   const selectedIndexName = selectedIndex ? getIndexName(selectedIndex) : getIndicatorName(selectedGeneralIndicator ?? { indicator_code: selectedMetric.code, indicator_name: selectedMetric.code });
+  const selectedIndicatorFrequency = (selectedGeneralIndicator?.data_frequency ?? "").toUpperCase();
+  const selectedIsMonthlyIndicator = selectedMetric.source === "MARKET_INDICATOR" && selectedIndicatorFrequency === "MONTHLY";
+  const periodOptions = selectedIsMonthlyIndicator ? MONTHLY_PERIOD_OPTIONS : DAILY_PERIOD_OPTIONS;
   const selectedStatusValue = selectedIndex ? getStatusValue(selectedIndex.collection_status, Boolean(selectedIndex.latest_price_date)) : getStatusValue(selectedGeneralIndicator?.collection_status, Boolean(selectedGeneralIndicator?.latest_value_date));
   const chartRows = useMemo(
     () => dailyRows.filter((row) => row.close_price !== null && row.close_price !== undefined && Number.isFinite(row.close_price)),
@@ -710,7 +804,7 @@ function MarketIndexesPage() {
   }), [indicatorRows]);
   const chartRangeLabel = selectedMetric.source === "MARKET_INDICATOR"
     ? indicatorChartRows.length
-      ? indicatorChartRows[0]?.value_date + " ~ " + indicatorChartRows[indicatorChartRows.length - 1]?.value_date
+      ? (indicatorChartRows[0]?.period_label || indicatorChartRows[0]?.value_date) + " ~ " + (indicatorChartRows[indicatorChartRows.length - 1]?.period_label || indicatorChartRows[indicatorChartRows.length - 1]?.value_date)
       : (range.startDate ?? TEXT.allPeriod) + " ~ " + range.endDate
     : chartRows.length
       ? chartRows[0]?.price_date + " ~ " + chartRows[chartRows.length - 1]?.price_date
@@ -721,7 +815,9 @@ function MarketIndexesPage() {
     [indexes]
   );
   const activeGeneralIndicators = useMemo(
-    () => generalIndicators.filter((item) => GENERAL_INDICATOR_CODES.includes(item.indicator_code as (typeof GENERAL_INDICATOR_CODES)[number]) && item.is_active),
+    () => generalIndicators
+      .filter((item) => GENERAL_INDICATOR_CODES.includes(item.indicator_code as (typeof GENERAL_INDICATOR_CODES)[number]) && item.is_active)
+      .sort((a, b) => GENERAL_INDICATOR_CODES.indexOf(a.indicator_code as (typeof GENERAL_INDICATOR_CODES)[number]) - GENERAL_INDICATOR_CODES.indexOf(b.indicator_code as (typeof GENERAL_INDICATOR_CODES)[number])),
     [generalIndicators]
   );
 
@@ -740,7 +836,7 @@ function MarketIndexesPage() {
                 ? category === "업종지수"
                 : categoryFilter === "금현물"
                   ? category === "금현물"
-                  : categoryFilter === "금리/환율"
+                  : categoryFilter === "금리/환율" || categoryFilter === "물가/경기" || categoryFilter === "미국시장"
                     ? false
                     : deferred;
         const keywordMatched =
@@ -766,24 +862,40 @@ function MarketIndexesPage() {
       return5: item.recent_5d_return_pct ?? item.recent_5d_return,
       return20: item.recent_20d_return_pct ?? item.recent_20d_return,
     }));
-    const generalItems = (categoryFilter === "전체" || categoryFilter === "금리/환율" ? activeGeneralIndicators : []).map((item) => ({
+    const visibleGeneralIndicators = categoryFilter === "전체"
+      ? activeGeneralIndicators
+      : categoryFilter === "금리/환율"
+        ? activeGeneralIndicators.filter((item) => RATE_FX_INDICATOR_CODES.includes(item.indicator_code as (typeof RATE_FX_INDICATOR_CODES)[number]))
+        : categoryFilter === "물가/경기"
+          ? activeGeneralIndicators.filter((item) => INFLATION_ECONOMY_INDICATOR_CODES.includes(item.indicator_code as (typeof INFLATION_ECONOMY_INDICATOR_CODES)[number]))
+          : categoryFilter === "미국시장"
+            ? activeGeneralIndicators.filter((item) => US_MARKET_INDICATOR_CODES.includes(item.indicator_code as (typeof US_MARKET_INDICATOR_CODES)[number]))
+            : [];
+    const generalItems = visibleGeneralIndicators.map((item) => ({
       key: makeMetricKey("MARKET_INDICATOR", item.indicator_code),
       source: "MARKET_INDICATOR" as const,
       code: item.indicator_code,
       name: getIndicatorName(item),
-      category: item.category === "RATE" ? "\uAE08\uB9AC" : item.category === "FX" ? "\uD658\uC728" : item.category,
+      category: item.category === "RATE" ? "\uAE08\uB9AC" : item.category === "FX" ? "\uD658\uC728" : item.category === "INFLATION" ? "물가" : item.category === "ECONOMY" ? "경기" : item.category,
       status: getStatusValue(item.collection_status, Boolean(item.latest_value_date)),
       latestValue: item.latest_value,
       latestDate: item.latest_value_date,
       changeValue: item.latest_change_value,
       changePct: item.latest_change_pct,
       unitLabel: item.unit_label || item.unit,
+      dataFrequency: item.data_frequency,
+      chartType: item.chart_type,
+      baseLineValue: item.base_line_value,
+      momPct: item.latest_mom_pct,
+      yoyPct: item.latest_yoy_pct,
     }));
     return [...indexItems, ...generalItems].filter((item) => {
       if (!normalizedQuery) return true;
       return item.code.toLowerCase().includes(normalizedQuery) || item.name.toLowerCase().includes(normalizedQuery) || item.category.toLowerCase().includes(normalizedQuery);
     });
   }, [activeGeneralIndicators, categoryFilter, filteredIndexes, normalizedQuery]);
+
+  const marketEnvironmentInsights = useMemo(() => buildMarketEnvironmentInsights({ marketIndexes: indexes, marketIndicators: activeGeneralIndicators, marketIndicatorValues: environmentIndicatorValues }), [activeGeneralIndicators, environmentIndicatorValues, indexes]);
 
   const marketSummaryCards = useMemo(() => {
     const byCode = (code: string) => indexes.find((item) => item.index_code === code);
@@ -830,6 +942,16 @@ function MarketIndexesPage() {
       repositories.marketIndexes.listProviderCodes?.({ market_type: providerCodeMarketType === "ALL" ? undefined : providerCodeMarketType }).then((response) => setProviderCodes(response.items)).catch(() => setProviderCodes([]));
       repositories.marketIndicators.providerStatuses?.().then((response: ExternalProviderStatusListResponse) => setExternalProviderStatuses(response.items)).catch(() => setExternalProviderStatuses([]));
 
+      const environmentValueCodes = ["US_NASDAQ", "US_SP500", "US_DOW", "US_SOX", "US_10Y", "US_2Y", "US_FED_FUNDS"];
+      Promise.all(environmentValueCodes.map(async (code) => {
+        try {
+          const values = await repositories.marketIndicators.values(code, { start_date: daysAgo(420), end_date: today() });
+          return [code, values.items] as const;
+        } catch {
+          return [code, []] as const;
+        }
+      })).then((entries) => setEnvironmentIndicatorValues(Object.fromEntries(entries))).catch(() => setEnvironmentIndicatorValues({}));
+
       const currentMetric = parseMetricKey(selectedMetricKey);
       const fallbackIndexCode = nextIndexes.find((item) => item.index_code === "KOSPI")?.index_code || nextIndexes[0]?.index_code || "KOSPI";
       const nextMetric = currentMetric.source === "MARKET_INDICATOR" && nextGeneralIndicators.some((item) => item.indicator_code === currentMetric.code)
@@ -862,28 +984,68 @@ function MarketIndexesPage() {
           end_date: range.endDate,
           normalize: true,
         });
-        compareSeries.push(...compareResponse.series.map((item) => ({ ...item, index_code: makeMetricKey("MARKET_INDEX", item.index_code) })));
+        compareSeries.push(...compareResponse.series.map((item) => ({
+          ...item,
+          index_code: makeMetricKey("MARKET_INDEX", item.index_code),
+          points: item.points.map((point) => ({ ...point, plotDate: point.date })),
+        })));
       }
       const indicatorSeries = await Promise.all(indicatorCompareCodes.map(async (code) => {
         const indicator = nextGeneralIndicators.find((item) => item.indicator_code === code);
         const values = await repositories.marketIndicators.values(code, { start_date: range.startDate, end_date: range.endDate });
         const rows = values.items
-          .map((row) => ({ date: row.value_date, rawValue: row.value ?? row.close_value ?? null }))
-          .filter((row): row is { date: string; rawValue: number } => row.rawValue !== null && row.rawValue !== undefined && Number.isFinite(row.rawValue))
-          .sort((a, b) => a.date.localeCompare(b.date));
+          .map((row) => ({ date: row.value_date, plotDate: getIndicatorPlotDate(row, indicator), periodLabel: row.period_label, rawValue: row.value ?? row.close_value ?? null }))
+          .filter((row) => row.rawValue !== null && row.rawValue !== undefined && Number.isFinite(row.rawValue))
+          .map((row) => ({ ...row, rawValue: row.rawValue as number }))
+          .sort((a, b) => a.plotDate.localeCompare(b.plotDate));
         const base = rows.find((row) => row.rawValue !== 0)?.rawValue ?? null;
         return {
           index_code: makeMetricKey("MARKET_INDICATOR", code),
           index_name: getIndicatorName(indicator ?? { indicator_code: code, indicator_name: code }),
-          points: rows.map((row) => ({ date: row.date, value: base ? (row.rawValue / base) * 100 : null, close_price: row.rawValue })),
+          points: rows.map((row) => ({ date: row.date, plotDate: row.plotDate, periodLabel: row.periodLabel, value: base ? (row.rawValue / base) * 100 : null, close_price: row.rawValue })),
         };
       }));
       compareSeries.push(...indicatorSeries);
-      setCompare({ normalize: true, start_date: range.startDate, end_date: range.endDate, series: compareSeries });
+      const sortedPlotDates = compareSeries
+        .flatMap((item) => item.points.map((point) => point.plotDate || point.date))
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b));
+      const globalMaxPlotDate = sortedPlotDates[sortedPlotDates.length - 1];
+      const adjustedCompareSeries = compareSeries.map((item) => {
+        const parsed = parseMetricKey(item.index_code);
+        const indicator = parsed.source === "MARKET_INDICATOR" ? nextGeneralIndicators.find((candidate) => candidate.indicator_code === parsed.code) : null;
+        if (!globalMaxPlotDate || !isMonthlyIndicator(indicator)) return item;
+        const points = [...item.points].sort((a, b) => (a.plotDate || a.date).localeCompare(b.plotDate || b.date));
+        const lastPoint = points[points.length - 1];
+        const lastPlotDate = lastPoint?.plotDate || lastPoint?.date;
+        if (!lastPoint || !lastPlotDate || lastPlotDate >= globalMaxPlotDate) return { ...item, points };
+        return {
+          ...item,
+          points: [
+            ...points,
+            {
+              ...lastPoint,
+              plotDate: globalMaxPlotDate,
+              isCarryForward: true,
+            },
+          ],
+        };
+      });
+      setCompare({ normalize: true, start_date: range.startDate, end_date: range.endDate, series: adjustedCompareSeries });
     } finally {
       setLoading(false);
     }
   }, [categoryFilter, providerCodeMarketType, range.endDate, range.startDate, selectedCode, selectedCompareCodes, selectedMetricKey, showDeferredIndicators]);
+
+  useEffect(() => {
+    if (selectedIsMonthlyIndicator && !MONTHLY_PERIOD_LABELS.has(period)) {
+      setPeriod("5Y");
+      return;
+    }
+    if (!selectedIsMonthlyIndicator && !DAILY_PERIOD_LABELS.has(period)) {
+      setPeriod("6M");
+    }
+  }, [selectedIsMonthlyIndicator, period]);
 
   useEffect(() => {
     loadAll().catch((error) => {
@@ -1117,6 +1279,43 @@ function MarketIndexesPage() {
         ))}
       </section>
 
+      <section className="market-environment-insight-section" aria-label="시장환경 해석">
+        <div className="market-environment-insight-head">
+          <div>
+            <h2>시장환경 해석</h2>
+            <p>수집된 시장지표를 기준으로 시장환경을 참고용으로 해석합니다. 매수·매도 추천이 아닙니다.</p>
+          </div>
+        </div>
+        <div className="market-environment-insight-grid">
+          {marketEnvironmentInsights.map((insight) => (
+            <article key={insight.key} className={`market-environment-insight-card tone-${insight.tone}`}>
+              <div className="market-environment-insight-card-head">
+                <span>{insight.title}</span>
+                <em>{getMarketEnvironmentToneLabel(insight.tone)}</em>
+              </div>
+              <strong>{insight.headline}</strong>
+              <p>{insight.description}</p>
+              <div className="market-environment-evidence-list">
+                {insight.evidence.map((item) => (
+                  <span key={item.label}>
+                    <b>{item.label}</b>
+                    {item.value}
+                  </span>
+                ))}
+              </div>
+              <div className="market-environment-perspective-list" aria-label={insight.title + " 다른 관점"}>
+                {insight.perspectives.slice(0, 3).map((item) => (
+                  <div key={item.label}>
+                    <span>{item.label}</span>
+                    <p>{item.text}</p>
+                  </div>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
       <section className="market-index-toolbar" aria-label="시장 지표 필터">
         <div className="market-index-filter-pills">
           {CATEGORY_OPTIONS.map((category) => (
@@ -1197,12 +1396,12 @@ function MarketIndexesPage() {
               ) : null}
               {adminDrawerTab === "external" ? (
                 <section className="market-indicator-admin-drawer-section">
-                  <h3>?? API ??</h3>
+                  <h3>{"\uC678\uBD80 API \uC0C1\uD0DC"}</h3>
                   <div className="market-indicator-provider-status-list">
                     {externalProviderStatuses.length ? externalProviderStatuses.map((item) => (
                       <div key={item.provider} className={`market-indicator-provider-status-card ${item.configured ? "configured" : "missing"}`}>
                         <div>
-                          <strong>{item.display_name}</strong>
+                          <strong>{getProviderDisplayName(item)}</strong>
                           <span>{item.provider}</span>
                         </div>
                         <span className="market-indicator-provider-status-state">{item.configured ? "\uC124\uC815\uB428" : "\uD0A4 \uC5C6\uC74C"}</span>
@@ -1227,8 +1426,8 @@ function MarketIndexesPage() {
           </div>
           <div className="market-indicator-compact-list">
             {selectorItems.length ? selectorItems.map((item) => {
-              const metric5 = item.source === "MARKET_INDEX" ? item.return5 : item.changeValue;
-              const metric20 = item.source === "MARKET_INDEX" ? item.return20 : item.changePct;
+              const metric5 = item.source === "MARKET_INDEX" ? item.return5 : (item.dataFrequency === "MONTHLY" ? item.momPct : item.changeValue);
+              const metric20 = item.source === "MARKET_INDEX" ? item.return20 : (item.dataFrequency === "MONTHLY" ? item.yoyPct : item.changePct);
               return (
                 <button
                   key={item.key}
@@ -1244,8 +1443,8 @@ function MarketIndexesPage() {
                     <span className={"status-badge market-indicator-compact-status status-" + getStatusClass(item.status)}>{item.source === "MARKET_INDICATOR" ? item.category : getStatusLabel(item.status, Boolean(item.latestDate))}</span>
                   </div>
                   <div className="market-indicator-compact-metrics">
-                    <span className={"market-indicator-compact-chip " + ((metric5 ?? 0) >= 0 ? "positive" : "negative")}>{item.source === "MARKET_INDEX" ? TEXT.oneDay5 + " " + formatPercent(metric5) : formatNumber(metric5, 3)}</span>
-                    <span className={"market-indicator-compact-chip " + ((metric20 ?? 0) >= 0 ? "positive" : "negative")}>{item.source === "MARKET_INDEX" ? TEXT.oneDay20 + " " + formatPercent(metric20) : formatPercent(metric20)}</span>
+                    <span className={"market-indicator-compact-chip " + ((metric5 ?? 0) >= 0 ? "positive" : "negative")}>{item.source === "MARKET_INDEX" ? TEXT.oneDay5 + " " + formatPercent(metric5) : item.dataFrequency === "MONTHLY" ? "MoM " + formatPercent(metric5) : formatNumber(metric5, 3)}</span>
+                    <span className={"market-indicator-compact-chip " + ((metric20 ?? 0) >= 0 ? "positive" : "negative")}>{item.source === "MARKET_INDEX" ? TEXT.oneDay20 + " " + formatPercent(metric20) : item.dataFrequency === "MONTHLY" ? "YoY " + formatPercent(metric20) : formatPercent(metric20)}</span>
                     <span className="market-indicator-compact-chip">{formatNumber(item.latestValue, item.source === "MARKET_INDICATOR" ? 3 : 2)}{item.unitLabel ? " " + item.unitLabel : ""}</span>
                   </div>
                 </button>
@@ -1258,11 +1457,11 @@ function MarketIndexesPage() {
         <SectionCard className="market-index-chart-card market-index-candle-card market-indicator-chart-panel">
           <div className="market-index-section-head">
             <div>
-              <h3>{`${selectedIndexName} 일봉 차트`}</h3>
+              <h3>{selectedMetric.source === "MARKET_INDICATOR" ? `${selectedIndexName} 라인 차트` : `${selectedIndexName} 일봉 차트`}</h3>
               <p>{chartRangeLabel}</p>
             </div>
             <div className="market-index-periods">
-              {PERIOD_OPTIONS.map((option) => (
+              {periodOptions.map((option) => (
                 <button key={option.label} className={`btn btn-secondary ${period === option.label ? "active" : ""}`} type="button" onClick={() => setPeriod(option.label)}>{option.label}</button>
               ))}
             </div>
@@ -1277,17 +1476,18 @@ function MarketIndexesPage() {
             </div>
           ) : selectedMetric.source === "MARKET_INDICATOR" && selectedGeneralIndicator ? (
             <div className="market-indicator-selected-summary">
-              <div><span>Category</span><strong>{selectedGeneralIndicator.category}</strong></div>
-              <div><span>Latest</span><strong>{formatNumber(selectedGeneralIndicator.latest_value, 3)}{selectedGeneralIndicator.unit_label ? " " + selectedGeneralIndicator.unit_label : ""}</strong></div>
-              <div><span>Date</span><strong>{selectedGeneralIndicator.latest_value_date || "-"}</strong></div>
-              <div><span>Change</span><strong className={(selectedGeneralIndicator.latest_change_value ?? 0) >= 0 ? "positive" : "negative"}>{formatNumber(selectedGeneralIndicator.latest_change_value, 3)}</strong></div>
-              <div><span>Rate</span><strong className={(selectedGeneralIndicator.latest_change_pct ?? 0) >= 0 ? "positive" : "negative"}>{formatPercent(selectedGeneralIndicator.latest_change_pct)}</strong></div>
+              <div><span>분류</span><strong>{selectedGeneralIndicator.category === "INFLATION" ? "물가" : selectedGeneralIndicator.category === "ECONOMY" ? "경기" : selectedGeneralIndicator.category === "GLOBAL_INDEX" ? "미국지수" : selectedGeneralIndicator.category === "GLOBAL_RATE" ? "미국금리" : selectedGeneralIndicator.category}</strong></div>
+              <div><span>최근값</span><strong>{formatNumber(selectedGeneralIndicator.latest_value, 3)}{selectedGeneralIndicator.unit_label ? " " + selectedGeneralIndicator.unit_label : ""}</strong></div>
+              <div><span>기준월</span><strong>{(selectedGeneralIndicator.latest_value_date || "-").slice(0, 7)}</strong></div>
+              <div><span>{selectedIsMonthlyIndicator ? "전월비" : "변화"}</span><strong className={((selectedGeneralIndicator.latest_mom_pct ?? selectedGeneralIndicator.latest_change_value) ?? 0) >= 0 ? "positive" : "negative"}>{selectedIsMonthlyIndicator ? formatPercent(selectedGeneralIndicator.latest_mom_pct) : formatNumber(selectedGeneralIndicator.latest_change_value, 3)}</strong></div>
+              <div><span>{selectedIsMonthlyIndicator ? "전년동월비" : "변화율"}</span><strong className={((selectedGeneralIndicator.latest_yoy_pct ?? selectedGeneralIndicator.latest_change_pct) ?? 0) >= 0 ? "positive" : "negative"}>{selectedIsMonthlyIndicator ? formatPercent(selectedGeneralIndicator.latest_yoy_pct) : formatPercent(selectedGeneralIndicator.latest_change_pct)}</strong></div>
+              {selectedGeneralIndicator.chart_type === "LINE_WITH_BASELINE" ? <div><span>기준선</span><strong>{formatNumber(selectedGeneralIndicator.base_line_value, 0)}</strong></div> : null}
             </div>
           ) : null}
           {selectedMetric.source === "MARKET_INDEX" ? <div className="market-index-chart-legend">
             <span className="ma5">MA5</span><span className="ma20">MA20</span><span className="ma60">MA60</span><span className="ma120">MA120</span>
           </div> : null}
-          {selectedMetric.source === "MARKET_INDICATOR" ? <MarketIndicatorLineChart rows={indicatorChartRows} indicatorName={selectedIndexName} unitLabel={selectedGeneralIndicator?.unit_label || selectedGeneralIndicator?.unit} /> : <CandleChart rows={chartRows} indexName={selectedIndexName} period={period} statusValue={selectedStatusValue} errorMessage={selectedIndex?.error_message} />}
+          {selectedMetric.source === "MARKET_INDICATOR" ? <MarketIndicatorLineChart rows={indicatorChartRows} indicator={selectedGeneralIndicator} indicatorName={selectedIndexName} unitLabel={selectedGeneralIndicator?.unit_label || selectedGeneralIndicator?.unit} /> : <CandleChart rows={chartRows} indexName={selectedIndexName} period={period} statusValue={selectedStatusValue} errorMessage={selectedIndex?.error_message} />}
         </SectionCard>
       </section>
 

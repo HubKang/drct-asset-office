@@ -111,6 +111,15 @@ def _return_pct(value: float | None, base_price: float | None) -> float | None:
     return round(((value - base_price) / base_price) * 100, 4)
 
 
+def _float_or_none(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _target_start_date(base_date: str) -> str:
     try:
         parsed = datetime.strptime(base_date, "%Y-%m-%d").date()
@@ -262,6 +271,12 @@ class StockTrackingService:
             base_change_rate=float(row["base_change_rate"]) if row.get("base_change_rate") is not None else None,
             base_volume=int(row["base_volume"]) if row.get("base_volume") is not None else None,
             base_trading_value=int(row["base_trading_value"]) if row.get("base_trading_value") is not None else None,
+            entry_close_price=float(row["entry_close_price"]) if row.get("entry_close_price") is not None else None,
+            entry_close_date=row.get("entry_close_date"),
+            latest_close_price=float(row["latest_close_price"]) if row.get("latest_close_price") is not None else None,
+            latest_close_date=row.get("latest_close_date"),
+            tracking_return_pct=float(row["tracking_return_pct"]) if row.get("tracking_return_pct") is not None else None,
+            price_updated_at=row.get("price_updated_at"),
             status=str(row["status"]),
             review_date=row.get("review_date"),
             review_note=row.get("review_note"),
@@ -269,6 +284,110 @@ class StockTrackingService:
             created_at=str(row["created_at"]),
             updated_at=str(row["updated_at"]),
         )
+
+    def _tracking_close_on_or_before(self, stock_id: int | None, base_date: str | None) -> dict[str, object] | None:
+        if not stock_id or not base_date:
+            return None
+        row = self.db.execute(
+            text(
+                """
+                SELECT close_price, trade_date
+                FROM stock_daily_prices
+                WHERE stock_id = :stock_id
+                  AND trade_date <= :base_date
+                  AND close_price IS NOT NULL
+                ORDER BY trade_date DESC
+                LIMIT 1
+                """
+            ),
+            {"stock_id": stock_id, "base_date": str(base_date)[:10]},
+        ).mappings().first()
+        return dict(row) if row else None
+
+    def _tracking_latest_close(self, stock_id: int | None) -> dict[str, object] | None:
+        if not stock_id:
+            return None
+        row = self.db.execute(
+            text(
+                """
+                SELECT close_price, trade_date
+                FROM stock_daily_prices
+                WHERE stock_id = :stock_id
+                  AND close_price IS NOT NULL
+                ORDER BY trade_date DESC
+                LIMIT 1
+                """
+            ),
+            {"stock_id": stock_id},
+        ).mappings().first()
+        return dict(row) if row else None
+
+    def _calculate_tracking_price_fields(self, item: dict[str, object]) -> dict[str, object]:
+        stock_id = int(item["stock_id"]) if item.get("stock_id") is not None else None
+        base_date = str(item.get("tracking_base_date") or "")[:10]
+        entry_close_price = _float_or_none(item.get("entry_close_price"))
+        entry_close_date = item.get("entry_close_date")
+        if entry_close_price is None:
+            entry_row = self._tracking_close_on_or_before(stock_id, base_date)
+            if entry_row and entry_row.get("close_price") is not None:
+                entry_close_price = float(entry_row["close_price"])
+                entry_close_date = str(entry_row["trade_date"])
+            elif item.get("base_price") is not None:
+                entry_close_price = float(item["base_price"])
+                entry_close_date = base_date or None
+
+        latest_row = self._tracking_latest_close(stock_id)
+        latest_close_price = float(latest_row["close_price"]) if latest_row and latest_row.get("close_price") is not None else _float_or_none(item.get("latest_close_price"))
+        latest_close_date = str(latest_row["trade_date"]) if latest_row and latest_row.get("trade_date") is not None else item.get("latest_close_date")
+        tracking_return_pct = _return_pct(latest_close_price, entry_close_price)
+        return {
+            "entry_close_price": entry_close_price,
+            "entry_close_date": entry_close_date,
+            "latest_close_price": latest_close_price,
+            "latest_close_date": latest_close_date,
+            "tracking_return_pct": tracking_return_pct,
+            "price_updated_at": now_kst(),
+        }
+
+    def _merge_tracking_price_fields(self, item: dict[str, object], *, persist: bool = True) -> tuple[dict[str, object], bool]:
+        fields = self._calculate_tracking_price_fields(item)
+        changed = any(item.get(key) != value for key, value in fields.items() if key != "price_updated_at")
+        merged = {**item, **fields}
+        if persist and changed:
+            self.db.execute(
+                text(
+                    """
+                    UPDATE stock_tracking_items
+                    SET entry_close_price = :entry_close_price,
+                        entry_close_date = :entry_close_date,
+                        latest_close_price = :latest_close_price,
+                        latest_close_date = :latest_close_date,
+                        tracking_return_pct = :tracking_return_pct,
+                        price_updated_at = :price_updated_at
+                    WHERE id = :item_id
+                    """
+                ),
+                {"item_id": item["id"], **fields},
+            )
+        return merged, changed
+
+    def _hydrate_tracking_price_rows(self, rows: list[dict[str, object]]) -> list[dict[str, object]]:
+        hydrated: list[dict[str, object]] = []
+        changed_any = False
+        for row in rows:
+            merged, changed = self._merge_tracking_price_fields(row)
+            hydrated.append(merged)
+            changed_any = changed_any or changed
+        if changed_any:
+            self.db.commit()
+        return hydrated
+
+    def _refresh_tracking_price_fields(self, item_id: int) -> dict[str, object]:
+        item = self._item_row(item_id)
+        merged, changed = self._merge_tracking_price_fields(item)
+        if changed:
+            self.db.commit()
+        return merged
 
     def _item_row(self, item_id: int) -> dict[str, object]:
         row = self.db.execute(
@@ -333,7 +452,8 @@ class StockTrackingService:
             ),
             params,
         ).mappings().all()
-        return StockTrackingItemListResponse(items=[self._to_item_response(dict(row)) for row in rows], total=int(total or 0))
+        hydrated_rows = self._hydrate_tracking_price_rows([dict(row) for row in rows])
+        return StockTrackingItemListResponse(items=[self._to_item_response(row) for row in hydrated_rows], total=int(total or 0))
 
     def register_from_candidates(self, payload: RegisterTrackingItemsFromCandidatesRequest) -> RegisterTrackingItemsFromCandidatesResponse:
         group = self._group_row(payload.group_id)
@@ -385,16 +505,27 @@ class StockTrackingService:
                 skipped_count += 1
                 register_results.append({"candidate_id": candidate_id, "stock_code": event["stock_code"], "stock_name": event["stock_name"], "status": "SKIPPED", "message": "\uC774\uBBF8 \uD574\uB2F9 \uADF8\uB8F9\uC5D0 \uB4F1\uB85D\uB41C \uD6C4\uBCF4\uC785\uB2C8\uB2E4."})
                 continue
+            tracking_fields = self._calculate_tracking_price_fields({
+                "stock_id": event["stock_id"],
+                "tracking_base_date": base_date,
+                "base_price": None,
+                "entry_close_price": None,
+                "entry_close_date": None,
+                "latest_close_price": None,
+                "latest_close_date": None,
+            })
             result = self.db.execute(
                 text(
                     """
                     INSERT INTO stock_tracking_items
                     (group_id, candidate_id, condition_no, condition_name, stock_id, stock_code, stock_name,
                      detected_date, tracking_base_date, base_price, base_change_rate, base_volume, base_trading_value,
+                     entry_close_price, entry_close_date, latest_close_price, latest_close_date, tracking_return_pct, price_updated_at,
                      status, review_date, review_note, price_status, created_at, updated_at)
                     VALUES
                     (:group_id, :candidate_id, :condition_no, :condition_name, :stock_id, :stock_code, :stock_name,
                      :detected_date, :tracking_base_date, NULL, :base_change_rate, NULL, :base_trading_value,
+                     :entry_close_price, :entry_close_date, :latest_close_price, :latest_close_date, :tracking_return_pct, :price_updated_at,
                      'TRACKING', NULL, NULL, 'NOT_COLLECTED', :created_at, :updated_at)
                     """
                 ),
@@ -410,6 +541,7 @@ class StockTrackingService:
                     "tracking_base_date": base_date,
                     "base_change_rate": event["change_rate"],
                     "base_trading_value": event["trading_value"],
+                    **tracking_fields,
                     "created_at": now,
                     "updated_at": now,
                 },
@@ -522,16 +654,27 @@ class StockTrackingService:
 
             base_trading_value = int(item.trading_value) if item.trading_value is not None else None
             base_volume = int(item.volume) if item.volume is not None else None
+            tracking_fields = self._calculate_tracking_price_fields({
+                "stock_id": stock_id,
+                "tracking_base_date": base_date,
+                "base_price": item.current_price,
+                "entry_close_price": None,
+                "entry_close_date": None,
+                "latest_close_price": None,
+                "latest_close_date": None,
+            })
             result = self.db.execute(
                 text(
                     """
                     INSERT INTO stock_tracking_items
                     (group_id, candidate_id, condition_no, condition_name, stock_id, stock_code, stock_name,
                      detected_date, tracking_base_date, base_price, base_change_rate, base_volume, base_trading_value,
+                     entry_close_price, entry_close_date, latest_close_price, latest_close_date, tracking_return_pct, price_updated_at,
                      status, review_date, review_note, price_status, created_at, updated_at)
                     VALUES
                     (:group_id, NULL, :condition_no, :condition_name, :stock_id, :stock_code, :stock_name,
                      :detected_date, :tracking_base_date, :base_price, :base_change_rate, :base_volume, :base_trading_value,
+                     :entry_close_price, :entry_close_date, :latest_close_price, :latest_close_date, :tracking_return_pct, :price_updated_at,
                      'TRACKING', NULL, NULL, 'NOT_COLLECTED', :created_at, :updated_at)
                     """
                 ),
@@ -548,6 +691,7 @@ class StockTrackingService:
                     "base_change_rate": item.change_rate,
                     "base_volume": base_volume,
                     "base_trading_value": base_trading_value,
+                    **tracking_fields,
                     "created_at": now,
                     "updated_at": now,
                 },
@@ -977,7 +1121,7 @@ class StockTrackingService:
         return StockTrackingGroupAnalysisListResponse(items=analysis_items)
 
     def get_item(self, item_id: int) -> StockTrackingItemResponse:
-        return self._to_item_response(self._item_row(item_id))
+        return self._to_item_response(self._refresh_tracking_price_fields(item_id))
 
     def update_review(self, item_id: int, payload: UpdateStockTrackingReviewRequest) -> StockTrackingItemResponse:
         self._item_row(item_id)
@@ -1162,6 +1306,7 @@ class StockTrackingService:
                     {"item_id": item_id, "stock_id": stock.id, "stock_code": normalized, "last_collected_date": last_collected, "target_status": target_status, "updated_at": now_kst()},
                 )
                 self.db.commit()
+                self._refresh_tracking_price_fields(item_id)
                 results.append({
                     "item_id": item_id,
                     "stock_code": normalized,

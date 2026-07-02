@@ -302,7 +302,10 @@ function MarketThemesPage() {
   const pendingCandidatesCount = useMemo(() => candidates.filter((x) => x.status === "pending").length, [candidates]);
   const activeThemesCount = useMemo(() => manageableThemes.filter((x) => x.is_active === 1).length, [manageableThemes]);
   const supplyThemesCount = useMemo(() => manageableThemes.filter((x) => x.is_supply_theme === 1).length, [manageableThemes]);
-  const linkedThemesCount = useMemo(() => manageableThemes.filter((x) => x.stock_count > 0).length, [manageableThemes]);
+  const linkedStockCount = useMemo(
+    () => manageableThemes.filter((x) => x.is_active === 1).reduce((sum, theme) => sum + (theme.stock_count ?? 0), 0),
+    [manageableThemes],
+  );
   const themeGroupCount = useMemo(() => themes.filter((x) => x.theme_level === "THEME_GROUP").length, [themes]);
   const themeManagementTitle = themeViewMode === "group" ? "테마그룹 관리" : themeViewMode === "trend" ? "테마등락추이" : "테마별 관리";
 
@@ -356,7 +359,7 @@ function MarketThemesPage() {
     setMessage("테마등락률 갱신 중...");
     try {
       const res = await repositories.marketThemes.refreshReturns({ scope: "all_active" });
-      await loadThemes();
+      await Promise.all([loadThemes(), loadThemeReturnTrend()]);
       setMessage(res.message || `테마등락률 갱신 완료: ${res.theme_count}개 테마, ${res.stock_count}개 종목 반영`);
     } catch (e) {
       setError(toErrorMessage(e, "테마등락률 갱신에 실패했습니다. 키움 REST 토큰/연결 상태를 확인해 주세요."));
@@ -788,9 +791,9 @@ function MarketThemesPage() {
             <span className="journal-summary-label">수급 테마</span>
             <strong className="journal-summary-value">{supplyThemesCount}</strong>
           </div>
-          <div className="journal-summary-mini-card">
-            <span className="journal-summary-label">연결 종목 있음</span>
-            <strong className="journal-summary-value">{linkedThemesCount}</strong>
+          <div className="journal-summary-mini-card" title="테마에 연결된 활성 종목 연결 수입니다. 같은 종목이 여러 테마에 연결되어 있으면 각각 계산합니다.">
+            <span className="journal-summary-label">연결 종목</span>
+            <strong className="journal-summary-value">{linkedStockCount}</strong>
           </div>
           <div className="journal-summary-mini-card">
             <span className="journal-summary-label">추천 후보</span>
@@ -1028,7 +1031,8 @@ function MarketThemesPage() {
             </table>
           </div>
           <div className="pagination-bar">
-            <span className="pagination-info">              {`이번 페이지 ${themePageStart}-${themePageEnd} / 전체 ${filteredThemes.length}건 - 20개씩 표시`}
+            <span className="pagination-info">
+              {`이번 페이지 ${themePageStart}-${themePageEnd} / 전체 ${filteredThemes.length}건 - 20개씩 표시`}
             </span>
             <div className="pagination-actions">
               <button

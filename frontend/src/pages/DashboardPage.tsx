@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { useNavigate } from "react-router-dom";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import StatusBadge from "@/components/common/StatusBadge";
-import { buildTreemapLayout, getTreemapLabelClass } from "@/utils/treemapLayout";
+import { buildTreemapLayout, getTreemapLabelClass, getTreemapTextMetrics } from "@/utils/treemapLayout";
 import { dataSourceLabel, repositories } from "@/services";
 import type { CollectionRun } from "@/types/collectionRun";
 import type { Disclosure } from "@/types/disclosure";
@@ -760,10 +760,13 @@ function DashboardPage() {
               {themeItems.map((item) => {
                 const rect = themeTreemapRectMap.get(`${item.viewMode}-${item.marketThemeId}`);
                 const sizeClass = getThemeTreemapSizeClass(item, maxThemeScore);
-                const labelClass = getTreemapLabelClass(rect);
+                const textMetrics = getTreemapTextMetrics(rect, item.themeName, { variant: "dashboard" });
+                const labelClass = getTreemapLabelClass(rect, item.themeName, { variant: "dashboard" });
                 const intensity = Math.max(0.22, Math.min(1, item.sizeValue / maxThemeScore));
                 const style = {
                   "--theme-intensity": intensity,
+                  "--tile-title-size": `${textMetrics.titleFontSize}px`,
+                  "--tile-title-lines": textMetrics.titleLineClamp,
                   "--return-color": getDashboardThemeReturnTreemapColor(item.returnSum),
                   left: `calc(${rect?.x ?? 0}% + 2px)`,
                   top: `calc(${rect?.y ?? 0}% + 2px)`,

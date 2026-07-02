@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import time
@@ -214,33 +214,43 @@ class BokEcosProvider:
             raise RuntimeError(str(result.get("message") or "ECOS collection failed"))
         values: list[dict[str, Any]] = []
         previous_value: float | None = None
+        monthly_values: dict[str, float] = {}
+        normalized_cycle = str(cycle).upper()
         for row in sorted(result.get("rows") or [], key=lambda item: str(item.get("TIME") or "")):
+            raw_time = str(row.get("TIME") or "")
             value = self._to_float(row.get("DATA_VALUE"))
-            value_date = self._value_date(row.get("TIME"), cycle)
+            value_date = self._value_date(raw_time, cycle)
             if value is None or not value_date:
                 continue
             change_value = None if previous_value is None else value - previous_value
             change_pct = None if previous_value in (None, 0) else (value - previous_value) / previous_value * 100
+            period_key = raw_time[:6]
+            yoy_pct = None
+            if normalized_cycle == "M" and len(period_key) == 6:
+                prior_key = f"{int(period_key[:4]) - 1}{period_key[4:6]}"
+                prior_value = monthly_values.get(prior_key)
+                yoy_pct = None if prior_value in (None, 0) else (value - prior_value) / prior_value * 100
             values.append(
                 {
                     "indicator_code": indicator_code,
                     "value_date": value_date,
-                    "period_label": self._period_label(row.get("TIME"), cycle) or str(row.get("TIME") or value_date),
+                    "period_label": self._period_label(raw_time, cycle) or str(row.get("TIME") or value_date),
                     "value": value,
                     "change_value": change_value,
                     "change_pct": change_pct,
-                    "mom_pct": change_pct if str(cycle).upper() == "M" else None,
-                    "yoy_pct": None,
+                    "mom_pct": change_pct if normalized_cycle == "M" else None,
+                    "yoy_pct": yoy_pct,
                     "source_provider": self.provider,
-                    "source_unit": row.get("UNIT_NAME"),
+                    "source_unit": row.get("UNIT_NAME") or params.get("source_unit"),
                     "is_preliminary": 0,
                     "release_date": None,
                     "raw_payload_json": json.dumps(self._sanitize_row(row), ensure_ascii=False),
                 }
             )
+            if normalized_cycle == "M" and len(period_key) == 6:
+                monthly_values[period_key] = value
             previous_value = value
         return values
-
     def _request(self, path_parts: list[str]) -> dict[str, Any]:
         url = "/".join([self.base_url] + [quote(part, safe="") for part in path_parts])
         request = Request(url, headers={"Accept": "application/json", "User-Agent": "drct-asset-office/1.0"})
@@ -333,9 +343,3 @@ class BokEcosProvider:
     def _sanitize_row(self, row: dict[str, Any]) -> dict[str, Any]:
         blocked = {"API_KEY", "AUTH_KEY", "KEY"}
         return {key: value for key, value in row.items() if str(key).upper() not in blocked}
-
-
-
-
-
-

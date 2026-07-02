@@ -83,8 +83,11 @@ export type MarketIndexCollectResponse = {
 
 export type MarketIndexComparePoint = {
   date: string;
+  plotDate?: string | null;
   value?: number | null;
   close_price?: number | null;
+  periodLabel?: string | null;
+  isCarryForward?: boolean;
 };
 
 export type MarketIndexCompareResponse = {

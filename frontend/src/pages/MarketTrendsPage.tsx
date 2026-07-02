@@ -1,9 +1,9 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { CSSProperties, DragEvent } from "react";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
-import { buildTreemapLayout, getTreemapLabelClass } from "@/utils/treemapLayout";
+import { buildTreemapLayout, getTreemapLabelClass, getTreemapTextMetrics } from "@/utils/treemapLayout";
 import { repositories } from "@/services";
 import type {
   AddMarketEventThemeLinkRequest,
@@ -366,6 +366,12 @@ function MarketTrendsPage() {
   }, [results, resultSort]);
 
   const selectedItems = useMemo(() => sortedResults.filter((r) => checkedMap[getResultRowKey(r)]), [checkedMap, sortedResults]);
+  const selectedConditionLabel = selectedConditionSeq ? `${selectedConditionSeq} / ${selectedConditionName}` : "조건식을 선택해 주세요.";
+  const conditionResultMeta = selectedConditionSeq
+    ? resultPanelStatus.includes("조회 중")
+      ? resultPanelStatus
+      : `조회 결과 ${sortedResults.length}건 / 선택 ${selectedItems.length}건`
+    : "조건식을 선택하면 결과를 조회할 수 있습니다.";
   const allResultChecked = useMemo(
     () => sortedResults.length > 0 && sortedResults.every((r) => Boolean(checkedMap[getResultRowKey(r)])),
     [sortedResults, checkedMap],
@@ -1309,11 +1315,16 @@ ${tableRows}
         <div className="space-y-4">
           <div className="grid grid-cols-1 xl:grid-cols-[380px_1fr] gap-4">
             <SectionCard title="">
-              <div className="watchlist-card-title-wrap">
-                <h3 className="section-title m-0">키움 조건식 목록</h3>
-                <span className="hint-icon" title="키움 REST API에서 조건검색식을 조회합니다. 새로고침 시 최신 조건식 목록을 다시 불러옵니다.">i</span>
+              <div className="market-trends-panel-header">
+                <div>
+                  <div className="market-trends-panel-title-row">
+                    <h3 className="market-trends-panel-title">키움 조건식 목록</h3>
+                    <span className="market-trends-panel-info" title="키움 REST API에서 조건검색식을 조회합니다. 새로고침 시 최신 조건식 목록을 다시 불러옵니다.">i</span>
+                  </div>
+                  <p className="market-trends-panel-subtitle">조건식을 선택해 결과를 조회합니다.</p>
+                </div>
               </div>
-              <div className="flex gap-2 mb-2">
+              <div className="market-trends-action-row market-trends-condition-toolbar">
                 <button type="button" className="btn btn-secondary" onClick={() => void refreshConditions()} disabled={conditionsRefreshing}>
                   {conditionsRefreshing ? "새로고침 중..." : "조건식 새로고침"}
                 </button>
@@ -1348,17 +1359,20 @@ ${tableRows}
             </SectionCard>
 
             <SectionCard title="">
-              <div className="watchlist-card-title-wrap">
-                <h3 className="section-title m-0">조건검색 결과</h3>
-                <span className="hint-icon" title="선택한 조건식의 현재 검색 결과입니다. 체크한 종목만 수급 이벤트 후보로 저장됩니다.">i</span>
-              </div>
-              <div className="space-y-2 mb-3">
-                <div className="text-sm text-muted">
-                  {selectedConditionSeq
-                    ? `${selectedConditionSeq} · ${selectedConditionName} · 조회 결과 ${sortedResults.length}건 · 선택 ${selectedItems.length}건`
-                    : "조건식을 선택해 주세요."}
+              <div className="market-trends-panel-header">
+                <div>
+                  <div className="market-trends-panel-title-row">
+                    <h3 className="market-trends-panel-title">조건검색 결과</h3>
+                    <span className="market-trends-panel-info" title="선택한 조건식의 현재 검색 결과입니다. 체크한 종목만 수급 이벤트 후보로 저장됩니다.">i</span>
+                  </div>
+                  <p className="market-trends-panel-subtitle">선택한 조건식의 종목 결과를 확인하고 후보로 저장합니다.</p>
                 </div>
-                {resultPanelStatus ? <div className="text-xs text-muted">{resultPanelStatus}</div> : null}
+              </div>
+              <div className="market-trends-result-head">
+                <div className="market-trends-panel-meta">
+                  <strong>{selectedConditionLabel}</strong>
+                  <span>{conditionResultMeta}</span>
+                </div>
                 <div className="market-trend-result-actions">
                   <div className="market-trend-result-actions-left">
                     <button type="button" className="btn btn-secondary" onClick={() => void loadConditionResults()} disabled={!selectedConditionSeq}>결과 조회</button>
@@ -1378,8 +1392,8 @@ ${tableRows}
                   </div>
                 </div>
               </div>
-              <div className="table-shell max-h-[420px] overflow-auto">
-                <table className="data-table compact-table condition-result-table">
+              <div className="table-shell max-h-[420px] overflow-auto market-trends-table-wrap">
+                <table className="data-table compact-table condition-result-table market-trends-table">
                   <colgroup>
                     <col className="condition-result-col-check" />
                     <col className="condition-result-col-stock" />
@@ -1440,13 +1454,18 @@ ${tableRows}
           </div>
 
           <SectionCard title="">
-            <div className="watchlist-card-title-wrap">
-              <h3 className="section-title m-0">저장된 수급 이벤트 후보</h3>
-              <span className="hint-icon" title="저장된 후보는 일별·월별 테마 수급 흐름 분석의 기초 데이터로 활용됩니다.">i</span>
+            <div className="market-trends-panel-header">
+              <div>
+                <div className="market-trends-panel-title-row">
+                  <h3 className="market-trends-panel-title">저장된 수급 이벤트 후보</h3>
+                  <span className="market-trends-panel-info" title="저장된 후보는 일별·월별 테마 수급 흐름 분석의 기초 데이터로 활용됩니다.">i</span>
+                </div>
+                <p className="market-trends-panel-subtitle">저장된 후보를 테마 수급 흐름 분석과 종목트래킹 등록에 활용합니다.</p>
+              </div>
             </div>
-            <div className="theme-event-candidate-toolbar">
+            <div className="theme-event-candidate-toolbar market-trends-action-row">
               <div className="candidate-date-nav calendar-period-nav">
-                <button type="button" className="btn btn-secondary calendar-nav-button" onClick={() => void applyFlowDate(shiftDate(tradeDate, -1))} aria-label="이전 날짜">◀</button>
+                <button type="button" className="btn btn-secondary calendar-nav-button" onClick={() => void applyFlowDate(shiftDate(tradeDate, -1))} aria-label="이전 날짜">&lt;</button>
                 <input
                   className="input-control candidate-date-input calendar-period-input"
                   type="date"
@@ -1461,7 +1480,7 @@ ${tableRows}
                   }}
                   aria-label="수급 이벤트 후보 날짜"
                 />
-                <button type="button" className="btn btn-secondary calendar-nav-button" onClick={() => void applyFlowDate(shiftDate(tradeDate, 1))} aria-label="다음 날짜">▶</button>
+                <button type="button" className="btn btn-secondary calendar-nav-button" onClick={() => void applyFlowDate(shiftDate(tradeDate, 1))} aria-label="다음 날짜">&gt;</button>
                 <button type="button" className="btn btn-primary calendar-today-button" onClick={() => void applyFlowDate(todayInKst())}>오늘</button>
               </div>
               <div className="theme-event-candidate-actions">
@@ -1478,8 +1497,8 @@ ${tableRows}
                 <button type="button" className="btn btn-primary" onClick={openManualCandidateModal}>+ 후보 직접등록</button>
               </div>
             </div>
-            <div className="table-shell">
-              <table className="data-table compact-table theme-event-candidate-table">
+            <div className="table-shell market-trends-table-wrap">
+              <table className="data-table compact-table theme-event-candidate-table market-trends-table">
                 <thead>
                   <tr>
                     <th className="condition-result-check-cell"><input type="checkbox" checked={allTrackingCandidatesChecked} onChange={(ev) => toggleAllTrackingCandidates(ev.target.checked)} aria-label="전체 후보 선택" /></th>
@@ -2203,11 +2222,14 @@ ${tableRows}
                   {monthlyTreemapItems.map((item) => {
                     const rect = monthlyTreemapRectMap.get(`${item.viewMode}-${item.marketThemeId}`);
                     const sizeClass = getThemeTreemapSizeClass(item, monthlyTreemapMaxScore);
-                    const labelClass = getTreemapLabelClass(rect);
+                    const textMetrics = getTreemapTextMetrics(rect, item.themeName, { variant: "marketTrend" });
+                    const labelClass = getTreemapLabelClass(rect, item.themeName, { variant: "marketTrend" });
                     const intensity = Math.max(0.22, Math.min(1, item.scoreSum / monthlyTreemapMaxScore));
                     const share = monthlyTreemapTotalScore > 0 ? Math.round((item.scoreSum / monthlyTreemapTotalScore) * 1000) / 10 : 0;
                     const style = {
                       "--theme-intensity": intensity,
+                      "--tile-title-size": `${textMetrics.titleFontSize}px`,
+                      "--tile-title-lines": textMetrics.titleLineClamp,
                       left: `calc(${rect?.x ?? 0}% + 2px)`,
                       top: `calc(${rect?.y ?? 0}% + 2px)`,
                       width: `calc(${rect?.width ?? 0}% - 4px)`,

@@ -118,6 +118,12 @@ class StockTrackingItemResponse(BaseModel):
     base_change_rate: float | None = None
     base_volume: int | None = None
     base_trading_value: int | None = None
+    entry_close_price: float | None = None
+    entry_close_date: str | None = None
+    latest_close_price: float | None = None
+    latest_close_date: str | None = None
+    tracking_return_pct: float | None = None
+    price_updated_at: str | None = None
     status: str
     review_date: str | None = None
     review_note: str | None = None

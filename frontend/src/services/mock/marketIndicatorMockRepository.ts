@@ -7,6 +7,7 @@ const providerStatuses: ExternalProviderStatusListResponse = {
     { provider: "DATA_GO_KR", display_name: "???????", configured: false, masked_key: null, status: "MISSING_KEY", message: "mock missing", last_checked_at: "mock" },
     { provider: "BOK_ECOS", display_name: "BOK ECOS", configured: false, masked_key: null, status: "MISSING_KEY", message: "mock missing", last_checked_at: "mock" },
     { provider: "KOSIS", display_name: "KOSIS", configured: false, masked_key: null, status: "MISSING_KEY", message: "mock missing", last_checked_at: "mock" },
+    { provider: "FRED", display_name: "FRED", configured: false, masked_key: null, status: "MISSING_KEY", message: "mock missing", last_checked_at: "mock" },
   ],
 };
 
