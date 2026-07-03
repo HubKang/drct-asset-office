@@ -128,6 +128,8 @@ export type UpdateStockTrackingReviewPayload = {
 export type CollectStockTrackingPricesPayload = {
   item_ids: number[];
   source?: string;
+  overlap_days?: number;
+  force_full_refresh?: boolean;
 };
 
 export type CollectStockTrackingPriceItemResult = {
@@ -136,7 +138,15 @@ export type CollectStockTrackingPriceItemResult = {
   stock_name: string | null;
   status: "SUCCESS" | "PARTIAL" | "FAILED" | "SKIPPED";
   collected_count: number;
+  saved_count?: number;
   last_collected_date: string | null;
+  target_start_date?: string | null;
+  latest_trade_date_before?: string | null;
+  requested_start_date?: string | null;
+  requested_end_date?: string | null;
+  collection_mode?: string | null;
+  overlap_days?: number;
+  force_full_refresh?: boolean;
   message: string | null;
 };
 

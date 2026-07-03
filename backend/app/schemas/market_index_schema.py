@@ -61,6 +61,9 @@ class MarketIndexCollectRequest(BaseModel):
     index_codes: list[str] | None = None
     start_date: str | None = None
     end_date: str | None = None
+    period_years: int = 2
+    overlap_days: int = 7
+    force_full_refresh: bool = False
 
 
 class MarketIndexCollectItemResult(BaseModel):
@@ -71,6 +74,10 @@ class MarketIndexCollectItemResult(BaseModel):
     saved_count: int = 0
     from_date: str | None = None
     to_date: str | None = None
+    collection_mode: str | None = None
+    latest_price_date_before: str | None = None
+    overlap_days: int = 7
+    force_full_refresh: bool = False
     message: str | None = None
     last_collected_date: str | None = None
     error_message: str | None = None

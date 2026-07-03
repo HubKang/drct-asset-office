@@ -140,6 +140,8 @@ class StockTrackingItemListResponse(BaseModel):
 class CollectStockTrackingPricesRequest(BaseModel):
     item_ids: list[int] = Field(default_factory=list)
     source: str = "kiwoom_rest"
+    overlap_days: int = 7
+    force_full_refresh: bool = False
 
 
 class CollectStockTrackingPriceItemResult(BaseModel):
@@ -148,7 +150,15 @@ class CollectStockTrackingPriceItemResult(BaseModel):
     stock_name: str | None = None
     status: str
     collected_count: int = 0
+    saved_count: int = 0
     last_collected_date: str | None = None
+    target_start_date: str | None = None
+    latest_trade_date_before: str | None = None
+    requested_start_date: str | None = None
+    requested_end_date: str | None = None
+    collection_mode: str | None = None
+    overlap_days: int = 7
+    force_full_refresh: bool = False
     message: str | None = None
 
 

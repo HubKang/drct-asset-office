@@ -42,6 +42,10 @@ export type SelectedStockPriceCollectRequest = {
   stock_ids: number[];
   period_years: number;
   source: string;
+  overlap_days?: number;
+  force_full_refresh?: boolean;
+  start_date?: string | null;
+  end_date?: string | null;
 };
 
 export type StockPriceCollectItemResult = {

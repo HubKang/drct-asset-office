@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+import logging
 from pathlib import Path
 import re
 from uuid import uuid4
@@ -36,6 +37,8 @@ from backend.app.schemas.stock_tracking_schema import (
 )
 
 ALLOWED_ITEM_STATUS = {"TRACKING", "SUCCESS", "FAIL", "HOLD", "EXCLUDED"}
+logger = logging.getLogger(__name__)
+
 FINAL_STATUSES = {"SUCCESS", "FAIL", "EXCLUDED"}
 ALLOWED_PRICE_STATUS = {"NOT_COLLECTED", "COLLECTING", "LATEST", "PARTIAL", "STOPPED", "ERROR"}
 ALLOWED_IMAGE_TYPES = {
@@ -1226,12 +1229,34 @@ class StockTrackingService:
         self.db.commit()
         return self._ensure_price_target(item)
 
-    def _latest_price_date(self, stock_id: int) -> str | None:
+    def _latest_price_date(self, stock_id: int, source: str | None = None) -> str | None:
+        clauses = ["stock_id = :stock_id"]
+        params: dict[str, object] = {"stock_id": stock_id}
+        if source:
+            clauses.append("source = :source")
+            params["source"] = source
         value = self.db.execute(
-            text("SELECT MAX(trade_date) FROM stock_daily_prices WHERE stock_id = :stock_id"),
-            {"stock_id": stock_id},
+            text(f"SELECT MAX(trade_date) FROM stock_daily_prices WHERE {' AND '.join(clauses)}"),
+            params,
         ).scalar_one_or_none()
         return str(value) if value else None
+
+    def _resolve_tracking_collect_window(
+        self,
+        target_start_date: date,
+        latest_trade_date: str | None,
+        overlap_days: int,
+        force_full_refresh: bool,
+        today: date,
+    ) -> tuple[str, date]:
+        if force_full_refresh:
+            return "full_refresh_from_target_start", target_start_date
+        if not latest_trade_date:
+            return "initial_tracking_backfill", target_start_date
+
+        latest = self._parse_date(str(latest_trade_date))
+        overlap_start = latest - timedelta(days=max(0, overlap_days))
+        return "tracking_incremental_overlap", max(target_start_date, overlap_start)
 
     def collect_prices(self, payload: CollectStockTrackingPricesRequest) -> CollectStockTrackingPricesResponse:
         item_ids = list(dict.fromkeys([int(v) for v in payload.item_ids if int(v) > 0]))
@@ -1255,7 +1280,7 @@ class StockTrackingService:
                         "stock_name": item.get("stock_name"),
                         "status": "SKIPPED",
                         "collected_count": 0,
-                        "last_collected_date": self._latest_price_date(int(item["stock_id"])) if item.get("stock_id") else None,
+                        "last_collected_date": self._latest_price_date(int(item["stock_id"]), source=payload.source) if item.get("stock_id") else None,
                         "message": "?? ?? ??? ???? ?? ??? ????.",
                     })
                     continue
@@ -1280,10 +1305,33 @@ class StockTrackingService:
                 self.db.execute(text("UPDATE stock_tracking_items SET price_status = 'COLLECTING', updated_at = :updated_at WHERE id = :item_id"), {"item_id": item_id, "updated_at": now})
                 self.db.execute(text("UPDATE price_collection_targets SET status = 'ACTIVE', error_message = NULL, updated_at = :updated_at WHERE source_type = 'STOCK_TRACKING' AND source_id = :item_id"), {"item_id": item_id, "updated_at": now})
                 self.db.commit()
-                start_date = self._parse_date(str(target.get("start_date") or _target_start_date(str(item.get("tracking_base_date")))))
+                target_start_date = self._parse_date(str(target.get("start_date") or _target_start_date(str(item.get("tracking_base_date")))))
                 end_date = datetime.now().date()
+                latest_trade_date_before = self._latest_price_date(stock.id, source=payload.source)
+                collection_mode, start_date = self._resolve_tracking_collect_window(
+                    target_start_date=target_start_date,
+                    latest_trade_date=latest_trade_date_before,
+                    overlap_days=payload.overlap_days,
+                    force_full_refresh=payload.force_full_refresh,
+                    today=end_date,
+                )
+                logger.info(
+                    "[TRACKING PRICE DEBUG] item_id=%s stock_id=%s stock_name=%s stock_code=%s source=%s mode=%s target_start_date=%s latest_trade_date=%s requested_start_date=%s requested_end_date=%s overlap_days=%s force_full_refresh=%s",
+                    item_id,
+                    stock.id,
+                    stock.stock_name,
+                    stock.stock_code,
+                    payload.source,
+                    collection_mode,
+                    target_start_date.isoformat(),
+                    latest_trade_date_before,
+                    start_date.isoformat(),
+                    end_date.isoformat(),
+                    payload.overlap_days,
+                    payload.force_full_refresh,
+                )
                 normalized, collected_count, saved_count = price_service._collect_and_upsert(stock=stock, source=payload.source, start_date=start_date, end_date=end_date)
-                last_collected = self._latest_price_date(stock.id)
+                last_collected = self._latest_price_date(stock.id, source=payload.source)
                 next_status = "LATEST" if collected_count > 0 else "PARTIAL"
                 target_status = "ACTIVE" if collected_count > 0 else "PARTIAL"
                 if collected_count > 0:
@@ -1313,7 +1361,15 @@ class StockTrackingService:
                     "stock_name": stock.stock_name,
                     "status": "SUCCESS" if collected_count > 0 else "PARTIAL",
                     "collected_count": collected_count,
+                    "saved_count": saved_count,
                     "last_collected_date": last_collected,
+                    "target_start_date": target_start_date.isoformat(),
+                    "latest_trade_date_before": latest_trade_date_before,
+                    "requested_start_date": start_date.isoformat(),
+                    "requested_end_date": end_date.isoformat(),
+                    "collection_mode": collection_mode,
+                    "overlap_days": payload.overlap_days,
+                    "force_full_refresh": payload.force_full_refresh,
                     "message": message,
                 })
             except Exception as exc:

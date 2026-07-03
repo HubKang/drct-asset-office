@@ -90,6 +90,13 @@ const parseDateInputValue = (value: string) => {
 
 const getDateInputValue = () => formatDateInputValue(new Date());
 
+const formatThemeReturnDateLabel = (value?: string | null) => {
+  if (!value) return "-";
+  const datePart = value.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return datePart.replace(/-/g, ".");
+  return value;
+};
+
 const getDateRange = (startDate: string, endDate: string) => {
   const dates: string[] = [];
   const start = parseDateInputValue(startDate);
@@ -306,6 +313,17 @@ function MarketThemesPage() {
     () => manageableThemes.filter((x) => x.is_active === 1).reduce((sum, theme) => sum + (theme.stock_count ?? 0), 0),
     [manageableThemes],
   );
+  const latestThemeReturnRefresh = useMemo<{ returnDate: string; refreshedAt: string | null } | null>(() => {
+    return manageableThemes.reduce<{ returnDate: string; refreshedAt: string | null } | null>((latest, theme) => {
+      const returnDate = theme.latest_return?.return_date;
+      if (!returnDate) return latest;
+      const refreshedAt = theme.latest_return?.last_refreshed_at ?? null;
+      if (!latest || returnDate > latest.returnDate || (returnDate === latest.returnDate && (refreshedAt ?? "") > (latest.refreshedAt ?? ""))) {
+        return { returnDate, refreshedAt };
+      }
+      return latest;
+    }, null);
+  }, [manageableThemes]);
   const themeGroupCount = useMemo(() => themes.filter((x) => x.theme_level === "THEME_GROUP").length, [themes]);
   const themeManagementTitle = themeViewMode === "group" ? "테마그룹 관리" : themeViewMode === "trend" ? "테마등락추이" : "테마별 관리";
 
@@ -919,9 +937,14 @@ function MarketThemesPage() {
             <input className="input-control market-theme-search-input" placeholder="테마그룹명, 테마명 또는 키워드 검색" value={themeFilterKeyword} onChange={(e) => setThemeFilterKeyword(e.target.value)} />
             <button type="button" className="btn btn-secondary market-theme-action-button" onClick={openCreateThemeModal}>+ 테마 등록</button>
             {themeViewMode === "theme" ? (
-              <button type="button" className="btn btn-secondary market-theme-action-button market-theme-refresh-button" onClick={() => void onRefreshThemeReturns()} disabled={refreshingReturns}>
-                {refreshingReturns ? "갱신 중..." : "테마등락률 갱신"}
-              </button>
+              <div className="market-theme-refresh-action-group">
+                <span className="market-theme-latest-return-date" title={latestThemeReturnRefresh?.refreshedAt ? `최종 처리: ${latestThemeReturnRefresh.refreshedAt}` : undefined}>
+                  최신갱신일 {formatThemeReturnDateLabel(latestThemeReturnRefresh?.returnDate)}
+                </span>
+                <button type="button" className="btn btn-secondary market-theme-action-button market-theme-refresh-button" onClick={() => void onRefreshThemeReturns()} disabled={refreshingReturns}>
+                  {refreshingReturns ? "갱신 중..." : "테마등락률 갱신"}
+                </button>
+              </div>
             ) : null}
           </div>
           <div className="table-shell">

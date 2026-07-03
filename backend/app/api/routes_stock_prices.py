@@ -25,6 +25,10 @@ def collect_selected_prices(payload: SelectedStockPriceCollectRequest, db: Sessi
         stock_ids=payload.stock_ids,
         period_years=payload.period_years,
         source=payload.source,
+        overlap_days=payload.overlap_days,
+        force_full_refresh=payload.force_full_refresh,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
     )
 
 

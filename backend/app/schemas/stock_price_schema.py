@@ -107,6 +107,10 @@ class SelectedStockPriceCollectRequest(BaseModel):
     stock_ids: list[int] = Field(default_factory=list)
     period_years: int = 2
     source: str = "kiwoom_rest"
+    overlap_days: int = 7
+    force_full_refresh: bool = False
+    start_date: str | None = None
+    end_date: str | None = None
 
 
 class StockPriceCollectItemResult(BaseModel):

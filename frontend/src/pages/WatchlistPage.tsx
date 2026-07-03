@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import EmptyState from "@/components/common/EmptyState";
 import SectionCard from "@/components/common/SectionCard";
@@ -13,19 +13,20 @@ import type { Watchlist } from "@/types/watchlist";
 
 type WatchlistViewMode = "theme" | "list";
 type WatchlistStatus = "not_registered" | "active" | "inactive";
+type PriceCollectionMode = "recent" | "full";
 type ThemeGroup = { themeName: string; rows: Watchlist[]; activeCount: number; inactiveCount: number };
 type ThemeMapPayload = { nameMap: Record<number, string>; idMap: Record<number, number> };
 
 const MARKET_OPTIONS = [
-  { value: "", label: "전체" },
+  { value: "", label: "\uC804\uCCB4" },
   { value: "KOSPI", label: "KOSPI" },
   { value: "KOSDAQ", label: "KOSDAQ" },
 ] as const;
 
 const WATCHLIST_STATE_OPTIONS = [
-  { value: 1, label: "활성" },
-  { value: 0, label: "비활성" },
-  { value: -1, label: "전체" },
+  { value: 1, label: "\uD65C\uC131" },
+  { value: 0, label: "\uBE44\uD65C\uC131" },
+  { value: -1, label: "\uC804\uCCB4" },
 ] as const;
 
 function normalizeKrStockCode(code?: string | null): string {
@@ -44,11 +45,30 @@ function formatCollectionPeriod(item: Watchlist): string {
   const start = item.price_start_date || "";
   const end = item.price_end_date || "";
   if (start && end) return `${start} ~ ${end}`;
-  return "미수집";
+  return "\uBBF8\uC218\uC9D1";
+}
+
+function formatPriceCollectRange(result: StockPriceCollectResult): string {
+  const fromDates = result.results.map((item) => item.from_date).filter((value): value is string => Boolean(value));
+  const toDates = result.results.map((item) => item.to_date).filter((value): value is string => Boolean(value));
+  if (!fromDates.length || !toDates.length) return "";
+  return `${fromDates.sort()[0]} ~ ${toDates.sort()[toDates.length - 1]}`;
+}
+
+function formatPriceCollectMessage(mode: PriceCollectionMode, priceResult: StockPriceCollectResult, metricsFailedCount: number): string {
+  const label = mode === "full" ? "\uC804\uCCB4\uC218\uC9D1" : "\uCD5C\uADFC7\uC77C\uC218\uC9D1";
+  const range = formatPriceCollectRange(priceResult);
+  const savedText = priceResult.saved_count.toLocaleString("ko-KR");
+  const rangeText = range ? `: ${range}, \uC800\uC7A5 ${savedText}\uAC74` : `: \uC800\uC7A5 ${savedText}\uAC74`;
+  if (priceResult.failed_count > 0 || metricsFailedCount > 0) {
+    return `${label} \uC644\uB8CC${rangeText}. \uC77C\uBD80 \uAC00\uACA9 \uB610\uB294 \uC2DC\uC7A5\uC9C0\uD45C \uAC31\uC2E0\uC5D0 \uC2E4\uD328\uD588\uC2B5\uB2C8\uB2E4.`;
+  }
+  return `${label} \uC644\uB8CC${rangeText}. \uAD00\uC2EC\uC885\uBAA9 \uAC00\uACA9\u00B7\uAE30\uC220\uC9C0\uD45C\u00B7\uC2DC\uC7A5\uC9C0\uD45C\uAC00 \uAC31\uC2E0\uB418\uC5C8\uC2B5\uB2C8\uB2E4.`;
 }
 
 function WatchlistPage() {
   const navigate = useNavigate();
+  const listSelectAllRef = useRef<HTMLInputElement | null>(null);
   const [allWatchlistRows, setAllWatchlistRows] = useState<Watchlist[]>([]);
   const [selectedWatchlistStockIds, setSelectedWatchlistStockIds] = useState<number[]>([]);
   const [stockCount, setStockCount] = useState(0);
@@ -74,6 +94,7 @@ function WatchlistPage() {
   const [actionError, setActionError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
   const [actionLoading, setActionLoading] = useState("");
+  const [fullRefreshConfirmOpen, setFullRefreshConfirmOpen] = useState(false);
   const [selectedNewsCollectResult, setSelectedNewsCollectResult] = useState<NewsCollectSelectedResponse | null>(null);
   const [selectedDisclosureCollectResult, setSelectedDisclosureCollectResult] = useState<DisclosureCollectSelectedResponse | null>(null);
   const [selectedPriceCollectResult, setSelectedPriceCollectResult] = useState<StockPriceCollectResult | null>(null);
@@ -174,6 +195,19 @@ function WatchlistPage() {
     });
   }, [allWatchlistRows, watchlistKeyword, watchlistMarket, watchlistState]);
 
+  const filteredWatchlistStockIds = useMemo(() => filteredWatchlist.map((row) => row.stock_id), [filteredWatchlist]);
+  const selectedFilteredCount = filteredWatchlistStockIds.filter((stockId) => selectedWatchlistStockIds.includes(stockId)).length;
+  const allFilteredSelected = filteredWatchlistStockIds.length > 0 && selectedFilteredCount === filteredWatchlistStockIds.length;
+  const someFilteredSelected = selectedFilteredCount > 0 && selectedFilteredCount < filteredWatchlistStockIds.length;
+
+  useEffect(() => {
+    if (listSelectAllRef.current) listSelectAllRef.current.indeterminate = someFilteredSelected;
+  }, [someFilteredSelected]);
+
+  const toggleRowsSelection = (rows: Watchlist[], checked: boolean) => {
+    const targetIds = rows.map((row) => row.stock_id);
+    setSelectedWatchlistStockIds((prev) => checked ? Array.from(new Set([...prev, ...targetIds])) : prev.filter((id) => !targetIds.includes(id)));
+  };
   const themeGroups = useMemo<ThemeGroup[]>(() => {
     const bucket: Record<string, Watchlist[]> = {};
     filteredWatchlist.forEach((x) => {
@@ -244,13 +278,16 @@ function WatchlistPage() {
     });
   };
 
-  const onRefreshSelectedPriceAndMarketMetrics = async () => {
+  const onRefreshSelectedPriceAndMarketMetrics = async (mode: PriceCollectionMode) => {
     if (selectedWatchlistStockIds.length === 0) return;
-    await runAction("refresh-selected-price-market-metrics", async () => {
+    const actionKey = mode === "full" ? "refresh-selected-price-market-metrics-full" : "refresh-selected-price-market-metrics-recent";
+    await runAction(actionKey, async () => {
       const priceResult = await repositories.stockPrices.collectSelected({
         stock_ids: selectedWatchlistStockIds,
         period_years: 2,
         source: "kiwoom_rest",
+        overlap_days: 7,
+        force_full_refresh: mode === "full",
       });
       setSelectedPriceCollectResult(priceResult);
       const metricsResult = await repositories.stockPrices.collectSelectedMarketMetrics({
@@ -258,11 +295,8 @@ function WatchlistPage() {
         source: "kiwoom_rest",
       });
       setSelectedMarketMetricsCollectResult(metricsResult);
-      if (priceResult.failed_count > 0 || metricsResult.failed_count > 0) {
-        setActionMessage("가격 데이터는 갱신되었지만 일부 지표 갱신에 실패했습니다.");
-      } else {
-        setActionMessage("가격 데이터, 기술지표, 시장지표 갱신이 완료되었습니다.");
-      }
+      setActionMessage(formatPriceCollectMessage(mode, priceResult, metricsResult.failed_count));
+      if (mode === "full") setFullRefreshConfirmOpen(false);
     });
   };
 
@@ -491,12 +525,20 @@ function WatchlistPage() {
                 공시 수집
               </button>
               <button
-                className="btn btn-secondary"
-                title="가격 데이터를 갱신하면 기술지표가 자동으로 재계산됩니다. 이어서 시장지표도 함께 갱신합니다."
-                disabled={selectedWatchlistStockIds.length === 0 || actionLoading === "refresh-selected-price-market-metrics"}
-                onClick={() => void onRefreshSelectedPriceAndMarketMetrics()}
+                className="btn btn-primary"
+                title={"\uB9C8\uC9C0\uB9C9 \uC218\uC9D1\uC77C \uAE30\uC900 7\uC77C \uC804\uBD80\uD130 \uC624\uB298\uAE4C\uC9C0 \uB2E4\uC2DC \uC218\uC9D1\uD569\uB2C8\uB2E4. \uAE30\uC874 \uB370\uC774\uD130\uAC00 \uC5C6\uC73C\uBA74 \uCD5C\uCD08\uC218\uC9D1\uC73C\uB85C \uCC98\uB9AC\uB429\uB2C8\uB2E4."}
+                disabled={selectedWatchlistStockIds.length === 0 || actionLoading.startsWith("refresh-selected-price-market-metrics")}
+                onClick={() => void onRefreshSelectedPriceAndMarketMetrics("recent")}
               >
-                {actionLoading === "refresh-selected-price-market-metrics" ? "가격·시장지표 갱신 중..." : "가격·시장지표 갱신"}
+                {actionLoading === "refresh-selected-price-market-metrics-recent" ? "\uCD5C\uADFC7\uC77C\uC218\uC9D1 \uC911..." : "\uCD5C\uADFC7\uC77C\uC218\uC9D1"}
+              </button>
+              <button
+                className="btn btn-secondary watchlist-full-refresh-button"
+                title={"\uAE30\uC874 \uC218\uC9D1 \uAE30\uAC04 \uC804\uCCB4\uB97C \uB2E4\uC2DC \uC694\uCCAD\uD574 upsert\uD569\uB2C8\uB2E4. \uAE30\uC874 \uB370\uC774\uD130\uB294 \uC0AD\uC81C\uB418\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4."}
+                disabled={selectedWatchlistStockIds.length === 0 || actionLoading.startsWith("refresh-selected-price-market-metrics")}
+                onClick={() => setFullRefreshConfirmOpen(true)}
+              >
+                {actionLoading === "refresh-selected-price-market-metrics-full" ? "\uC804\uCCB4\uC218\uC9D1 \uC911..." : "\uC804\uCCB4\uC218\uC9D1"}
               </button>
               <button className="btn btn-secondary" disabled={selectedWatchlistStockIds.length === 0} onClick={() => navigate("/advisory-packages")}>
                 GPT 자료 패키지
@@ -505,6 +547,9 @@ function WatchlistPage() {
                 Data분석 이동
               </button>
             </div>
+            <p className="watchlist-collection-help">
+              {"\uCD5C\uADFC7\uC77C\uC218\uC9D1\uC740 \uB9C8\uC9C0\uB9C9 \uC218\uC9D1\uC77C \uAE30\uC900 7\uC77C \uC804\uBD80\uD130 \uC624\uB298\uAE4C\uC9C0 \uB2E4\uC2DC \uC218\uC9D1\uD569\uB2C8\uB2E4. \uC804\uCCB4\uC218\uC9D1\uC740 \uAE30\uC874 \uAE30\uAC04 \uC804\uCCB4\uB97C \uB2E4\uC2DC \uC694\uCCAD\uD558\uBA70, \uAE30\uC874 \uB370\uC774\uD130\uB294 \uC0AD\uC81C\uB418\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4."}
+            </p>
           </div>
 
         </div>
@@ -549,7 +594,7 @@ function WatchlistPage() {
                       <table className="data-table compact-table watchlist-table min-w-[760px]">
                         <thead>
                           <tr>
-                            <th className="selection-cell">선택</th>
+                            <th className="selection-cell"><input className="selection-checkbox" type="checkbox" aria-label="그룹 전체 선택" title="그룹 전체 선택" checked={group.rows.length > 0 && group.rows.every((row) => selectedWatchlistStockIds.includes(row.stock_id))} onChange={(e) => toggleRowsSelection(group.rows, e.target.checked)} /></th>
                             <th>상태</th>
                             <th>종목</th>
                             <th>시장</th>
@@ -613,7 +658,7 @@ function WatchlistPage() {
             <table className="data-table compact-table watchlist-table min-w-[760px]">
               <thead>
                 <tr>
-                  <th className="selection-cell">선택</th>
+                  <th className="selection-cell"><input ref={listSelectAllRef} className="selection-checkbox" type="checkbox" aria-label="현재 목록 전체 선택" title="현재 목록 전체 선택" checked={allFilteredSelected} onChange={(e) => toggleRowsSelection(filteredWatchlist, e.target.checked)} /></th>
                   <th>상태</th>
                   <th>종목명/코드</th>
                   <th>시장</th>
@@ -668,6 +713,31 @@ function WatchlistPage() {
         ) : null}
       </SectionCard>
 
+      {fullRefreshConfirmOpen ? (
+        <div className="modal-backdrop" onClick={() => setFullRefreshConfirmOpen(false)}>
+          <div className="modal-card watchlist-refresh-confirm-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="trade-journal-detail-header">
+              <h3>{"\uC804\uCCB4\uC218\uC9D1\uC744 \uC2E4\uD589\uD558\uC2DC\uACA0\uC2B5\uB2C8\uAE4C?"}</h3>
+              <button className="btn btn-secondary btn-table-sm" type="button" onClick={() => setFullRefreshConfirmOpen(false)}>
+                {"\uCDE8\uC18C"}
+              </button>
+            </div>
+            <div className="watchlist-refresh-confirm-body">
+              <p>{"\uC804\uCCB4\uC218\uC9D1\uC740 \uAD00\uC2EC\uC885\uBAA9\uC758 \uAE30\uC874 \uC218\uC9D1 \uAE30\uAC04 \uB370\uC774\uD130\uB97C \uB2E4\uC2DC \uC694\uCCAD\uD574 upsert\uD569\uB2C8\uB2E4."}</p>
+              <p>{"\uAE30\uC874 \uB370\uC774\uD130\uB294 \uC0AD\uC81C\uB418\uC9C0 \uC54A\uC9C0\uB9CC, \uC218\uC9D1 \uC2DC\uAC04\uC774 \uC624\uB798 \uAC78\uB9B4 \uC218 \uC788\uC2B5\uB2C8\uB2E4."}</p>
+              <p className="watchlist-refresh-confirm-note">{"\uC77C\uBC18\uC801\uC778 \uAC31\uC2E0\uC740 \uCD5C\uADFC7\uC77C\uC218\uC9D1\uC744 \uC0AC\uC6A9\uD558\uC138\uC694."}</p>
+            </div>
+            <div className="watchlist-refresh-confirm-actions">
+              <button className="btn btn-secondary" type="button" disabled={actionLoading === "refresh-selected-price-market-metrics-full"} onClick={() => setFullRefreshConfirmOpen(false)}>
+                {"\uCDE8\uC18C"}
+              </button>
+              <button className="btn btn-danger" type="button" disabled={selectedWatchlistStockIds.length === 0 || actionLoading === "refresh-selected-price-market-metrics-full"} onClick={() => void onRefreshSelectedPriceAndMarketMetrics("full")}>
+                {actionLoading === "refresh-selected-price-market-metrics-full" ? "\uC804\uCCB4\uC218\uC9D1 \uC911..." : "\uC804\uCCB4\uC218\uC9D1 \uC2E4\uD589"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {modalOpen ? (
         <div className="modal-backdrop" onClick={() => setModalOpen(false)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>

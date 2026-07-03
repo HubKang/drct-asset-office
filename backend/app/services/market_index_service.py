@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -29,6 +30,8 @@ STATUS_NO_OFFICIAL_INDEX = "NO_OFFICIAL_INDEX"
 STATUS_CUSTOM_INDEX_REQUIRED = "CUSTOM_INDEX_REQUIRED"
 STATUS_EXCLUDED = "EXCLUDED"
 EXCLUDED_COLLECT_STATUSES = {STATUS_NO_OFFICIAL_INDEX, STATUS_CUSTOM_INDEX_REQUIRED, STATUS_EXCLUDED}
+
+logger = logging.getLogger(__name__)
 
 
 class MarketIndexService:
@@ -183,10 +186,61 @@ class MarketIndexService:
             )
         return {"normalize": normalize, "start_date": start_date, "end_date": end_date, "series": series}
 
-    def collect(self, *, index_codes: list[str] | None, start_date: str | None, end_date: str | None) -> dict[str, Any]:
-        today = self._today()
+    def _resolve_collect_window(
+        self,
+        *,
+        index_code: str,
+        today: date,
+        start_date: str | None,
+        end_date: str | None,
+        period_years: int,
+        overlap_days: int,
+        force_full_refresh: bool,
+    ) -> tuple[str, date, date, str | None]:
+        safe_period_years = max(1, period_years)
+        safe_overlap_days = max(0, overlap_days)
         end_dt = self._parse_date(end_date, today)
-        start_dt = self._parse_date(start_date, end_dt - timedelta(days=365 * 2))
+        full_start = end_dt - timedelta(days=safe_period_years * 365)
+
+        if start_date or end_date:
+            start_dt = self._parse_date(start_date, full_start)
+            if start_dt > end_dt:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="start_date must be earlier than or equal to end_date",
+                )
+            return "manual_range", start_dt, end_dt, None
+
+        if force_full_refresh:
+            return "full_refresh", full_start, end_dt, None
+
+        latest_price_date = self._latest_price_date(index_code)
+        if not latest_price_date:
+            return "initial_backfill", full_start, end_dt, None
+
+        latest_dt = self._parse_date(str(latest_price_date), end_dt)
+        start_dt = latest_dt - timedelta(days=safe_overlap_days)
+        return "incremental_overlap", start_dt, end_dt, str(latest_price_date)
+
+    def collect(
+        self,
+        *,
+        index_codes: list[str] | None,
+        start_date: str | None,
+        end_date: str | None,
+        period_years: int = 2,
+        overlap_days: int = 7,
+        force_full_refresh: bool = False,
+    ) -> dict[str, Any]:
+        today = self._today()
+        preview_end_dt = self._parse_date(end_date, today)
+        preview_start_dt = self._parse_date(start_date, preview_end_dt - timedelta(days=max(1, period_years) * 365))
+        if preview_start_dt > preview_end_dt:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="start_date must be earlier than or equal to end_date",
+            )
+        preview_mode = "manual_range" if start_date or end_date else ("full_refresh" if force_full_refresh else "incremental_or_initial")
         masters = self._target_indexes(index_codes)
         include_inactive_policy_rows = index_codes is None
         results = []
@@ -199,6 +253,10 @@ class MarketIndexService:
             code = master["index_code"]
             index_name = self._display_name(code, master.get("index_name"))
             current_status = self._normalize_status(master.get("collection_status"), master.get("last_collected_date"))
+            mode = preview_mode
+            start_dt = preview_start_dt
+            end_dt = preview_end_dt
+            latest_price_date_before = None
             if current_status in EXCLUDED_COLLECT_STATUSES or not bool(master.get("is_active", 1)):
                 excluded_count += 1
                 message = master.get("error_message") or master.get("description") or '공식 업종지수 수집 대상이 아닙니다.'
@@ -211,6 +269,10 @@ class MarketIndexService:
                         "saved_count": 0,
                         "from_date": start_dt.isoformat(),
                         "to_date": end_dt.isoformat(),
+                        "collection_mode": mode,
+                        "latest_price_date_before": latest_price_date_before,
+                        "overlap_days": overlap_days,
+                        "force_full_refresh": force_full_refresh,
                         "last_collected_date": master.get("last_collected_date"),
                         "error_message": message,
                         "message": message,
@@ -218,6 +280,26 @@ class MarketIndexService:
                 )
                 continue
             try:
+                mode, start_dt, end_dt, latest_price_date_before = self._resolve_collect_window(
+                    index_code=code,
+                    today=today,
+                    start_date=start_date,
+                    end_date=end_date,
+                    period_years=period_years,
+                    overlap_days=overlap_days,
+                    force_full_refresh=force_full_refresh,
+                )
+                logger.info(
+                    "[MARKET INDEX PRICE DEBUG] index_code=%s index_name=%s mode=%s latest_price_date=%s requested_start_date=%s requested_end_date=%s overlap_days=%s force_full_refresh=%s",
+                    code,
+                    index_name,
+                    mode,
+                    latest_price_date_before,
+                    start_dt.isoformat(),
+                    end_dt.isoformat(),
+                    overlap_days,
+                    force_full_refresh,
+                )
                 self._update_collect_status(code, "COLLECTING", None, None)
                 mapping = self._get_enabled_provider_mapping(code)
                 if mapping is None and code.upper() not in {"KOSPI", "KOSDAQ"}:
@@ -248,6 +330,10 @@ class MarketIndexService:
                         "saved_count": saved,
                         "from_date": start_dt.isoformat(),
                         "to_date": end_dt.isoformat(),
+                        "collection_mode": mode,
+                        "latest_price_date_before": latest_price_date_before,
+                        "overlap_days": overlap_days,
+                        "force_full_refresh": force_full_refresh,
                         "message": f"{index_name} 지수 데이터를 갱신했습니다.",
                         "last_collected_date": latest_date,
                         "error_message": None,
@@ -266,6 +352,10 @@ class MarketIndexService:
                         "saved_count": 0,
                         "from_date": start_dt.isoformat(),
                         "to_date": end_dt.isoformat(),
+                        "collection_mode": mode,
+                        "latest_price_date_before": latest_price_date_before,
+                        "overlap_days": overlap_days,
+                        "force_full_refresh": force_full_refresh,
                         "last_collected_date": None,
                         "error_message": message,
                         "message": message,
@@ -283,9 +373,13 @@ class MarketIndexService:
                         "collected_count": 0,
                         "saved_count": 0,
                         "from_date": start_dt.isoformat(),
+                        "to_date": end_dt.isoformat(),
+                        "collection_mode": mode,
+                        "latest_price_date_before": latest_price_date_before,
+                        "overlap_days": overlap_days,
+                        "force_full_refresh": force_full_refresh,
                         "last_collected_date": None,
                         "error_message": message,
-                        "to_date": end_dt.isoformat(),
                         "message": message,
                     }
                 )
@@ -307,8 +401,12 @@ class MarketIndexService:
                         "status": current_status,
                         "collected_count": 0,
                         "saved_count": 0,
-                        "from_date": start_dt.isoformat(),
-                        "to_date": end_dt.isoformat(),
+                        "from_date": preview_start_dt.isoformat(),
+                        "to_date": preview_end_dt.isoformat(),
+                        "collection_mode": preview_mode,
+                        "latest_price_date_before": None,
+                        "overlap_days": overlap_days,
+                        "force_full_refresh": force_full_refresh,
                         "last_collected_date": master.get("last_collected_date"),
                         "error_message": message,
                         "message": message,
@@ -857,30 +955,11 @@ class MarketIndexService:
         ]
 
     def _upsert_daily_rows(self, index_code: str, rows: list[dict[str, Any]], *, source_provider: str) -> int:
-        saved = 0
+        params: list[dict[str, Any]] = []
         for row in rows:
             if not row.get("price_date") or row.get("close_price") is None:
                 continue
-            result = self.db.execute(
-                text(
-                    """
-                    INSERT INTO market_index_daily_prices
-                    (index_code, price_date, open_price, high_price, low_price, close_price, volume, trading_value,
-                     change_rate, source_provider, created_at, updated_at)
-                    VALUES (:index_code, :price_date, :open_price, :high_price, :low_price, :close_price, :volume,
-                            :trading_value, :change_rate, :source_provider, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                    ON CONFLICT(index_code, price_date) DO UPDATE SET
-                        open_price = excluded.open_price,
-                        high_price = excluded.high_price,
-                        low_price = excluded.low_price,
-                        close_price = excluded.close_price,
-                        volume = excluded.volume,
-                        trading_value = excluded.trading_value,
-                        change_rate = excluded.change_rate,
-                        source_provider = excluded.source_provider,
-                        updated_at = CURRENT_TIMESTAMP
-                    """
-                ),
+            params.append(
                 {
                     "index_code": index_code,
                     "price_date": row.get("price_date"),
@@ -892,11 +971,39 @@ class MarketIndexService:
                     "trading_value": row.get("trading_value"),
                     "change_rate": row.get("change_rate"),
                     "source_provider": source_provider,
-                },
+                }
             )
-            saved += max(int(result.rowcount or 0), 0)
+        if not params:
+            return 0
+
+        sql = text(
+            """
+            INSERT INTO market_index_daily_prices
+            (index_code, price_date, open_price, high_price, low_price, close_price, volume, trading_value,
+             change_rate, source_provider, created_at, updated_at)
+            VALUES (:index_code, :price_date, :open_price, :high_price, :low_price, :close_price, :volume,
+                    :trading_value, :change_rate, :source_provider, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT(index_code, price_date) DO UPDATE SET
+                open_price = excluded.open_price,
+                high_price = excluded.high_price,
+                low_price = excluded.low_price,
+                close_price = excluded.close_price,
+                volume = excluded.volume,
+                trading_value = excluded.trading_value,
+                change_rate = excluded.change_rate,
+                source_provider = excluded.source_provider,
+                updated_at = CURRENT_TIMESTAMP
+            """
+        )
+        self.db.execute(sql, params)
         self.db.commit()
-        return saved
+        logger.info(
+            "market index daily price batch upsert completed: index_code=%s rows_count=%s saved_count=%s upsert_mode=batch",
+            index_code,
+            len(rows),
+            len(params),
+        )
+        return len(params)
 
     def _recalculate_moving_averages(self, index_code: str) -> None:
         rows = self._daily_rows(index_code, None, None)

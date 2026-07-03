@@ -29,6 +29,37 @@ const toneLabels: Record<MarketEnvironmentTone, string> = {
 
 export const getMarketEnvironmentToneLabel = (tone: MarketEnvironmentTone) => toneLabels[tone];
 
+const compactInsightPriority: Record<string, number> = {
+  stock: 100,
+  fx: 92,
+  rate: 88,
+  "us-market": 84,
+  "us-semiconductor": 80,
+  "us-rate": 76,
+  inflation: 72,
+  economy: 68,
+  risk: 64,
+};
+
+const compactTonePriority: Record<MarketEnvironmentTone, number> = {
+  risk: 40,
+  caution: 34,
+  positive: 18,
+  neutral: 8,
+};
+
+export function summarizeMarketEnvironmentInsights(insights: MarketEnvironmentInsight[], limit = 4): MarketEnvironmentInsight[] {
+  return [...insights]
+    .sort((a, b) => {
+      const toneDiff = (compactTonePriority[b.tone] ?? 0) - (compactTonePriority[a.tone] ?? 0);
+      if (toneDiff !== 0) return toneDiff;
+      const priorityDiff = (compactInsightPriority[b.key] ?? 0) - (compactInsightPriority[a.key] ?? 0);
+      if (priorityDiff !== 0) return priorityDiff;
+      return a.title.localeCompare(b.title);
+    })
+    .slice(0, Math.max(1, limit));
+}
+
 const asNumber = (value?: number | null) => (typeof value === "number" && Number.isFinite(value) ? value : null);
 
 const formatNumber = (value?: number | null, fraction = 2) => {

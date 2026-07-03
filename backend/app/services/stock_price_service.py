@@ -146,26 +146,72 @@ class StockPriceService:
             )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"지원하지 않는 source입니다: {source}")
 
-    def _resolve_collect_window(self, stock_id: int, source: str, period_years: int) -> tuple[str, date, date, str]:
+    def _parse_optional_collect_date(self, raw: str | None, field_name: str) -> date | None:
+        if not raw:
+            return None
+        try:
+            return self._parse_iso_date(str(raw)[:10])
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"invalid {field_name}: expected YYYY-MM-DD",
+            ) from exc
+
+    def _resolve_collect_window(
+        self,
+        stock_id: int,
+        source: str,
+        period_years: int,
+        overlap_days: int,
+        force_full_refresh: bool,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> tuple[str, date, date, str, str | None]:
         today = date.today()
-        if source in ("kiwoom_rest", "mock"):
-            start_date = today - timedelta(days=max(1, period_years) * 365)
-            return "initial_backfill", start_date, today, "최근 2년치 수집"
+        if source not in {"kiwoom_rest", "mock", "pykrx"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"unsupported source: {source}")
 
-        if source != "pykrx":
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"지원하지 않는 source입니다: {source}")
+        manual_start = self._parse_optional_collect_date(start_date, "start_date")
+        manual_end = self._parse_optional_collect_date(end_date, "end_date")
+        if manual_start or manual_end:
+            if not manual_start or not manual_end:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="start_date and end_date must be provided together",
+                )
+            if manual_start > manual_end:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="start_date must be earlier than or equal to end_date",
+                )
+            return "manual_range", manual_start, manual_end, "manual date range collection", None
 
-        latest_trade_date = self.price_repo.get_latest_trade_date(stock_id=stock_id, source="pykrx")
+        safe_period_years = max(1, period_years)
+        safe_overlap_days = max(0, overlap_days)
+        full_start = today - timedelta(days=safe_period_years * 365)
+
+        if force_full_refresh:
+            return "full_refresh", full_start, today, f"full refresh for recent {safe_period_years} years", None
+
+        latest_trade_date = self.price_repo.get_latest_trade_date(stock_id=stock_id, source=source)
         if not latest_trade_date:
-            start_date = today - timedelta(days=max(1, period_years) * 365)
-            return "initial_backfill", start_date, today, "최초 수집, 최근 2년치 수집"
+            return "initial_backfill", full_start, today, f"initial backfill for recent {safe_period_years} years", None
 
-        latest = self._parse_iso_date(latest_trade_date)
-        if latest < today:
-            return "incremental", latest, today, f"증분 수집, {latest_trade_date} 이후 데이터 수집"
+        latest = self._parse_iso_date(str(latest_trade_date))
+        if source == "pykrx":
+            if latest < today:
+                return "incremental", latest, today, f"incremental collection from {latest_trade_date}", str(latest_trade_date)
+            refresh_start = today - timedelta(days=7)
+            return "refresh_latest", refresh_start, today, "refresh latest 7 calendar days", str(latest_trade_date)
 
-        refresh_start = today - timedelta(days=7)
-        return "refresh_latest", refresh_start, today, "최신 데이터 재조회/당일 갱신"
+        incremental_start = latest - timedelta(days=safe_overlap_days)
+        return (
+            "incremental_overlap",
+            incremental_start,
+            today,
+            f"incremental collection with {safe_overlap_days} calendar-day overlap from {latest_trade_date}",
+            str(latest_trade_date),
+        )
 
     def _collect_and_upsert(self, stock, source: str, start_date: date, end_date: date) -> tuple[str, int, int]:
         normalized, payload = self._collect_rows_by_source(stock, start_date, end_date, source)
@@ -188,7 +234,7 @@ class StockPriceService:
         )
         return normalized, collected_count, saved
 
-    def collect_selected_backfill(self, stock_ids: list[int], period_years: int, source: str) -> dict:
+    def collect_selected_backfill(self, stock_ids: list[int], period_years: int, source: str, overlap_days: int = 7, force_full_refresh: bool = False, start_date: str | None = None, end_date: str | None = None) -> dict:
         selected_ids = self._validate_selected_stock_ids(stock_ids)
         active_ids = set(self.watchlist_repo.list_active_stock_ids())
         selected_stocks = [self.stock_repo.get_by_id(sid) for sid in selected_ids]
@@ -249,10 +295,17 @@ class StockPriceService:
             to_date = None
             mode_message = None
             try:
-                mode, from_date, to_date, mode_message = self._resolve_collect_window(stock.id, source, period_years)
-                latest_trade_date = self.price_repo.get_latest_trade_date(stock_id=stock.id, source=source)
+                mode, from_date, to_date, mode_message, latest_trade_date = self._resolve_collect_window(
+                    stock.id,
+                    source,
+                    period_years,
+                    overlap_days,
+                    force_full_refresh,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
                 logger.info(
-                    "[PRICE DEBUG] stock_id=%s stock_name=%s stock_code=%s normalized_code=%s mode=%s from_date=%s to_date=%s latest_trade_date=%s",
+                    "[PRICE DEBUG] stock_id=%s stock_name=%s stock_code=%s normalized_code=%s mode=%s from_date=%s to_date=%s latest_trade_date=%s overlap_days=%s force_full_refresh=%s",
                     stock.id,
                     stock.stock_name,
                     stock.stock_code,
@@ -261,6 +314,8 @@ class StockPriceService:
                     from_date.isoformat() if from_date else None,
                     to_date.isoformat() if to_date else None,
                     latest_trade_date,
+                    overlap_days,
+                    force_full_refresh,
                 )
                 normalized_code, collected_count, saved_count = self._collect_and_upsert(
                     stock=stock,

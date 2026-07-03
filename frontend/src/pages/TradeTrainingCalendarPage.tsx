@@ -16,23 +16,25 @@ const fmtRate = (value: number) => {
   return `${n > 0 ? "+" : ""}${n.toFixed(1)}%`;
 };
 
-const scoreClass = (score: number) => {
-  if (score >= 80) return "training-calendar-day-score-excellent";
-  if (score >= 60) return "training-calendar-day-score-good";
-  if (score >= 40) return "training-calendar-day-score-mid";
-  if (score > 0) return "training-calendar-day-score-low";
-  return "training-calendar-day-cell-empty";
+const getReturnGradientLevel = (value: number) => {
+  const absValue = Math.abs(value);
+  if (absValue >= 30) return "strong";
+  if (absValue >= 10) return "medium";
+  if (absValue >= 3) return "soft";
+  return "pale";
 };
 
-const scoreHeatColor = (score: number) => {
-  const ratio = Math.max(0, Math.min(1, Number(score || 0) / 100));
-  const low = { r: 255, g: 248, b: 196 };
-  const high = { r: 255, g: 199, b: 199 };
-  const channel = (start: number, end: number) => Math.round(start + (end - start) * ratio);
-  return `rgb(${channel(low.r, high.r)}, ${channel(low.g, high.g)}, ${channel(low.b, high.b)})`;
+const getReturnToneClass = (value?: number | null) => {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n === 0) return "training-return-neutral";
+  return `training-return-${n > 0 ? "positive" : "negative"}-${getReturnGradientLevel(n)}`;
 };
 
-const scoreHeatStyle = (score: number) => (score > 0 ? { backgroundColor: scoreHeatColor(score) } : undefined);
+const getReturnTextClass = (value?: number | null) => {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n === 0) return "training-neutral";
+  return n > 0 ? "training-positive" : "training-negative";
+};
 
 const monthDays = (month: string) => {
   const [year, monthNumber] = month.split("-").map(Number);
@@ -160,15 +162,14 @@ function TradeTrainingCalendarPage() {
                 <button
                   key={date}
                   type="button"
-                  className={`training-calendar-day-cell ${scoreClass(day?.training_score ?? 0)} ${selected ? "training-calendar-day-cell-selected" : ""}`}
-                  style={day ? scoreHeatStyle(day.training_score) : undefined}
+                  className={`training-calendar-day-cell ${day ? getReturnToneClass(day.total_return_rate) : "training-calendar-day-cell-empty"} ${selected ? "training-calendar-day-cell-selected" : ""}`}
                   onClick={() => setSelectedDate(date)}
                 >
                   <span className="training-calendar-day-number">{Number(date.slice(-2))}</span>
                   {day ? (
                     <span className="training-calendar-day-body">
                       <b>{day.training_count}건 · {day.training_score}점</b>
-                      <em className={day.total_return_rate >= 0 ? "training-positive" : "training-negative"}>{fmtRate(day.total_return_rate)}</em>
+                      <em className={getReturnTextClass(day.total_return_rate)}>{fmtRate(day.total_return_rate)}</em>
                       <small>복기 {day.review_saved_count}/{day.review_required_count}</small>
                     </span>
                   ) : null}
@@ -197,8 +198,8 @@ function TradeTrainingCalendarPage() {
               <>
                 <div className="training-calendar-detail-kpis">
                   <div><span>훈련점수</span><strong>{fmtScore(selectedDay.training_score)}</strong></div>
-                  <div><span>총 수익률</span><strong>{fmtRate(selectedDay.total_return_rate)}</strong></div>
-                  <div><span>평균 수익률</span><strong>{fmtRate(selectedDay.avg_return_rate)}</strong></div>
+                  <div><span>총 수익률</span><strong className={getReturnTextClass(selectedDay.total_return_rate)}>{fmtRate(selectedDay.total_return_rate)}</strong></div>
+                  <div><span>평균 수익률</span><strong className={getReturnTextClass(selectedDay.avg_return_rate)}>{fmtRate(selectedDay.avg_return_rate)}</strong></div>
                   <div><span>복기</span><strong>{selectedDay.review_saved_count}/{selectedDay.review_required_count}</strong></div>
                 </div>
                 <div className="training-calendar-method-list">
@@ -206,13 +207,13 @@ function TradeTrainingCalendarPage() {
                     <article key={`${group.trade_method_id ?? "free"}-${group.trade_method_name}`} className="training-calendar-method-card">
                       <div className="training-calendar-method-head">
                         <strong>{group.trade_method_name}</strong>
-                        <span>{group.training_count}건 · {fmtRate(group.total_return_rate)}</span>
+                        <span className={getReturnTextClass(group.total_return_rate)}>{group.training_count}건 · {fmtRate(group.total_return_rate)}</span>
                       </div>
                       {group.stocks.map((stock) => (
                         <div key={`${stock.stock_code || stock.stock_name}`} className="training-calendar-stock-row">
                           <span>{stock.stock_name}<small>{stock.stock_code || ""}</small></span>
                           <span>{stock.training_count}건</span>
-                          <span>{fmtRate(stock.avg_return_rate)}</span>
+                          <span className={getReturnTextClass(stock.avg_return_rate)}>{fmtRate(stock.avg_return_rate)}</span>
                           <span>복기 {stock.review_saved_count}건</span>
                         </div>
                       ))}
@@ -230,12 +231,10 @@ function TradeTrainingCalendarPage() {
       <SectionCard title="월간 성장 추이">
         <div className="training-calendar-growth-chart">
           {(data?.days ?? []).map((day) => (
-            <button key={day.date} type="button" onClick={() => setSelectedDate(day.date)} title={`${day.date} ${day.training_score}점`}>
+            <button key={day.date} type="button" onClick={() => setSelectedDate(day.date)} title={`${day.date} ${fmtRate(day.total_return_rate)}`}>
               <span
-                style={{
-                  height: `${Math.max(8, (day.training_score / maxScore) * 100)}%`,
-                  backgroundColor: scoreHeatColor(day.training_score),
-                }}
+                className={getReturnToneClass(day.total_return_rate)}
+                style={{ height: `${Math.max(8, (day.training_score / maxScore) * 100)}%` }}
               />
               <small>{Number(day.date.slice(-2))}</small>
             </button>
@@ -261,7 +260,7 @@ function TradeTrainingCalendarPage() {
                   <td>{day.date}</td>
                   <td>{day.training_count}건</td>
                   <td>{day.training_score}점</td>
-                  <td className={day.total_return_rate >= 0 ? "training-positive" : "training-negative"}>{fmtRate(day.total_return_rate)}</td>
+                  <td className={getReturnTextClass(day.total_return_rate)}>{fmtRate(day.total_return_rate)}</td>
                   <td>{day.review_saved_count}/{day.review_required_count}</td>
                   <td>{day.method_groups[0]?.trade_method_name || "-"}</td>
                   <td><button type="button" className="btn btn-secondary btn-table-sm" onClick={() => setSelectedDate(day.date)}>보기</button></td>

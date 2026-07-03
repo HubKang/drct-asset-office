@@ -47,6 +47,9 @@ const IMAGE_TYPE_OPTIONS: Array<{ value: StockTrackingImageType; label: string }
 ];
 
 const ITEM_PAGE_SIZE = 20;
+type TrackingCollectionScope = "all" | "checked" | "detail";
+type TrackingCollectionMode = "recent" | "full";
+type TrackingFullRefreshTarget = Exclude<TrackingCollectionScope, "detail">;
 
 const emptyImageForm: { image_type: StockTrackingImageType; caption: string; file: File | null } = {
   image_type: "BASE_DATE",
@@ -85,9 +88,14 @@ const fmtSignedPct = (value?: number | null) => {
 const fmtNumber = (value?: number | null) => (value == null ? "-" : Number(value).toLocaleString("ko-KR"));
 const fmtEok = (value?: number | null) => (value == null ? "-" : `${(Number(value) / 100000000).toLocaleString("ko-KR", { maximumFractionDigits: 1 })}억`);
 const canCollectItem = (item: StockTrackingItem) => (item.status === "TRACKING" || item.status === "HOLD") && item.price_status !== "STOPPED";
-const getCollectResultMessage = (response: CollectStockTrackingPricesResponse) => {
+const getCollectResultMessage = (response: CollectStockTrackingPricesResponse, mode: TrackingCollectionMode) => {
   if (response.requested_count === 0) return "갱신할 트래킹 종목이 없습니다.";
-  return `가격정보 갱신 완료: 성공 ${response.success_count}건, 일부 누락 ${response.partial_count}건, 실패 ${response.failed_count}건`;
+  const label = mode === "full" ? "전체수집" : "최근7일수집";
+  const savedCount = response.items.reduce((sum, item) => sum + Number(item.saved_count || 0), 0);
+  const fromDates = response.items.map((item) => item.requested_start_date).filter((value): value is string => Boolean(value));
+  const toDates = response.items.map((item) => item.requested_end_date).filter((value): value is string => Boolean(value));
+  const range = fromDates.length && toDates.length ? `${fromDates.sort()[0]} ~ ${toDates.sort()[toDates.length - 1]}, 저장 ${savedCount.toLocaleString("ko-KR")}건` : `${response.requested_count}개 종목 가격 데이터 갱신`;
+  return `${label} 완료: ${range} / 성공 ${response.success_count}건, 일부 누락 ${response.partial_count}건, 실패 ${response.failed_count}건`;
 };
 
 function pathFromPoints(points: Array<{ x: number; y: number }>) {
@@ -625,6 +633,9 @@ function StockTrackingPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [collecting, setCollecting] = useState(false);
+  const [fullRefreshTarget, setFullRefreshTarget] = useState<TrackingFullRefreshTarget | null>(null);
+  const [fullRefreshMenuOpen, setFullRefreshMenuOpen] = useState(false);
+  const fullRefreshMenuRef = useRef<HTMLDivElement | null>(null);
   const [chartLoading, setChartLoading] = useState(false);
   const [chart, setChart] = useState<StockTrackingChartResponse | null>(null);
   const [imageRows, setImageRows] = useState<StockTrackingImage[]>([]);
@@ -919,8 +930,8 @@ function StockTrackingPage() {
     await loadItems(page);
   };
 
-  const refreshAfterCollect = async (response: CollectStockTrackingPricesResponse, selectedId?: number) => {
-    setMessage(getCollectResultMessage(response));
+  const refreshAfterCollect = async (response: CollectStockTrackingPricesResponse, mode: TrackingCollectionMode, selectedId?: number) => {
+    setMessage(getCollectResultMessage(response, mode));
     setCheckedItemIds(new Set());
     await loadItems();
     await loadGroups();
@@ -932,14 +943,28 @@ function StockTrackingPage() {
     }
   };
 
-  const collectPrices = async (mode: "all" | "checked" | "detail") => {
-    const targetItems = mode === "checked"
-      ? checkedCollectableItems
-      : mode === "detail"
-        ? (selectedItem && selectedCanCollect ? [selectedItem] : [])
-        : collectableItems;
+  const getCollectTargets = (scope: TrackingCollectionScope) => scope === "checked"
+    ? checkedCollectableItems
+    : scope === "detail"
+      ? (selectedItem && selectedCanCollect ? [selectedItem] : [])
+      : collectableItems;
+
+  const openFullRefreshConfirm = (target: TrackingFullRefreshTarget) => {
+    const targetItems = getCollectTargets(target);
     if (targetItems.length === 0) {
-      setError(mode === "all" ? "갱신할 트래킹 종목이 없습니다." : "가격정보를 갱신할 종목을 선택해 주세요.");
+      setFullRefreshMenuOpen(false);
+      setError(target === "checked" ? "선택한 종목이 없습니다." : "갱신할 트래킹 종목이 없습니다.");
+      return;
+    }
+    setError("");
+    setFullRefreshMenuOpen(false);
+    setFullRefreshTarget(target);
+  };
+
+  const collectPrices = async (scope: TrackingCollectionScope, collectionMode: TrackingCollectionMode = "recent") => {
+    const targetItems = getCollectTargets(scope);
+    if (targetItems.length === 0) {
+      setError(scope === "all" ? "갱신할 트래킹 종목이 없습니다." : scope === "checked" ? "선택한 종목이 없습니다." : "가격정보를 갱신할 종목을 선택해 주세요.");
       return;
     }
     setError("");
@@ -948,8 +973,13 @@ function StockTrackingPage() {
     const targetIds = new Set(targetItems.map((item) => item.id));
     setItems((prev) => prev.map((item) => targetIds.has(item.id) ? { ...item, price_status: "COLLECTING" } : item));
     try {
-      const response = await repositories.stockTracking.collectPrices({ item_ids: Array.from(targetIds) });
-      await refreshAfterCollect(response, selectedItem && targetIds.has(selectedItem.id) ? selectedItem.id : undefined);
+      const response = await repositories.stockTracking.collectPrices({
+        item_ids: Array.from(targetIds),
+        overlap_days: 7,
+        force_full_refresh: collectionMode === "full",
+      });
+      await refreshAfterCollect(response, collectionMode, selectedItem && targetIds.has(selectedItem.id) ? selectedItem.id : undefined);
+      if (collectionMode === "full") setFullRefreshTarget(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -957,6 +987,21 @@ function StockTrackingPage() {
     }
   };
 
+  useEffect(() => {
+    if (!fullRefreshMenuOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!fullRefreshMenuRef.current?.contains(event.target as Node)) setFullRefreshMenuOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFullRefreshMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [fullRefreshMenuOpen]);
   const saveReview = async () => {
     if (!selectedItem) return;
     const updated = await repositories.stockTracking.updateReview(selectedItem.id, { status: reviewStatus, review_note: reviewNote });
@@ -1127,8 +1172,17 @@ function StockTrackingPage() {
             <div className="stock-tracking-list-head">
               <h3 className="section-title m-0">트래킹 목록</h3>
               <div className="stock-tracking-list-actions">
-                <button type="button" className="btn btn-secondary" disabled={collecting} onClick={() => void collectPrices("all")}>{collecting ? "갱신 중..." : "목록 가격 갱신"}</button>
-                <button type="button" className="btn btn-primary" disabled={checkedCollectableItems.length === 0 || collecting} title={checkedCollectableItems.length === 0 ? "체크박스로 갱신할 종목을 선택해 주세요." : "체크한 종목만 갱신합니다."} onClick={() => void collectPrices("checked")}>{collecting ? "갱신 중..." : checkedCollectableItems.length > 0 ? `선택 ${checkedCollectableItems.length}건 갱신` : "선택 종목 갱신"}</button>
+                <button type="button" className="btn stock-tracking-collect-button stock-tracking-primary-collect-button" disabled={collecting} onClick={() => void collectPrices("all", "recent")}>{collecting ? "수집 중..." : "목록 최근7일수집"}</button>
+                <button type="button" className="btn stock-tracking-collect-button" disabled={checkedCollectableItems.length === 0 || collecting} title={checkedCollectableItems.length === 0 ? "체크박스로 수집할 종목을 선택해 주세요." : "체크한 종목만 최근 7일 기준으로 수집합니다."} onClick={() => void collectPrices("checked", "recent")}>{collecting ? "수집 중..." : checkedCollectableItems.length > 0 ? `선택 ${checkedCollectableItems.length}건 최근7일수집` : "선택 최근7일수집"}</button>
+                <div className="stock-tracking-full-refresh-menu" ref={fullRefreshMenuRef}>
+                  <button type="button" className="btn stock-tracking-full-refresh-button" disabled={collecting} title="전체수집은 target 시작일부터 오늘까지 다시 upsert합니다." aria-haspopup="menu" aria-expanded={fullRefreshMenuOpen} onClick={() => setFullRefreshMenuOpen((prev) => !prev)}>전체수집 ▾</button>
+                  {fullRefreshMenuOpen ? (
+                    <div className="stock-tracking-full-refresh-menu-list" role="menu">
+                      <button type="button" role="menuitem" onClick={() => openFullRefreshConfirm("all")}>목록 전체수집</button>
+                      <button type="button" role="menuitem" disabled={checkedCollectableItems.length === 0} title={checkedCollectableItems.length === 0 ? "체크박스로 수집할 종목을 선택해 주세요." : "체크한 종목만 전체 기간으로 다시 수집합니다."} onClick={() => openFullRefreshConfirm("checked")}>{checkedCollectableItems.length > 0 ? `선택 ${checkedCollectableItems.length}건 전체수집` : "선택 전체수집"}</button>
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </div>
             <div className="stock-tracking-filter-row">
@@ -1209,7 +1263,7 @@ function StockTrackingPage() {
                     <div className="stock-tracking-chart-empty">
                       <strong>가격정보가 아직 수집되지 않았습니다.</strong>
                       <p>가격정보 갱신 후 차트를 확인할 수 있습니다.</p>
-                      <button type="button" className="btn btn-secondary" disabled={!selectedCanCollect || collecting} onClick={() => void collectPrices("detail")}>이 종목 가격 갱신</button>
+                      <button type="button" className="btn btn-secondary" disabled={!selectedCanCollect || collecting} onClick={() => void collectPrices("detail", "recent")}>이 종목 최근7일수집</button>
                     </div>
                   )}
                 </div>
@@ -1285,6 +1339,27 @@ function StockTrackingPage() {
         </div>
       )}
 
+
+      {fullRefreshTarget ? (
+        <div className="modal-backdrop stock-tracking-refresh-confirm-backdrop" onClick={() => setFullRefreshTarget(null)}>
+          <div className="modal-card stock-tracking-refresh-confirm-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="trade-journal-detail-header">
+              <h3>전체수집을 실행하시겠습니까?</h3>
+              <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => setFullRefreshTarget(null)}>닫기</button>
+            </div>
+            <div className="stock-tracking-refresh-confirm-body">
+              <p>{fullRefreshTarget === "all" ? "목록의 수집 가능 트래킹 종목을 전체 기간 기준으로 다시 요청합니다." : `선택한 ${checkedCollectableItems.length}개 트래킹 종목을 전체 기간 기준으로 다시 요청합니다.`}</p>
+              <div className="stock-tracking-refresh-confirm-note">
+                최근7일수집은 기존 저장 데이터를 기준으로 증분 요청하고, 전체수집은 과거 기간을 다시 확인합니다. 저장은 기존 upsert 흐름을 사용합니다.
+              </div>
+            </div>
+            <div className="stock-tracking-refresh-confirm-actions">
+              <button type="button" className="btn btn-secondary" disabled={collecting} onClick={() => setFullRefreshTarget(null)}>취소</button>
+              <button type="button" className="btn btn-danger" disabled={collecting} onClick={() => void collectPrices(fullRefreshTarget, "full")}>{collecting ? "전체수집 중..." : "전체수집 실행"}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {imageModalOpen && selectedItem ? (
         <div className="modal-backdrop stock-tracking-image-modal-backdrop">
           <div className="modal-card stock-tracking-image-modal" onClick={(event) => event.stopPropagation()}>

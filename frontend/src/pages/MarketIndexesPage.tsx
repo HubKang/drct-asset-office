@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import { repositories } from "@/services";
-import { buildMarketEnvironmentInsights, getMarketEnvironmentToneLabel } from "@/utils/marketEnvironmentRules";
+import { buildMarketEnvironmentInsights, getMarketEnvironmentToneLabel, summarizeMarketEnvironmentInsights } from "@/utils/marketEnvironmentRules";
 import type { MarketIndexCompareResponse, MarketIndexDailyPriceItem, MarketIndexItem, MarketIndexProviderCode, MarketIndexProviderMapping } from "@/types/marketIndex";
 import type { ExternalProviderStatus, ExternalProviderStatusListResponse, MarketIndicator, MarketIndicatorValue } from "@/types/marketIndicator";
 
@@ -325,7 +325,20 @@ const formatNumber = (value?: number | null, fraction = 0) => {
   return new Intl.NumberFormat("ko-KR", { maximumFractionDigits: fraction, minimumFractionDigits: fraction }).format(value);
 };
 
-const formatPercent = (value?: number | null) => (value === null || value === undefined ? "-" : `${value > 0 ? "+" : ""}${formatNumber(value, 2)}%`);
+const formatPercent = (value?: number | null) => (typeof value !== "number" || !Number.isFinite(value) ? "-" : `${value > 0 ? "+" : ""}${formatNumber(value, 2)}%`);
+
+const getIndicatorChangeChipClass = (value?: number | string | null) => {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.startsWith("+")) return "positive";
+    if (trimmed.startsWith("-")) return "negative";
+    const numeric = Number(trimmed.replace(/,/g, "").replace("%", ""));
+    if (!Number.isFinite(numeric) || numeric === 0) return "flat";
+    return numeric > 0 ? "positive" : "negative";
+  }
+  if (typeof value !== "number" || !Number.isFinite(value) || value === 0) return "flat";
+  return value > 0 ? "positive" : "negative";
+};
 
 const formatTradingValue = (value?: number | null) => {
   if (!value) return "-";
@@ -784,6 +797,7 @@ function MarketIndexesPage() {
   const [adminDrawerTab, setAdminDrawerTab] = useState<AdminDrawerTab>("mapping");
   const [showDeferredIndicators, setShowDeferredIndicators] = useState(false);
   const [externalProviderStatuses, setExternalProviderStatuses] = useState<ExternalProviderStatus[]>([]);
+  const [isEnvironmentExpanded, setIsEnvironmentExpanded] = useState(false);
 
   const range = useMemo(() => getRange(period), [period]);
   const selectedMetric = useMemo(() => parseMetricKey(selectedMetricKey), [selectedMetricKey]);
@@ -896,6 +910,8 @@ function MarketIndexesPage() {
   }, [activeGeneralIndicators, categoryFilter, filteredIndexes, normalizedQuery]);
 
   const marketEnvironmentInsights = useMemo(() => buildMarketEnvironmentInsights({ marketIndexes: indexes, marketIndicators: activeGeneralIndicators, marketIndicatorValues: environmentIndicatorValues }), [activeGeneralIndicators, environmentIndicatorValues, indexes]);
+  const compactMarketEnvironmentInsights = useMemo(() => summarizeMarketEnvironmentInsights(marketEnvironmentInsights, 4), [marketEnvironmentInsights]);
+  const visibleMarketEnvironmentInsights = isEnvironmentExpanded ? marketEnvironmentInsights : compactMarketEnvironmentInsights;
 
   const marketSummaryCards = useMemo(() => {
     const byCode = (code: string) => indexes.find((item) => item.index_code === code);
@@ -1279,38 +1295,43 @@ function MarketIndexesPage() {
         ))}
       </section>
 
-      <section className="market-environment-insight-section" aria-label="시장환경 해석">
+      <section className={`market-environment-insight-section ${isEnvironmentExpanded ? "is-expanded" : "is-compact"}`} aria-label="시장환경 해석">
         <div className="market-environment-insight-head">
           <div>
             <h2>시장환경 해석</h2>
-            <p>수집된 시장지표를 기준으로 시장환경을 참고용으로 해석합니다. 매수·매도 추천이 아닙니다.</p>
+            <p>수집된 시장지표 기반 참고 해석입니다. 매수·매도 추천이 아닙니다.</p>
           </div>
+          <button type="button" className="market-environment-toggle-button" onClick={() => setIsEnvironmentExpanded((prev) => !prev)}>
+            {isEnvironmentExpanded ? "해석 접기" : "전체 해석 보기"}
+          </button>
         </div>
-        <div className="market-environment-insight-grid">
-          {marketEnvironmentInsights.map((insight) => (
-            <article key={insight.key} className={`market-environment-insight-card tone-${insight.tone}`}>
+        <div className={isEnvironmentExpanded ? "market-environment-insight-grid market-environment-expanded-grid" : "market-environment-summary-grid"}>
+          {visibleMarketEnvironmentInsights.map((insight) => (
+            <article key={insight.key} className={`market-environment-insight-card tone-${insight.tone} ${isEnvironmentExpanded ? "" : "market-environment-summary-card"}`}>
               <div className="market-environment-insight-card-head">
                 <span>{insight.title}</span>
                 <em>{getMarketEnvironmentToneLabel(insight.tone)}</em>
               </div>
               <strong>{insight.headline}</strong>
-              <p>{insight.description}</p>
+              {isEnvironmentExpanded ? <p>{insight.description}</p> : null}
               <div className="market-environment-evidence-list">
-                {insight.evidence.map((item) => (
+                {(isEnvironmentExpanded ? insight.evidence : insight.evidence.slice(0, 3)).map((item) => (
                   <span key={item.label}>
                     <b>{item.label}</b>
                     {item.value}
                   </span>
                 ))}
               </div>
-              <div className="market-environment-perspective-list" aria-label={insight.title + " 다른 관점"}>
-                {insight.perspectives.slice(0, 3).map((item) => (
-                  <div key={item.label}>
-                    <span>{item.label}</span>
-                    <p>{item.text}</p>
-                  </div>
-                ))}
-              </div>
+              {isEnvironmentExpanded ? (
+                <div className="market-environment-perspective-list" aria-label={insight.title + " 다른 관점"}>
+                  {insight.perspectives.slice(0, 3).map((item) => (
+                    <div key={item.label}>
+                      <span>{item.label}</span>
+                      <p>{item.text}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </article>
           ))}
         </div>
@@ -1443,8 +1464,8 @@ function MarketIndexesPage() {
                     <span className={"status-badge market-indicator-compact-status status-" + getStatusClass(item.status)}>{item.source === "MARKET_INDICATOR" ? item.category : getStatusLabel(item.status, Boolean(item.latestDate))}</span>
                   </div>
                   <div className="market-indicator-compact-metrics">
-                    <span className={"market-indicator-compact-chip " + ((metric5 ?? 0) >= 0 ? "positive" : "negative")}>{item.source === "MARKET_INDEX" ? TEXT.oneDay5 + " " + formatPercent(metric5) : item.dataFrequency === "MONTHLY" ? "MoM " + formatPercent(metric5) : formatNumber(metric5, 3)}</span>
-                    <span className={"market-indicator-compact-chip " + ((metric20 ?? 0) >= 0 ? "positive" : "negative")}>{item.source === "MARKET_INDEX" ? TEXT.oneDay20 + " " + formatPercent(metric20) : item.dataFrequency === "MONTHLY" ? "YoY " + formatPercent(metric20) : formatPercent(metric20)}</span>
+                    <span className={"market-indicator-compact-chip " + getIndicatorChangeChipClass(metric5)}>{item.source === "MARKET_INDEX" ? TEXT.oneDay5 + " " + formatPercent(metric5) : item.dataFrequency === "MONTHLY" ? "MoM " + formatPercent(metric5) : formatNumber(metric5, 3)}</span>
+                    <span className={"market-indicator-compact-chip " + getIndicatorChangeChipClass(metric20)}>{item.source === "MARKET_INDEX" ? TEXT.oneDay20 + " " + formatPercent(metric20) : item.dataFrequency === "MONTHLY" ? "YoY " + formatPercent(metric20) : formatPercent(metric20)}</span>
                     <span className="market-indicator-compact-chip">{formatNumber(item.latestValue, item.source === "MARKET_INDICATOR" ? 3 : 2)}{item.unitLabel ? " " + item.unitLabel : ""}</span>
                   </div>
                 </button>

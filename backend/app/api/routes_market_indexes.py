@@ -43,6 +43,9 @@ def collect_market_indexes(
         index_codes=payload.index_codes,
         start_date=payload.start_date,
         end_date=payload.end_date,
+        period_years=payload.period_years,
+        overlap_days=payload.overlap_days,
+        force_full_refresh=payload.force_full_refresh,
     )
 
 
