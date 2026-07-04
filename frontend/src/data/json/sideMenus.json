@@ -117,28 +117,29 @@
     "routeKey": "pattern-research"
   },
   {
-    "menuKey": "analysis-rules",
-    "title": "분류 규칙 관리",
-    "routeKey": "classification-rules"
-  },
-  {
     "menuKey": "system",
     "title": "설정",
-    "routeKey": "settings"
-  },
-  {
-    "menuKey": "system",
-    "title": "매매연구 지표 설정",
-    "routeKey": "analysis-indicator-settings"
+    "routeKey": "settings",
+    "children": [
+      {
+        "title": "분류규칙관리",
+        "routeKey": "classification-rules"
+      },
+      {
+        "title": "매매연구지표설정",
+        "routeKey": "analysis-indicator-settings"
+      }
+    ]
   },
   {
     "menuKey": "system",
     "title": "DrCT아키텍처",
-    "routeKey": "drct-architecture"
-  },
-  {
-    "menuKey": "system",
-    "title": "DrCT테이블정보",
-    "routeKey": "schema-comments"
+    "routeKey": "drct-architecture",
+    "children": [
+      {
+        "title": "DrCT테이블정보",
+        "routeKey": "schema-comments"
+      }
+    ]
   }
 ]

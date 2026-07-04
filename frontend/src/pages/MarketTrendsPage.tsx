@@ -88,9 +88,9 @@ const normalizeStockCode = (value: string | null | undefined) => {
   return digits.slice(-6).padStart(6, "0");
 };
 
-const getNaverChartImageUrl = (stockCode: string, period: "week" | "month3" | "year", sidcode: number) => {
+const getNaverChartImageUrl = (stockCode: string, period: "day" | "week" | "month", sidcode: number) => {
   const code = normalizeStockCode(stockCode);
-  return `https://ssl.pstatic.net/imgfinance/chart/item/area/${period}/${code}.png?sidcode=${sidcode}`;
+  return `https://ssl.pstatic.net/imgfinance/chart/item/candle/${period}/${code}.png?sidcode=${sidcode}`;
 };
 
 const getNaverMarketChartImageUrl = (market: "KOSPI" | "KOSDAQ", sidcode: number) =>
@@ -1939,13 +1939,13 @@ ${tableRows}
               <div className="table-shell overflow-auto">
                 <table className="data-table compact-table min-w-[1320px]">
                   <thead>
-                    <tr><th>테마명</th><th>종목명</th><th>1주일</th><th>3개월</th><th>1년</th></tr>
+                    <tr><th>테마명</th><th>종목명</th><th>일봉</th><th>주봉</th><th>월봉</th></tr>
                   </thead>
                   <tbody>
                     {flowStocks.map((row) => {
+                      const dayUrl = getNaverChartImageUrl(row.stock_code, "day", chartSidcode);
                       const weekUrl = getNaverChartImageUrl(row.stock_code, "week", chartSidcode);
-                      const month3Url = getNaverChartImageUrl(row.stock_code, "month3", chartSidcode);
-                      const yearUrl = getNaverChartImageUrl(row.stock_code, "year", chartSidcode);
+                      const monthUrl = getNaverChartImageUrl(row.stock_code, "month", chartSidcode);
 
                       const chartCell = (url: string, key: string) => (
                         <div className="w-[280px]">
@@ -1977,9 +1977,9 @@ ${tableRows}
                               </div>
                             ) : null}
                           </td>
+                          <td>{chartCell(dayUrl, `${row.stock_code}-day`)}</td>
                           <td>{chartCell(weekUrl, `${row.stock_code}-week`)}</td>
-                          <td>{chartCell(month3Url, `${row.stock_code}-month3`)}</td>
-                          <td>{chartCell(yearUrl, `${row.stock_code}-year`)}</td>
+                          <td>{chartCell(monthUrl, `${row.stock_code}-month`)}</td>
                         </tr>
                       );
                     })}

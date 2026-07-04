@@ -20,10 +20,6 @@
     "title": "매매 관리"
   },
   {
-    "menuKey": "analysis-rules",
-    "title": "분석 기준 관리"
-  },
-  {
     "menuKey": "system",
     "title": "시스템"
   }

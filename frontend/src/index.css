@@ -12583,6 +12583,125 @@ a:focus-visible {
   background: #eff6ff;
 }
 
+.theme-linked-stock-table-shell {
+  overflow-x: auto;
+}
+
+.theme-linked-stock-table {
+  min-width: 1505px;
+  table-layout: fixed;
+}
+
+.theme-linked-stock-table th,
+.theme-linked-stock-table td {
+  padding: 8px 8px;
+  vertical-align: middle;
+}
+
+.theme-linked-stock-table th {
+  white-space: nowrap;
+}
+
+.theme-linked-stock-col-stock { width: 180px; }
+.theme-linked-stock-col-market { width: 80px; }
+.theme-linked-stock-col-primary { width: 80px; }
+.theme-linked-stock-col-status { width: 80px; }
+.theme-linked-stock-col-chart { width: 334px; }
+.theme-linked-stock-col-action { width: 80px; }
+
+.theme-linked-stock-name {
+  gap: 1px;
+  line-height: 1.25;
+}
+
+.theme-linked-stock-name strong,
+.theme-linked-stock-name span {
+  line-height: 1.25;
+}
+
+.theme-linked-stock-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.theme-linked-stock-primary input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+
+.theme-linked-stock-chart,
+.theme-linked-stock-chart-fallback {
+  display: block;
+  width: 312px;
+  height: 157px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.theme-linked-stock-chart-button {
+  display: block;
+  width: 312px;
+  height: 157px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.theme-linked-stock-chart-button:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.theme-linked-stock-chart {
+  object-fit: contain;
+}
+
+.theme-linked-stock-chart-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.theme-linked-stock-action {
+  min-height: 28px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.theme-linked-stock-chart-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.68);
+  cursor: zoom-out;
+}
+
+.theme-linked-stock-chart-modal-image {
+  display: block;
+  width: min(900px, 92vw);
+  max-height: 86vh;
+  object-fit: contain;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 24px 72px rgba(15, 23, 42, 0.34);
+}
+
 .market-theme-stock-drawer-backdrop {
   position: fixed;
   inset: 0;

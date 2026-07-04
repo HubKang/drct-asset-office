@@ -19,6 +19,7 @@ import type { Stock } from "@/types/stock";
 type ActiveTab = "themes" | "mapping" | "candidates";
 type ThemeViewMode = "group" | "theme" | "trend";
 type ThemeReturnSort = "default" | "desc" | "asc";
+type NaverCandleChartPeriod = "day" | "week" | "month";
 const THEME_PAGE_SIZE = 20;
 
 function toErrorMessage(error: unknown, fallback: string): string {
@@ -39,6 +40,64 @@ function sourceLabel(source: string): string {
   if (source === "supply_event" || source === "kiwoom_supply_event") return "\uC218\uAE09\uC774\uBCA4\uD2B8";
   if (source === "manual") return "manual";
   return source;
+}
+
+function normalizeStockCode(value: string | null | undefined): string {
+  const digits = String(value ?? "").replace(/[^0-9]/g, "");
+  if (!digits) return "";
+  return digits.slice(-6).padStart(6, "0");
+}
+
+function buildNaverCandleChartUrl(stockCode: string, period: NaverCandleChartPeriod, sidcode: number): string {
+  return `https://ssl.pstatic.net/imgfinance/chart/item/candle/${period}/${stockCode}.png?sidcode=${sidcode}`;
+}
+
+function ThemeLinkedStockChart({
+  stockCode,
+  stockName,
+  period,
+  label,
+  sidcode,
+  onOpen,
+}: {
+  stockCode: string;
+  stockName: string;
+  period: NaverCandleChartPeriod;
+  label: string;
+  sidcode: number;
+  onOpen: (chart: { url: string; alt: string }) => void;
+}) {
+  const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    setHasError(false);
+  }, [period, sidcode, stockCode]);
+
+  if (!stockCode || hasError) {
+    return <div className="theme-linked-stock-chart-fallback">차트 없음</div>;
+  }
+
+  const url = buildNaverCandleChartUrl(stockCode, period, sidcode);
+  const alt = `${stockName || stockCode} ${label} 차트`;
+
+  return (
+    <button
+      type="button"
+      className="theme-linked-stock-chart-button"
+      onClick={(event) => {
+        event.stopPropagation();
+        onOpen({ url, alt });
+      }}
+    >
+      <img
+        src={url}
+        alt={alt}
+        className="theme-linked-stock-chart"
+        loading="lazy"
+        onError={() => setHasError(true)}
+      />
+    </button>
+  );
 }
 
 function statusLabel(status: MarketThemeCandidateStatus): string {
@@ -189,6 +248,7 @@ function MarketThemesPage() {
   const [selectedReturnDetail, setSelectedReturnDetail] = useState<MarketThemeLatestReturnDetail | null>(null);
   const [stockDrawerOpen, setStockDrawerOpen] = useState(false);
   const [selectedLinkedStock, setSelectedLinkedStock] = useState<MarketThemeStock | null>(null);
+  const [zoomedChart, setZoomedChart] = useState<{ url: string; alt: string } | null>(null);
   const [stockMemos, setStockMemos] = useState<MarketThemeStockMemo[]>([]);
   const [stockMemoLoading, setStockMemoLoading] = useState(false);
   const [stockMemoError, setStockMemoError] = useState("");
@@ -303,6 +363,7 @@ function MarketThemesPage() {
     [mappingThemeGroupId, themeGroups],
   );
   const activeThemeStocks = useMemo(() => themeStocks.filter((x) => x.is_active === 1), [themeStocks]);
+  const chartSidcode = useMemo(() => Date.now(), [selectedThemeId, activeThemeStocks.length]);
   const connectedStockIdSet = useMemo(() => new Set(activeThemeStocks.map((x) => x.stock_id)), [activeThemeStocks]);
   const primaryCount = useMemo(() => activeThemeStocks.filter((x) => x.is_primary === 1).length, [activeThemeStocks]);
 
@@ -1176,26 +1237,42 @@ function MarketThemesPage() {
           </SectionCard>
 
           <SectionCard title={`연결 종목 목록${selectedTheme ? ` - ${selectedThemeGroup ? `${selectedThemeGroup.theme_name} / ` : ""}${selectedTheme.theme_name}` : ""} (${activeThemeStocks.length}종목 · 대표 ${primaryCount})`}>
-            <div className="table-shell">
-              <table className="data-table compact-table">
-                <thead><tr><th>종목</th><th>시장</th><th>대표</th><th>출처</th><th>신뢰도</th><th>상태</th><th>작업</th></tr></thead>
+            <div className="table-shell theme-linked-stock-table-shell">
+              <table className="data-table compact-table theme-linked-stock-table">
+                <colgroup>
+                  <col className="theme-linked-stock-col-stock" />
+                  <col className="theme-linked-stock-col-market" />
+                  <col className="theme-linked-stock-col-primary" />
+                  <col className="theme-linked-stock-col-status" />
+                  <col className="theme-linked-stock-col-chart" />
+                  <col className="theme-linked-stock-col-chart" />
+                  <col className="theme-linked-stock-col-chart" />
+                  <col className="theme-linked-stock-col-action" />
+                </colgroup>
+                <thead><tr><th>종목</th><th>시장</th><th>대표</th><th>상태</th><th>일봉</th><th>주봉</th><th>월봉</th><th>작업</th></tr></thead>
                 <tbody>
-                  {activeThemeStocks.map((row) => (
-                    <tr
-                      key={row.mapping_id}
-                      className={`market-theme-stock-row ${selectedLinkedStock?.mapping_id === row.mapping_id ? "selected" : ""}`}
-                      onClick={(e) => {
-                        if ((e.target as HTMLElement).closest("button,input,label")) return;
-                        void openLinkedStockDrawer(row);
-                      }}
-                    >
-                      <td><div className="stock-cell"><strong>{row.stock_name}</strong><span>{row.stock_code}</span></div></td>
-                      <td>{row.market ?? "-"}</td>
-                      <td><label className="inline-flex items-center gap-2"><input type="checkbox" checked={row.is_primary === 1} disabled={updatingPrimaryMappingId === row.mapping_id} onChange={(e) => void onTogglePrimary(row.mapping_id, e.target.checked)} /><span>{row.is_primary === 1 ? "대표" : "일반"}</span></label></td>
-                      <td>{sourceLabel(row.mapping_source)}</td><td>{row.confidence_score ?? "-"}</td><td>{row.is_active === 1 ? "활성" : "비활성"}</td>
-                      <td><button type="button" className="btn btn-secondary btn-table-sm" onClick={() => void onDeactivateMapping(row.mapping_id)}>해제</button></td>
-                    </tr>
-                  ))}
+                  {activeThemeStocks.map((row) => {
+                    const stockCode = normalizeStockCode(row.stock_code);
+                    return (
+                      <tr
+                        key={row.mapping_id}
+                        className={`market-theme-stock-row ${selectedLinkedStock?.mapping_id === row.mapping_id ? "selected" : ""}`}
+                        onClick={(e) => {
+                          if ((e.target as HTMLElement).closest("button,input,label")) return;
+                          void openLinkedStockDrawer(row);
+                        }}
+                      >
+                        <td><div className="stock-cell theme-linked-stock-name"><strong>{row.stock_name}</strong><span>{stockCode || row.stock_code}</span></div></td>
+                        <td>{row.market ?? "-"}</td>
+                        <td><label className="theme-linked-stock-primary"><input type="checkbox" checked={row.is_primary === 1} disabled={updatingPrimaryMappingId === row.mapping_id} onChange={(e) => void onTogglePrimary(row.mapping_id, e.target.checked)} /><span>{row.is_primary === 1 ? "대표" : "일반"}</span></label></td>
+                        <td><span className={`badge ${row.is_active === 1 ? "badge-emerald" : "badge-slate"}`}>{row.is_active === 1 ? "활성" : "비활성"}</span></td>
+                        <td><ThemeLinkedStockChart stockCode={stockCode} stockName={row.stock_name} period="day" label="일봉" sidcode={chartSidcode} onOpen={setZoomedChart} /></td>
+                        <td><ThemeLinkedStockChart stockCode={stockCode} stockName={row.stock_name} period="week" label="주봉" sidcode={chartSidcode} onOpen={setZoomedChart} /></td>
+                        <td><ThemeLinkedStockChart stockCode={stockCode} stockName={row.stock_name} period="month" label="월봉" sidcode={chartSidcode} onOpen={setZoomedChart} /></td>
+                        <td><button type="button" className="btn btn-secondary btn-table-sm theme-linked-stock-action" onClick={() => void onDeactivateMapping(row.mapping_id)}>해제</button></td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1261,6 +1338,19 @@ function MarketThemesPage() {
             </table>
           </div>
         </SectionCard>
+      ) : null}
+      {zoomedChart ? (
+        <div className="theme-linked-stock-chart-modal" onClick={() => setZoomedChart(null)}>
+          <img
+            src={zoomedChart.url}
+            alt={zoomedChart.alt}
+            className="theme-linked-stock-chart-modal-image"
+            onClick={(event) => {
+              event.stopPropagation();
+              setZoomedChart(null);
+            }}
+          />
+        </div>
       ) : null}
       {stockDrawerOpen && selectedLinkedStock ? (
         <div className="market-theme-stock-drawer-backdrop" onClick={closeStockDrawer}>
