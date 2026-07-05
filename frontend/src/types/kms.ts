@@ -22,6 +22,9 @@ export type KmsCategory = {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  post_count?: number;
+  total_post_count?: number;
+  child_count?: number;
 };
 
 export type KmsTag = {
@@ -80,6 +83,16 @@ export type KmsCategoryPayload = {
   description?: string | null;
   sort_order?: number;
   is_active?: boolean;
+};
+
+export type KmsCategorySortOrderItem = {
+  id: number;
+  sort_order: number;
+};
+
+export type KmsCategorySortOrderResponse = {
+  success: boolean;
+  updated_count: number;
 };
 
 export type KmsPostListParams = {

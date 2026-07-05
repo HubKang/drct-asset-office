@@ -2,6 +2,8 @@ import { apiRequest } from "@/services/api/apiClient";
 import type {
   KmsCategory,
   KmsCategoryPayload,
+  KmsCategorySortOrderItem,
+  KmsCategorySortOrderResponse,
   KmsHomeSummary,
   KmsPost,
   KmsPostListParams,
@@ -28,8 +30,17 @@ export const kmsApiRepository = {
   updateCategory: (categoryId: number, payload: Partial<KmsCategoryPayload>) =>
     apiRequest<KmsCategory>(`/kms/categories/${categoryId}`, { method: "PUT", body: JSON.stringify(payload) }),
 
+  updateCategoryActive: (categoryId: number, isActive: boolean) =>
+    apiRequest<KmsCategory>(`/kms/categories/${categoryId}/active`, { method: "PATCH", body: JSON.stringify({ is_active: isActive }) }),
+
   deactivateCategory: (categoryId: number) =>
-    apiRequest<KmsCategory>(`/kms/categories/${categoryId}`, { method: "DELETE" }),
+    apiRequest<KmsCategory>(`/kms/categories/${categoryId}/active`, { method: "PATCH", body: JSON.stringify({ is_active: false }) }),
+
+  deleteCategory: (categoryId: number) =>
+    apiRequest<{ success: boolean }>(`/kms/categories/${categoryId}`, { method: "DELETE" }),
+
+  updateCategorySortOrders: (items: KmsCategorySortOrderItem[]) =>
+    apiRequest<KmsCategorySortOrderResponse>("/kms/categories/sort-orders", { method: "PUT", body: JSON.stringify({ items }) }),
 
   listTags: (params?: { keyword?: string; sort?: "popular" | "name"; limit?: number }) => {
     const search = new URLSearchParams();

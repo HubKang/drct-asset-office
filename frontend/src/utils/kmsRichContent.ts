@@ -35,7 +35,7 @@ export const sanitizeKmsHtml = (value: string) =>
       "br",
       "span",
     ],
-    ALLOWED_ATTR: ["href", "src", "alt", "title", "target", "rel", "colspan", "rowspan"],
+    ALLOWED_ATTR: ["href", "src", "alt", "title", "target", "rel", "colspan", "rowspan", "width", "height"],
     ADD_DATA_URI_TAGS: ["img"],
   });
 

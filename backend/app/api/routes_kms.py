@@ -5,8 +5,11 @@ from sqlalchemy.orm import Session
 
 from backend.app.core.database import get_db
 from backend.app.schemas.kms_schema import (
+    KmsCategoryActiveUpdate,
     KmsCategoryCreate,
     KmsCategoryResponse,
+    KmsCategorySortOrderResponse,
+    KmsCategorySortOrderUpdate,
     KmsCategoryUpdate,
     KmsHomeSummary,
     KmsPostCreate,
@@ -34,14 +37,24 @@ def create_kms_category(payload: KmsCategoryCreate, db: Session = Depends(get_db
     return KmsService(db).create_category(payload)
 
 
+@router.put("/categories/sort-orders", response_model=KmsCategorySortOrderResponse)
+def update_kms_category_sort_orders(payload: KmsCategorySortOrderUpdate, db: Session = Depends(get_db)) -> KmsCategorySortOrderResponse:
+    return KmsService(db).update_category_sort_orders(payload)
+
+
 @router.put("/categories/{category_id}", response_model=KmsCategoryResponse)
 def update_kms_category(category_id: int, payload: KmsCategoryUpdate, db: Session = Depends(get_db)) -> KmsCategoryResponse:
     return KmsService(db).update_category(category_id, payload)
 
 
-@router.delete("/categories/{category_id}", response_model=KmsCategoryResponse)
-def delete_kms_category(category_id: int, db: Session = Depends(get_db)) -> KmsCategoryResponse:
-    return KmsService(db).deactivate_category(category_id)
+@router.patch("/categories/{category_id}/active", response_model=KmsCategoryResponse)
+def update_kms_category_active(category_id: int, payload: KmsCategoryActiveUpdate, db: Session = Depends(get_db)) -> KmsCategoryResponse:
+    return KmsService(db).set_category_active(category_id, payload.is_active)
+
+
+@router.delete("/categories/{category_id}")
+def delete_kms_category(category_id: int, db: Session = Depends(get_db)) -> dict[str, bool]:
+    return KmsService(db).delete_category(category_id)
 
 
 @router.get("/tags", response_model=list[KmsTagResponse])

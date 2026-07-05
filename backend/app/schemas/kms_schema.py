@@ -18,6 +18,9 @@ class KmsCategoryResponse(BaseModel):
     is_active: bool
     created_at: str
     updated_at: str
+    post_count: int = 0
+    total_post_count: int = 0
+    child_count: int = 0
 
 
 class KmsCategoryCreate(BaseModel):
@@ -34,6 +37,24 @@ class KmsCategoryUpdate(BaseModel):
     description: str | None = None
     sort_order: int | None = None
     is_active: bool | None = None
+
+
+class KmsCategoryActiveUpdate(BaseModel):
+    is_active: bool
+
+
+class KmsCategorySortOrderItem(BaseModel):
+    id: int
+    sort_order: int
+
+
+class KmsCategorySortOrderUpdate(BaseModel):
+    items: list[KmsCategorySortOrderItem]
+
+
+class KmsCategorySortOrderResponse(BaseModel):
+    success: bool
+    updated_count: int
 
 
 class KmsTagResponse(BaseModel):

@@ -13,6 +13,8 @@ from backend.app.schemas.kms_schema import (
     LEARNING_STATUS_VALUES,
     KmsCategoryCreate,
     KmsCategoryResponse,
+    KmsCategorySortOrderResponse,
+    KmsCategorySortOrderUpdate,
     KmsCategorySummary,
     KmsCategoryUpdate,
     KmsHomeSummary,
@@ -57,10 +59,33 @@ class KmsService:
         rows = self.db.execute(
             text(
                 f"""
-                SELECT id, parent_id, name, description, sort_order, is_active, created_at, updated_at
-                FROM kms_categories
+                SELECT
+                    c.id,
+                    c.parent_id,
+                    c.name,
+                    c.description,
+                    c.sort_order,
+                    c.is_active,
+                    c.created_at,
+                    c.updated_at,
+                    (
+                        SELECT COUNT(*)
+                        FROM kms_posts p
+                        WHERE p.category_id = c.id AND p.is_active = 1
+                    ) AS post_count,
+                    (
+                        SELECT COUNT(*)
+                        FROM kms_posts p
+                        WHERE p.category_id = c.id
+                    ) AS total_post_count,
+                    (
+                        SELECT COUNT(*)
+                        FROM kms_categories child
+                        WHERE child.parent_id = c.id
+                    ) AS child_count
+                FROM kms_categories c
                 {where}
-                ORDER BY COALESCE(parent_id, 0), sort_order, id
+                ORDER BY COALESCE(c.parent_id, 0), c.sort_order, c.id
                 """
             )
         ).mappings()
@@ -107,9 +132,32 @@ class KmsService:
         row = self.db.execute(
             text(
                 """
-                SELECT id, parent_id, name, description, sort_order, is_active, created_at, updated_at
-                FROM kms_categories
-                WHERE id = :category_id
+                SELECT
+                    c.id,
+                    c.parent_id,
+                    c.name,
+                    c.description,
+                    c.sort_order,
+                    c.is_active,
+                    c.created_at,
+                    c.updated_at,
+                    (
+                        SELECT COUNT(*)
+                        FROM kms_posts p
+                        WHERE p.category_id = c.id AND p.is_active = 1
+                    ) AS post_count,
+                    (
+                        SELECT COUNT(*)
+                        FROM kms_posts p
+                        WHERE p.category_id = c.id
+                    ) AS total_post_count,
+                    (
+                        SELECT COUNT(*)
+                        FROM kms_categories child
+                        WHERE child.parent_id = c.id
+                    ) AS child_count
+                FROM kms_categories c
+                WHERE c.id = :category_id
                 """
             ),
             {"category_id": category_id},
@@ -136,14 +184,59 @@ class KmsService:
         self.db.commit()
         return self.get_category(category_id)
 
-    def deactivate_category(self, category_id: int) -> KmsCategoryResponse:
+    def set_category_active(self, category_id: int, is_active: bool) -> KmsCategoryResponse:
         self.get_category(category_id)
         self.db.execute(
-            text("UPDATE kms_categories SET is_active = 0, updated_at = :now WHERE id = :category_id"),
-            {"category_id": category_id, "now": now_kst()},
+            text("UPDATE kms_categories SET is_active = :is_active, updated_at = :now WHERE id = :category_id"),
+            {"category_id": category_id, "is_active": 1 if is_active else 0, "now": now_kst()},
         )
         self.db.commit()
         return self.get_category(category_id)
+
+    def deactivate_category(self, category_id: int) -> KmsCategoryResponse:
+        return self.set_category_active(category_id, False)
+
+    def delete_category(self, category_id: int) -> dict[str, bool]:
+        self.get_category(category_id)
+        post_count = int(
+            self.db.execute(text("SELECT COUNT(*) FROM kms_posts WHERE category_id = :category_id"), {"category_id": category_id}).scalar() or 0
+        )
+        child_count = int(
+            self.db.execute(text("SELECT COUNT(*) FROM kms_categories WHERE parent_id = :category_id"), {"category_id": category_id}).scalar() or 0
+        )
+        if post_count > 0:
+            raise HTTPException(status_code=409, detail="이 카테고리에 연결된 게시글이 있어 삭제할 수 없습니다. 비활성화를 사용해 주세요.")
+        if child_count > 0:
+            raise HTTPException(status_code=409, detail="하위 카테고리가 있어 삭제할 수 없습니다. 하위 카테고리를 먼저 정리해 주세요.")
+        self.db.execute(text("DELETE FROM kms_categories WHERE id = :category_id"), {"category_id": category_id})
+        self.db.commit()
+        return {"success": True}
+
+    def update_category_sort_orders(self, payload: KmsCategorySortOrderUpdate) -> KmsCategorySortOrderResponse:
+        if not payload.items:
+            raise HTTPException(status_code=400, detail="저장할 카테고리 순서가 없습니다.")
+        ids = [item.id for item in payload.items]
+        if len(set(ids)) != len(ids):
+            raise HTTPException(status_code=400, detail="중복된 카테고리가 포함되어 있습니다.")
+        orders = [item.sort_order for item in payload.items]
+        if len(set(orders)) != len(orders):
+            raise HTTPException(status_code=400, detail="표시 순서가 중복되었습니다.")
+        rows = self.db.execute(
+            text("SELECT id FROM kms_categories WHERE id IN :ids").bindparams(bindparam("ids", expanding=True)),
+            {"ids": tuple(ids)},
+        ).mappings().all()
+        found_ids = {int(row["id"]) for row in rows}
+        missing_ids = [category_id for category_id in ids if category_id not in found_ids]
+        if missing_ids:
+            raise HTTPException(status_code=404, detail=f"존재하지 않는 카테고리가 포함되어 있습니다: {missing_ids[0]}")
+        now = now_kst()
+        for item in payload.items:
+            self.db.execute(
+                text("UPDATE kms_categories SET sort_order = :sort_order, updated_at = :now WHERE id = :category_id"),
+                {"category_id": item.id, "sort_order": item.sort_order, "now": now},
+            )
+        self.db.commit()
+        return KmsCategorySortOrderResponse(success=True, updated_count=len(payload.items))
 
     def list_posts(
         self,
@@ -458,6 +551,9 @@ class KmsService:
             tags=tags,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            post_count=int(row["post_count"] or 0) if "post_count" in row else 0,
+            total_post_count=int(row["total_post_count"] or 0) if "total_post_count" in row else 0,
+            child_count=int(row["child_count"] or 0) if "child_count" in row else 0,
         )
 
     def _tags_for_post(self, post_id: int) -> list[str]:

@@ -138,7 +138,7 @@ function KmsPostDetailPage() {
               <h3>기본 정보</h3>
               <p>제목, 분류, 학습 상태를 수정합니다.</p>
             </div>
-            <div className="kms-form-grid">
+            <div className="kms-form-grid kms-basic-info-grid">
               <label className="kms-form-field kms-form-wide">
                 <span className="kms-form-label">제목 *</span>
                 <input className="input kms-form-control" value={form.title} onChange={(event) => setForm((prev) => prev && ({ ...prev, title: event.target.value }))} />
@@ -169,7 +169,6 @@ function KmsPostDetailPage() {
               <p>지식글의 핵심을 짧게 정리합니다.</p>
             </div>
             <label className="kms-form-field">
-              <span className="kms-form-label">요약</span>
               <textarea className="textarea kms-form-control kms-summary-textarea" value={form.summary || ""} onChange={(event) => setForm((prev) => prev && ({ ...prev, summary: event.target.value }))} />
             </label>
           </div>
@@ -178,7 +177,7 @@ function KmsPostDetailPage() {
               <h3>본문 작성 *</h3>
               <p>본문 서식과 표, 이미지 링크를 수정합니다.</p>
             </div>
-            <KmsRichEditor value={form.content} onChange={(content) => setForm((prev) => prev && ({ ...prev, content }))} />
+            <KmsRichEditor resetKey={`detail-${numericPostId}`} value={form.content} onChange={(content) => setForm((prev) => prev && ({ ...prev, content }))} />
           </div>
           <div className="kms-form-section">
             <div className="kms-form-section-header">
