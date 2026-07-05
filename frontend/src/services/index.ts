@@ -15,6 +15,7 @@ import { marketIndicatorApiRepository } from "@/services/api/marketIndicatorApiR
 import { marketThemeApiRepository } from "@/services/api/marketThemeApiRepository";
 import { marketTrendApiRepository } from "@/services/api/marketTrendApiRepository";
 import { gptPromptTemplateApiRepository } from "@/services/api/gptPromptTemplateApiRepository";
+import { kmsApiRepository } from "@/services/api/kmsApiRepository";
 import { schemaCommentApiRepository } from "@/services/api/schemaCommentApiRepository";
 import { stockApiRepository } from "@/services/api/stockApiRepository";
 import { stockPriceApiRepository } from "@/services/api/stockPriceApiRepository";
@@ -57,6 +58,7 @@ export const repositories = {
   marketIndexes: useMock ? marketIndexMockRepository : marketIndexApiRepository,
   marketIndicators: useMock ? marketIndicatorMockRepository : marketIndicatorApiRepository,
   marketTrends: marketTrendApiRepository,
+  kms: kmsApiRepository,
   disclosures: useMock ? disclosureMockRepository : disclosureApiRepository,
   economicBriefing: economicBriefingApiRepository,
   telegram: telegramApiRepository,

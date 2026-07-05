@@ -4,6 +4,12 @@ import { useNavigate } from "react-router-dom";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import StatusBadge from "@/components/common/StatusBadge";
+import {
+  buildNaverKoreaMarketChartUrl,
+  buildNaverMarketIndexAreaChartUrl,
+  buildNaverWorldIndexChartUrl,
+  createNaverChartSidcode,
+} from "@/utils/naverChart";
 import { buildTreemapLayout, getTreemapLabelClass, getTreemapTextMetrics } from "@/utils/treemapLayout";
 import { dataSourceLabel, repositories } from "@/services";
 import type { CollectionRun } from "@/types/collectionRun";
@@ -18,6 +24,13 @@ type SourceKey = "news" | "disclosure" | "youtube" | "telegram";
 type SourceStatus = "normal" | "warning" | "idle";
 type DetailFilter = "all" | "summarized" | "pending" | "issue";
 type ThemeFlowViewMode = "THEME_GROUP" | "THEME";
+
+type DashboardIndicator = {
+  title: string;
+  category: string;
+  imageUrl: string;
+  helpType?: "dollar-index";
+};
 
 type SourceSummary = {
   source: SourceKey;
@@ -413,6 +426,8 @@ const DASHBOARD_RETURN_LEGEND = [
   { label: "+30% 이상", color: "#991B1B" },
 ];
 
+const DOLLAR_INDEX_HELP_URL = "https://blog.naver.com/annalife_/224280737671?photoView=3";
+
 function DashboardPage() {
   const navigate = useNavigate();
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
@@ -423,6 +438,59 @@ function DashboardPage() {
   const [selectedThemeId, setSelectedThemeId] = useState<number | null>(null);
   const [treemapViewMode, setTreemapViewMode] = useState<ThemeFlowViewMode>("THEME");
   const [treemapTooltip, setTreemapTooltip] = useState<{ x: number; y: number; item: ThemeTreemapItem } | null>(null);
+  const [isDollarIndexHelpOpen, setIsDollarIndexHelpOpen] = useState(false);
+  const chartSidcode = useMemo(() => createNaverChartSidcode(), []);
+  const dashboardIndicators = useMemo<DashboardIndicator[]>(
+    () => [
+      {
+        title: "코스피",
+        category: "국내지수 · 90일",
+        imageUrl: buildNaverKoreaMarketChartUrl("KOSPI", chartSidcode),
+      },
+      {
+        title: "코스닥",
+        category: "국내지수 · 90일",
+        imageUrl: buildNaverKoreaMarketChartUrl("KOSDAQ", chartSidcode),
+      },
+      {
+        title: "국제 금",
+        category: "원자재 · 3개월",
+        imageUrl: buildNaverMarketIndexAreaChartUrl("CMDT_GC", "month3", chartSidcode),
+      },
+      {
+        title: "다우지수",
+        category: "해외증시 · 3개월",
+        imageUrl: buildNaverWorldIndexChartUrl("DJI@DJI", "month3", chartSidcode),
+      },
+      {
+        title: "나스닥",
+        category: "해외증시 · 3개월",
+        imageUrl: buildNaverWorldIndexChartUrl("NAS@IXIC", "month3", chartSidcode),
+      },
+      {
+        title: "S&P500",
+        category: "해외증시 · 3개월",
+        imageUrl: buildNaverWorldIndexChartUrl("SPI@SPX", "month3", chartSidcode),
+      },
+      {
+        title: "달러 환율",
+        category: "환율 · 3개월",
+        imageUrl: buildNaverMarketIndexAreaChartUrl("FX_USDKRW", "month3", chartSidcode),
+      },
+      {
+        title: "달러 인덱스",
+        category: "환율·지수 · 3개월",
+        imageUrl: buildNaverMarketIndexAreaChartUrl("FX_USDX", "month3", chartSidcode),
+        helpType: "dollar-index",
+      },
+      {
+        title: "WTI",
+        category: "원자재 · 3개월",
+        imageUrl: buildNaverMarketIndexAreaChartUrl("OIL_CL", "month3"),
+      },
+    ],
+    [chartSidcode],
+  );
 
   const loadDashboard = useCallback(async () => {
     setIsLoading(true);
@@ -666,6 +734,15 @@ function DashboardPage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [detailSource]);
 
+  useEffect(() => {
+    if (!isDollarIndexHelpOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsDollarIndexHelpOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isDollarIndexHelpOpen]);
+
   const summaryCards = dashboard?.source_summaries ?? [];
   const detailSummary = detailSource ? summaryCards.find((item) => item.source === detailSource) : null;
   const detailItems = detailSource ? dashboard?.feed_by_source[detailSource] ?? [] : [];
@@ -711,7 +788,44 @@ function DashboardPage() {
           <p className="text-sm text-rose-600">{errorMessage}</p>
         </SectionCard>
       ) : null}
-<SectionCard title="최근 1개월 테마등락률 트리맵">
+
+      <SectionCard title="주요 지표 흐름">
+        <div className="dashboard-indicator-panel">
+          <div className="dashboard-indicator-header">
+            <p>국내지수, 해외증시, 환율·원자재 흐름을 네이버 차트 기준으로 빠르게 확인합니다.</p>
+          </div>
+          <div className="dashboard-indicator-grid">
+            {dashboardIndicators.map((indicator) => (
+              <article key={indicator.title} className="dashboard-indicator-card">
+                <div className="dashboard-indicator-card-title">
+                  <div>
+                    <strong>{indicator.title}</strong>
+                    <span>{indicator.category}</span>
+                  </div>
+                  {indicator.helpType === "dollar-index" ? (
+                    <button
+                      type="button"
+                      className="dashboard-indicator-help-button"
+                      aria-label="달러 인덱스 설명 보기"
+                      onClick={() => setIsDollarIndexHelpOpen(true)}
+                    >
+                      ?
+                    </button>
+                  ) : null}
+                </div>
+                <img
+                  src={indicator.imageUrl}
+                  alt={`${indicator.title} 흐름 차트`}
+                  className="dashboard-indicator-chart"
+                  loading="lazy"
+                />
+              </article>
+            ))}
+          </div>
+        </div>
+      </SectionCard>
+
+      <SectionCard title="최근 1개월 테마등락률 트리맵">
         <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <p className="text-sm text-slate-600">최근 1개월 동안 저장된 테마등락률을 합산하여, 테마별 상승·하락 강도를 면적으로 표현합니다.</p>
           <div className="dashboard-treemap-toolbar">
@@ -884,6 +998,36 @@ function DashboardPage() {
           </div>
         )}
       </SectionCard>
+
+      {isDollarIndexHelpOpen ? (
+        <div className="dashboard-indicator-modal" role="presentation" onClick={() => setIsDollarIndexHelpOpen(false)}>
+          <div
+            className="dashboard-indicator-modal-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="dollar-index-help-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="dashboard-indicator-modal-header">
+              <div>
+                <h3 id="dollar-index-help-title">달러 인덱스 설명</h3>
+                <p>네이버 블로그 자료를 참고해 달러 인덱스 의미와 흐름을 확인합니다.</p>
+              </div>
+              <button type="button" className="btn btn-secondary" onClick={() => setIsDollarIndexHelpOpen(false)}>
+                닫기
+              </button>
+            </div>
+            <iframe
+              title="달러 인덱스 설명"
+              src={DOLLAR_INDEX_HELP_URL}
+              className="dashboard-indicator-modal-frame"
+            />
+            <a className="dashboard-indicator-modal-link" href={DOLLAR_INDEX_HELP_URL} target="_blank" rel="noreferrer">
+              새 창에서 보기
+            </a>
+          </div>
+        </div>
+      ) : null}
 
       <SectionCard title="오늘 소스별 수집 현황">
         {summaryCards.length === 0 ? (

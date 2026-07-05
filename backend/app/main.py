@@ -18,6 +18,7 @@ from backend.app.api.routes_external_kiwoom import router as external_kiwoom_rou
 from backend.app.api.routes_gpt_prompt_templates import router as gpt_prompt_templates_router
 from backend.app.api.routes_health import router as health_router
 from backend.app.api.routes_market_metrics import router as market_metrics_router
+from backend.app.api.routes_kms import router as kms_router
 from backend.app.api.routes_market_calendar import router as market_calendar_router
 from backend.app.api.routes_market_indexes import router as market_indexes_router
 from backend.app.api.routes_market_indicators import router as market_indicators_router
@@ -71,6 +72,7 @@ app.include_router(watchlist_router)
 app.include_router(schema_comments_router)
 app.include_router(news_router)
 app.include_router(kiwoom_router)
+app.include_router(kms_router)
 app.include_router(disclosures_router)
 app.include_router(collectors_router)
 app.include_router(collection_runs_router)

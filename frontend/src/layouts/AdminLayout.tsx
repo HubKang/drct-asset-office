@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { NavLink, Outlet, matchPath, useLocation } from "react-router-dom";
 import clsx from "clsx";
 import topMenus from "@/data/json/topMenus.json";
 import sideMenus from "@/data/json/sideMenus.json";
@@ -19,6 +19,16 @@ type SideMenuItem = {
 
 const menus = sideMenus as SideMenuItem[];
 
+const isRoutePathActive = (routePath: string, currentPath: string) =>
+  Boolean(matchPath({ path: routePath, end: true }, currentPath));
+
+const isKmsMenuRouteActive = (routeKey: string, currentPath: string) => {
+  if (routeKey === "kms-home") return currentPath === "/kms" || currentPath === "/kms/";
+  if (routeKey === "kms-posts") return currentPath === "/kms/posts" || currentPath.startsWith("/kms/posts/");
+  if (routeKey === "kms-settings") return currentPath === "/kms/settings" || currentPath.startsWith("/kms/settings/");
+  return false;
+};
+
 function AdminLayout() {
   const location = useLocation();
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
@@ -33,10 +43,11 @@ function AdminLayout() {
   const currentRoute = useMemo(() => {
     const found = menus.find((menu) => {
       const route = routeRegistryMap[menu.routeKey];
-      if (route && location.pathname === route.path) return true;
+      if (menu.menuKey === "kms" && isKmsMenuRouteActive(menu.routeKey, location.pathname)) return true;
+      if (route && isRoutePathActive(route.path, location.pathname)) return true;
       return (menu.children ?? []).some((child) => {
         const childRoute = routeRegistryMap[child.routeKey];
-        return childRoute && location.pathname === childRoute.path;
+        return childRoute && isRoutePathActive(childRoute.path, location.pathname);
       });
     });
     return found ?? null;
@@ -44,10 +55,11 @@ function AdminLayout() {
 
   const isMenuActive = (menu: SideMenuItem) => {
     const route = routeRegistryMap[menu.routeKey];
-    if (route && location.pathname === route.path) return true;
+    if (menu.menuKey === "kms" && isKmsMenuRouteActive(menu.routeKey, location.pathname)) return true;
+    if (route && isRoutePathActive(route.path, location.pathname)) return true;
     return (menu.children ?? []).some((child) => {
       const childRoute = routeRegistryMap[child.routeKey];
-      return childRoute && location.pathname === childRoute.path;
+      return childRoute && isRoutePathActive(childRoute.path, location.pathname);
     });
   };
 
@@ -112,7 +124,9 @@ function AdminLayout() {
                     <li key={menu.routeKey}>
                       <NavLink
                         to={route.path}
-                        className={({ isActive }) => clsx("side-menu-link", (isActive || parentActive) && "side-menu-link-active")}
+                        className={({ isActive }) =>
+                          clsx("side-menu-link", (menu.menuKey === "kms" ? parentActive : isActive || parentActive) && "side-menu-link-active")
+                        }
                       >
                         <span>{menu.title}</span>
                       </NavLink>

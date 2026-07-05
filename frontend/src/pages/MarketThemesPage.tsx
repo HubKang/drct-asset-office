@@ -2,6 +2,12 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import SectionCard from "@/components/common/SectionCard";
 import StatusBadge from "@/components/common/StatusBadge";
 import { repositories } from "@/services";
+import {
+  buildNaverStockCandleChartUrl,
+  createNaverChartSidcode,
+  normalizeNaverStockCode,
+  type NaverStockCandlePeriod,
+} from "@/utils/naverChart";
 import type {
   MarketTheme,
   MarketThemeCandidate,
@@ -19,7 +25,6 @@ import type { Stock } from "@/types/stock";
 type ActiveTab = "themes" | "mapping" | "candidates";
 type ThemeViewMode = "group" | "theme" | "trend";
 type ThemeReturnSort = "default" | "desc" | "asc";
-type NaverCandleChartPeriod = "day" | "week" | "month";
 const THEME_PAGE_SIZE = 20;
 
 function toErrorMessage(error: unknown, fallback: string): string {
@@ -42,16 +47,6 @@ function sourceLabel(source: string): string {
   return source;
 }
 
-function normalizeStockCode(value: string | null | undefined): string {
-  const digits = String(value ?? "").replace(/[^0-9]/g, "");
-  if (!digits) return "";
-  return digits.slice(-6).padStart(6, "0");
-}
-
-function buildNaverCandleChartUrl(stockCode: string, period: NaverCandleChartPeriod, sidcode: number): string {
-  return `https://ssl.pstatic.net/imgfinance/chart/item/candle/${period}/${stockCode}.png?sidcode=${sidcode}`;
-}
-
 function ThemeLinkedStockChart({
   stockCode,
   stockName,
@@ -62,7 +57,7 @@ function ThemeLinkedStockChart({
 }: {
   stockCode: string;
   stockName: string;
-  period: NaverCandleChartPeriod;
+  period: NaverStockCandlePeriod;
   label: string;
   sidcode: number;
   onOpen: (chart: { url: string; alt: string }) => void;
@@ -77,7 +72,7 @@ function ThemeLinkedStockChart({
     return <div className="theme-linked-stock-chart-fallback">차트 없음</div>;
   }
 
-  const url = buildNaverCandleChartUrl(stockCode, period, sidcode);
+  const url = buildNaverStockCandleChartUrl(stockCode, period, sidcode);
   const alt = `${stockName || stockCode} ${label} 차트`;
 
   return (
@@ -363,7 +358,7 @@ function MarketThemesPage() {
     [mappingThemeGroupId, themeGroups],
   );
   const activeThemeStocks = useMemo(() => themeStocks.filter((x) => x.is_active === 1), [themeStocks]);
-  const chartSidcode = useMemo(() => Date.now(), [selectedThemeId, activeThemeStocks.length]);
+  const chartSidcode = useMemo(() => createNaverChartSidcode(), [selectedThemeId, activeThemeStocks.length]);
   const connectedStockIdSet = useMemo(() => new Set(activeThemeStocks.map((x) => x.stock_id)), [activeThemeStocks]);
   const primaryCount = useMemo(() => activeThemeStocks.filter((x) => x.is_primary === 1).length, [activeThemeStocks]);
 
@@ -1252,7 +1247,7 @@ function MarketThemesPage() {
                 <thead><tr><th>종목</th><th>시장</th><th>대표</th><th>상태</th><th>일봉</th><th>주봉</th><th>월봉</th><th>작업</th></tr></thead>
                 <tbody>
                   {activeThemeStocks.map((row) => {
-                    const stockCode = normalizeStockCode(row.stock_code);
+                    const stockCode = normalizeNaverStockCode(row.stock_code);
                     return (
                       <tr
                         key={row.mapping_id}

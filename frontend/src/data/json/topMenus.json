@@ -20,6 +20,10 @@
     "title": "매매 관리"
   },
   {
+    "menuKey": "kms",
+    "title": "DrCT KMS"
+  },
+  {
     "menuKey": "system",
     "title": "시스템"
   }

@@ -1,11 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, PenLine, Trash2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import EmptyState from "@/components/common/EmptyState";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import StatusBadge from "@/components/common/StatusBadge";
 import { repositories } from "@/services";
-import type { Stock, StockUpdateInput } from "@/types/stock";
+import {
+  buildNaverStockCandleChartUrl,
+  createNaverChartSidcode,
+  normalizeNaverStockCode,
+  type NaverStockCandlePeriod,
+} from "@/utils/naverChart";
+import type { Stock } from "@/types/stock";
 import type { StockSyncResponse } from "@/types/stockSync";
 
 type MarketFilter = "ALL" | "KOSPI" | "KOSDAQ" | "INACTIVE";
@@ -24,6 +30,67 @@ const SECURITY_LABELS: Record<SecurityType, string> = {
   other: "기타",
 };
 
+const createEmptySecurityTypeMap = <T,>(value: T): Record<SecurityType, T> => ({
+  common_stock: value,
+  preferred_stock: value,
+  etf: value,
+  etn: value,
+  spac: value,
+  reit: value,
+  other: value,
+});
+
+function formatSyncedAt(value: string | null | undefined): string {
+  if (!value) return "-";
+  const normalized = value.replace("T", " ");
+  return normalized.length >= 16 ? normalized.slice(0, 16) : normalized;
+}
+
+function StockChartImage({
+  stockCode,
+  stockName,
+  period,
+  label,
+  sidcode,
+  onOpen,
+}: {
+  stockCode: string;
+  stockName: string;
+  period: NaverStockCandlePeriod;
+  label: string;
+  sidcode: number;
+  onOpen: (chart: { url: string; alt: string }) => void;
+}) {
+  const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    setHasError(false);
+  }, [period, sidcode, stockCode]);
+
+  if (!stockCode || hasError) {
+    return <div className="stock-management-chart-fallback">차트 없음</div>;
+  }
+
+  const url = buildNaverStockCandleChartUrl(stockCode, period, sidcode);
+  const alt = `${stockName || stockCode} ${label} 차트`;
+
+  return (
+    <button
+      type="button"
+      className="stock-management-chart-button"
+      onClick={() => onOpen({ url, alt })}
+    >
+      <img
+        src={url}
+        alt={alt}
+        className="stock-management-chart-image"
+        loading="lazy"
+        onError={() => setHasError(true)}
+      />
+    </button>
+  );
+}
+
 function StocksPage() {
   const [items, setItems] = useState<Stock[]>([]);
   const [keyword, setKeyword] = useState("");
@@ -32,20 +99,12 @@ function StocksPage() {
   const [offset, setOffset] = useState(0);
   const limit = 20;
 
-  const [editId, setEditId] = useState<number | null>(null);
-  const [editForm, setEditForm] = useState<StockUpdateInput>({});
-
   const [syncMarket, setSyncMarket] = useState<SyncMarket>("ALL");
   const [includeSecurityTypes, setIncludeSecurityTypes] = useState<SecurityType[]>(["common_stock"]);
-  const [typeCounts, setTypeCounts] = useState<Record<SecurityType, number>>({
-    common_stock: 0,
-    preferred_stock: 0,
-    etf: 0,
-    etn: 0,
-    spac: 0,
-    reit: 0,
-    other: 0,
-  });
+  const [typeCounts, setTypeCounts] = useState<Record<SecurityType, number>>(() => createEmptySecurityTypeMap(0));
+  const [typeLatestSyncedAt, setTypeLatestSyncedAt] = useState<Record<SecurityType, string | null>>(() => createEmptySecurityTypeMap<string | null>(null));
+  const [chartSidcode, setChartSidcode] = useState(createNaverChartSidcode());
+  const [zoomedChart, setZoomedChart] = useState<{ url: string; alt: string } | null>(null);
   const [syncLoading, setSyncLoading] = useState(false);
   const [syncResult, setSyncResult] = useState<StockSyncResponse | null>(null);
   const [syncError, setSyncError] = useState("");
@@ -70,22 +129,30 @@ function StocksPage() {
   const load = async (nextOffset = offset) => {
     const data = await repositories.stocks.list(buildListParams(nextOffset));
     setItems(data);
+    setChartSidcode(createNaverChartSidcode());
   };
 
   const loadTypeCounts = async () => {
-    const next: Record<SecurityType, number> = { common_stock: 0, preferred_stock: 0, etf: 0, etn: 0, spac: 0, reit: 0, other: 0 };
+    const next = createEmptySecurityTypeMap(0);
+    const latest = createEmptySecurityTypeMap<string | null>(null);
     await Promise.all(
       SECURITY_TYPES.map(async (type) => {
         let count = 0;
         for (let pageOffset = 0; pageOffset < 50000; pageOffset += 500) {
           const rows = await repositories.stocks.list({ is_active: 1, security_type: type, limit: 500, offset: pageOffset });
           count += rows.length;
+          rows.forEach((row) => {
+            if (row.last_synced_at && (!latest[type] || row.last_synced_at > latest[type])) {
+              latest[type] = row.last_synced_at;
+            }
+          });
           if (rows.length < 500) break;
         }
         next[type] = count;
       }),
     );
     setTypeCounts(next);
+    setTypeLatestSyncedAt(latest);
   };
 
   useEffect(() => {
@@ -111,27 +178,8 @@ function StocksPage() {
     await load(0);
   };
 
-  const startEdit = (item: Stock) => {
-    setEditId(item.id);
-    setEditForm({
-      stock_name: item.stock_name,
-      market: item.market || "",
-      sector: item.sector || "",
-      industry: item.industry || "",
-      security_type: item.security_type || "common_stock",
-    });
-  };
-
-  const onUpdate = async () => {
-    if (!editId) return;
-    await repositories.stocks.update(editId, editForm);
-    setEditId(null);
-    setEditForm({});
-    await load();
-  };
-
-  const onDeactivate = async (stockId: number) => {
-    await repositories.stocks.deactivate(stockId);
+  const onToggleActive = async (stockId: number, nextActive: number) => {
+    await repositories.stocks.update(stockId, { is_active: nextActive });
     await load();
     await loadTypeCounts();
   };
@@ -223,7 +271,8 @@ function StocksPage() {
             return (
               <button key={type} type="button" className={`stock-type-card ${selected ? "selected" : ""}`} onClick={() => toggleSecurityType(type)}>
                 <strong>{SECURITY_LABELS[type]}</strong>
-                <span>현재 DB {typeCounts[type].toLocaleString()}건</span>
+                <span>{typeCounts[type].toLocaleString()}건</span>
+                <span>마지막 동기화 {formatSyncedAt(typeLatestSyncedAt[type])}</span>
                 <em>{selected ? "선택" : "미선택"}</em>
               </button>
             );
@@ -278,52 +327,51 @@ function StocksPage() {
         </form>
       </SectionCard>
 
-      {editId ? (
-        <SectionCard title="종목 수정">
-          <div className="grid grid-cols-1 gap-2 md:grid-cols-6">
-            <input className="input-control" placeholder="종목명" value={editForm.stock_name || ""} onChange={(e) => setEditForm({ ...editForm, stock_name: e.target.value })} />
-            <input className="input-control" placeholder="시장" value={editForm.market || ""} onChange={(e) => setEditForm({ ...editForm, market: e.target.value })} />
-            <input className="input-control" placeholder="섹터" value={editForm.sector || ""} onChange={(e) => setEditForm({ ...editForm, sector: e.target.value })} />
-            <input className="input-control" placeholder="업종" value={editForm.industry || ""} onChange={(e) => setEditForm({ ...editForm, industry: e.target.value })} />
-            <select className="select-control" value={editForm.security_type || "common_stock"} onChange={(e) => setEditForm({ ...editForm, security_type: e.target.value })}>
-              {SECURITY_TYPES.map((type) => <option key={type} value={type}>{SECURITY_LABELS[type]}</option>)}
-            </select>
-            <div className="flex gap-2">
-              <button className="btn btn-primary" onClick={onUpdate}>저장</button>
-              <button className="btn btn-secondary" onClick={() => setEditId(null)}>취소</button>
-            </div>
-          </div>
-        </SectionCard>
-      ) : null}
-
       <SectionCard title="종목 목록">
         {items.length === 0 ? (
           <EmptyState message="조회된 종목이 없습니다." />
         ) : (
           <>
-            <div className="table-shell">
-              <table className="data-table compact-table min-w-[1320px]">
+            <div className="table-shell stock-management-table-shell">
+              <table className="data-table compact-table stock-management-table">
+                <colgroup>
+                  <col className="stock-management-col-code" />
+                  <col className="stock-management-col-name" />
+                  <col className="stock-management-col-market" />
+                  <col className="stock-management-col-type" />
+                  <col className="stock-management-col-active" />
+                  <col className="stock-management-col-chart" />
+                  <col className="stock-management-col-chart" />
+                  <col className="stock-management-col-chart" />
+                  <col className="stock-management-col-actions" />
+                </colgroup>
                 <thead>
-                  <tr><th>ID</th><th>종목코드</th><th>종목명</th><th>시장</th><th>종목유형</th><th>섹터</th><th>업종</th><th>ISIN</th><th>활성</th><th>마지막 동기화</th><th>작업</th></tr>
+                  <tr><th>종목코드</th><th>종목명</th><th>시장</th><th>종목유형</th><th>활성</th><th>일봉</th><th>주봉</th><th>월봉</th><th>작업</th></tr>
                 </thead>
                 <tbody>
-                  {items.map((s) => (
-                    <tr key={s.id}>
-                      <td>{s.id}</td><td className="cell-nowrap font-medium text-slate-800">{s.stock_code}</td>
-                      <td className="cell-nowrap max-w-[220px] truncate" title={s.stock_name}>{s.stock_name}</td>
-                      <td className="cell-nowrap">{s.market || "-"}</td><td className="cell-nowrap">{renderSecurityType(s.security_type)}</td>
-                      <td className="cell-nowrap">{s.sector || "-"}</td><td className="cell-nowrap">{s.industry || "-"}</td>
-                      <td className="cell-nowrap">{s.isin_code || "-"}</td>
-                      <td>{s.is_active === 1 ? <StatusBadge label="활성" tone="emerald" /> : <StatusBadge label="비활성" tone="slate" />}</td>
-                      <td className="cell-nowrap">{s.last_synced_at || "-"}</td>
-                      <td>
-                        <div className="flex gap-2">
-                          <button className="btn btn-secondary inline-flex items-center gap-1" onClick={() => startEdit(s)}><PenLine size={13} />수정</button>
-                          <button className="btn btn-danger inline-flex items-center gap-1" onClick={() => onDeactivate(s.id)}><Trash2 size={13} />비활성화</button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {items.map((s) => {
+                    const stockCode = normalizeNaverStockCode(s.stock_code);
+                    const codeTitle = stockCode && stockCode !== s.stock_code ? s.stock_code : undefined;
+                    return (
+                      <tr key={s.id}>
+                        <td className="cell-nowrap font-medium text-slate-800" title={codeTitle}>{stockCode || s.stock_code}</td>
+                        <td className="cell-nowrap truncate stock-management-name-cell" title={s.stock_name}>{s.stock_name}</td>
+                        <td className="cell-nowrap">{s.market || "-"}</td>
+                        <td className="cell-nowrap">{renderSecurityType(s.security_type)}</td>
+                        <td>{s.is_active === 1 ? <StatusBadge label="활성" tone="emerald" /> : <StatusBadge label="비활성" tone="slate" />}</td>
+                        <td><StockChartImage stockCode={stockCode} stockName={s.stock_name} period="day" label="일봉" sidcode={chartSidcode} onOpen={setZoomedChart} /></td>
+                        <td><StockChartImage stockCode={stockCode} stockName={s.stock_name} period="week" label="주봉" sidcode={chartSidcode} onOpen={setZoomedChart} /></td>
+                        <td><StockChartImage stockCode={stockCode} stockName={s.stock_name} period="month" label="월봉" sidcode={chartSidcode} onOpen={setZoomedChart} /></td>
+                        <td>
+                          <div className="stock-management-actions">
+                            <button className={`btn ${s.is_active === 1 ? "btn-danger" : "btn-secondary"} btn-table-sm stock-management-action-button`} onClick={() => onToggleActive(s.id, s.is_active === 1 ? 0 : 1)}>
+                              {s.is_active === 1 ? "비활성" : "활성"}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -337,6 +385,19 @@ function StocksPage() {
           </>
         )}
       </SectionCard>
+      {zoomedChart ? (
+        <div className="stock-management-chart-modal" onClick={() => setZoomedChart(null)}>
+          <img
+            src={zoomedChart.url}
+            alt={zoomedChart.alt}
+            className="stock-management-chart-modal-image"
+            onClick={(event) => {
+              event.stopPropagation();
+              setZoomedChart(null);
+            }}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

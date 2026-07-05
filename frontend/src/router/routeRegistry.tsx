@@ -8,6 +8,10 @@ import DrctArchitecturePage from "@/pages/DrctArchitecturePage";
 import DisclosuresPage from "@/pages/DisclosuresPage";
 import EconomicBriefingPage from "@/pages/EconomicBriefingPage";
 import GptPromptSettingsPage from "@/pages/GptPromptSettingsPage";
+import KmsHomePage from "@/pages/KmsHomePage";
+import KmsPostDetailPage from "@/pages/KmsPostDetailPage";
+import KmsPostsPage from "@/pages/KmsPostsPage";
+import KmsSettingsPage from "@/pages/KmsSettingsPage";
 import TelegramBriefingPage from "@/pages/TelegramBriefingPage";
 import TradeCalendarPage from "@/pages/TradeCalendarPage";
 import TradeMethodsPage from "@/pages/TradeMethodsPage";
@@ -63,6 +67,10 @@ export const routeRegistry: RouteItem[] = [
   { routeKey: "market-indexes", path: "/market-indexes", title: "시장 지표 관리", description: "코스피, 코스닥, 업종지수, 금 현물 등 주요 시장지표를 수집하고 시장 흐름을 비교합니다.", component: <MarketIndexesPage /> },
   { routeKey: "economic-briefing", path: "/economic-briefing", title: "경제 브리핑", description: "경제 영상 메타데이터/요약 관리", component: <EconomicBriefingPage /> },
   { routeKey: "telegram-briefing", path: "/telegram-briefing", title: "텔레그램 브리핑", description: "텔레그램 채널 수집/요약 관리", component: <TelegramBriefingPage /> },
+  { routeKey: "kms-home", path: "/kms", title: "KMS 홈", description: "투자 지식 대시보드", component: <KmsHomePage /> },
+  { routeKey: "kms-posts", path: "/kms/posts", title: "지식 게시판", description: "KMS 지식글 등록/조회", component: <KmsPostsPage /> },
+  { routeKey: "kms-post-detail", path: "/kms/posts/:postId", title: "지식글 상세", description: "KMS 지식글 상세/수정", component: <KmsPostDetailPage /> },
+  { routeKey: "kms-settings", path: "/kms/settings", title: "KMS 설정", description: "KMS 카테고리 관리", component: <KmsSettingsPage /> },
   { routeKey: "trade-methods", path: "/trade-methods", title: "매매기법", description: "매매기법 등록/수정/비활성화 관리", component: <TradeMethodsPage /> },
   { routeKey: "trade-journals", path: "/trade-journals", title: "매매일지", description: "매매일지 등록/조회", component: <TradeJournalsPage /> },
   { routeKey: "trade-calendar", path: "/trade-calendar", title: "매매일지 캘린더", description: "매매일지의 매수·매도 기록을 달력으로 확인", component: <TradeCalendarPage /> },

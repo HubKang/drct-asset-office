@@ -76,6 +76,21 @@
     "routeKey": "collection-runs"
   },
   {
+    "menuKey": "kms",
+    "title": "KMS 홈",
+    "routeKey": "kms-home"
+  },
+  {
+    "menuKey": "kms",
+    "title": "지식 게시판",
+    "routeKey": "kms-posts"
+  },
+  {
+    "menuKey": "kms",
+    "title": "KMS 설정",
+    "routeKey": "kms-settings"
+  },
+  {
     "menuKey": "trade",
     "title": "매매기법",
     "routeKey": "trade-methods"

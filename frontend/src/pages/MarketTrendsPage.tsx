@@ -4,6 +4,12 @@ import type { CSSProperties, DragEvent } from "react";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import { buildTreemapLayout, getTreemapLabelClass, getTreemapTextMetrics } from "@/utils/treemapLayout";
+import {
+  buildNaverKoreaMarketChartUrl,
+  buildNaverStockCandleChartUrl,
+  createNaverChartSidcode,
+  normalizeNaverStockCode as normalizeStockCode,
+} from "@/utils/naverChart";
 import { repositories } from "@/services";
 import type {
   AddMarketEventThemeLinkRequest,
@@ -81,20 +87,12 @@ const formatDate = (value: string | null | undefined) => {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 };
 
-const normalizeStockCode = (value: string | null | undefined) => {
-  if (!value) return "";
-  const digits = String(value).replace(/[^0-9]/g, "");
-  if (!digits) return "";
-  return digits.slice(-6).padStart(6, "0");
-};
-
 const getNaverChartImageUrl = (stockCode: string, period: "day" | "week" | "month", sidcode: number) => {
-  const code = normalizeStockCode(stockCode);
-  return `https://ssl.pstatic.net/imgfinance/chart/item/candle/${period}/${code}.png?sidcode=${sidcode}`;
+  return buildNaverStockCandleChartUrl(stockCode, period, sidcode);
 };
 
 const getNaverMarketChartImageUrl = (market: "KOSPI" | "KOSDAQ", sidcode: number) =>
-  `https://ssl.pstatic.net/imgstock/chart3/day90/${market}.png?sidcode=${sidcode}`;
+  buildNaverKoreaMarketChartUrl(market, sidcode);
 
 const estimatedTradingValue = (item: { estimated_trading_value?: number | null; current_price?: number | null; volume?: number | null; trading_value?: number | null }) => {
   if (item.estimated_trading_value != null) return item.estimated_trading_value;
@@ -286,7 +284,7 @@ function MarketTrendsPage() {
   const [rankDraftItems, setRankDraftItems] = useState<DailyThemeFlowSummary[]>([]);
   const [draggingThemeId, setDraggingThemeId] = useState<number | null>(null);
   const [flowRankInfoOpen, setFlowRankInfoOpen] = useState(false);
-  const [chartSidcode, setChartSidcode] = useState<number>(Date.now());
+  const [chartSidcode, setChartSidcode] = useState<number>(createNaverChartSidcode());
   const [brokenCharts, setBrokenCharts] = useState<Record<string, boolean>>({});
   const [zoomedChart, setZoomedChart] = useState<{ url: string; alt: string } | null>(null);
   const [monthlyBaseMonth, setMonthlyBaseMonth] = useState<string>(getMonthInput());
@@ -980,7 +978,7 @@ ${tableRows}
   const loadFlowStocks = async (theme: DailyThemeFlowSummary) => {
     setSelectedFlowTheme({ id: theme.market_theme_id, name: theme.theme_name });
     setFlowStocksLoading(true);
-    setChartSidcode(Date.now());
+    setChartSidcode(createNaverChartSidcode());
     setBrokenCharts({});
     try {
       const res = await repositories.marketTrends.getExternalDailyThemeFlowStocks(tradeDate, theme.market_theme_id);
