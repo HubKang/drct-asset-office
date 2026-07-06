@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+﻿import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import PageHeader from "@/components/common/PageHeader";
 import StatusBadge from "@/components/common/StatusBadge";
 import KmsRichEditor from "@/components/kms/KmsRichEditor";
@@ -16,6 +16,7 @@ import {
 import { sanitizeKmsHtml, toKmsDisplayHtml, toKmsEditableHtml, toKmsPlainText } from "@/utils/kmsRichContent";
 
 const pageSize = 20;
+const categoryAccentColors = ["#2563eb", "#f97316", "#8b5cf6", "#10b981", "#06b6d4", "#6366f1", "#ec4899", "#64748b", "#a855f7", "#0f766e"];
 
 const emptyForm: KmsPostPayload = {
   category_id: 0,
@@ -43,15 +44,16 @@ const toKmsUserMessage = (error: unknown, fallback: string) => {
 };
 
 function KmsPostsPage() {
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [categories, setCategories] = useState<KmsCategory[]>([]);
   const [posts, setPosts] = useState<KmsPost[]>([]);
   const [categoryCounts, setCategoryCounts] = useState<Record<number, number>>({});
   const [totalPostCount, setTotalPostCount] = useState(0);
-  const [keyword, setKeyword] = useState("");
+  const [keyword, setKeyword] = useState(searchParams.get("keyword") || "");
   const [categoryId, setCategoryId] = useState<number>(Number(searchParams.get("category_id") || 0));
-  const [learningStatus, setLearningStatus] = useState("");
-  const [importance, setImportance] = useState("");
+  const [learningStatus, setLearningStatus] = useState(searchParams.get("learning_status") || "");
+  const [importance, setImportance] = useState(searchParams.get("importance") || "");
   const [currentPage, setCurrentPage] = useState(1);
   const [reloadKey, setReloadKey] = useState(0);
   const [selectedPost, setSelectedPost] = useState<KmsPost | null>(null);
@@ -62,6 +64,7 @@ function KmsPostsPage() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [drawerSaving, setDrawerSaving] = useState(false);
+  const [drawerDeleting, setDrawerDeleting] = useState(false);
   const [message, setMessage] = useState("");
 
   const activeCategory = useMemo(() => categories.find((item) => item.id === categoryId) ?? null, [categories, categoryId]);
@@ -273,6 +276,25 @@ function KmsPostsPage() {
     }
   };
 
+  const deleteDrawerPost = async () => {
+    if (!selectedPost) return;
+    if (!window.confirm("이 지식글을 삭제하시겠습니까? 삭제한 글은 목록에서 숨겨집니다.")) return;
+    setDrawerDeleting(true);
+    setMessage("");
+    try {
+      const deleted = await repositories.kms.deactivatePost(selectedPost.id);
+      setPosts((prev) => prev.filter((post) => post.id !== deleted.id));
+      setSelectedPost(null);
+      setDrawerEditing(false);
+      setDrawerForm(null);
+      await loadCategoryCounts();
+      setMessage("지식글이 삭제되었습니다.");
+    } catch (error) {
+      setMessage(toKmsUserMessage(error, "지식글 삭제에 실패했습니다."));
+    } finally {
+      setDrawerDeleting(false);
+    }
+  };
   return (
     <div className="space-y-4">
       <PageHeader
@@ -335,7 +357,7 @@ function KmsPostsPage() {
               <h3>본문 작성 *</h3>
               <p>제목, 목록, 인용, 표, 링크, 이미지를 사용해 학습 내용을 구조화합니다.</p>
             </div>
-            <KmsRichEditor resetKey={showForm ? "new-kms-post" : "closed-new-kms-post"} value={form.content} onChange={(content) => setForm((prev) => ({ ...prev, content }))} />
+            <KmsRichEditor resetKey={showForm ? "new-kms-post" : "closed-new-kms-post"} value={form.content} selectLocalImage={() => repositories.kms.selectLocalImage()} onChange={(content) => setForm((prev) => ({ ...prev, content }))} />
           </div>
           <div className="kms-form-section">
             <div className="kms-form-section-header">
@@ -367,18 +389,44 @@ function KmsPostsPage() {
 
       <section className="kms-panel kms-filter-panel">
         <div className="kms-posts-layout">
-          <aside className="kms-filter-sidebar">
-            <div className="kms-sidebar-title">카테고리</div>
-            <button type="button" className={!categoryId ? "active kms-category-list-row" : "kms-category-list-row"} onClick={() => selectCategory(0)}>
-              <span>전체</span>
-              <b>{totalPostCount.toLocaleString("ko-KR")}</b>
-            </button>
-            {categories.map((category) => (
-              <button key={category.id} type="button" className={categoryId === category.id ? "active kms-category-list-row" : "kms-category-list-row"} onClick={() => selectCategory(category.id)}>
-                <span>{category.name}</span>
-                <b>{(categoryCounts[category.id] || 0).toLocaleString("ko-KR")}</b>
+          <aside className="kms-filter-sidebar kms-posts-category-panel">
+            <div className="kms-posts-category-header">
+              <strong>카테고리</strong>
+              <span className="kms-posts-category-description">분류별 지식글을 빠르게 탐색합니다.</span>
+            </div>
+            <div className="kms-posts-category-list">
+              <button
+                type="button"
+                className={!categoryId ? "kms-posts-category-row kms-posts-category-row-active" : "kms-posts-category-row"}
+                style={{ "--category-accent": "#2563eb" } as CSSProperties}
+                onClick={() => selectCategory(0)}
+              >
+                <span className="kms-posts-category-dot" aria-hidden="true" />
+                <span className="kms-posts-category-name">전체</span>
+                <span className={totalPostCount ? "kms-posts-category-count has-posts" : "kms-posts-category-count"}>{totalPostCount.toLocaleString("ko-KR")}</span>
               </button>
-            ))}
+              <div className="kms-posts-category-divider" />
+              {categories.map((category, index) => {
+                const count = categoryCounts[category.id] || 0;
+                return (
+                  <button
+                    key={category.id}
+                    type="button"
+                    className={categoryId === category.id ? "kms-posts-category-row kms-posts-category-row-active" : "kms-posts-category-row"}
+                    style={{ "--category-accent": categoryAccentColors[index % categoryAccentColors.length] } as CSSProperties}
+                    onClick={() => selectCategory(category.id)}
+                  >
+                    <span className="kms-posts-category-dot" aria-hidden="true" />
+                    <span className="kms-posts-category-name">{category.name}</span>
+                    <span className={count ? "kms-posts-category-count has-posts" : "kms-posts-category-count"}>{count.toLocaleString("ko-KR")}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="kms-posts-category-footer">
+              <span>카테고리는 KMS 설정에서 관리합니다.</span>
+              <button type="button" className="kms-posts-category-settings-link" onClick={() => navigate("/kms/settings")}>KMS 설정으로 이동</button>
+            </div>
           </aside>
           <div className="kms-post-list-panel">
             <div className="kms-search-control-box">
@@ -455,14 +503,22 @@ function KmsPostsPage() {
               </div>
               <div className="kms-detail-drawer-actions">
                 {drawerEditing ? (
-                  <>
-                    <button type="button" className="btn btn-primary" onClick={() => void saveDrawerPost()} disabled={drawerSaving}>{drawerSaving ? "저장 중..." : "저장"}</button>
-                    <button type="button" className="btn btn-secondary" onClick={() => setDrawerEditing(false)} disabled={drawerSaving}>취소</button>
-                  </>
+                  <button type="button" className="btn btn-primary" onClick={() => void saveDrawerPost()} disabled={drawerSaving}>
+                    {drawerSaving ? "저장 중..." : "저장"}
+                  </button>
                 ) : (
-                  <button type="button" className="btn btn-primary" onClick={() => setDrawerEditing(true)}>수정</button>
+                  <>
+                    <button type="button" className="btn btn-primary" onClick={() => setDrawerEditing(true)} disabled={drawerDeleting}>
+                      수정
+                    </button>
+                    <button type="button" className="btn btn-danger" onClick={() => void deleteDrawerPost()} disabled={drawerDeleting}>
+                      {drawerDeleting ? "삭제 중..." : "삭제"}
+                    </button>
+                  </>
                 )}
-                <button type="button" className="btn btn-secondary kms-detail-drawer-close" onClick={() => setSelectedPost(null)}>닫기</button>
+                <button type="button" className="btn btn-secondary kms-detail-drawer-close" onClick={() => setSelectedPost(null)} disabled={drawerSaving || drawerDeleting}>
+                  닫기
+                </button>
               </div>
             </div>
             <div className="kms-detail-drawer-body">
@@ -512,7 +568,7 @@ function KmsPostsPage() {
                       <h3>본문 작성 *</h3>
                       <p>본문과 첨부 이미지를 drawer 안에서 바로 수정합니다.</p>
                     </div>
-                    <KmsRichEditor resetKey={`drawer-${selectedPost.id}`} value={drawerForm.content} onChange={(content) => setDrawerForm((prev) => prev && ({ ...prev, content }))} />
+                    <KmsRichEditor resetKey={`drawer-${selectedPost.id}`} value={drawerForm.content} selectLocalImage={() => repositories.kms.selectLocalImage()} onChange={(content) => setDrawerForm((prev) => prev && ({ ...prev, content }))} />
                   </div>
                   <div className="kms-form-section">
                     <div className="kms-form-section-header">

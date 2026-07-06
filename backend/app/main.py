@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +17,7 @@ from backend.app.api.routes_economic_briefing import router as economic_briefing
 from backend.app.api.routes_external_kiwoom import router as external_kiwoom_router
 from backend.app.api.routes_gpt_prompt_templates import router as gpt_prompt_templates_router
 from backend.app.api.routes_health import router as health_router
+from backend.app.api.routes_images import router as images_router
 from backend.app.api.routes_market_metrics import router as market_metrics_router
 from backend.app.api.routes_kms import router as kms_router
 from backend.app.api.routes_market_calendar import router as market_calendar_router
@@ -58,6 +59,7 @@ app.add_middleware(
 )
 
 app.include_router(health_router)
+app.include_router(images_router)
 app.include_router(stocks_router)
 app.include_router(stock_prices_router)
 app.include_router(stock_tracking_router)

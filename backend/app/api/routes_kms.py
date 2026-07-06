@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from backend.app.core.database import get_db
@@ -12,6 +13,7 @@ from backend.app.schemas.kms_schema import (
     KmsCategorySortOrderUpdate,
     KmsCategoryUpdate,
     KmsHomeSummary,
+    KmsLocalImageSelectResponse,
     KmsPostCreate,
     KmsPostSummary,
     KmsPostUpdate,
@@ -65,6 +67,27 @@ def list_kms_tags(
     db: Session = Depends(get_db),
 ) -> list[KmsTagResponse]:
     return KmsService(db).list_tags(keyword=keyword, sort=sort, limit=limit)
+
+
+
+@router.get("/local-image/select", response_model=KmsLocalImageSelectResponse)
+def select_kms_local_image(db: Session = Depends(get_db)) -> KmsLocalImageSelectResponse:
+    return KmsService(db).select_local_image()
+
+
+@router.get("/local-image")
+def get_kms_local_image(path: str = Query(...), db: Session = Depends(get_db)) -> FileResponse:
+    file_path, media_type = KmsService(db).resolve_local_image(path)
+    return FileResponse(
+        path=file_path,
+        media_type=media_type,
+        filename=file_path.name,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 @router.get("/posts/search-by-tags", response_model=list[KmsPostSummary])

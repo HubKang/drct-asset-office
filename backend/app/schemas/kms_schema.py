@@ -67,6 +67,14 @@ class KmsTagResponse(BaseModel):
     updated_at: str
 
 
+
+
+class KmsLocalImageSelectResponse(BaseModel):
+    selected: bool
+    path: str | None = None
+    url: str | None = None
+
+
 class KmsPostSummary(BaseModel):
     id: int
     category_id: int

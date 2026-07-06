@@ -59,6 +59,36 @@ def ensure_runtime_schema() -> None:
         return
 
     with engine.begin() as conn:
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS app_images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                domain TEXT NOT NULL,
+                owner_type TEXT,
+                owner_id INTEGER,
+                original_file_name TEXT NOT NULL,
+                stored_file_name TEXT NOT NULL,
+                relative_path TEXT NOT NULL,
+                file_url TEXT NOT NULL,
+                file_ext TEXT NOT NULL,
+                mime_type TEXT,
+                file_size INTEGER NOT NULL,
+                width INTEGER,
+                height INTEGER,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                description TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_app_images_domain_owner ON app_images(domain, owner_type, owner_id, is_active)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_app_images_domain_created ON app_images(domain, created_at)"
+        )
         rows = conn.exec_driver_sql("PRAGMA table_info(watchlist)").fetchall()
         if not rows:
             return

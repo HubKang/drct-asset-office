@@ -439,6 +439,7 @@ function DashboardPage() {
   const [treemapViewMode, setTreemapViewMode] = useState<ThemeFlowViewMode>("THEME");
   const [treemapTooltip, setTreemapTooltip] = useState<{ x: number; y: number; item: ThemeTreemapItem } | null>(null);
   const [isDollarIndexHelpOpen, setIsDollarIndexHelpOpen] = useState(false);
+  const [zoomedIndicator, setZoomedIndicator] = useState<{ url: string; alt: string } | null>(null);
   const chartSidcode = useMemo(() => createNaverChartSidcode(), []);
   const dashboardIndicators = useMemo<DashboardIndicator[]>(
     () => [
@@ -813,12 +814,19 @@ function DashboardPage() {
                     </button>
                   ) : null}
                 </div>
-                <img
-                  src={indicator.imageUrl}
-                  alt={`${indicator.title} 흐름 차트`}
-                  className="dashboard-indicator-chart"
-                  loading="lazy"
-                />
+                <button
+                  type="button"
+                  className="dashboard-indicator-chart-button"
+                  onClick={() => setZoomedIndicator({ url: indicator.imageUrl, alt: `${indicator.title} 흐름 차트` })}
+                  aria-label={`${indicator.title} 차트 크게 보기`}
+                >
+                  <img
+                    src={indicator.imageUrl}
+                    alt={`${indicator.title} 흐름 차트`}
+                    className="dashboard-indicator-chart"
+                    loading="lazy"
+                  />
+                </button>
               </article>
             ))}
           </div>
@@ -999,6 +1007,16 @@ function DashboardPage() {
         )}
       </SectionCard>
 
+
+      {zoomedIndicator ? (
+        <div className="dashboard-chart-zoom-modal" onClick={() => setZoomedIndicator(null)} role="presentation">
+          <img
+            src={zoomedIndicator.url}
+            alt={zoomedIndicator.alt}
+            className="dashboard-chart-zoom-image"
+          />
+        </div>
+      ) : null}
       {isDollarIndexHelpOpen ? (
         <div className="dashboard-indicator-modal" role="presentation" onClick={() => setIsDollarIndexHelpOpen(false)}>
           <div

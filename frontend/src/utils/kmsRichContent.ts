@@ -35,7 +35,7 @@ export const sanitizeKmsHtml = (value: string) =>
       "br",
       "span",
     ],
-    ALLOWED_ATTR: ["href", "src", "alt", "title", "target", "rel", "colspan", "rowspan", "width", "height"],
+    ALLOWED_ATTR: ["href", "src", "alt", "title", "target", "rel", "colspan", "rowspan", "width", "height", "style"],
     ADD_DATA_URI_TAGS: ["img"],
   });
 
@@ -87,7 +87,27 @@ const linkifyTextUrls = (html: string) => {
   return container.innerHTML;
 };
 
-export const toKmsDisplayHtml = (value: string) => linkifyTextUrls(toKmsEditableHtml(value));
+
+const bustLocalImageCache = (html: string) => {
+  if (!html || typeof document === "undefined") return html;
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  container.querySelectorAll("img").forEach((image) => {
+    const src = image.getAttribute("src") || "";
+    if (!src.includes("/kms/local-image")) return;
+    try {
+      const url = new URL(src, window.location.origin);
+      url.searchParams.set("_kms_cache_bust", String(Date.now()));
+      image.setAttribute("src", url.toString());
+    } catch {
+      const separator = src.includes("?") ? "&" : "?";
+      image.setAttribute("src", `${src}${separator}_kms_cache_bust=${Date.now()}`);
+    }
+  });
+  return container.innerHTML;
+};
+
+export const toKmsDisplayHtml = (value: string) => bustLocalImageCache(linkifyTextUrls(toKmsEditableHtml(value)));
 
 export const toKmsPlainText = (value: string) => {
   if (!value) return "";

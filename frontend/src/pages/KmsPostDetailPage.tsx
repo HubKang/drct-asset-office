@@ -177,7 +177,7 @@ function KmsPostDetailPage() {
               <h3>본문 작성 *</h3>
               <p>본문 서식과 표, 이미지 링크를 수정합니다.</p>
             </div>
-            <KmsRichEditor resetKey={`detail-${numericPostId}`} value={form.content} onChange={(content) => setForm((prev) => prev && ({ ...prev, content }))} />
+            <KmsRichEditor resetKey={`detail-${numericPostId}`} value={form.content} selectLocalImage={() => repositories.kms.selectLocalImage()} onChange={(content) => setForm((prev) => prev && ({ ...prev, content }))} />
           </div>
           <div className="kms-form-section">
             <div className="kms-form-section-header">

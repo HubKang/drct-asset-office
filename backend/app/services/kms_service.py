@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from collections import Counter
+import mimetypes
+from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import HTTPException
 from sqlalchemy import bindparam, text
@@ -18,6 +21,7 @@ from backend.app.schemas.kms_schema import (
     KmsCategorySummary,
     KmsCategoryUpdate,
     KmsHomeSummary,
+    KmsLocalImageSelectResponse,
     KmsOverallSummary,
     KmsPostCreate,
     KmsPostSummary,
@@ -26,12 +30,59 @@ from backend.app.schemas.kms_schema import (
     KmsTagResponse,
 )
 
+KMS_ALLOWED_LOCAL_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 DEFAULT_KMS_CATEGORIES = ["시장", "재료", "수급", "차트", "재무", "기법", "심리", "리스크", "복기", "자료"]
 
 
 class KmsService:
     def __init__(self, db: Session) -> None:
         self.db = db
+
+    def resolve_local_image(self, image_path: str) -> tuple[Path, str]:
+        raw_path = str(image_path or "").strip().strip('"')
+        if not raw_path:
+            raise HTTPException(status_code=400, detail="local image path is required")
+        path = Path(raw_path).expanduser()
+        if not path.is_absolute():
+            raise HTTPException(status_code=400, detail="absolute local image path is required")
+        if not path.exists() or not path.is_file():
+            raise HTTPException(status_code=404, detail="local image file not found")
+        if path.suffix.lower() not in KMS_ALLOWED_LOCAL_IMAGE_SUFFIXES:
+            raise HTTPException(status_code=400, detail="PNG, JPG, GIF, WEBP image files only")
+        media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        return path, media_type
+
+    def select_local_image(self) -> KmsLocalImageSelectResponse:
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"file picker unavailable: {exc}") from exc
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        try:
+            selected = filedialog.askopenfilename(
+                title="KMS image select",
+                filetypes=[
+                    ("Image files", "*.png *.jpg *.jpeg *.gif *.webp"),
+                    ("All files", "*.*"),
+                ],
+            )
+        finally:
+            root.destroy()
+
+        if not selected:
+            return KmsLocalImageSelectResponse(selected=False)
+
+        file_path, _media_type = self.resolve_local_image(selected)
+        path_text = str(file_path)
+        return KmsLocalImageSelectResponse(
+            selected=True,
+            path=path_text,
+            url=f"/kms/local-image?path={quote(path_text, safe='')}",
+        )
 
     def ensure_default_categories(self) -> None:
         now = now_kst()

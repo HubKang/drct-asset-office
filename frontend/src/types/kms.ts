@@ -95,6 +95,12 @@ export type KmsCategorySortOrderResponse = {
   updated_count: number;
 };
 
+export type KmsLocalImageSelectResponse = {
+  selected: boolean;
+  path?: string | null;
+  url?: string | null;
+};
+
 export type KmsPostListParams = {
   keyword?: string;
   category_id?: number;

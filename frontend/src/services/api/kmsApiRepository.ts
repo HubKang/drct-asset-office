@@ -1,10 +1,12 @@
 import { apiRequest } from "@/services/api/apiClient";
+import { appConfig } from "@/services/config/appConfig";
 import type {
   KmsCategory,
   KmsCategoryPayload,
   KmsCategorySortOrderItem,
   KmsCategorySortOrderResponse,
   KmsHomeSummary,
+  KmsLocalImageSelectResponse,
   KmsPost,
   KmsPostListParams,
   KmsPostPayload,
@@ -64,6 +66,16 @@ export const kmsApiRepository = {
 
   getPost: (postId: number) => apiRequest<KmsPost>(`/kms/posts/${postId}`),
 
+  localImageUrl: (localPath: string) =>
+    `${appConfig.apiBaseUrl}/kms/local-image?path=${encodeURIComponent(localPath)}`,
+
+  selectLocalImage: async () => {
+    const result = await apiRequest<KmsLocalImageSelectResponse>("/kms/local-image/select");
+    return {
+      ...result,
+      url: result.url && !result.url.startsWith("http") ? `${appConfig.apiBaseUrl}${result.url}` : result.url,
+    };
+  },
   createPost: (payload: KmsPostPayload) =>
     apiRequest<KmsPost>("/kms/posts", { method: "POST", body: JSON.stringify(payload) }),
 

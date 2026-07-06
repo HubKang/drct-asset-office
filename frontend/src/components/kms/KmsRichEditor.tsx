@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type ChangeEvent, type MouseEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import type { Editor } from "@tiptap/core";
 import Color from "@tiptap/extension-color";
 import Image from "@tiptap/extension-image";
@@ -19,6 +19,7 @@ type KmsRichEditorProps = {
   onChange: (value: string) => void;
   placeholder?: string;
   resetKey?: string | number;
+  selectLocalImage?: () => Promise<{ selected: boolean; path?: string | null; url?: string | null }>;
 };
 
 const KmsImage = Image.extend({
@@ -27,28 +28,25 @@ const KmsImage = Image.extend({
       ...this.parent?.(),
       width: {
         default: null,
-        parseHTML: (element) => element.getAttribute("width"),
-        renderHTML: (attributes) => (attributes.width ? { width: attributes.width } : {}),
+        parseHTML: (element) => element.getAttribute("width") || element.style.width || null,
+        renderHTML: (attributes) => {
+          if (!attributes.width) return {};
+          return { width: attributes.width, style: `width: ${attributes.width};` };
+        },
       },
       height: {
         default: null,
-        parseHTML: (element) => element.getAttribute("height"),
-        renderHTML: (attributes) => (attributes.height ? { height: attributes.height } : {}),
+        parseHTML: (element) => element.getAttribute("height") || element.style.height || null,
+        renderHTML: (attributes) => (attributes.height ? { height: attributes.height, style: `height: ${attributes.height};` } : {}),
       },
     };
   },
 });
 
-const imageSizeOptions = [
-  { label: "25%", value: "25%" },
-  { label: "50%", value: "50%" },
-  { label: "75%", value: "75%" },
-  { label: "100%", value: "100%" },
-];
 
-function KmsRichEditor({ value, onChange, placeholder = "본문을 입력하세요.", resetKey = "kms-editor" }: KmsRichEditorProps) {
-  const imageInputRef = useRef<HTMLInputElement | null>(null);
+function KmsRichEditor({ value, onChange, placeholder = "본문을 입력하세요.", resetKey = "kms-editor", selectLocalImage }: KmsRichEditorProps) {
   const lastResetKeyRef = useRef<string | number>(resetKey);
+  const [, setEditorRevision] = useState(0);
   const editor = useEditor({
     extensions: [
       StarterKit,
@@ -79,7 +77,11 @@ function KmsRichEditor({ value, onChange, placeholder = "본문을 입력하세�
     ],
     content: toKmsEditableHtml(value),
     onUpdate: ({ editor: activeEditor }) => {
+      setEditorRevision((revision) => revision + 1);
       onChange(sanitizeKmsHtml(activeEditor.getHTML()));
+    },
+    onSelectionUpdate: () => {
+      setEditorRevision((revision) => revision + 1);
     },
     editorProps: {
       attributes: {
@@ -122,35 +124,32 @@ function KmsRichEditor({ value, onChange, placeholder = "본문을 입력하세�
     run(() => editor.chain().focus().extendMarkRange("link").setLink({ href: url.trim() }).run());
   };
 
-  const openImagePicker = () => {
-    imageInputRef.current?.click();
-  };
+  const insertLocalImage = async () => {
+    if (!editor) return;
+    if (!selectLocalImage) {
+      window.alert("로컬 이미지 선택 기능이 연결되지 않았습니다.");
+      return;
+    }
 
-  const insertImageFile = (file: File) => {
-    if (!editor || !file.type.startsWith("image/")) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const src = String(reader.result || "");
-      if (!src) return;
-      run(() => editor.chain().focus().setImage({ src, alt: file.name, width: "100%" } as never).createParagraphNear().run());
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleImageChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) insertImageFile(file);
-    event.target.value = "";
+    try {
+      const selectedImage = await selectLocalImage();
+      if (!selectedImage.selected || !selectedImage.url) return;
+      const localPath = selectedImage.path || "";
+      run(() => editor.chain().focus().setImage({ src: selectedImage.url, alt: localPath.split(/[\\/]/).pop() || "local image", width: "50%" } as never).createParagraphNear().run());
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "이미지 선택에 실패했습니다.");
+    }
   };
 
   const insertTable = () => run(() => editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run());
 
-  const setImageWidth = (activeEditor: Editor | null, width: string) => {
-    if (!activeEditor?.isActive("image")) return;
-    run(() => activeEditor.chain().focus().updateAttributes("image", { width, height: null }).run());
+  const setImageWidth = (activeEditor: Editor | null, widthPercent: number) => {
+    if (!activeEditor) return;
+    run(() => activeEditor.chain().focus().updateAttributes("image", { width: `${widthPercent}%`, height: null }).run());
   };
 
-  const activeImageWidth = (editor?.getAttributes("image").width as string | null | undefined) || "100%";
+  const activeImageWidth = (editor?.getAttributes("image").width as string | null | undefined) || "50%";
+  const activeImageWidthValue = Math.max(0, Math.min(100, Number.parseInt(activeImageWidth, 10) || 0));
   const isImageSelected = editor?.isActive("image") ?? false;
   const isTableSelected = editor?.isActive("table") ?? false;
   const buttonClass = (active = false) => (active ? "kms-editor-button active" : "kms-editor-button");
@@ -174,30 +173,23 @@ function KmsRichEditor({ value, onChange, placeholder = "본문을 입력하세�
         <button type="button" title="열 삭제" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().deleteColumn().run())} disabled={!isTableSelected}>열-</button>
         <button type="button" title="행 삭제" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().deleteRow().run())} disabled={!isTableSelected}>행-</button>
         <button type="button" title="표 삭제" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().deleteTable().run())} disabled={!isTableSelected}>표삭제</button>
-        <button type="button" title="이미지 첨부" className="kms-editor-button" onMouseDown={keepSelection} onClick={openImagePicker}>이미지</button>
-        <span className="kms-editor-toolbar-label">이미지 크기</span>
-        {imageSizeOptions.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            title={`이미지 크기 ${option.label}`}
-            className={buttonClass(isImageSelected && activeImageWidth === option.value)}
-            onMouseDown={keepSelection}
-            onClick={() => setImageWidth(editor, option.value)}
+        <button type="button" title="Local image file" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => void insertLocalImage()}>Image</button>
+        <label className="kms-editor-image-size-control">
+          <span>이미지 크기</span>
+          <input
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            value={activeImageWidthValue}
+            onMouseDown={(event) => event.stopPropagation()}
+            onChange={(event) => setImageWidth(editor, Number(event.target.value))}
             disabled={!isImageSelected}
-          >
-            {option.label}
-          </button>
-        ))}
+          />
+          <output>{activeImageWidthValue}%</output>
+        </label>
         <button type="button" title="실행취소" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().undo().run())} disabled={!editor?.can().undo()}>실행취소</button>
         <button type="button" title="다시실행" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().redo().run())} disabled={!editor?.can().redo()}>다시실행</button>
-        <input
-          ref={imageInputRef}
-          type="file"
-          accept="image/png,image/jpeg,image/jpg,image/gif,image/webp"
-          className="kms-editor-file-input"
-          onChange={handleImageChange}
-        />
       </div>
       <EditorContent editor={editor} />
     </div>

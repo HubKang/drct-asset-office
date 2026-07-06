@@ -40,6 +40,20 @@ data_cache/
 data/raw/
 reports/
 
+# User-uploaded image files
+data/kms/**
+data/stock_tracking/**
+data/trade_journal_images/**
+data/trade_method_images/**
+!data/kms/
+!data/stock_tracking/
+!data/trade_journal_images/
+!data/trade_method_images/
+!data/kms/.gitkeep
+!data/stock_tracking/.gitkeep
+!data/trade_journal_images/.gitkeep
+!data/trade_method_images/.gitkeep
+
 logs/
 archive/cleanup/
 *.log
@@ -52,6 +66,10 @@ backend/.local/telegram_sessions/
 # Kiwoom legacy agent runtime outputs
 kiwoom-rest-agent/data/**
 
-# Trade journal image files
-data/trade_journal_images/**
-
+# KMS uploaded image files and local DB migration backups
+backend/uploads/**
+db/*.bak
+db/*.bak-journal
+db/*.copy
+db/*.copy-wal
+db/*.copy-shm

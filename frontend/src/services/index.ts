@@ -1,4 +1,4 @@
-﻿import { advisoryPackageApiRepository } from "@/services/api/advisoryPackageApiRepository";
+import { advisoryPackageApiRepository } from "@/services/api/advisoryPackageApiRepository";
 import { analysisIndicatorApiRepository } from "@/services/api/analysisIndicatorApiRepository";
 import { architectureApiRepository } from "@/services/api/architectureApiRepository";
 import { backtestApiRepository } from "@/services/api/backtestApiRepository";
@@ -16,6 +16,7 @@ import { marketThemeApiRepository } from "@/services/api/marketThemeApiRepositor
 import { marketTrendApiRepository } from "@/services/api/marketTrendApiRepository";
 import { gptPromptTemplateApiRepository } from "@/services/api/gptPromptTemplateApiRepository";
 import { kmsApiRepository } from "@/services/api/kmsApiRepository";
+import { imageApiRepository } from "@/services/api/imageApiRepository";
 import { schemaCommentApiRepository } from "@/services/api/schemaCommentApiRepository";
 import { stockApiRepository } from "@/services/api/stockApiRepository";
 import { stockPriceApiRepository } from "@/services/api/stockPriceApiRepository";
@@ -59,6 +60,7 @@ export const repositories = {
   marketIndicators: useMock ? marketIndicatorMockRepository : marketIndicatorApiRepository,
   marketTrends: marketTrendApiRepository,
   kms: kmsApiRepository,
+  images: imageApiRepository,
   disclosures: useMock ? disclosureMockRepository : disclosureApiRepository,
   economicBriefing: economicBriefingApiRepository,
   telegram: telegramApiRepository,
