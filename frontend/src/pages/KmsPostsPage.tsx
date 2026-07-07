@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import PageHeader from "@/components/common/PageHeader";
 import StatusBadge from "@/components/common/StatusBadge";
@@ -357,7 +357,7 @@ function KmsPostsPage() {
               <h3>본문 작성 *</h3>
               <p>제목, 목록, 인용, 표, 링크, 이미지를 사용해 학습 내용을 구조화합니다.</p>
             </div>
-            <KmsRichEditor resetKey={showForm ? "new-kms-post" : "closed-new-kms-post"} value={form.content} selectLocalImage={() => repositories.kms.selectLocalImage()} onChange={(content) => setForm((prev) => ({ ...prev, content }))} />
+            <KmsRichEditor resetKey={showForm ? "new-kms-post" : "closed-new-kms-post"} value={form.content} selectLocalImage={() => repositories.kms.selectLocalImage()} imageUploadDomain="kms" ownerType="kms_post" onChange={(content) => setForm((prev) => ({ ...prev, content }))} />
           </div>
           <div className="kms-form-section">
             <div className="kms-form-section-header">
@@ -568,7 +568,7 @@ function KmsPostsPage() {
                       <h3>본문 작성 *</h3>
                       <p>본문과 첨부 이미지를 drawer 안에서 바로 수정합니다.</p>
                     </div>
-                    <KmsRichEditor resetKey={`drawer-${selectedPost.id}`} value={drawerForm.content} selectLocalImage={() => repositories.kms.selectLocalImage()} onChange={(content) => setDrawerForm((prev) => prev && ({ ...prev, content }))} />
+                    <KmsRichEditor resetKey={`drawer-${selectedPost.id}`} value={drawerForm.content} selectLocalImage={() => repositories.kms.selectLocalImage()} imageUploadDomain="kms" ownerType="kms_post" ownerId={selectedPost.id} onChange={(content) => setDrawerForm((prev) => prev && ({ ...prev, content }))} />
                   </div>
                   <div className="kms-form-section">
                     <div className="kms-form-section-header">

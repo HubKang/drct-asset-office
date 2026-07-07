@@ -99,6 +99,81 @@ def ensure_runtime_schema() -> None:
 
         conn.exec_driver_sql(
             """
+            CREATE TABLE IF NOT EXISTS watchlist_evaluation_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_date TEXT NOT NULL,
+                run_type TEXT NOT NULL DEFAULT 'MANUAL',
+                status TEXT NOT NULL DEFAULT 'SUCCESS',
+                memo TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS watchlist_evaluation_scores (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id INTEGER NOT NULL,
+                watchlist_stock_id INTEGER NOT NULL,
+                stock_id INTEGER NOT NULL,
+                evaluated_at TEXT NOT NULL,
+                market_score REAL,
+                material_score REAL,
+                supply_score REAL,
+                chart_score REAL,
+                financial_score REAL,
+                total_score REAL,
+                market_status TEXT,
+                material_status TEXT,
+                supply_status TEXT,
+                chart_status TEXT,
+                financial_status TEXT,
+                overall_status TEXT,
+                data_confidence TEXT NOT NULL DEFAULT 'NOT_EVALUATED',
+                risk_flags_json TEXT NOT NULL DEFAULT '[]',
+                missing_data_json TEXT NOT NULL DEFAULT '[]',
+                summary_text TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (run_id) REFERENCES watchlist_evaluation_runs(id) ON DELETE CASCADE,
+                FOREIGN KEY (watchlist_stock_id) REFERENCES watchlist(id) ON DELETE CASCADE,
+                FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS watchlist_evaluation_factors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                score_id INTEGER NOT NULL,
+                category TEXT NOT NULL,
+                factor_code TEXT NOT NULL,
+                factor_name TEXT NOT NULL,
+                raw_value TEXT,
+                normalized_score REAL,
+                weight REAL,
+                contribution_score REAL,
+                reason TEXT,
+                source_table TEXT,
+                source_date TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (score_id) REFERENCES watchlist_evaluation_scores(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_watchlist_evaluation_scores_watchlist ON watchlist_evaluation_scores(watchlist_stock_id, evaluated_at)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_watchlist_evaluation_scores_run ON watchlist_evaluation_scores(run_id)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_watchlist_evaluation_factors_score ON watchlist_evaluation_factors(score_id)"
+        )
+
+        conn.exec_driver_sql(
+            """
             CREATE TABLE IF NOT EXISTS stock_daily_market_metrics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 stock_id INTEGER NOT NULL,
@@ -2561,3 +2636,4 @@ def ensure_runtime_schema() -> None:
                 """,
                 (category_name, sort_order * 10),
             )
+

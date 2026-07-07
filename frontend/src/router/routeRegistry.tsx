@@ -1,4 +1,4 @@
-﻿import AdvisoryPackagePage from "@/pages/AdvisoryPackagePage";
+import AdvisoryPackagePage from "@/pages/AdvisoryPackagePage";
 import AnalysisIndicatorSettingsPage from "@/pages/AnalysisIndicatorSettingsPage";
 import BacktestPage from "@/pages/BacktestPage";
 import ClassificationRulesPage from "@/pages/ClassificationRulesPage";
@@ -29,6 +29,7 @@ import StockPricesPage from "@/pages/StockPricesPage";
 import StockTrackingPage from "@/pages/StockTrackingPage";
 import StocksPage from "@/pages/StocksPage";
 import WatchlistPage from "@/pages/WatchlistPage";
+import WatchlistSijeSuchaJaePage from "@/pages/WatchlistSijeSuchaJaePage";
 import PageHeader from "@/components/common/PageHeader";
 import PatternResearchPage from "@/pages/PatternResearchPage";
 
@@ -54,6 +55,7 @@ export const routeRegistry: RouteItem[] = [
   { routeKey: "advisory-packages", path: "/advisory-packages", title: "GPT 자문 패키지", description: "최종 투자 자문용 패키지 생성", component: <AdvisoryPackagePage /> },
   { routeKey: "stocks", path: "/stocks", title: "종목 관리", description: "종목 마스터 관리", component: <StocksPage /> },
   { routeKey: "watchlist", path: "/watchlist", title: "관심 종목", description: "분석 우선 종목 Pool 관리", component: <WatchlistPage /> },
+  { routeKey: "watchlist-sije-sucha-jae", path: "/watchlist/sije-sucha-jae", title: "관심 종목 시재수차재", description: "관심종목 평가 전용 화면", component: <WatchlistSijeSuchaJaePage /> },
   { routeKey: "stock-prices", path: "/stock-prices", title: "관심 종목 분석", description: "일봉/이동평균 데이터 검증", component: <StockPricesPage /> },
   { routeKey: "stock-tracking", path: "/stock-tracking", title: "종목 트래킹", description: "수급 이벤트 후보 종목을 그룹별로 추적하고 복기", component: <StockTrackingPage /> },
   { routeKey: "schema-comments", path: "/schema-comments", title: "DrCT테이블정보", description: "DrCT에셋 데이터베이스의 테이블/컬럼 구조 조회", component: <SchemaCommentsPage /> },

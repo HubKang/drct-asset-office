@@ -4,6 +4,7 @@ import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import { repositories } from "@/services";
 import { appConfig } from "@/services/config/appConfig";
+import type { AppImage } from "@/types/image";
 import type {
   CollectStockTrackingPricesResponse,
   StockTrackingChartPrice,
@@ -639,8 +640,10 @@ function StockTrackingPage() {
   const [chartLoading, setChartLoading] = useState(false);
   const [chart, setChart] = useState<StockTrackingChartResponse | null>(null);
   const [imageRows, setImageRows] = useState<StockTrackingImage[]>([]);
+  const [appImageRows, setAppImageRows] = useState<AppImage[]>([]);
   const [imageModalOpen, setImageModalOpen] = useState(false);
   const [previewImage, setPreviewImage] = useState<StockTrackingImage | null>(null);
+  const [previewAppImage, setPreviewAppImage] = useState<AppImage | null>(null);
   const [imageUploading, setImageUploading] = useState(false);
   const [imageForm, setImageForm] = useState(emptyImageForm);
   const [analysisRows, setAnalysisRows] = useState<StockTrackingGroupAnalysis[]>([]);
@@ -821,10 +824,15 @@ function StockTrackingPage() {
 
   const loadImages = async (itemId: number) => {
     try {
-      const response = await repositories.stockTracking.listImages(itemId);
-      setImageRows(response.items);
+      const [legacyResponse, appResponse] = await Promise.all([
+        repositories.stockTracking.listImages(itemId),
+        repositories.images.listImages({ domain: "stock_tracking", owner_type: "stock_tracking", owner_id: itemId }),
+      ]);
+      setImageRows(legacyResponse.items);
+      setAppImageRows(appResponse.items);
     } catch (err) {
       setImageRows([]);
+      setAppImageRows([]);
       setError(err instanceof Error ? err.message : String(err));
     }
   };
@@ -847,12 +855,16 @@ function StockTrackingPage() {
     setError("");
     setImageUploading(true);
     try {
-      const row = await repositories.stockTracking.uploadImage(selectedItem.id, {
+      const imageTypeLabel = getImageTypeLabel(imageForm.image_type);
+      const caption = imageForm.caption.trim();
+      const row = await repositories.images.uploadImage({
+        domain: "stock_tracking",
+        owner_type: "stock_tracking",
+        owner_id: selectedItem.id,
         file: imageForm.file,
-        image_type: imageForm.image_type,
-        caption: imageForm.caption.trim() || undefined,
+        description: caption ? imageTypeLabel + " - " + caption : imageTypeLabel,
       });
-      setImageRows((prev) => [row, ...prev]);
+      setAppImageRows((prev) => [row, ...prev]);
       setImageModalOpen(false);
       resetImageForm();
       setMessage("첨부 이미지를 등록했습니다.");
@@ -875,11 +887,25 @@ function StockTrackingPage() {
     }
   };
 
+  const deleteAppImage = async (image: AppImage) => {
+    if (!window.confirm("이 첨부 이미지를 삭제할까요?")) return;
+    try {
+      await repositories.images.deleteImage(image.id);
+      setAppImageRows((prev) => prev.filter((row) => row.id !== image.id));
+      if (previewAppImage?.id === image.id) setPreviewAppImage(null);
+      setMessage("첨부 이미지를 삭제했습니다.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   const closeDetail = () => {
     setSelectedItem(null);
     setChart(null);
     setImageRows([]);
+    setAppImageRows([]);
     setPreviewImage(null);
+    setPreviewAppImage(null);
     setImageModalOpen(false);
   };
 
@@ -1013,6 +1039,9 @@ function StockTrackingPage() {
 
   const deleteItem = async (item: StockTrackingItem) => {
     if (!window.confirm("이 트래킹 종목을 삭제합니다. 트래킹 등록 정보, 메모, 이미지, 가격 수집 대상 정보가 삭제됩니다. 다른 기능에서 함께 사용하는 가격 데이터는 삭제되지 않습니다.")) return;
+    if (selectedItem?.id === item.id && appImageRows.length > 0) {
+      await Promise.all(appImageRows.map((image) => repositories.images.deleteImage(image.id)));
+    }
     await repositories.stockTracking.deleteItem(item.id);
     setCheckedItemIds((prev) => {
       const next = new Set(prev);
@@ -1023,6 +1052,8 @@ function StockTrackingPage() {
       setSelectedItem(null);
       setChart(null);
       setImageRows([]);
+      setAppImageRows([]);
+      setPreviewAppImage(null);
     }
     setMessage("트래킹 종목을 삭제했습니다.");
     await loadItems();
@@ -1294,7 +1325,7 @@ function StockTrackingPage() {
                     <div><h4>첨부 이미지</h4><span>차트 캡처와 복기 이미지를 관리합니다.</span></div>
                     <button type="button" className="btn btn-secondary btn-table-sm" onClick={openImageModal}>+ 이미지 추가</button>
                   </div>
-                  {imageRows.length === 0 ? (
+                  {imageRows.length === 0 && appImageRows.length === 0 ? (
                     <div className="stock-tracking-image-placeholder">
                       <strong>등록된 이미지가 없습니다.</strong>
                       <p>기준일 차트, 성공/실패 근거, 진입 가능 구간 이미지를 추가해 복기 자료로 남길 수 있습니다.</p>
@@ -1316,6 +1347,25 @@ function StockTrackingPage() {
                             <div className="stock-tracking-image-actions">
                               <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => setPreviewImage(image)}>원본보기</button>
                               <button type="button" className="btn btn-danger btn-table-sm" onClick={() => void deleteImage(image)}>삭제</button>
+                            </div>
+                          </div>
+                        </article>
+                      ))}
+                      {appImageRows.map((image) => (
+                        <article className="stock-tracking-image-card" key={"app-" + image.id}>
+                          <button type="button" className="stock-tracking-image-thumb" onClick={() => setPreviewAppImage(image)} aria-label="이미지 크게 보기">
+                            <img src={getImageUrl(image.file_url)} alt={image.original_file_name || "첨부 이미지"} />
+                          </button>
+                          <div className="stock-tracking-image-meta">
+                            <div className="stock-tracking-image-meta-head">
+                              <span className="stock-tracking-image-badge">공통 이미지</span>
+                              <span>{formatDateTime(image.created_at)}</span>
+                            </div>
+                            <strong>{image.original_file_name || "첨부 이미지"}</strong>
+                            {image.description ? <p className="stock-tracking-image-caption">{image.description}</p> : <p className="stock-tracking-image-caption muted">메모 없음</p>}
+                            <div className="stock-tracking-image-actions">
+                              <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => setPreviewAppImage(image)}>원본보기</button>
+                              <button type="button" className="btn btn-danger btn-table-sm" onClick={() => void deleteAppImage(image)}>삭제</button>
                             </div>
                           </div>
                         </article>
@@ -1403,6 +1453,24 @@ function StockTrackingPage() {
               <img src={getImageUrl(previewImage.image_url)} alt={previewImage.original_filename || "첨부 이미지"} />
             </div>
             {previewImage.caption ? <p className="stock-tracking-image-preview-caption">{previewImage.caption}</p> : null}
+          </div>
+        </div>
+      ) : null}
+
+      {previewAppImage ? (
+        <div className="modal-backdrop stock-tracking-image-modal-backdrop" onClick={() => setPreviewAppImage(null)}>
+          <div className="modal-card stock-tracking-image-preview-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="trade-journal-detail-header">
+              <div>
+                <h3>첨부 이미지</h3>
+                <p>{previewAppImage.original_file_name || "첨부 이미지"}</p>
+              </div>
+              <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => setPreviewAppImage(null)}>닫기</button>
+            </div>
+            <div className="stock-tracking-image-preview">
+              <img src={getImageUrl(previewAppImage.file_url)} alt={previewAppImage.original_file_name || "첨부 이미지"} />
+            </div>
+            {previewAppImage.description ? <p className="stock-tracking-image-preview-caption">{previewAppImage.description}</p> : null}
           </div>
         </div>
       ) : null}

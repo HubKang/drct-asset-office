@@ -2,7 +2,7 @@
 import clsx from "clsx";
 
 type Props = {
-  title?: string;
+  title?: ReactNode;
   children: ReactNode;
   theme?: "light" | "dark";
   className?: string;

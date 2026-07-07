@@ -27,6 +27,10 @@
       {
         "title": "관심 종목 분석",
         "routeKey": "stock-prices"
+      },
+      {
+        "title": "관심 종목 시재수차재",
+        "routeKey": "watchlist-sije-sucha-jae"
       }
     ]
   },

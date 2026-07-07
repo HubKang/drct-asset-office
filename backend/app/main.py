@@ -39,6 +39,7 @@ from backend.app.api.routes_trade_training import router as trade_training_route
 from backend.app.api.routes_trade_journals import router as trade_journals_router
 from backend.app.api.routes_trade_reviews import router as trade_reviews_router
 from backend.app.api.routes_watchlist import router as watchlist_router
+from backend.app.api.routes_watchlist_evaluation import router as watchlist_evaluation_router
 from backend.app.core.database import ensure_runtime_schema
 from backend.app.core.config import PROJECT_ROOT
 from backend.app.core.logging import setup_logging
@@ -70,6 +71,7 @@ app.include_router(market_indicators_router)
 app.include_router(market_themes_router)
 app.include_router(market_theme_candidates_router)
 app.include_router(market_trends_router)
+app.include_router(watchlist_evaluation_router)
 app.include_router(watchlist_router)
 app.include_router(schema_comments_router)
 app.include_router(news_router)

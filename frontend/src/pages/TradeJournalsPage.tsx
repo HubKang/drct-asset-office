@@ -2,6 +2,7 @@
 import SectionCard from "@/components/common/SectionCard";
 import { repositories } from "@/services";
 import { appConfig } from "@/services/config/appConfig";
+import type { AppImage } from "@/types/image";
 import type {
   FailurePatternReviewPackage,
   TradeJournal,
@@ -59,6 +60,7 @@ function TradeJournalsPage() {
   const [detailMode, setDetailMode] = useState<DetailMode>("create");
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [detailImages, setDetailImages] = useState<TradeJournalImage[]>([]);
+  const [detailAppImages, setDetailAppImages] = useState<AppImage[]>([]);
   const [gptPackage, setGptPackage] = useState<TradeJournalGptReviewPackage | null>(null);
   const [failurePatternPackage, setFailurePatternPackage] = useState<FailurePatternReviewPackage | null>(null);
   const [failureLoading, setFailureLoading] = useState(false);
@@ -70,6 +72,7 @@ function TradeJournalsPage() {
   });
   const [savingImageEdit, setSavingImageEdit] = useState(false);
   const [deletingImageId, setDeletingImageId] = useState<number | null>(null);
+  const [previewImage, setPreviewImage] = useState<{ src: string; title: string; caption?: string; badge?: string } | null>(null);
 
   const [form, setForm] = useState<TradeJournalSaveRequest>({
     buy_date: today(),
@@ -85,6 +88,14 @@ function TradeJournalsPage() {
 
   const safeItems = useMemo(() => (Array.isArray(items) ? items : []), [items]);
   const safeMethods = useMemo(() => (Array.isArray(tradeMethods) ? tradeMethods : []), [tradeMethods]);
+
+  const getImageTypeLabel = (value: string) => IMAGE_TYPE_OPTIONS.find((option) => option.value === value)?.label || value;
+  const getImageUrl = (url?: string | null) => {
+    if (!url) return "";
+    if (/^https?:\/\//i.test(url) || url.startsWith("blob:")) return url;
+    const normalized = url.startsWith("/") ? url : "/" + url;
+    return appConfig.apiBaseUrl + normalized;
+  };
 
   const summaryStats = useMemo(() => {
     const total = safeItems.length;
@@ -128,10 +139,20 @@ function TradeJournalsPage() {
     void loadList();
   }, []);
 
+  useEffect(() => {
+    if (!previewImage) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPreviewImage(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [previewImage]);
+
   const loadDetail = async (id: number) => {
-    const [detail, images] = await Promise.all([
+    const [detail, images, appImages] = await Promise.all([
       repositories.tradeJournals.fetchTradeJournalDetail(id),
       repositories.tradeJournals.fetchTradeJournalImages(id),
+      repositories.images.listImages({ domain: "trade_journal", owner_type: "trade_journal", owner_id: id }),
     ]);
     setForm({
       buy_date: detail.buy_date?.slice(0, 10) || today(),
@@ -150,6 +171,7 @@ function TradeJournalsPage() {
       remark: detail.remark || "",
     });
     setDetailImages(images ?? []);
+    setDetailAppImages(appImages.items);
   };
 
   const openCreate = () => {
@@ -167,6 +189,8 @@ function TradeJournalsPage() {
       realized_profit: 0,
     });
     setDetailImages([]);
+    setDetailAppImages([]);
+    setPreviewImage(null);
   };
 
   const openEdit = async (id: number) => {
@@ -207,16 +231,21 @@ function TradeJournalsPage() {
 
   const uploadImage = async () => {
     if (!selectedJournalId || !imageFile) return;
-    await repositories.tradeJournals.uploadTradeJournalImage(selectedJournalId, {
-      image_type: imageType,
-      image_memo: imageMemo,
+    const imageTypeLabel = IMAGE_TYPE_OPTIONS.find((option) => option.value === imageType)?.label || imageType;
+    const memo = imageMemo.trim();
+    await repositories.images.uploadImage({
+      domain: "trade_journal",
+      owner_type: "trade_journal",
+      owner_id: selectedJournalId,
       file: imageFile,
+      description: memo ? imageTypeLabel + " - " + memo : imageTypeLabel,
     });
     setImageFile(null);
     setImageMemo("");
     setImageEditingId(null);
     await loadDetail(selectedJournalId);
     await loadList();
+    setMessage("차트 이미지가 등록되었습니다.");
   };
 
   const startEditImage = (image: TradeJournalImage) => {
@@ -268,6 +297,23 @@ function TradeJournalsPage() {
     }
   };
 
+  const deleteAppImage = async (imageId: number) => {
+    const ok = window.confirm("이 차트 이미지를 삭제하시겠습니까?");
+    if (!ok) return;
+    setDeletingImageId(imageId);
+    setError("");
+    try {
+      await repositories.images.deleteImage(imageId);
+      setDetailAppImages((prev) => prev.filter((image) => image.id !== imageId));
+      setMessage("차트 이미지가 삭제되었습니다.");
+      await loadList();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "차트 이미지 삭제에 실패했습니다.");
+    } finally {
+      setDeletingImageId(null);
+    }
+  };
+
   const deleteJournal = async () => {
     if (!selectedJournalId || detailMode !== "edit") return;
     const ok = window.confirm("이 매매일지를 삭제하시겠습니까? 등록된 차트 이미지도 함께 삭제될 수 있습니다.");
@@ -275,6 +321,9 @@ function TradeJournalsPage() {
     setDeletingJournal(true);
     setError("");
     try {
+      if (detailAppImages.length > 0) {
+        await Promise.all(detailAppImages.map((image) => repositories.images.deleteImage(image.id)));
+      }
       await repositories.tradeJournals.deleteTradeJournal(selectedJournalId);
       setMessage("매매일지가 삭제되었습니다.");
       setSelectedJournalId(null);
@@ -282,6 +331,8 @@ function TradeJournalsPage() {
       setDetailMode("create");
       setImageEditingId(null);
       setDetailImages([]);
+      setDetailAppImages([]);
+      setPreviewImage(null);
       setGptPackage(null);
       await loadList();
     } catch (e) {
@@ -638,7 +689,23 @@ function TradeJournalsPage() {
                           </button>
                         </div>
                       </div>
-                      {img.image_url ? <img src={`${appConfig.apiBaseUrl}${img.image_url}`} className="trade-journal-image-preview" alt="trade" /> : null}
+                      {img.image_url ? (
+                        <button
+                          type="button"
+                          className="journal-image-thumb"
+                          onClick={() =>
+                            setPreviewImage({
+                              src: getImageUrl(img.image_url),
+                              title: img.original_filename || img.image_path || "차트 이미지",
+                              caption: img.image_memo || "",
+                              badge: getImageTypeLabel(img.image_type),
+                            })
+                          }
+                          aria-label="차트 이미지 크게 보기"
+                        >
+                          <img src={getImageUrl(img.image_url)} alt={img.original_filename || "trade"} />
+                        </button>
+                      ) : null}
                       {imageEditingId === img.id ? (
                         <div className="trade-image-memo-edit">
                           <select
@@ -673,6 +740,39 @@ function TradeJournalsPage() {
                       )}
                     </article>
                   ))}
+                  {detailAppImages.map((img) => (
+                    <article key={"app-" + img.id} className="trade-journal-image-card">
+                      <div className="trade-image-card-header">
+                        <div className="trade-image-card-title-wrap">
+                          <span className="badge badge-blue">공통 이미지</span>
+                          <small className="trade-image-card-title">{img.original_file_name}</small>
+                        </div>
+                        <div className="trade-image-card-actions">
+                          <button type="button" className="btn btn-danger btn-table-sm" onClick={() => void deleteAppImage(img.id)} disabled={deletingImageId === img.id}>
+                            {deletingImageId === img.id ? "삭제중" : "삭제"}
+                          </button>
+                        </div>
+                      </div>
+                      {img.file_url ? (
+                        <button
+                          type="button"
+                          className="journal-image-thumb"
+                          onClick={() =>
+                            setPreviewImage({
+                              src: getImageUrl(img.file_url),
+                              title: img.original_file_name || "차트 이미지",
+                              caption: img.description || "",
+                              badge: "공통 이미지",
+                            })
+                          }
+                          aria-label="차트 이미지 크게 보기"
+                        >
+                          <img src={getImageUrl(img.file_url)} alt={img.original_file_name || "trade"} />
+                        </button>
+                      ) : null}
+                      <p className="trade-image-memo">{img.description || "메모 없음"}</p>
+                    </article>
+                  ))}
                 </div>
               </div>
             </div>
@@ -687,6 +787,21 @@ function TradeJournalsPage() {
               ) : null}
             </div>
           </aside>
+          {previewImage ? (
+            <div className="journal-image-preview-backdrop" onClick={() => setPreviewImage(null)} role="presentation">
+              <div className="journal-image-preview-modal" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="차트 이미지 미리보기">
+                <button type="button" className="journal-image-preview-close" onClick={() => setPreviewImage(null)} aria-label="닫기">
+                  닫기
+                </button>
+                <img className="journal-image-preview-img" src={previewImage.src} alt={previewImage.title} />
+                <div className="journal-image-preview-caption">
+                  {previewImage.badge ? <span className="badge badge-blue">{previewImage.badge}</span> : null}
+                  <strong>{previewImage.title}</strong>
+                  {previewImage.caption ? <p>{previewImage.caption}</p> : null}
+                </div>
+              </div>
+            </div>
+          ) : null}
         </>
       ) : null}
     </div>

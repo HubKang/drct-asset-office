@@ -3,14 +3,16 @@ from __future__ import annotations
 from collections import Counter
 import mimetypes
 from pathlib import Path
+import re
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from fastapi import HTTPException
 from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import now_kst
+from backend.app.services.image_file_service import ImageFileService
 from backend.app.schemas.kms_schema import (
     IMPORTANCE_VALUES,
     LEARNING_STATUS_VALUES,
@@ -379,6 +381,7 @@ class KmsService:
         )
         post_id = int(result.lastrowid)
         self._replace_post_tags(post_id, self._normalize_tags(payload.tags))
+        self._link_content_images_to_post(post_id, payload.content)
         self.db.commit()
         return self.get_post(post_id)
 
@@ -404,17 +407,25 @@ class KmsService:
             self.db.execute(text(f"UPDATE kms_posts SET {assignments} WHERE id = :post_id"), values)
         if tags_value is not None:
             self._replace_post_tags(post_id, self._normalize_tags(tags_value))
+        if "content" in values:
+            self._link_content_images_to_post(post_id, merged_content)
         self.db.commit()
         return self.get_post(post_id)
 
-    def deactivate_post(self, post_id: int) -> KmsPostSummary:
-        self.get_post(post_id)
+    def delete_post(self, post_id: int) -> KmsPostSummary:
+        current = self.get_post(post_id)
+        self._delete_post_images(post_id, current.content)
+        self.db.execute(text("DELETE FROM kms_post_tags WHERE post_id = :post_id"), {"post_id": post_id})
         self.db.execute(
-            text("UPDATE kms_posts SET is_active = 0, updated_at = :now WHERE id = :post_id"),
-            {"post_id": post_id, "now": now_kst()},
+            text("DELETE FROM kms_posts WHERE id = :post_id"),
+            {"post_id": post_id},
         )
+        self._refresh_tag_counts()
         self.db.commit()
-        return self.get_post(post_id)
+        return current
+
+    def deactivate_post(self, post_id: int) -> KmsPostSummary:
+        return self.delete_post(post_id)
 
     def list_tags(self, keyword: str | None = None, sort: str = "popular", limit: int = 100) -> list[KmsTagResponse]:
         filters = ["is_active = 1"]
@@ -521,6 +532,86 @@ class KmsService:
             review_needed_posts=review_needed_posts,
             practice_candidate_posts=practice_candidate_posts,
         )
+
+    def _extract_kms_image_refs(self, content: str | None) -> tuple[set[str], set[str]]:
+        file_urls: set[str] = set()
+        relative_paths: set[str] = set()
+        for src in re.findall(r'<img[^>]+src=["\']([^"\']+)["\']', str(content or ""), flags=re.IGNORECASE):
+            marker = "/static/kms_images/"
+            marker_index = src.find(marker)
+            if marker_index < 0:
+                continue
+            file_url = src[marker_index:].split("#", 1)[0].split("?", 1)[0]
+            if not file_url:
+                continue
+            file_urls.add(file_url)
+            decoded_file_url = unquote(file_url)
+            file_urls.add(decoded_file_url)
+            relative_paths.add("data/" + file_url.removeprefix("/static/"))
+            relative_paths.add("data/" + decoded_file_url.removeprefix("/static/"))
+        return file_urls, relative_paths
+
+    def _find_kms_image_ids(self, post_id: int, content: str | None) -> set[int]:
+        image_ids: set[int] = set()
+        rows = self.db.execute(
+            text(
+                """
+                SELECT id
+                FROM app_images
+                WHERE domain = 'kms'
+                  AND owner_type = 'kms_post'
+                  AND owner_id = :post_id
+                """
+            ),
+            {"post_id": post_id},
+        ).mappings().all()
+        image_ids.update(int(row["id"]) for row in rows)
+
+        file_urls, relative_paths = self._extract_kms_image_refs(content)
+        for file_url in file_urls:
+            row = self.db.execute(
+                text("SELECT id FROM app_images WHERE domain = 'kms' AND file_url = :file_url"),
+                {"file_url": file_url},
+            ).mappings().first()
+            if row:
+                image_ids.add(int(row["id"]))
+        for relative_path in relative_paths:
+            row = self.db.execute(
+                text("SELECT id FROM app_images WHERE domain = 'kms' AND relative_path = :relative_path"),
+                {"relative_path": relative_path},
+            ).mappings().first()
+            if row:
+                image_ids.add(int(row["id"]))
+        return image_ids
+
+    def _link_content_images_to_post(self, post_id: int, content: str | None) -> None:
+        image_ids = self._find_kms_image_ids(post_id, content)
+        for image_id in image_ids:
+            self.db.execute(
+                text(
+                    """
+                    UPDATE app_images
+                    SET owner_type = 'kms_post', owner_id = :post_id, updated_at = :now
+                    WHERE id = :image_id
+                      AND domain = 'kms'
+                      AND (owner_id IS NULL OR owner_id = :post_id)
+                    """
+                ),
+                {"image_id": image_id, "post_id": post_id, "now": now_kst()},
+            )
+
+    def _delete_post_images(self, post_id: int, content: str | None) -> None:
+        image_ids = self._find_kms_image_ids(post_id, content)
+        image_service = ImageFileService(self.db)
+        for image_id in sorted(image_ids):
+            row = self.db.execute(
+                text("SELECT relative_path FROM app_images WHERE id = :image_id"),
+                {"image_id": image_id},
+            ).mappings().first()
+            if not row:
+                continue
+            image_service.delete_physical_file(str(row["relative_path"]))
+            self.db.execute(text("DELETE FROM app_images WHERE id = :image_id"), {"image_id": image_id})
 
     def _validate_post_payload(self, category_id: int, title: str, content: str, importance: str, learning_status: str) -> None:
         if not str(title or "").strip():

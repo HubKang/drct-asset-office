@@ -1,4 +1,4 @@
-﻿# DrCT 통합 이미지 파일 관리 체계
+# DrCT 통합 이미지 파일 관리 체계
 
 ## 목적
 
@@ -18,8 +18,8 @@ DrCT의 이미지 첨부 방식을 공통 규칙으로 통일한다. 60-I-1 단�
 | --- | --- |
 | `trade_journal` | `data/trade_journal_images` |
 | `trade_method` | `data/trade_method_images` |
-| `stock_tracking` | `data/stock_tracking` |
-| `kms` | `data/kms` |
+| `stock_tracking` | `data/stock_tracking_images` |
+| `kms` | `data/kms_images` |
 
 상세 폴더는 연도와 월까지만 생성한다.
 
@@ -30,7 +30,7 @@ data/{domain_folder}/{yyyy}/{mm}/{stored_file_name}
 예시:
 
 ```text
-data/kms/2026/07/chart_sample_20260706001.jpg
+data/kms_images/2026/07/chart_sample_20260706001.jpg
 data/trade_method_images/2026/07/20day_rebound_20260706002.png
 ```
 
@@ -149,8 +149,8 @@ DELETE /images/{image_id}
 현재 FastAPI는 `data` 폴더를 `/static`으로 마운트한다.
 
 ```text
-relative_path: data/kms/2026/07/sample_20260706001.jpg
-file_url: /static/kms/2026/07/sample_20260706001.jpg
+relative_path: data/kms_images/2026/07/sample_20260706001.jpg
+file_url: /static/kms_images/2026/07/sample_20260706001.jpg
 ```
 
 프론트엔드는 `appConfig.apiBaseUrl + file_url` 형태로 이미지를 표시할 수 있다.
@@ -176,8 +176,8 @@ file_url: /static/kms/2026/07/sample_20260706001.jpg
 
 제외 대상:
 
-- `data/kms/**`
-- `data/stock_tracking/**`
+- `data/kms_images/**`
+- `data/stock_tracking_images/**`
 - `data/trade_journal_images/**`
 - `data/trade_method_images/**`
 

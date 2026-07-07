@@ -151,4 +151,4 @@ def update_kms_post(post_id: int, payload: KmsPostUpdate, db: Session = Depends(
 
 @router.delete("/posts/{post_id}", response_model=KmsPostSummary)
 def delete_kms_post(post_id: int, db: Session = Depends(get_db)) -> KmsPostSummary:
-    return KmsService(db).deactivate_post(post_id)
+    return KmsService(db).delete_post(post_id)

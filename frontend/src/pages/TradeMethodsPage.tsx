@@ -2,6 +2,7 @@
 import SectionCard from "@/components/common/SectionCard";
 import { repositories } from "@/services";
 import { appConfig } from "@/services/config/appConfig";
+import type { AppImage } from "@/types/image";
 import type {
   TradeJournal,
   TradeMethod,
@@ -132,6 +133,7 @@ function TradeMethodsPage() {
   const [guidePackage, setGuidePackage] = useState<TradeMethodGptGuidePackage | null>(null);
   const [guideLoading, setGuideLoading] = useState(false);
   const [methodImages, setMethodImages] = useState<TradeMethodImage[]>([]);
+  const [methodAppImages, setMethodAppImages] = useState<AppImage[]>([]);
   const [methodImageType, setMethodImageType] = useState<TradeMethodImageType>("example_chart");
   const [methodImageMemo, setMethodImageMemo] = useState("");
   const [methodImageFile, setMethodImageFile] = useState<File | null>(null);
@@ -149,6 +151,7 @@ function TradeMethodsPage() {
   const [methodImageSavingEdit, setMethodImageSavingEdit] = useState(false);
   const [methodImageDeletingId, setMethodImageDeletingId] = useState<number | null>(null);
   const [methodImagePreview, setMethodImagePreview] = useState<TradeMethodImage | null>(null);
+  const [methodAppImagePreview, setMethodAppImagePreview] = useState<AppImage | null>(null);
 
   const safeItems = useMemo(() => (Array.isArray(items) ? items : []), [items]);
 
@@ -186,8 +189,12 @@ function TradeMethodsPage() {
   };
 
   const loadMethodImages = async (methodId: number) => {
-    const rows = await repositories.tradeJournals.fetchTradeMethodImages(methodId);
+    const [rows, appImages] = await Promise.all([
+      repositories.tradeJournals.fetchTradeMethodImages(methodId),
+      repositories.images.listImages({ domain: "trade_method", owner_type: "trade_method", owner_id: methodId }),
+    ]);
     setMethodImages(Array.isArray(rows) ? rows : []);
+    setMethodAppImages(appImages.items);
   };
 
   const loadStatsForMethod = async (methodId: number): Promise<MethodStats> => {
@@ -247,6 +254,7 @@ function TradeMethodsPage() {
     setDetailForm(defaultForm());
     setGuidePackage(null);
     setMethodImages([]);
+    setMethodAppImages([]);
     resetMethodImageForm();
     setIsDetailOpen(true);
     setMessage("");
@@ -294,6 +302,7 @@ function TradeMethodsPage() {
     setSelectedMethodId(null);
     setGuidePackage(null);
     setMethodImages([]);
+    setMethodAppImages([]);
     resetMethodImageForm();
   };
 
@@ -386,10 +395,14 @@ function TradeMethodsPage() {
     setMethodImageUploading(true);
     setError("");
     try {
-      await repositories.tradeJournals.uploadTradeMethodImage(selectedMethodId, {
-        image_type: methodImageType,
-        image_memo: methodImageMemo,
+      const imageTypeLabel = METHOD_IMAGE_TYPE_OPTIONS.find((option) => option.value === methodImageType)?.label || methodImageType;
+      const memo = methodImageMemo.trim();
+      await repositories.images.uploadImage({
+        domain: "trade_method",
+        owner_type: "trade_method",
+        owner_id: selectedMethodId,
         file: methodImageFile,
+        description: memo ? imageTypeLabel + " - " + memo : imageTypeLabel,
       });
       setMessage("기법 이미지를 등록했습니다.");
       resetMethodImageForm();
@@ -441,6 +454,24 @@ function TradeMethodsPage() {
       setMessage("기법 이미지를 삭제했습니다.");
       setMethodImageEditingId((prev) => (prev === imageId ? null : prev));
       await loadMethodImages(selectedMethodId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "기법 이미지 삭제에 실패했습니다.");
+    } finally {
+      setMethodImageDeletingId(null);
+    }
+  };
+
+  const deleteAppMethodImage = async (imageId: number) => {
+    if (!selectedMethodId) return;
+    const ok = window.confirm("이 기법 이미지를 삭제하시겠습니까?");
+    if (!ok) return;
+    setMethodImageDeletingId(imageId);
+    setError("");
+    try {
+      await repositories.images.deleteImage(imageId);
+      setMethodAppImages((prev) => prev.filter((image) => image.id !== imageId));
+      if (methodAppImagePreview?.id === imageId) setMethodAppImagePreview(null);
+      setMessage("기법 이미지를 삭제했습니다.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "기법 이미지 삭제에 실패했습니다.");
     } finally {
@@ -791,7 +822,48 @@ function TradeMethodsPage() {
                             </div>
                           </article>
                         ))}
-                        {methodImages.length === 0 ? (
+                        {methodAppImages.map((image) => (
+                          <article key={"app-" + image.id} className="method-image-card">
+                            <div className="method-image-thumb-wrap">
+                              {image.file_url ? (
+                                <button
+                                  type="button"
+                                  className="method-image-thumb-button"
+                                  onClick={() => setMethodAppImagePreview(image)}
+                                  aria-label={`${image.original_file_name || "기법 이미지 원본"} 원본 보기`}
+                                >
+                                  <img
+                                    className="method-image-thumb"
+                                    src={`${appConfig.apiBaseUrl}${image.file_url}`}
+                                    alt={image.original_file_name || "기법 이미지 원본"}
+                                  />
+                                </button>
+                              ) : (
+                                <div className="method-image-thumb method-image-thumb-fallback">이미지를 불러올 수 없습니다.</div>
+                              )}
+                            </div>
+                            <div className="method-image-meta">
+                              <div className="method-image-meta-header">
+                                <span className="badge badge-blue method-image-badge">공통 이미지</span>
+                                <span className="method-image-filename">{image.original_file_name}</span>
+                              </div>
+                              <p className="method-image-memo-text">{image.description || "메모 없음"}</p>
+                              {detailMode === "edit" ? (
+                                <div className="method-image-actions">
+                                  <button
+                                    type="button"
+                                    className="btn btn-danger btn-table-sm"
+                                    onClick={() => void deleteAppMethodImage(image.id)}
+                                    disabled={methodImageDeletingId === image.id}
+                                  >
+                                    {methodImageDeletingId === image.id ? "삭제중" : "삭제"}
+                                  </button>
+                                </div>
+                              ) : null}
+                            </div>
+                          </article>
+                        ))}
+                        {methodImages.length === 0 && methodAppImages.length === 0 ? (
                           <div className="method-image-empty">등록된 기법 이미지가 없습니다.</div>
                         ) : null}
                       </div>
@@ -1024,6 +1096,21 @@ function TradeMethodsPage() {
                   <div className="method-image-preview-caption">
                     <span className="badge badge-blue">{methodImagePreview.image_type_label || methodImagePreview.image_type}</span>
                     <span>{methodImagePreview.original_filename || methodImagePreview.image_path}</span>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            {methodAppImagePreview?.file_url ? (
+              <div className="method-image-preview-modal" onClick={() => setMethodAppImagePreview(null)}>
+                <div className="method-image-preview-frame" onClick={(event) => event.stopPropagation()}>
+                  <img
+                    className="method-image-preview-original"
+                    src={`${appConfig.apiBaseUrl}${methodAppImagePreview.file_url}`}
+                    alt={methodAppImagePreview.original_file_name || "기법 이미지 원본"}
+                  />
+                  <div className="method-image-preview-caption">
+                    <span className="badge badge-blue">공통 이미지</span>
+                    <span>{methodAppImagePreview.original_file_name}</span>
                   </div>
                 </div>
               </div>

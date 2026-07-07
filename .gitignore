@@ -42,15 +42,18 @@ reports/
 
 # User-uploaded image files
 data/kms/**
-data/stock_tracking/**
+data/kms_images/**
+data/stock_tracking_images/**
 data/trade_journal_images/**
 data/trade_method_images/**
 !data/kms/
-!data/stock_tracking/
+!data/kms_images/
+!data/stock_tracking_images/
 !data/trade_journal_images/
 !data/trade_method_images/
 !data/kms/.gitkeep
-!data/stock_tracking/.gitkeep
+!data/kms_images/.gitkeep
+!data/stock_tracking_images/.gitkeep
 !data/trade_journal_images/.gitkeep
 !data/trade_method_images/.gitkeep
 

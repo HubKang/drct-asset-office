@@ -25,6 +25,7 @@ import { tradeJournalApiRepository } from "@/services/api/tradeJournalApiReposit
 import { tradeReviewApiRepository } from "@/services/api/tradeReviewApiRepository";
 import { tradeTrainingApiRepository } from "@/services/api/tradeTrainingApiRepository";
 import { watchlistApiRepository } from "@/services/api/watchlistApiRepository";
+import { watchlistEvaluationApiRepository } from "@/services/api/watchlistEvaluationApiRepository";
 import { advisoryPackageMockRepository } from "@/services/mock/advisoryPackageMockRepository";
 import { classificationRuleMockRepository } from "@/services/mock/classificationRuleMockRepository";
 import { collectionRunMockRepository } from "@/services/mock/collectionRunMockRepository";
@@ -40,6 +41,7 @@ import { stockMockRepository } from "@/services/mock/stockMockRepository";
 import { stockPriceMockRepository } from "@/services/mock/stockPriceMockRepository";
 import { stockTrackingMockRepository } from "@/services/mock/stockTrackingMockRepository";
 import { watchlistMockRepository } from "@/services/mock/watchlistMockRepository";
+import { watchlistEvaluationMockRepository } from "@/services/mock/watchlistEvaluationMockRepository";
 import { appConfig } from "@/services/config/appConfig";
 
 const useMock = appConfig.dataSource !== "api";
@@ -52,6 +54,7 @@ export const repositories = {
   stockPrices: useMock ? stockPriceMockRepository : stockPriceApiRepository,
   stockTracking: useMock ? stockTrackingMockRepository : stockTrackingApiRepository,
   watchlist: useMock ? watchlistMockRepository : watchlistApiRepository,
+  watchlistEvaluation: useMock ? watchlistEvaluationMockRepository : watchlistEvaluationApiRepository,
   schemaComments: useMock ? schemaCommentMockRepository : schemaCommentApiRepository,
   news: useMock ? newsMockRepository : newsApiRepository,
   marketThemes: useMock ? marketThemeMockRepository : marketThemeApiRepository,
@@ -75,3 +78,4 @@ export const repositories = {
 };
 
 export const dataSourceLabel = useMock ? "mock" : "api";
+

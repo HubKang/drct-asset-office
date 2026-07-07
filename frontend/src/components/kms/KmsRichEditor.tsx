@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type MouseEvent } from "react";
 import type { Editor } from "@tiptap/core";
 import Color from "@tiptap/extension-color";
 import Image from "@tiptap/extension-image";
@@ -12,6 +12,9 @@ import { TextStyle } from "@tiptap/extension-text-style";
 import Underline from "@tiptap/extension-underline";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
+import { imageApiRepository } from "@/services/api/imageApiRepository";
+import { appConfig } from "@/services/config/appConfig";
+import type { AppImageDomain } from "@/types/image";
 import { sanitizeKmsHtml, toKmsEditableHtml } from "@/utils/kmsRichContent";
 
 type KmsRichEditorProps = {
@@ -20,6 +23,10 @@ type KmsRichEditorProps = {
   placeholder?: string;
   resetKey?: string | number;
   selectLocalImage?: () => Promise<{ selected: boolean; path?: string | null; url?: string | null }>;
+  imageUploadDomain?: AppImageDomain;
+  ownerType?: string;
+  ownerId?: number | string | null;
+  enableImageUpload?: boolean;
 };
 
 const KmsImage = Image.extend({
@@ -43,10 +50,24 @@ const KmsImage = Image.extend({
   },
 });
 
-
-function KmsRichEditor({ value, onChange, placeholder = "본문을 입력하세요.", resetKey = "kms-editor", selectLocalImage }: KmsRichEditorProps) {
+function KmsRichEditor({
+  value,
+  onChange,
+  placeholder = "Enter content",
+  resetKey = "kms-editor",
+  selectLocalImage,
+  imageUploadDomain = "kms",
+  ownerType = "kms_post",
+  ownerId = null,
+  enableImageUpload = true,
+}: KmsRichEditorProps) {
   const lastResetKeyRef = useRef<string | number>(resetKey);
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const [, setEditorRevision] = useState(0);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [imageUploadError, setImageUploadError] = useState("");
+  const [imageUploadMessage, setImageUploadMessage] = useState("");
+
   const editor = useEditor({
     extensions: [
       StarterKit,
@@ -103,19 +124,28 @@ function KmsRichEditor({ value, onChange, placeholder = "본문을 입력하세�
     lastResetKeyRef.current = resetKey;
   }, [editor, resetKey, value]);
 
-  const run = useCallback((action: () => void) => {
-    if (!editor) return;
-    action();
-  }, [editor]);
+  const run = useCallback(
+    (action: () => void) => {
+      if (!editor) return;
+      action();
+    },
+    [editor],
+  );
 
   const keepSelection = (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
   };
 
+  const buttonClass = (active = false) => (active ? "kms-editor-button active" : "kms-editor-button");
+  const isImageSelected = editor?.isActive("image") ?? false;
+  const isTableSelected = editor?.isActive("table") ?? false;
+  const activeImageWidth = (editor?.getAttributes("image").width as string | null | undefined) || "50%";
+  const activeImageWidthValue = Math.max(0, Math.min(100, Number.parseInt(activeImageWidth, 10) || 0));
+
   const setLink = () => {
     if (!editor) return;
     const previousUrl = editor.getAttributes("link").href as string | undefined;
-    const url = window.prompt("링크 URL을 입력하세요.", previousUrl || "https://");
+    const url = window.prompt("Link URL", previousUrl || "https://");
     if (url === null) return;
     if (!url.trim()) {
       run(() => editor.chain().focus().extendMarkRange("link").unsetLink().run());
@@ -124,73 +154,136 @@ function KmsRichEditor({ value, onChange, placeholder = "본문을 입력하세�
     run(() => editor.chain().focus().extendMarkRange("link").setLink({ href: url.trim() }).run());
   };
 
-  const insertLocalImage = async () => {
+  const insertImageUrl = () => {
     if (!editor) return;
-    if (!selectLocalImage) {
-      window.alert("로컬 이미지 선택 기능이 연결되지 않았습니다.");
+    const url = window.prompt("이미지 URL", "https://");
+    if (url === null) return;
+    const trimmedUrl = url.trim();
+    if (!trimmedUrl) return;
+    run(() =>
+      editor
+        .chain()
+        .focus()
+        .setImage({ src: trimmedUrl, alt: trimmedUrl.split("/").pop() || "image", width: "50%" } as never)
+        .createParagraphNear()
+        .run(),
+    );
+    setImageUploadError("");
+    setImageUploadMessage("이미지 URL을 본문에 삽입했습니다.");
+  };
+
+  const normalizeOwnerId = () => {
+    if (ownerId === null || ownerId === undefined || ownerId === "") return undefined;
+    const numericOwnerId = typeof ownerId === "number" ? ownerId : Number(ownerId);
+    return Number.isFinite(numericOwnerId) ? numericOwnerId : undefined;
+  };
+
+  const toRenderableImageUrl = (fileUrl: string) => {
+    if (/^https?:\/\//i.test(fileUrl)) return fileUrl;
+    const normalized = fileUrl.startsWith("/") ? fileUrl : `/${fileUrl}`;
+    return `${appConfig.apiBaseUrl}${normalized}`;
+  };
+
+  const uploadEditorImage = async (file: File) => {
+    if (!editor || !enableImageUpload || !imageUploadDomain) return;
+    if (!file.type.startsWith("image/")) {
+      setImageUploadMessage("");
+      setImageUploadError("이미지 파일만 업로드할 수 있습니다.");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setImageUploadMessage("");
+      setImageUploadError("10MB 이하 이미지 파일만 업로드할 수 있습니다.");
       return;
     }
 
+    setImageUploadError("");
+    setImageUploadMessage("");
+    setIsUploadingImage(true);
     try {
-      const selectedImage = await selectLocalImage();
-      if (!selectedImage.selected || !selectedImage.url) return;
-      const localPath = selectedImage.path || "";
-      run(() => editor.chain().focus().setImage({ src: selectedImage.url, alt: localPath.split(/[\\/]/).pop() || "local image", width: "50%" } as never).createParagraphNear().run());
+      const uploaded = await imageApiRepository.uploadImage({
+        domain: imageUploadDomain,
+        file,
+        owner_type: ownerType,
+        owner_id: normalizeOwnerId(),
+      });
+      run(() =>
+        editor
+          .chain()
+          .focus()
+          .setImage({ src: toRenderableImageUrl(uploaded.file_url), alt: uploaded.original_file_name, width: "50%" } as never)
+          .createParagraphNear()
+          .run(),
+      );
+      setImageUploadMessage(
+        uploaded.relative_path
+          ? `DrCT 저장소에 이미지를 업로드했습니다: ${uploaded.relative_path}`
+          : "DrCT 저장소에 이미지를 업로드했습니다.",
+      );
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : "이미지 선택에 실패했습니다.");
+      setImageUploadMessage("");
+      setImageUploadError(error instanceof Error ? error.message : "이미지 업로드에 실패했습니다.");
+    } finally {
+      setIsUploadingImage(false);
     }
   };
 
-  const insertTable = () => run(() => editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run());
+  const handleUploadImageClick = () => {
+    if (isUploadingImage) return;
+    uploadInputRef.current?.click();
+  };
 
+  const handleUploadImageChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    void uploadEditorImage(file);
+  };
+
+  const insertTable = () => run(() => editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run());
   const setImageWidth = (activeEditor: Editor | null, widthPercent: number) => {
     if (!activeEditor) return;
     run(() => activeEditor.chain().focus().updateAttributes("image", { width: `${widthPercent}%`, height: null }).run());
   };
 
-  const activeImageWidth = (editor?.getAttributes("image").width as string | null | undefined) || "50%";
-  const activeImageWidthValue = Math.max(0, Math.min(100, Number.parseInt(activeImageWidth, 10) || 0));
-  const isImageSelected = editor?.isActive("image") ?? false;
-  const isTableSelected = editor?.isActive("table") ?? false;
-  const buttonClass = (active = false) => (active ? "kms-editor-button active" : "kms-editor-button");
-
   return (
     <div className="kms-editor-shell">
-      <div className="kms-editor-toolbar" aria-label="본문 편집 도구">
-        <button type="button" title="문단" className={buttonClass(editor?.isActive("paragraph"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().setParagraph().run())}>문단</button>
-        <button type="button" title="제목 1" className={buttonClass(editor?.isActive("heading", { level: 1 }))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleHeading({ level: 1 }).run())}>제목1</button>
-        <button type="button" title="제목 2" className={buttonClass(editor?.isActive("heading", { level: 2 }))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleHeading({ level: 2 }).run())}>제목2</button>
-        <button type="button" title="굵게" className={buttonClass(editor?.isActive("bold"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleBold().run())}>B</button>
-        <button type="button" title="기울임" className={buttonClass(editor?.isActive("italic"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleItalic().run())}>I</button>
-        <button type="button" title="밑줄" className={buttonClass(editor?.isActive("underline"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleUnderline().run())}>U</button>
-        <button type="button" title="글머리 목록" className={buttonClass(editor?.isActive("bulletList"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleBulletList().run())}>목록</button>
-        <button type="button" title="순서 있는 목록을 켜거나 끕니다." className={buttonClass(editor?.isActive("orderedList"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleOrderedList().run())}>번호목록</button>
-        <button type="button" title="인용" className={buttonClass(editor?.isActive("blockquote"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleBlockquote().run())}>인용</button>
-        <button type="button" title="링크" className={buttonClass(editor?.isActive("link"))} onMouseDown={keepSelection} onClick={setLink}>링크</button>
-        <button type="button" title="표 삽입" className="kms-editor-button" onMouseDown={keepSelection} onClick={insertTable}>표</button>
-        <button type="button" title="열 추가" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().addColumnAfter().run())} disabled={!isTableSelected}>열+</button>
-        <button type="button" title="행 추가" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().addRowAfter().run())} disabled={!isTableSelected}>행+</button>
-        <button type="button" title="열 삭제" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().deleteColumn().run())} disabled={!isTableSelected}>열-</button>
-        <button type="button" title="행 삭제" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().deleteRow().run())} disabled={!isTableSelected}>행-</button>
-        <button type="button" title="표 삭제" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().deleteTable().run())} disabled={!isTableSelected}>표삭제</button>
-        <button type="button" title="Local image file" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => void insertLocalImage()}>Image</button>
+      <div className="kms-editor-toolbar" aria-label="Editor tools">
+        <button type="button" title="Paragraph" className={buttonClass(editor?.isActive("paragraph"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().setParagraph().run())}>P</button>
+        <button type="button" title="Heading 1" className={buttonClass(editor?.isActive("heading", { level: 1 }))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleHeading({ level: 1 }).run())}>H1</button>
+        <button type="button" title="Heading 2" className={buttonClass(editor?.isActive("heading", { level: 2 }))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleHeading({ level: 2 }).run())}>H2</button>
+        <button type="button" title="Bold" className={buttonClass(editor?.isActive("bold"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleBold().run())}>B</button>
+        <button type="button" title="Italic" className={buttonClass(editor?.isActive("italic"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleItalic().run())}>I</button>
+        <button type="button" title="Underline" className={buttonClass(editor?.isActive("underline"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleUnderline().run())}>U</button>
+        <button type="button" title="Bullet list" className={buttonClass(editor?.isActive("bulletList"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleBulletList().run())}>List</button>
+        <button type="button" title="Ordered list" className={buttonClass(editor?.isActive("orderedList"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleOrderedList().run())}>1.</button>
+        <button type="button" title="Quote" className={buttonClass(editor?.isActive("blockquote"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleBlockquote().run())}>Quote</button>
+        <button type="button" title="Link" className={buttonClass(editor?.isActive("link"))} onMouseDown={keepSelection} onClick={setLink}>Link</button>
+        <button type="button" title="Insert table" className="kms-editor-button" onMouseDown={keepSelection} onClick={insertTable}>Table</button>
+        <button type="button" title="Add column" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().addColumnAfter().run())} disabled={!isTableSelected}>Col+</button>
+        <button type="button" title="Add row" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().addRowAfter().run())} disabled={!isTableSelected}>Row+</button>
+        <button type="button" title="Delete column" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().deleteColumn().run())} disabled={!isTableSelected}>Col-</button>
+        <button type="button" title="Delete row" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().deleteRow().run())} disabled={!isTableSelected}>Row-</button>
+        <button type="button" title="Delete table" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().deleteTable().run())} disabled={!isTableSelected}>Clear</button>
+        <button type="button" title="Insert image URL" className="kms-editor-button" onMouseDown={keepSelection} onClick={insertImageUrl}>이미지 URL</button>
+        {enableImageUpload ? (
+          <>
+            <button type="button" title="Upload image" className="kms-editor-button" onMouseDown={keepSelection} onClick={handleUploadImageClick} disabled={isUploadingImage}>
+              {isUploadingImage ? "업로드 중" : "이미지 업로드"}
+            </button>
+            <input ref={uploadInputRef} className="kms-editor-file-input" type="file" accept="image/png,image/jpeg,image/jpg,image/gif,image/webp" onChange={handleUploadImageChange} />
+          </>
+        ) : null}
         <label className="kms-editor-image-size-control">
-          <span>이미지 크기</span>
-          <input
-            type="range"
-            min="0"
-            max="100"
-            step="1"
-            value={activeImageWidthValue}
-            onMouseDown={(event) => event.stopPropagation()}
-            onChange={(event) => setImageWidth(editor, Number(event.target.value))}
-            disabled={!isImageSelected}
-          />
+          <span>Image size</span>
+          <input type="range" min="0" max="100" step="1" value={activeImageWidthValue} onMouseDown={(event) => event.stopPropagation()} onChange={(event) => setImageWidth(editor, Number(event.target.value))} disabled={!isImageSelected} />
           <output>{activeImageWidthValue}%</output>
         </label>
-        <button type="button" title="실행취소" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().undo().run())} disabled={!editor?.can().undo()}>실행취소</button>
-        <button type="button" title="다시실행" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().redo().run())} disabled={!editor?.can().redo()}>다시실행</button>
+        <button type="button" title="Undo" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().undo().run())} disabled={!editor?.can().undo()}>Undo</button>
+        <button type="button" title="Redo" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().redo().run())} disabled={!editor?.can().redo()}>Redo</button>
       </div>
+      {imageUploadError ? <p className="kms-editor-error">{imageUploadError}</p> : null}
+      {imageUploadMessage ? <p className="kms-editor-success">{imageUploadMessage}</p> : null}
       <EditorContent editor={editor} />
     </div>
   );

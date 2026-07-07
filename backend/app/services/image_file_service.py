@@ -19,8 +19,8 @@ from backend.app.core.config import PROJECT_ROOT, now_kst
 DOMAIN_FOLDERS = {
     "trade_journal": "trade_journal_images",
     "trade_method": "trade_method_images",
-    "stock_tracking": "stock_tracking",
-    "kms": "kms",
+    "stock_tracking": "stock_tracking_images",
+    "kms": "kms_images",
 }
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 ALLOWED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}

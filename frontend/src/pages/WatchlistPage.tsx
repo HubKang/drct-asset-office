@@ -1,9 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import EmptyState from "@/components/common/EmptyState";
 import SectionCard from "@/components/common/SectionCard";
 import StatusBadge from "@/components/common/StatusBadge";
 import { repositories } from "@/services";
+import {
+  buildNaverStockCandleChartUrl,
+  createNaverChartSidcode,
+  normalizeNaverStockCode,
+  type NaverStockCandlePeriod,
+} from "@/utils/naverChart";
 import type { DisclosureCollectSelectedResponse } from "@/types/disclosure";
 import type { MarketTheme, MarketThemeStock } from "@/types/marketTheme";
 import type { NewsCollectSelectedResponse } from "@/types/news";
@@ -41,11 +48,57 @@ function safeMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
-function formatCollectionPeriod(item: Watchlist): string {
+function formatCollectionPeriod(item: Watchlist): { start: string; end: string } | null {
   const start = item.price_start_date || "";
   const end = item.price_end_date || "";
-  if (start && end) return `${start} ~ ${end}`;
-  return "\uBBF8\uC218\uC9D1";
+  if (start && end) return { start, end };
+  return null;
+}
+
+function WatchlistCollectionPeriod({ item }: { item: Watchlist }) {
+  const period = formatCollectionPeriod(item);
+  if (!period) return <span className="badge badge-slate">미수집</span>;
+  return (
+    <span className="watchlist-period-stack">
+      <span>{period.start} ~</span>
+      <span>{period.end}</span>
+    </span>
+  );
+}
+
+function WatchlistChartImage({
+  stockCode,
+  stockName,
+  period,
+  label,
+  sidcode,
+  onOpen,
+}: {
+  stockCode: string;
+  stockName: string;
+  period: NaverStockCandlePeriod;
+  label: string;
+  sidcode: number;
+  onOpen: (chart: { url: string; alt: string }) => void;
+}) {
+  const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    setHasError(false);
+  }, [period, sidcode, stockCode]);
+
+  if (!stockCode || hasError) {
+    return <div className="stock-management-chart-fallback">차트 없음</div>;
+  }
+
+  const url = buildNaverStockCandleChartUrl(stockCode, period, sidcode);
+  const alt = (stockName || stockCode) + " " + label + " 차트";
+
+  return (
+    <button type="button" className="stock-management-chart-button" onClick={() => onOpen({ url, alt })}>
+      <img src={url} alt={alt} className="stock-management-chart-image" loading="lazy" onError={() => setHasError(true)} />
+    </button>
+  );
 }
 
 function formatPriceCollectRange(result: StockPriceCollectResult): string {
@@ -69,6 +122,7 @@ function formatPriceCollectMessage(mode: PriceCollectionMode, priceResult: Stock
 function WatchlistPage() {
   const navigate = useNavigate();
   const listSelectAllRef = useRef<HTMLInputElement | null>(null);
+  const collectionHelpRef = useRef<HTMLDivElement | null>(null);
   const [allWatchlistRows, setAllWatchlistRows] = useState<Watchlist[]>([]);
   const [selectedWatchlistStockIds, setSelectedWatchlistStockIds] = useState<number[]>([]);
   const [stockCount, setStockCount] = useState(0);
@@ -87,6 +141,8 @@ function WatchlistPage() {
   const [themeModalSelectedThemeId, setThemeModalSelectedThemeId] = useState<number | null>(null);
   const [themeModalSaving, setThemeModalSaving] = useState(false);
   const [themeModalStock, setThemeModalStock] = useState<Watchlist | null>(null);
+  const [chartSidcode, setChartSidcode] = useState(createNaverChartSidcode());
+  const [zoomedChart, setZoomedChart] = useState<{ url: string; alt: string } | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [modalKeyword, setModalKeyword] = useState("");
   const [modalLoading, setModalLoading] = useState(false);
@@ -95,6 +151,7 @@ function WatchlistPage() {
   const [actionMessage, setActionMessage] = useState("");
   const [actionLoading, setActionLoading] = useState("");
   const [fullRefreshConfirmOpen, setFullRefreshConfirmOpen] = useState(false);
+  const [collectionHelpOpen, setCollectionHelpOpen] = useState(false);
   const [selectedNewsCollectResult, setSelectedNewsCollectResult] = useState<NewsCollectSelectedResponse | null>(null);
   const [selectedDisclosureCollectResult, setSelectedDisclosureCollectResult] = useState<DisclosureCollectSelectedResponse | null>(null);
   const [selectedPriceCollectResult, setSelectedPriceCollectResult] = useState<StockPriceCollectResult | null>(null);
@@ -157,6 +214,7 @@ function WatchlistPage() {
       setStockCount(count);
       setThemeNameByStockId(themeMap.nameMap);
       setThemeIdByStockId(themeMap.idMap);
+      setChartSidcode(createNaverChartSidcode());
     } catch (error) {
       setWatchlistError(safeMessage(error, "관심종목 데이터를 불러오는 중 오류가 발생했습니다."));
       setAllWatchlistRows([]);
@@ -168,6 +226,24 @@ function WatchlistPage() {
   useEffect(() => {
     void refreshAll();
   }, []);
+
+  useEffect(() => {
+    if (!collectionHelpOpen) return undefined;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!collectionHelpRef.current?.contains(event.target as Node)) {
+        setCollectionHelpOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setCollectionHelpOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [collectionHelpOpen]);
 
   const watchlistByStockId = useMemo(() => {
     const map: Record<number, Watchlist> = {};
@@ -393,6 +469,65 @@ function WatchlistPage() {
     return selectableThemes.filter((x) => x.theme_name.toLowerCase().includes(keyword));
   }, [themeModalKeyword, themeModalThemes]);
 
+  const renderWatchlistTableHead = (selectAllControl: ReactNode) => (
+    <thead>
+      <tr>
+        <th className="selection-cell">{selectAllControl}</th>
+        <th>종목명/코드</th>
+        <th>시장</th>
+        <th>테마</th>
+        <th className="watchlist-period-col">데이터수집기간</th>
+        <th>상태</th>
+        <th>일봉</th>
+        <th>주봉</th>
+        <th>월봉</th>
+        <th>작업</th>
+      </tr>
+    </thead>
+  );
+
+  const renderWatchlistRow = (row: Watchlist) => {
+    const selected = selectedWatchlistStockIds.includes(row.stock_id);
+    const stockCode = normalizeNaverStockCode(row.stock_code);
+    return (
+      <tr key={row.id} className={selected ? "selected-row" : ""}>
+        <td className="selection-cell">
+          <input className="selection-checkbox" type="checkbox" checked={selected} onChange={(e) => toggleStockSelection(row.stock_id, e.target.checked)} />
+        </td>
+        <td>
+          <div className="stock-cell">
+            <strong>{row.stock_name}</strong>
+            <span>{normalizeKrStockCode(row.stock_code)}</span>
+          </div>
+        </td>
+        <td>{row.market || "-"}</td>
+        <td>
+          <button type="button" className="watchlist-theme-badge" onClick={() => void onOpenThemeModal(row)}>
+            {themeNameByStockId[row.stock_id] || "테마 미지정"}
+          </button>
+        </td>
+        <td className="watchlist-period-col"><WatchlistCollectionPeriod item={row} /></td>
+        <td>
+          <StatusBadge label={row.is_active === 1 ? "활성" : "비활성"} tone={row.is_active === 1 ? "emerald" : "amber"} />
+        </td>
+        <td><WatchlistChartImage stockCode={stockCode} stockName={row.stock_name} period="day" label="일봉" sidcode={chartSidcode} onOpen={setZoomedChart} /></td>
+        <td><WatchlistChartImage stockCode={stockCode} stockName={row.stock_name} period="week" label="주봉" sidcode={chartSidcode} onOpen={setZoomedChart} /></td>
+        <td><WatchlistChartImage stockCode={stockCode} stockName={row.stock_name} period="month" label="월봉" sidcode={chartSidcode} onOpen={setZoomedChart} /></td>
+        <td>
+          {row.is_active === 1 ? (
+            <button className="btn btn-secondary btn-table-sm watchlist-action-button" onClick={() => void onToggleWatchlistActive(row, 0)}>
+              비활성
+            </button>
+          ) : (
+            <button className="btn btn-secondary btn-table-sm watchlist-action-button" onClick={() => void onToggleWatchlistActive(row, 1)}>
+              활성
+            </button>
+          )}
+        </td>
+      </tr>
+    );
+  };
+
   const onSavePrimaryTheme = async () => {
     if (!themeModalStock || !themeModalSelectedThemeId) return;
     setThemeModalSaving(true);
@@ -460,13 +595,16 @@ function WatchlistPage() {
         </div>
       </div>
 
-      <SectionCard title="관심종목 운영 목록">
-        <div className="watchlist-card-title-wrap">
-          <span className="watchlist-card-title">관심종목 운영 목록</span>
-          <span className="hint-icon" title="활성 종목은 뉴스·공시·가격 데이터 수집 대상입니다. 비활성 종목은 수집 대상에서는 제외되지만 기존 수집 데이터는 유지됩니다.">
-            ⓘ
+      <SectionCard
+        title={(
+          <span className="watchlist-section-title-with-help">
+            관심종목 운영 목록
+            <span className="hint-icon" title="활성 종목은 뉴스·공시·가격 데이터 수집 대상입니다. 비활성 종목은 수집 대상에서는 제외되지만 기존 수집 데이터는 유지됩니다.">
+              i
+            </span>
           </span>
-        </div>
+        )}
+      >
         <form className="watchlist-ops-toolbar" onSubmit={(e) => e.preventDefault()}>
           <select className="select-control" value={watchlistMarket} onChange={(e) => setWatchlistMarket(e.target.value)}>
             {MARKET_OPTIONS.map((x) => (
@@ -514,42 +652,58 @@ function WatchlistPage() {
           </div>
 
           <div className="watchlist-selection-bar">
-            {selectedWatchlistStockIds.length > 0 ? (
-              <div className="watchlist-selection-count">선택 {selectedWatchlistStockIds.length}건</div>
-            ) : null}
-            <div className="watchlist-selection-actions">
-              <button className="btn btn-primary" disabled={selectedWatchlistStockIds.length === 0 || actionLoading === "collect-selected-news"} onClick={() => void onCollectSelectedNews()}>
-                뉴스 수집
-              </button>
-              <button className="btn btn-primary" disabled={selectedWatchlistStockIds.length === 0 || actionLoading === "collect-selected-disclosures"} onClick={() => void onCollectSelectedDisclosures()}>
-                공시 수집
-              </button>
-              <button
-                className="btn btn-primary"
-                title={"\uB9C8\uC9C0\uB9C9 \uC218\uC9D1\uC77C \uAE30\uC900 7\uC77C \uC804\uBD80\uD130 \uC624\uB298\uAE4C\uC9C0 \uB2E4\uC2DC \uC218\uC9D1\uD569\uB2C8\uB2E4. \uAE30\uC874 \uB370\uC774\uD130\uAC00 \uC5C6\uC73C\uBA74 \uCD5C\uCD08\uC218\uC9D1\uC73C\uB85C \uCC98\uB9AC\uB429\uB2C8\uB2E4."}
-                disabled={selectedWatchlistStockIds.length === 0 || actionLoading.startsWith("refresh-selected-price-market-metrics")}
-                onClick={() => void onRefreshSelectedPriceAndMarketMetrics("recent")}
-              >
-                {actionLoading === "refresh-selected-price-market-metrics-recent" ? "\uCD5C\uADFC7\uC77C\uC218\uC9D1 \uC911..." : "\uCD5C\uADFC7\uC77C\uC218\uC9D1"}
-              </button>
-              <button
-                className="btn btn-secondary watchlist-full-refresh-button"
-                title={"\uAE30\uC874 \uC218\uC9D1 \uAE30\uAC04 \uC804\uCCB4\uB97C \uB2E4\uC2DC \uC694\uCCAD\uD574 upsert\uD569\uB2C8\uB2E4. \uAE30\uC874 \uB370\uC774\uD130\uB294 \uC0AD\uC81C\uB418\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4."}
-                disabled={selectedWatchlistStockIds.length === 0 || actionLoading.startsWith("refresh-selected-price-market-metrics")}
-                onClick={() => setFullRefreshConfirmOpen(true)}
-              >
-                {actionLoading === "refresh-selected-price-market-metrics-full" ? "\uC804\uCCB4\uC218\uC9D1 \uC911..." : "\uC804\uCCB4\uC218\uC9D1"}
-              </button>
-              <button className="btn btn-secondary" disabled={selectedWatchlistStockIds.length === 0} onClick={() => navigate("/advisory-packages")}>
-                GPT 자료 패키지
-              </button>
-              <button className="btn btn-secondary" disabled={selectedWatchlistStockIds.length === 0} onClick={() => navigate("/stock-prices")}>
-                Data분석 이동
-              </button>
+            <div className="watchlist-selection-count">선택 {selectedWatchlistStockIds.length.toLocaleString("ko-KR")}건</div>
+            <div className="watchlist-action-toolbar" aria-label="관심종목 작업 도구">
+              <div className="watchlist-action-group">
+                <button className="btn btn-primary" disabled={selectedWatchlistStockIds.length === 0 || actionLoading === "collect-selected-news"} onClick={() => void onCollectSelectedNews()}>
+                  뉴스수집
+                </button>
+                <button className="btn btn-primary" disabled={selectedWatchlistStockIds.length === 0 || actionLoading === "collect-selected-disclosures"} onClick={() => void onCollectSelectedDisclosures()}>
+                  공시수집
+                </button>
+              </div>
+              <span className="watchlist-action-divider" aria-hidden="true" />
+              <div className="watchlist-action-group">
+                <button
+                  className="btn btn-primary"
+                  title={"마지막 수집일 기준 7일 전부터 오늘까지 다시 수집합니다. 기존 데이터가 없으면 최초수집으로 처리됩니다."}
+                  disabled={selectedWatchlistStockIds.length === 0 || actionLoading.startsWith("refresh-selected-price-market-metrics")}
+                  onClick={() => void onRefreshSelectedPriceAndMarketMetrics("recent")}
+                >
+                  {actionLoading === "refresh-selected-price-market-metrics-recent" ? "최근7일수집 중..." : "최근7일수집"}
+                </button>
+                <button
+                  className="btn btn-secondary watchlist-full-refresh-button"
+                  disabled={selectedWatchlistStockIds.length === 0 || actionLoading.startsWith("refresh-selected-price-market-metrics")}
+                  onClick={() => setFullRefreshConfirmOpen(true)}
+                >
+                  {actionLoading === "refresh-selected-price-market-metrics-full" ? "전체수집 중..." : "전체수집"}
+                </button>
+                <div className="watchlist-help" ref={collectionHelpRef}>
+                  <button
+                    type="button"
+                    className="watchlist-help-button"
+                    aria-label="수집 기준 도움말"
+                    aria-expanded={collectionHelpOpen}
+                    onClick={() => setCollectionHelpOpen((open) => !open)}
+                  >
+                    ?
+                  </button>
+                  {collectionHelpOpen ? (
+                    <div className="watchlist-help-popover" role="tooltip">
+                      <p>최근7일수집은 마지막 수집일 기준 7일 전부터 오늘까지 다시 수집합니다.</p>
+                      <p>전체수집은 기존 기간 전체를 다시 요청하며, 기존 데이터는 삭제되지 않습니다.</p>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+              <span className="watchlist-action-divider" aria-hidden="true" />
+              <div className="watchlist-action-group">
+                <button className="btn btn-secondary" disabled={selectedWatchlistStockIds.length === 0} onClick={() => navigate("/advisory-packages")}>
+                  GPT자료패키지
+                </button>
+              </div>
             </div>
-            <p className="watchlist-collection-help">
-              {"\uCD5C\uADFC7\uC77C\uC218\uC9D1\uC740 \uB9C8\uC9C0\uB9C9 \uC218\uC9D1\uC77C \uAE30\uC900 7\uC77C \uC804\uBD80\uD130 \uC624\uB298\uAE4C\uC9C0 \uB2E4\uC2DC \uC218\uC9D1\uD569\uB2C8\uB2E4. \uC804\uCCB4\uC218\uC9D1\uC740 \uAE30\uC874 \uAE30\uAC04 \uC804\uCCB4\uB97C \uB2E4\uC2DC \uC694\uCCAD\uD558\uBA70, \uAE30\uC874 \uB370\uC774\uD130\uB294 \uC0AD\uC81C\uB418\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4."}
-            </p>
           </div>
 
         </div>
@@ -591,58 +745,22 @@ function WatchlistPage() {
                   </div>
                   {expanded ? (
                     <div className="table-shell">
-                      <table className="data-table compact-table watchlist-table min-w-[760px]">
-                        <thead>
-                          <tr>
-                            <th className="selection-cell"><input className="selection-checkbox" type="checkbox" aria-label="그룹 전체 선택" title="그룹 전체 선택" checked={group.rows.length > 0 && group.rows.every((row) => selectedWatchlistStockIds.includes(row.stock_id))} onChange={(e) => toggleRowsSelection(group.rows, e.target.checked)} /></th>
-                            <th>상태</th>
-                            <th>종목</th>
-                            <th>시장</th>
-                            <th>테마</th>
-                            <th className="watchlist-period-col">데이터수집기간</th>
-                            <th>작업</th>
-                          </tr>
-                        </thead>
+                      <table className="data-table compact-table watchlist-table watchlist-chart-table">
+                        <colgroup>
+                          <col className="watchlist-col-select" />
+                          <col className="watchlist-col-stock" />
+                          <col className="watchlist-col-market" />
+                          <col className="watchlist-col-theme" />
+                          <col className="watchlist-col-period" />
+                          <col className="watchlist-col-status" />
+                          <col className="stock-management-col-chart" />
+                          <col className="stock-management-col-chart" />
+                          <col className="stock-management-col-chart" />
+                          <col className="watchlist-col-action" />
+                        </colgroup>
+                        {renderWatchlistTableHead(<input className="selection-checkbox" type="checkbox" aria-label="그룹 전체 선택" title="그룹 전체 선택" checked={group.rows.length > 0 && group.rows.every((row) => selectedWatchlistStockIds.includes(row.stock_id))} onChange={(e) => toggleRowsSelection(group.rows, e.target.checked)} />)}
                         <tbody>
-                          {group.rows.map((row) => {
-                            const selected = selectedWatchlistStockIds.includes(row.stock_id);
-                            return (
-                              <tr key={row.id} className={selected ? "selected-row" : ""}>
-                                <td className="selection-cell">
-                                  <input className="selection-checkbox" type="checkbox" checked={selected} onChange={(e) => toggleStockSelection(row.stock_id, e.target.checked)} />
-                                </td>
-                                <td>
-                                  <StatusBadge label={row.is_active === 1 ? "활성" : "비활성"} tone={row.is_active === 1 ? "emerald" : "amber"} />
-                                </td>
-                                <td>
-                                  <div className="stock-cell">
-                                    <strong>{row.stock_name}</strong>
-                                    <span>{normalizeKrStockCode(row.stock_code)}</span>
-                                  </div>
-                                </td>
-                                <td>{row.market || "-"}</td>
-                                <td>
-                                  <button type="button" className="watchlist-theme-badge" onClick={() => void onOpenThemeModal(row)}>
-                                    {themeNameByStockId[row.stock_id] || "테마 미지정"}
-                                  </button>
-                                </td>
-                                <td className="watchlist-period-col">
-                                  {formatCollectionPeriod(row) === "미수집" ? <span className="badge badge-slate">미수집</span> : formatCollectionPeriod(row)}
-                                </td>
-                                <td>
-                                  {row.is_active === 1 ? (
-                                    <button className="btn btn-secondary btn-table-sm" onClick={() => void onToggleWatchlistActive(row, 0)}>
-                                      비활성화
-                                    </button>
-                                  ) : (
-                                    <button className="btn btn-secondary btn-table-sm" onClick={() => void onToggleWatchlistActive(row, 1)}>
-                                      활성화
-                                    </button>
-                                  )}
-                                </td>
-                              </tr>
-                            );
-                          })}
+                          {group.rows.map((row) => renderWatchlistRow(row))}
                         </tbody>
                       </table>
                     </div>
@@ -655,58 +773,22 @@ function WatchlistPage() {
 
         {!loadingWatchlist && !watchlistError && filteredWatchlist.length > 0 && viewMode === "list" ? (
           <div className="table-shell">
-            <table className="data-table compact-table watchlist-table min-w-[760px]">
-              <thead>
-                <tr>
-                  <th className="selection-cell"><input ref={listSelectAllRef} className="selection-checkbox" type="checkbox" aria-label="현재 목록 전체 선택" title="현재 목록 전체 선택" checked={allFilteredSelected} onChange={(e) => toggleRowsSelection(filteredWatchlist, e.target.checked)} /></th>
-                  <th>상태</th>
-                  <th>종목명/코드</th>
-                  <th>시장</th>
-                  <th>테마</th>
-                  <th className="watchlist-period-col">데이터수집기간</th>
-                  <th>작업</th>
-                </tr>
-              </thead>
+            <table className="data-table compact-table watchlist-table watchlist-chart-table">
+              <colgroup>
+                <col className="watchlist-col-select" />
+                <col className="watchlist-col-stock" />
+                <col className="watchlist-col-market" />
+                <col className="watchlist-col-theme" />
+                <col className="watchlist-col-period" />
+                <col className="watchlist-col-status" />
+                <col className="stock-management-col-chart" />
+                <col className="stock-management-col-chart" />
+                <col className="stock-management-col-chart" />
+                <col className="watchlist-col-action" />
+              </colgroup>
+              {renderWatchlistTableHead(<input ref={listSelectAllRef} className="selection-checkbox" type="checkbox" aria-label="현재 목록 전체 선택" title="현재 목록 전체 선택" checked={allFilteredSelected} onChange={(e) => toggleRowsSelection(filteredWatchlist, e.target.checked)} />)}
               <tbody>
-                {filteredWatchlist.map((row) => {
-                  const selected = selectedWatchlistStockIds.includes(row.stock_id);
-                  return (
-                    <tr key={row.id} className={selected ? "selected-row" : ""}>
-                      <td className="selection-cell">
-                        <input className="selection-checkbox" type="checkbox" checked={selected} onChange={(e) => toggleStockSelection(row.stock_id, e.target.checked)} />
-                      </td>
-                      <td>
-                        <StatusBadge label={row.is_active === 1 ? "활성" : "비활성"} tone={row.is_active === 1 ? "emerald" : "amber"} />
-                      </td>
-                      <td>
-                        <div className="stock-cell">
-                          <strong>{row.stock_name}</strong>
-                          <span>{normalizeKrStockCode(row.stock_code)}</span>
-                        </div>
-                      </td>
-                      <td>{row.market || "-"}</td>
-                      <td>
-                        <button type="button" className="watchlist-theme-badge" onClick={() => void onOpenThemeModal(row)}>
-                          {themeNameByStockId[row.stock_id] || "테마 미지정"}
-                        </button>
-                      </td>
-                      <td className="watchlist-period-col">
-                        {formatCollectionPeriod(row) === "미수집" ? <span className="badge badge-slate">미수집</span> : formatCollectionPeriod(row)}
-                      </td>
-                      <td>
-                        {row.is_active === 1 ? (
-                          <button className="btn btn-secondary btn-table-sm" onClick={() => void onToggleWatchlistActive(row, 0)}>
-                            비활성화
-                          </button>
-                        ) : (
-                          <button className="btn btn-secondary btn-table-sm" onClick={() => void onToggleWatchlistActive(row, 1)}>
-                            활성화
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
+                {filteredWatchlist.map((row) => renderWatchlistRow(row))}
               </tbody>
             </table>
           </div>
@@ -813,6 +895,20 @@ function WatchlistPage() {
               </div>
             ) : null}
           </div>
+        </div>
+      ) : null}
+
+      {zoomedChart ? (
+        <div className="stock-management-chart-modal" onClick={() => setZoomedChart(null)}>
+          <img
+            src={zoomedChart.url}
+            alt={zoomedChart.alt}
+            className="stock-management-chart-modal-image"
+            onClick={(event) => {
+              event.stopPropagation();
+              setZoomedChart(null);
+            }}
+          />
         </div>
       ) : null}
 

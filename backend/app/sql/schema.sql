@@ -1,4 +1,4 @@
-﻿-- Datetime storage standard: YYYY-MM-DD HH:MM:SS (TEXT)\nPRAGMA foreign_keys = ON;
+-- Datetime storage standard: YYYY-MM-DD HH:MM:SS (TEXT)\nPRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS stocks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -350,6 +350,66 @@ CREATE TABLE IF NOT EXISTS schema_comments (
     UNIQUE (table_name, column_name)
 );
 
+
+CREATE TABLE IF NOT EXISTS watchlist_evaluation_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_date TEXT NOT NULL,
+    run_type TEXT NOT NULL DEFAULT 'MANUAL',
+    status TEXT NOT NULL DEFAULT 'SUCCESS',
+    memo TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS watchlist_evaluation_scores (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL,
+    watchlist_stock_id INTEGER NOT NULL,
+    stock_id INTEGER NOT NULL,
+    evaluated_at TEXT NOT NULL,
+    market_score REAL,
+    material_score REAL,
+    supply_score REAL,
+    chart_score REAL,
+    financial_score REAL,
+    total_score REAL,
+    market_status TEXT,
+    material_status TEXT,
+    supply_status TEXT,
+    chart_status TEXT,
+    financial_status TEXT,
+    overall_status TEXT,
+    data_confidence TEXT NOT NULL DEFAULT 'NOT_EVALUATED',
+    risk_flags_json TEXT NOT NULL DEFAULT '[]',
+    missing_data_json TEXT NOT NULL DEFAULT '[]',
+    summary_text TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (run_id) REFERENCES watchlist_evaluation_runs(id) ON DELETE CASCADE,
+    FOREIGN KEY (watchlist_stock_id) REFERENCES watchlist(id) ON DELETE CASCADE,
+    FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS watchlist_evaluation_factors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    score_id INTEGER NOT NULL,
+    category TEXT NOT NULL,
+    factor_code TEXT NOT NULL,
+    factor_name TEXT NOT NULL,
+    raw_value TEXT,
+    normalized_score REAL,
+    weight REAL,
+    contribution_score REAL,
+    reason TEXT,
+    source_table TEXT,
+    source_date TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (score_id) REFERENCES watchlist_evaluation_scores(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_watchlist_evaluation_scores_watchlist ON watchlist_evaluation_scores(watchlist_stock_id, evaluated_at);
+CREATE INDEX IF NOT EXISTS idx_watchlist_evaluation_scores_run ON watchlist_evaluation_scores(run_id);
+CREATE INDEX IF NOT EXISTS idx_watchlist_evaluation_factors_score ON watchlist_evaluation_factors(score_id);
 CREATE INDEX IF NOT EXISTS idx_stocks_stock_code ON stocks(stock_code);
 CREATE INDEX IF NOT EXISTS idx_watchlist_stock_id ON watchlist(stock_id);
 CREATE INDEX IF NOT EXISTS idx_news_items_stock_id ON news_items(stock_id);
@@ -885,4 +945,5 @@ INSERT OR IGNORE INTO classification_rules (
 ('disclosure_risk_level','disclosure','공시_고위험','소송,제재,불성실공시,상장폐지,감사의견,관리종목,횡령,배임','ai_risk_level','high',20,10,1,'고위험 공시 분류',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),
 ('disclosure_risk_level','disclosure','공시_중위험','유상증자,전환사채,대규모 투자,주요 계약 해지,지분변동','ai_risk_level','medium',10,20,1,'중위험 공시 분류',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),
 ('disclosure_risk_level','disclosure','공시_저위험','배당,자사주,주주총회,임원 보유','ai_risk_level','low',0,30,1,'저위험 공시 분류',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
+
 
