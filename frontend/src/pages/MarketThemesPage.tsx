@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import SectionCard from "@/components/common/SectionCard";
 import StatusBadge from "@/components/common/StatusBadge";
 import { repositories } from "@/services";
@@ -25,7 +26,26 @@ import type { Stock } from "@/types/stock";
 type ActiveTab = "themes" | "mapping" | "candidates";
 type ThemeViewMode = "group" | "theme" | "trend";
 type ThemeReturnSort = "default" | "desc" | "asc";
+type ThemeReturnTrendViewMode = "heatmap" | "line";
 const THEME_PAGE_SIZE = 20;
+const THEME_RETURN_LINE_COLORS = [
+  "#2563eb",
+  "#16a34a",
+  "#dc2626",
+  "#9333ea",
+  "#ea580c",
+  "#0891b2",
+  "#4f46e5",
+  "#be123c",
+  "#65a30d",
+  "#7c3aed",
+  "#0f766e",
+  "#c2410c",
+  "#0369a1",
+  "#a21caf",
+  "#15803d",
+  "#b91c1c",
+];
 
 function toErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message.trim()) return error.message;
@@ -197,6 +217,183 @@ const returnToneClass = (value: number | null | undefined) => {
   if (Number(value) < 0) return "theme-return-negative";
   return "theme-return-neutral";
 };
+
+function buildLinePath(points: Array<{ x: number; y: number }>): string {
+  return points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(" ");
+}
+
+function splitLineSegments(points: Array<{ x: number; y: number } | null>): Array<Array<{ x: number; y: number }>> {
+  const segments: Array<Array<{ x: number; y: number }>> = [];
+  let current: Array<{ x: number; y: number }> = [];
+  points.forEach((point) => {
+    if (!point) {
+      if (current.length > 0) segments.push(current);
+      current = [];
+      return;
+    }
+    current.push(point);
+  });
+  if (current.length > 0) segments.push(current);
+  return segments;
+}
+
+function ThemeReturnLineChart({
+  themes,
+  dates,
+  hoveredThemeId,
+  onHoverTheme,
+}: {
+  themes: MarketThemeMonthlyReturnThemeItem[];
+  dates: string[];
+  hoveredThemeId: number | null;
+  onHoverTheme: (themeId: number | null) => void;
+}) {
+  const chartWidth = 840;
+  const chartHeight = 500;
+  const margin = { top: 24, right: 18, bottom: 34, left: 44 };
+  const innerWidth = chartWidth - margin.left - margin.right;
+  const innerHeight = chartHeight - margin.top - margin.bottom;
+  const validDateSet = new Set<string>();
+  themes.forEach((theme) => {
+    theme.daily_returns.forEach((day) => {
+      const value = Number(day.avg_change_rate);
+      if (day.avg_change_rate != null && Number.isFinite(value)) {
+        validDateSet.add(day.return_date);
+      }
+    });
+  });
+  const lineDates = dates.filter((date) => validDateSet.has(date));
+
+  const series = themes.map((theme, index) => {
+    const dailyMap = new Map(theme.daily_returns.map((item) => [item.return_date, item.avg_change_rate]));
+    const values = lineDates.map((date) => {
+      const raw = dailyMap.get(date);
+      const numberValue = Number(raw);
+      const value = raw == null || !Number.isFinite(numberValue) ? null : numberValue;
+      return { date, returnRate: value };
+    });
+    const lastValue = [...values].reverse().find((item) => item.returnRate != null)?.returnRate ?? null;
+    return {
+      themeId: theme.theme_id,
+      themeName: theme.theme_name,
+      color: THEME_RETURN_LINE_COLORS[index % THEME_RETURN_LINE_COLORS.length],
+      cumulativeReturn: theme.period_compound_return ?? theme.monthly_compound_return,
+      lastValue,
+      values,
+    };
+  });
+  const allValues = series.flatMap((item) => item.values.map((value) => value.returnRate).filter((value): value is number => value != null));
+  const hasData = lineDates.length > 0 && allValues.length > 0;
+  if (!hasData) {
+    return <div className="theme-return-line-empty">선그래프로 표시할 거래일 데이터가 없습니다.</div>;
+  }
+
+  const rawMin = Math.min(...allValues);
+  const rawMax = Math.max(...allValues);
+  const yMin = rawMin < -30 ? Math.floor(rawMin / 10) * 10 : -30;
+  const yMax = rawMax > 30 ? Math.ceil(rawMax / 10) * 10 : 30;
+  const yTicks = Array.from({ length: Math.floor((yMax - yMin) / 10) + 1 }, (_, index) => yMin + index * 10);
+  const targetXTickCount = Math.min(7, Math.max(2, lineDates.length));
+  const xTicks = lineDates.filter((_, index) => {
+    if (index === 0 || index === lineDates.length - 1) return true;
+    if (targetXTickCount <= 2) return false;
+    const tickIndex = Math.round(((targetXTickCount - 1) * index) / (lineDates.length - 1));
+    const tickDateIndex = Math.round((tickIndex * (lineDates.length - 1)) / (targetXTickCount - 1));
+    return tickDateIndex === index;
+  });
+  const xScale = (index: number) => margin.left + (lineDates.length <= 1 ? innerWidth / 2 : (innerWidth * index) / (lineDates.length - 1));
+  const yScale = (value: number) => margin.top + innerHeight - ((value - yMin) / (yMax - yMin)) * innerHeight;
+  const zeroY = yScale(0);
+  const linePanelStyle = {
+    "--theme-return-line-chart-height": `${chartHeight}px`,
+    "--theme-return-line-plot-top": `${margin.top}px`,
+    "--theme-return-line-plot-bottom": `${margin.bottom}px`,
+  } as CSSProperties;
+
+  return (
+    <div className="theme-return-line-panel" style={linePanelStyle}>
+      <div className="theme-return-line-header">
+        <div>
+          <strong>테마별 30일 등락률 선그래프</strong>
+          <span>거래일 기준 일별 테마 등락률을 선으로 비교합니다. 데이터가 없는 휴장일은 x축에서 제외합니다.</span>
+        </div>
+      </div>
+      <div className="theme-return-line-body">
+        <div className="theme-return-line-chart">
+          <svg className="theme-return-line-svg" viewBox={`0 0 ${chartWidth} ${chartHeight}`} preserveAspectRatio="none" role="img" aria-label="테마별 30일 등락률 선그래프">
+            {yTicks.map((tick) => {
+              const y = yScale(tick);
+              return (
+                <g key={`y-${tick.toFixed(2)}`}>
+                  <line className="theme-return-line-grid" x1={margin.left} x2={chartWidth - margin.right} y1={y} y2={y} />
+                  <text className="theme-return-line-axis-label theme-return-line-y-label" x={margin.left - 10} y={y + 3} textAnchor="end">{fmtHeatmapCellPct(tick)}%</text>
+                </g>
+              );
+            })}
+            {zeroY >= margin.top && zeroY <= margin.top + innerHeight ? <line className="theme-return-line-zero" x1={margin.left} x2={chartWidth - margin.right} y1={zeroY} y2={zeroY} /> : null}
+            {xTicks.map((date) => {
+              const index = lineDates.indexOf(date);
+              const x = xScale(index);
+              return (
+                <g key={`x-${date}`}>
+                  <line className="theme-return-line-grid theme-return-line-grid--vertical" x1={x} x2={x} y1={margin.top} y2={margin.top + innerHeight} />
+                  <text className="theme-return-line-axis-label theme-return-line-x-label" x={x} y={chartHeight - 12} textAnchor="middle">{date.slice(5).replace("-", ".")}</text>
+                </g>
+              );
+            })}
+            <line className="theme-return-line-axis-line" x1={margin.left} x2={margin.left} y1={margin.top} y2={margin.top + innerHeight} />
+            <line className="theme-return-line-axis-line" x1={margin.left} x2={chartWidth - margin.right} y1={margin.top + innerHeight} y2={margin.top + innerHeight} />
+            {series.map((item) => {
+              const pointList = item.values.map((value, index) => {
+                if (value.returnRate == null) return null;
+                return { x: xScale(index), y: yScale(value.returnRate) };
+              });
+              const segments = splitLineSegments(pointList).filter((segment) => segment.length > 1);
+              const active = hoveredThemeId === item.themeId;
+              const muted = hoveredThemeId != null && !active;
+              return segments.map((segment, segmentIndex) => (
+                <path
+                  key={`${item.themeId}-${segmentIndex}`}
+                  className={`theme-return-line-path ${active ? "theme-return-line-path-active" : ""} ${muted ? "theme-return-line-path-muted" : ""}`}
+                  d={buildLinePath(segment)}
+                  fill="none"
+                  stroke={item.color}
+                  onMouseEnter={() => onHoverTheme(item.themeId)}
+                  onMouseLeave={() => onHoverTheme(null)}
+                />
+              ));
+            })}
+          </svg>
+        </div>
+        <div className="theme-return-line-legend-shell" onMouseLeave={() => onHoverTheme(null)}>
+          <div className="theme-return-line-legend">
+            {series.map((item) => {
+              const active = hoveredThemeId === item.themeId;
+              const muted = hoveredThemeId != null && !active;
+              return (
+                <button
+                  key={item.themeId}
+                  type="button"
+                  className={`theme-return-line-legend-item ${active ? "theme-return-line-legend-item-active" : ""} ${muted ? "theme-return-line-legend-item-muted" : ""}`}
+                  onMouseEnter={() => onHoverTheme(item.themeId)}
+                  onFocus={() => onHoverTheme(item.themeId)}
+                  onBlur={() => onHoverTheme(null)}
+                >
+                  <span className="theme-return-line-legend-color" style={{ background: item.color }} />
+                  <span className="theme-return-line-legend-text">
+                    <strong>{item.themeName}</strong>
+                    <em>누적 {fmtPct(item.cumulativeReturn)} · 최근 {fmtPct(item.lastValue)}</em>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MarketThemesPage() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("themes");
 
@@ -235,6 +432,8 @@ function MarketThemesPage() {
   const [trendThemeGroupId, setTrendThemeGroupId] = useState<"all" | string>("all");
   const [trendKeyword, setTrendKeyword] = useState("");
   const [trendLimit, setTrendLimit] = useState<"all" | string>("20");
+  const [trendViewMode, setTrendViewMode] = useState<ThemeReturnTrendViewMode>("heatmap");
+  const [hoveredTrendThemeId, setHoveredTrendThemeId] = useState<number | null>(null);
   const [trendLoading, setTrendLoading] = useState(false);
   const [trendData, setTrendData] = useState<MarketThemeMonthlyReturnResponse | null>(null);
   const [returnDrawerOpen, setReturnDrawerOpen] = useState(false);
@@ -918,6 +1117,10 @@ function MarketThemesPage() {
                   <option value="all">전체</option>
                 </select>
                 <button type="button" className="btn btn-secondary market-theme-refresh-button" onClick={() => void loadThemeReturnTrend()} disabled={trendLoading}>{trendLoading ? "조회 중..." : "새로고침"}</button>
+                <div className="theme-return-view-toggle" aria-label="테마등락추이 보기 선택">
+                  <button type="button" className={trendViewMode === "heatmap" ? "active" : ""} onClick={() => setTrendViewMode("heatmap")}>히트맵</button>
+                  <button type="button" className={trendViewMode === "line" ? "active" : ""} onClick={() => setTrendViewMode("line")}>선그래프</button>
+                </div>
               </div>
               <div className="theme-return-summary-grid">
                 {trendSummaryCards.map((card) => (
@@ -928,12 +1131,15 @@ function MarketThemesPage() {
                   </div>
                 ))}
               </div>
-              <div className="theme-return-legend">
-                {[`-10% 이하`, `-7%`, `-5%`, `-3%`, `0%`, `+3%`, `+5%`, `+7%`, `+10% 이상`].map((label, index) => {
-                  const colors = ["#93C5FD", "#BFDBFE", "#DBEAFE", "#EFF6FF", "#F3F4F6", "#FEF2F2", "#FEE2E2", "#FECACA", "#FCA5A5"];
-                  return <span key={label} className="theme-return-legend__item"><i className="theme-return-legend__chip" style={{ background: colors[index] }} />{label}</span>;
-                })}
-              </div>
+              {trendViewMode === "heatmap" ? (
+                <div className="theme-return-legend">
+                  {[`-10% 이하`, `-7%`, `-5%`, `-3%`, `0%`, `+3%`, `+5%`, `+7%`, `+10% 이상`].map((label, index) => {
+                    const colors = ["#93C5FD", "#BFDBFE", "#DBEAFE", "#EFF6FF", "#F3F4F6", "#FEF2F2", "#FEE2E2", "#FECACA", "#FCA5A5"];
+                    return <span key={label} className="theme-return-legend__item"><i className="theme-return-legend__chip" style={{ background: colors[index] }} />{label}</span>;
+                  })}
+                </div>
+              ) : null}
+              {trendViewMode === "heatmap" ? (
               <div className="theme-return-heatmap-wrap">
                 <div className="theme-return-heatmap" style={{ gridTemplateColumns: `minmax(130px, 150px) repeat(${Math.max(trendDates.length, 1)}, minmax(0, 1fr))` }}>
                   <div className="theme-return-heatmap__theme-cell theme-return-heatmap__header-cell">테마</div>
@@ -969,6 +1175,9 @@ function MarketThemesPage() {
                   })}
                 </div>
               </div>
+              ) : (
+                <ThemeReturnLineChart themes={trendData?.themes ?? []} dates={trendDates} hoveredThemeId={hoveredTrendThemeId} onHoverTheme={setHoveredTrendThemeId} />
+              )}
             </div>
           ) : (
             <>
