@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { ListCollapse, ListTree, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
@@ -7,6 +7,8 @@ import { repositories } from "@/services";
 import type { AiSummarizeResponse } from "@/types/analysis";
 import type { Disclosure, DisclosureCollectResponse, DisclosureCollectSelectedResponse } from "@/types/disclosure";
 import type { Watchlist } from "@/types/watchlist";
+
+const DISCLOSURES_LEFT_PANEL_STORAGE_KEY = "drct.disclosures.leftPanelCollapsed";
 
 type WatchlistDisclosureTarget = {
   stock_id: number;
@@ -127,6 +129,10 @@ function DisclosuresPage() {
   const [items, setItems] = useState<Disclosure[]>([]);
   const [selectedDisclosure, setSelectedDisclosure] = useState<Disclosure | null>(null);
   const [isDisclosureDrawerOpen, setIsDisclosureDrawerOpen] = useState(false);
+  const [panelCollapsed, setPanelCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(DISCLOSURES_LEFT_PANEL_STORAGE_KEY) === "true";
+  });
 
   const [currentStockId, setCurrentStockId] = useState<number | null>(null);
   const [checkedStockIds, setCheckedStockIds] = useState<number[]>([]);
@@ -231,6 +237,10 @@ function DisclosuresPage() {
   useEffect(() => {
     void loadTargets();
   }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(DISCLOSURES_LEFT_PANEL_STORAGE_KEY, String(panelCollapsed));
+  }, [panelCollapsed]);
 
   useEffect(() => {
     setCollectResult(null);
@@ -429,9 +439,25 @@ function DisclosuresPage() {
       {summarizeResult ? <div className="inline-result">{`선택 AI 처리 완료: 성공 ${summarizeResult.success_count ?? 0}건 / 실패 ${summarizeResult.failed_count ?? 0}건`}</div> : null}
       {summarizeError ? <div className="inline-result inline-error">{summarizeError}</div> : null}
 
-      <div className="grid w-full min-w-0 grid-cols-[360px_minmax(0,1fr)] items-stretch gap-4 news-page-layout">
-        <div className="min-w-0">
-          <SectionCard title="관심종목 목록">
+      <div className={`drct-split-layout news-page-layout ${panelCollapsed ? "drct-split-layout--collapsed" : ""}`}>
+        <aside className="drct-left-panel">
+          <div className="drct-left-panel-rail" aria-label="관심종목 목록 펼치기">
+            <button type="button" className="sije-icon-button" onClick={() => setPanelCollapsed(false)} title="관심종목 목록 펼치기" aria-label="관심종목 목록 펼치기">
+              <ListTree size={17} />
+            </button>
+            <span className="drct-left-panel-rail-label">관심종목</span>
+          </div>
+          {!panelCollapsed ? (
+          <SectionCard
+            title={(
+              <span className="drct-left-panel-title">
+                <span>관심종목 목록</span>
+                <button type="button" className="sije-icon-button" onClick={() => setPanelCollapsed(true)} title="관심종목 목록 접기" aria-label="관심종목 목록 접기">
+                  <ListCollapse size={17} />
+                </button>
+              </span>
+            )}
+          >
             <div className="watchlist-selection-count mb-2">선택 종목 {checkedStockIds.length}건</div>
             <div className="news-target-list">
               {watchlistLoading ? <div className="text-sm text-muted py-3">관심종목을 불러오는 중입니다.</div> : null}
@@ -465,9 +491,10 @@ function DisclosuresPage() {
               })}
             </div>
           </SectionCard>
-        </div>
+          ) : null}
+        </aside>
 
-        <div className="min-w-0">
+        <main className="drct-main-panel">
           <SectionCard title="">
             <div className="news-list-header">
               <h3 className="section-title m-0">{`공시 목록${activeTarget ? ` - ${activeTarget.stock_name}` : ""}`}</h3>
@@ -557,7 +584,7 @@ function DisclosuresPage() {
               </div>
             ) : null}
           </SectionCard>
-        </div>
+        </main>
       </div>
 
       {isDisclosureDrawerOpen && selectedDisclosure ? (

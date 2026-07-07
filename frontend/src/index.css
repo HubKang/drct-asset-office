@@ -1766,6 +1766,10 @@ a:focus-visible {
   align-items: start;
 }
 
+.price-page-content.price-page-content--collapsed {
+  grid-template-columns: 56px minmax(0, 1fr);
+}
+
 .price-stock-list-card {
   min-width: 0;
 }
@@ -5978,6 +5982,81 @@ a:focus-visible {
 .watchlist-col-period { width: 118px; }
 .watchlist-col-status { width: 68px; }
 .watchlist-col-action { width: 66px; }
+
+.drct-split-layout {
+  display: grid;
+  grid-template-columns: 360px minmax(0, 1fr);
+  align-items: stretch;
+  gap: 16px;
+  width: 100%;
+  min-width: 0;
+}
+
+.drct-split-layout--collapsed {
+  grid-template-columns: 56px minmax(0, 1fr);
+}
+
+.drct-left-panel,
+.drct-main-panel {
+  min-width: 0;
+}
+
+.drct-left-panel {
+  display: grid;
+}
+
+.drct-left-panel > .drct-left-panel-rail {
+  display: none;
+}
+
+.drct-split-layout--collapsed .drct-left-panel > .drct-left-panel-rail,
+.price-page-content--collapsed .drct-left-panel > .drct-left-panel-rail,
+.drct-left-panel-rail {
+  min-height: 220px;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px 8px;
+  color: #475569;
+}
+
+.drct-split-layout--collapsed .drct-left-panel > .drct-left-panel-rail,
+.price-page-content--collapsed .drct-left-panel > .drct-left-panel-rail {
+  display: flex;
+}
+
+.drct-left-panel-rail {
+  align-items: center;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.drct-left-panel-rail-label {
+  display: block;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.2;
+  text-align: center;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+}
+
+.drct-left-panel-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+}
+
+.drct-left-panel-title > span {
+  min-width: 0;
+}
+
+.drct-left-panel-title .sije-icon-button {
+  flex: 0 0 auto;
+}
 
 .watchlist-period-stack {
   display: inline-grid;
@@ -19706,6 +19785,10 @@ button.chip-light {
 .stock-data-analysis-page .price-page-content {
   grid-template-columns: 400px minmax(0, 1fr);
   gap: 18px;
+}
+
+.stock-data-analysis-page .price-page-content.price-page-content--collapsed {
+  grid-template-columns: 56px minmax(0, 1fr);
 }
 
 .stock-data-analysis-page .price-stock-list-card,

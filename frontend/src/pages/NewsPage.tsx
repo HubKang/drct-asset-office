@@ -1,4 +1,4 @@
-import { HelpCircle, X } from "lucide-react";
+import { HelpCircle, ListCollapse, ListTree, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
@@ -6,6 +6,8 @@ import StatusBadge from "@/components/common/StatusBadge";
 import { repositories } from "@/services";
 import type { AiSummarizeResponse } from "@/types/analysis";
 import type { NewsBulkDeleteResponse, NewsCollectResponse, NewsCollectSelectedResponse, NewsCollectionTarget, NewsItem } from "@/types/news";
+
+const NEWS_LEFT_PANEL_STORAGE_KEY = "drct.news.leftPanelCollapsed";
 
 function importanceMeta(score?: number | null): { label: string; variant: "importance-high" | "importance-medium" | "importance-low" } {
   const value = Number.isFinite(score) ? Number(score) : 0;
@@ -112,6 +114,10 @@ function NewsPage() {
   const [selectedNews, setSelectedNews] = useState<NewsItem | null>(null);
   const [currentStockId, setCurrentStockId] = useState<number | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [panelCollapsed, setPanelCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(NEWS_LEFT_PANEL_STORAGE_KEY) === "true";
+  });
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -198,6 +204,10 @@ function NewsPage() {
   useEffect(() => {
     void loadCollectionTargets();
   }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(NEWS_LEFT_PANEL_STORAGE_KEY, String(panelCollapsed));
+  }, [panelCollapsed]);
 
   useEffect(() => {
     setCollectResult(null);
@@ -408,9 +418,25 @@ function NewsPage() {
       {summarizeResult ? <div className="inline-result">{`선택한 뉴스의 AI 처리가 완료되었습니다. (성공 ${summarizeResult.success_count ?? 0}건 / 실패 ${summarizeResult.failed_count ?? 0}건)`}</div> : null}
       {summarizeError ? <div className="inline-result inline-error">{summarizeError}</div> : null}
 
-      <div className="grid w-full min-w-0 grid-cols-[360px_minmax(0,1fr)] items-stretch gap-4 news-page-layout">
-        <div className="min-w-0">
-          <SectionCard title="관심종목 목록">
+      <div className={`drct-split-layout news-page-layout ${panelCollapsed ? "drct-split-layout--collapsed" : ""}`}>
+        <aside className="drct-left-panel">
+          <div className="drct-left-panel-rail" aria-label="관심종목 목록 펼치기">
+            <button type="button" className="sije-icon-button" onClick={() => setPanelCollapsed(false)} title="관심종목 목록 펼치기" aria-label="관심종목 목록 펼치기">
+              <ListTree size={17} />
+            </button>
+            <span className="drct-left-panel-rail-label">관심종목</span>
+          </div>
+          {!panelCollapsed ? (
+          <SectionCard
+            title={(
+              <span className="drct-left-panel-title">
+                <span>관심종목 목록</span>
+                <button type="button" className="sije-icon-button" onClick={() => setPanelCollapsed(true)} title="관심종목 목록 접기" aria-label="관심종목 목록 접기">
+                  <ListCollapse size={17} />
+                </button>
+              </span>
+            )}
+          >
             <div className="watchlist-selection-count mb-2">선택 종목 {checkedStockIds.length}건</div>
             <div className="news-target-list">
               {watchlistLoading ? <div className="text-sm text-muted py-3">관심종목을 불러오는 중입니다.</div> : null}
@@ -444,9 +470,10 @@ function NewsPage() {
               })}
             </div>
           </SectionCard>
-        </div>
+          ) : null}
+        </aside>
 
-        <div className="min-w-0">
+        <main className="drct-main-panel">
           <SectionCard title="">
             <div className="news-list-header">
               <div className="news-list-title-row">
@@ -587,7 +614,7 @@ function NewsPage() {
               </>
             ) : null}
           </SectionCard>
-        </div>
+        </main>
       </div>
 
       {isDrawerOpen && selectedNews ? (

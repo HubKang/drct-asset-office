@@ -1,5 +1,6 @@
 ﻿import { FormEvent, useEffect, useMemo, useState } from "react";
 import EmptyState from "@/components/common/EmptyState";
+import { ListCollapse, ListTree } from "lucide-react";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import { ApiError } from "@/services/api/apiClient";
@@ -21,6 +22,7 @@ type SummaryTab = "price" | "market" | "gpt";
 const SUMMARY_LIMIT = 20;
 const DAILY_LIMIT = 20;
 const PRICE_WORKSPACE_SOURCE_LABEL = "KIWOOM_REST (ka10001, ka10015, ka10009, ka10008)";
+const WATCHLIST_ANALYSIS_LEFT_PANEL_STORAGE_KEY = "drct.watchlistAnalysis.leftPanelCollapsed";
 const FALLBACK_GPT_PROMPT = `당신은 보수적인 주식 애널리스트 보조역입니다.
 아래 DrCT에셋 근거 패키지를 바탕으로 분석해 주세요.
 
@@ -238,6 +240,10 @@ function StockPricesPage() {
   const [keyword, setKeyword] = useState("");
   const [analysisScope, setAnalysisScope] = useState<AnalysisScope>("watchlist");
   const [offset, setOffset] = useState(0);
+  const [panelCollapsed, setPanelCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(WATCHLIST_ANALYSIS_LEFT_PANEL_STORAGE_KEY) === "true";
+  });
 
   const [summaryItems, setSummaryItems] = useState<StockPriceSummaryItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -469,6 +475,10 @@ function StockPricesPage() {
   }, []);
 
   useEffect(() => {
+    window.localStorage.setItem(WATCHLIST_ANALYSIS_LEFT_PANEL_STORAGE_KEY, String(panelCollapsed));
+  }, [panelCollapsed]);
+
+  useEffect(() => {
     if (!selectedStock) {
       setSelectedSummary(null);
       setSummaryError("");
@@ -535,8 +545,26 @@ function StockPricesPage() {
     <div className="stock-data-analysis-page space-y-4">
       <PageHeader title="관심 종목 분석" description="관심 종목의 가격·시장지표를 확인하고 GPT 분석 근거를 구성합니다." />
 
-      <div className="price-page-content">
-        <SectionCard title="분석 종목 목록" className="price-stock-list-card">
+      <div className={`price-page-content ${panelCollapsed ? "price-page-content--collapsed" : ""}`}>
+        <aside className="drct-left-panel">
+          <div className="drct-left-panel-rail" aria-label="분석 종목 목록 펼치기">
+            <button type="button" className="sije-icon-button" onClick={() => setPanelCollapsed(false)} title="분석 종목 목록 펼치기" aria-label="분석 종목 목록 펼치기">
+              <ListTree size={17} />
+            </button>
+            <span className="drct-left-panel-rail-label">분석종목</span>
+          </div>
+          {!panelCollapsed ? (
+        <SectionCard
+          title={(
+            <span className="drct-left-panel-title">
+              <span>분석 종목 목록</span>
+              <button type="button" className="sije-icon-button" onClick={() => setPanelCollapsed(true)} title="분석 종목 목록 접기" aria-label="분석 종목 목록 접기">
+                <ListCollapse size={17} />
+              </button>
+            </span>
+          )}
+          className="price-stock-list-card"
+        >
           <div className="price-list-title-row">
             <span className="hint-icon" title="필터 조건에 맞는 가격 데이터 보유 종목을 표시합니다.">ⓘ</span>
           </div>
@@ -607,7 +635,10 @@ function StockPricesPage() {
             </>
           ) : null}
         </SectionCard>
+          ) : null}
+        </aside>
 
+        <main className="drct-main-panel">
         <SectionCard title="" className="price-daily-table-card price-analysis-workspace-card">
           {!selectedStock ? <EmptyState message="분석할 종목을 선택하세요. 좌측 목록에서 종목을 선택하면 가격 요약, 시장지표, GPT 패키지 옵션을 확인할 수 있습니다." /> : null}
 
@@ -1006,6 +1037,7 @@ function StockPricesPage() {
             </>
           ) : null}
         </SectionCard>
+        </main>
       </div>
     </div>
   );
