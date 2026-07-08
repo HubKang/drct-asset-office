@@ -94,10 +94,12 @@ class WatchlistService:
                 price_start_date=price_start_date,
                 price_end_date=price_end_date,
                 price_data_count=int(price_data_count) if price_data_count is not None else None,
+                primary_theme_id=int(primary_theme_id) if primary_theme_id is not None else None,
+                primary_theme_name=primary_theme_name,
                 registered_at=item.registered_at,
                 updated_at=item.updated_at,
             )
-            for item, stock, price_start_date, price_end_date, price_data_count in rows
+            for item, stock, price_start_date, price_end_date, price_data_count, primary_theme_id, primary_theme_name in rows
         ]
 
     def get_watchlist_stock_ids(self) -> WatchlistStockIdsResponse:

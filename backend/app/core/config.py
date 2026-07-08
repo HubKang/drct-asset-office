@@ -154,6 +154,10 @@ KIWOOM_REST_MARKET_DAILY_API_ID = os.getenv("KIWOOM_REST_MARKET_DAILY_API_ID", "
 KIWOOM_REST_MARKET_DAILY_PATH = os.getenv("KIWOOM_REST_MARKET_DAILY_PATH", "/api/dostk/chart").strip()
 KIWOOM_REST_BLOCK_ORDER_API = os.getenv("KIWOOM_REST_BLOCK_ORDER_API", "true").strip().lower() in {"1", "true", "yes", "y", "on"}
 KIWOOM_REST_LOG_RAW_PREVIEW = os.getenv("KIWOOM_REST_LOG_RAW_PREVIEW", "false").strip().lower() in {"1", "true", "yes", "y", "on"}
+KIWOOM_REST_INVESTOR_FLOW_API_ID = os.getenv("KIWOOM_REST_INVESTOR_FLOW_API_ID", "ka10005").strip()
+KIWOOM_REST_INVESTOR_FLOW_PATH = os.getenv("KIWOOM_REST_INVESTOR_FLOW_PATH", "/api/dostk/mrkcond").strip()
+KIWOOM_REST_PROGRAM_FLOW_API_ID = os.getenv("KIWOOM_REST_PROGRAM_FLOW_API_ID", "").strip()
+KIWOOM_REST_PROGRAM_FLOW_PATH = os.getenv("KIWOOM_REST_PROGRAM_FLOW_PATH", "").strip()
 
 
 def now_kst() -> str:

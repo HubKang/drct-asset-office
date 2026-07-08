@@ -173,5 +173,121 @@ class WatchlistEvaluationRepository:
         ).mappings().first()
         return dict(row) if row else None
 
+    def list_stock_daily_price_rows(self, stock_id: int, limit: int = 80) -> list[dict[str, Any]]:
+        rows = self.db.execute(
+            text(
+                """
+                SELECT stock_id, trade_date, close_price, change_rate, volume, trading_value
+                FROM stock_daily_prices
+                WHERE stock_id = :stock_id
+                  AND close_price IS NOT NULL
+                ORDER BY trade_date DESC
+                LIMIT :limit
+                """
+            ),
+            {"stock_id": stock_id, "limit": limit},
+        ).mappings().all()
+        return [dict(row) for row in reversed(rows)]
+
+    def list_stock_themes(self, stock_id: int) -> list[dict[str, Any]]:
+        rows = self.db.execute(
+            text(
+                """
+                SELECT
+                    t.id AS theme_id,
+                    t.theme_name,
+                    t.theme_level,
+                    t.parent_theme_id,
+                    mts.is_primary
+                FROM market_theme_stocks mts
+                JOIN market_themes t ON t.id = mts.theme_id
+                WHERE mts.stock_id = :stock_id
+                  AND mts.is_active = 1
+                  AND t.is_active = 1
+                ORDER BY mts.is_primary DESC, t.sort_order ASC, t.theme_name ASC
+                """
+            ),
+            {"stock_id": stock_id},
+        ).mappings().all()
+        return [dict(row) for row in rows]
+
+    def list_theme_stocks(self, theme_id: int) -> list[dict[str, Any]]:
+        rows = self.db.execute(
+            text(
+                """
+                SELECT mts.stock_id, s.stock_code, s.stock_name, mts.is_primary
+                FROM market_theme_stocks mts
+                JOIN stocks s ON s.id = mts.stock_id
+                WHERE mts.theme_id = :theme_id
+                  AND mts.is_active = 1
+                ORDER BY mts.is_primary DESC, s.stock_name ASC
+                """
+            ),
+            {"theme_id": theme_id},
+        ).mappings().all()
+        return [dict(row) for row in rows]
+
+
+    def list_material_news(self, stock_id: int, limit: int = 30) -> list[dict[str, Any]]:
+        rows = self.db.execute(
+            text(
+                """
+                SELECT
+                    id,
+                    stock_id,
+                    title,
+                    source,
+                    url,
+                    published_at,
+                    collected_at,
+                    summary,
+                    sentiment,
+                    importance_score,
+                    ai_summary,
+                    ai_sentiment,
+                    ai_importance_score,
+                    ai_tags,
+                    ai_processed_at
+                FROM news_items
+                WHERE stock_id = :stock_id
+                ORDER BY COALESCE(published_at, collected_at, created_at) DESC, id DESC
+                LIMIT :limit
+                """
+            ),
+            {"stock_id": stock_id, "limit": limit},
+        ).mappings().all()
+        return [dict(row) for row in rows]
+
+    def list_material_disclosures(self, stock_id: int, limit: int = 30) -> list[dict[str, Any]]:
+        rows = self.db.execute(
+            text(
+                """
+                SELECT
+                    id,
+                    stock_id,
+                    dart_receipt_no,
+                    disclosure_title,
+                    disclosure_type,
+                    disclosed_at,
+                    url,
+                    summary,
+                    importance_score,
+                    ai_summary,
+                    ai_importance_score,
+                    ai_tags,
+                    ai_risk_level,
+                    ai_event_type,
+                    ai_processed_at,
+                    created_at
+                FROM disclosures
+                WHERE stock_id = :stock_id
+                ORDER BY COALESCE(disclosed_at, created_at) DESC, id DESC
+                LIMIT :limit
+                """
+            ),
+            {"stock_id": stock_id, "limit": limit},
+        ).mappings().all()
+        return [dict(row) for row in rows]
+
     def commit(self) -> None:
         self.db.commit()

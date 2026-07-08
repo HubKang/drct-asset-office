@@ -1,5 +1,8 @@
 import sampleWatchlist from "@/data/json/sampleWatchlist.json";
 import type {
+  InvestorFlowChartResponse,
+  InvestorFlowCollectRequest,
+  InvestorFlowCollectResponse,
   WatchlistEvaluateResponse,
   WatchlistEvaluationFactor,
   WatchlistEvaluationHistoryItem,
@@ -46,7 +49,15 @@ function buildItem(row: Watchlist): WatchlistEvaluationListItem {
     market_factors: factors,
     missing_market_data: factors.filter((item) => item.contribution_score == null).map((item) => item.factor_name),
     material_score: null,
-    supply_score: null,
+    supply_score: market ? 62 : null,
+    supply_status: market ? "PARTIAL" : "NOT_EVALUATED",
+    supply_grade: market ? "??" : "???",
+    supply_summary: market ? "mock ????? ?? ???? ?? ???????." : "?? ?? ????.",
+    supply_factors: [],
+    missing_supply_data: market ? [] : ["????? ??"],
+    supply_investor_flow_status: { foreign: "COLLECTED", institution: "COLLECTED", program: "COLLECTED", credit: "2? ??", short: "2? ??", loan: "2? ??" },
+    supply_model_version: market ? "V2" : "V1",
+    investor_flow_summary: { latest_date: new Date().toISOString().slice(0, 10), foreign_5d_net_qty: 12000, institution_5d_net_qty: -4200, program_5d_net_qty: 8300 },
     chart_score: null,
     financial_score: null,
     total_score: latest?.total_score ?? null,
@@ -108,6 +119,33 @@ export const watchlistEvaluationMockRepository = {
   },
   async history(watchlistId: number): Promise<WatchlistEvaluationHistoryItem[]> {
     return historyByWatchlistId[watchlistId] || [];
+  },
+  async investorFlows(watchlistId: number, days = 30): Promise<InvestorFlowChartResponse> {
+    const row = rows.find((item) => item.id === watchlistId) || rows[0];
+    const today = new Date();
+    const items = Array.from({ length: Math.min(days, 12) }, (_, index) => {
+      const date = new Date(today);
+      date.setDate(today.getDate() - (Math.min(days, 12) - index - 1));
+      const wave = index - 5;
+      return {
+        date: date.toISOString().slice(0, 10),
+        source: "mock",
+        data_source_type: "DERIVED_PRICE_FLOW",
+        source_method: "mock",
+        is_real_investor_flow: false,
+        collection_status: "DERIVED",
+        foreign_net_qty: wave * 1800,
+        institution_net_qty: (index % 3 - 1) * 2400,
+        program_net_qty: (6 - index) * 1500,
+        foreign_net_amount: wave * 18000000,
+        institution_net_amount: (index % 3 - 1) * 24000000,
+        program_net_amount: (6 - index) * 15000000,
+      };
+    });
+    return { watchlist_id: watchlistId, stock_id: row?.stock_id || 0, stock_code: row?.stock_code || "-", stock_name: row?.stock_name || "-", latest_date: items[items.length - 1]?.date || null, selected_source_type: "DERIVED_PRICE_FLOW", fallback_source_type: null, is_real_investor_flow: false, data_notice: "mock derived investor flow data", items };
+  },
+  async collectInvestorFlows(_payload: InvestorFlowCollectRequest): Promise<InvestorFlowCollectResponse> {
+    return { status: "SUCCESS", requested_count: 1, success_count: 1, failed_count: 0, saved_count: 7, items: [] };
   },
   async createGptPrompt(watchlistId: number): Promise<WatchlistGptPromptResponse> {
     const row = rows.find((item) => item.id === watchlistId);

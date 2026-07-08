@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from enum import Enum
 
@@ -81,5 +81,7 @@ class WatchlistListItem(BaseModel):
     price_start_date: str | None = None
     price_end_date: str | None = None
     price_data_count: int | None = None
+    primary_theme_id: int | None = None
+    primary_theme_name: str | None = None
     registered_at: str
     updated_at: str

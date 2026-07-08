@@ -100,6 +100,53 @@ CREATE TABLE IF NOT EXISTS stock_daily_prices (
     FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE CASCADE
 );
 
+
+CREATE TABLE IF NOT EXISTS stock_investor_flows (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    stock_id INTEGER NOT NULL,
+    stock_code TEXT NOT NULL,
+    flow_date TEXT NOT NULL,
+    foreign_buy_qty INTEGER,
+    foreign_sell_qty INTEGER,
+    foreign_net_qty INTEGER,
+    foreign_buy_amount INTEGER,
+    foreign_sell_amount INTEGER,
+    foreign_net_amount INTEGER,
+    foreign_holding_qty INTEGER,
+    foreign_holding_ratio REAL,
+    institution_buy_qty INTEGER,
+    institution_sell_qty INTEGER,
+    institution_net_qty INTEGER,
+    institution_buy_amount INTEGER,
+    institution_sell_amount INTEGER,
+    institution_net_amount INTEGER,
+    financial_investment_net_qty INTEGER,
+    insurance_net_qty INTEGER,
+    investment_trust_net_qty INTEGER,
+    bank_net_qty INTEGER,
+    other_finance_net_qty INTEGER,
+    pension_fund_net_qty INTEGER,
+    private_fund_net_qty INTEGER,
+    other_corporation_net_qty INTEGER,
+    program_buy_qty INTEGER,
+    program_sell_qty INTEGER,
+    program_net_qty INTEGER,
+    program_buy_amount INTEGER,
+    program_sell_amount INTEGER,
+    program_net_amount INTEGER,
+    program_arbitrage_net_qty INTEGER,
+    program_non_arbitrage_net_qty INTEGER,
+    source TEXT NOT NULL DEFAULT 'derived_price_flow',
+    data_source_type TEXT NOT NULL DEFAULT 'DERIVED_PRICE_FLOW',
+    source_method TEXT NOT NULL DEFAULT 'derived_price_flow',
+    is_real_investor_flow INTEGER NOT NULL DEFAULT 0,
+    collection_status TEXT NOT NULL DEFAULT 'SUCCESS',
+    raw_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE CASCADE,
+    UNIQUE (stock_id, flow_date)
+);
 CREATE TABLE IF NOT EXISTS stock_daily_market_metrics (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     stock_id INTEGER NOT NULL,
@@ -419,6 +466,7 @@ CREATE INDEX IF NOT EXISTS idx_disclosures_disclosed_at ON disclosures(disclosed
 CREATE UNIQUE INDEX IF NOT EXISTS ux_stock_daily_prices_stock_date ON stock_daily_prices(stock_id, trade_date);
 CREATE INDEX IF NOT EXISTS idx_stock_daily_prices_stock_id ON stock_daily_prices(stock_id);
 CREATE INDEX IF NOT EXISTS idx_stock_daily_prices_stock_date ON stock_daily_prices(stock_id, trade_date);
+CREATE INDEX IF NOT EXISTS idx_stock_investor_flows_stock_date ON stock_investor_flows(stock_id, flow_date);
 
 CREATE TABLE IF NOT EXISTS kiwoom_condition_searches (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

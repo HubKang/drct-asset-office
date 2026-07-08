@@ -22,7 +22,6 @@ type WatchlistViewMode = "theme" | "list";
 type WatchlistStatus = "not_registered" | "active" | "inactive";
 type PriceCollectionMode = "recent" | "full";
 type ThemeGroup = { themeName: string; rows: Watchlist[]; activeCount: number; inactiveCount: number };
-type ThemeMapPayload = { nameMap: Record<number, string>; idMap: Record<number, number> };
 
 const MARKET_OPTIONS = [
   { value: "", label: "\uC804\uCCB4" },
@@ -180,40 +179,21 @@ function WatchlistPage() {
     return count;
   };
 
-  const loadThemeMap = async (): Promise<ThemeMapPayload> => {
-    const themes: MarketTheme[] = await repositories.marketThemes.list({ is_active: 1, theme_level: "THEME", limit: 200, offset: 0 });
-    const entries = await Promise.all(
-      themes.map(async (theme) => {
-        const stocks = await repositories.marketThemes.listThemeStocks(theme.id);
-        return stocks
-          .filter((x) => x.is_active === 1)
-          .map((x) => ({ stockId: x.stock_id, themeId: theme.id, themeName: theme.theme_name, isPrimary: x.is_primary === 1 }));
-      }),
-    );
-    const picked: Record<number, { themeId: number; themeName: string; isPrimary: boolean }> = {};
-    entries.flat().forEach((x) => {
-      if (!picked[x.stockId] || (x.isPrimary && !picked[x.stockId].isPrimary)) {
-        picked[x.stockId] = { themeId: x.themeId, themeName: x.themeName, isPrimary: x.isPrimary };
-      }
-    });
-    const nameMap: Record<number, string> = {};
-    const idMap: Record<number, number> = {};
-    Object.entries(picked).forEach(([stockId, item]) => {
-      nameMap[Number(stockId)] = item.themeName;
-      idMap[Number(stockId)] = item.themeId;
-    });
-    return { nameMap, idMap };
-  };
-
   const refreshAll = async () => {
     setLoadingWatchlist(true);
     setWatchlistError("");
     try {
-      const [watchlistRows, count, themeMap] = await Promise.all([fetchAllWatchlistRows(), fetchStockCount(), loadThemeMap()]);
+      const [watchlistRows, count] = await Promise.all([fetchAllWatchlistRows(), fetchStockCount()]);
       setAllWatchlistRows(watchlistRows);
       setStockCount(count);
-      setThemeNameByStockId(themeMap.nameMap);
-      setThemeIdByStockId(themeMap.idMap);
+      const nameMap: Record<number, string> = {};
+      const idMap: Record<number, number> = {};
+      watchlistRows.forEach((row) => {
+        if (row.primary_theme_name) nameMap[row.stock_id] = row.primary_theme_name;
+        if (row.primary_theme_id) idMap[row.stock_id] = row.primary_theme_id;
+      });
+      setThemeNameByStockId(nameMap);
+      setThemeIdByStockId(idMap);
       setChartSidcode(createNaverChartSidcode());
     } catch (error) {
       setWatchlistError(safeMessage(error, "관심종목 데이터를 불러오는 중 오류가 발생했습니다."));
@@ -371,7 +351,14 @@ function WatchlistPage() {
         source: "kiwoom_rest",
       });
       setSelectedMarketMetricsCollectResult(metricsResult);
-      setActionMessage(formatPriceCollectMessage(mode, priceResult, metricsResult.failed_count));
+      const investorFlowResult = await repositories.watchlistEvaluation.collectInvestorFlows({
+        stock_ids: selectedWatchlistStockIds,
+        period: mode === "full" ? "RECENT_90D" : "RECENT_7D",
+        source: "kiwoom",
+        prefer_real_source: true,
+        fallback_to_derived: false,
+      });
+      setActionMessage(`${formatPriceCollectMessage(mode, priceResult, metricsResult.failed_count)} · 투자주체별 수급 저장 ${investorFlowResult.saved_count.toLocaleString("ko-KR")}일, 실패 ${investorFlowResult.failed_count.toLocaleString("ko-KR")}건`);
       if (mode === "full") setFullRefreshConfirmOpen(false);
     });
   };
@@ -666,7 +653,7 @@ function WatchlistPage() {
               <div className="watchlist-action-group">
                 <button
                   className="btn btn-primary"
-                  title={"마지막 수집일 기준 7일 전부터 오늘까지 다시 수집합니다. 기존 데이터가 없으면 최초수집으로 처리됩니다."}
+                  title={"시재수차재 수급 평가에 필요한 가격·거래대금·기술 데이터와 외국인·기관·프로그램 순매매 데이터를 최근 7일 기준으로 갱신합니다."}
                   disabled={selectedWatchlistStockIds.length === 0 || actionLoading.startsWith("refresh-selected-price-market-metrics")}
                   onClick={() => void onRefreshSelectedPriceAndMarketMetrics("recent")}
                 >
@@ -691,8 +678,8 @@ function WatchlistPage() {
                   </button>
                   {collectionHelpOpen ? (
                     <div className="watchlist-help-popover" role="tooltip">
-                      <p>최근7일수집은 마지막 수집일 기준 7일 전부터 오늘까지 다시 수집합니다.</p>
-                      <p>전체수집은 기존 기간 전체를 다시 요청하며, 기존 데이터는 삭제되지 않습니다.</p>
+                      <p>최근7일수집은 시재수차재 수급 평가에 필요한 가격·거래대금·기술 데이터를 최근 7일 기준으로 갱신합니다.</p>
+                      <p>전체수집은 가격 데이터를 가능한 전체 기간으로 다시 요청합니다. 뉴스·공시는 최근 90일, 재료 평가는 최근 30일 기준으로 사용할 예정이며 기존 데이터는 삭제되지 않습니다.</p>
                     </div>
                   ) : null}
                 </div>
@@ -805,9 +792,9 @@ function WatchlistPage() {
               </button>
             </div>
             <div className="watchlist-refresh-confirm-body">
-              <p>{"\uC804\uCCB4\uC218\uC9D1\uC740 \uAD00\uC2EC\uC885\uBAA9\uC758 \uAE30\uC874 \uC218\uC9D1 \uAE30\uAC04 \uB370\uC774\uD130\uB97C \uB2E4\uC2DC \uC694\uCCAD\uD574 upsert\uD569\uB2C8\uB2E4."}</p>
-              <p>{"\uAE30\uC874 \uB370\uC774\uD130\uB294 \uC0AD\uC81C\uB418\uC9C0 \uC54A\uC9C0\uB9CC, \uC218\uC9D1 \uC2DC\uAC04\uC774 \uC624\uB798 \uAC78\uB9B4 \uC218 \uC788\uC2B5\uB2C8\uB2E4."}</p>
-              <p className="watchlist-refresh-confirm-note">{"\uC77C\uBC18\uC801\uC778 \uAC31\uC2E0\uC740 \uCD5C\uADFC7\uC77C\uC218\uC9D1\uC744 \uC0AC\uC6A9\uD558\uC138\uC694."}</p>
+              <p>{"전체수집은 가격 데이터를 가능한 전체 기간으로 다시 요청해 upsert합니다."}</p>
+              <p>{"기존 데이터는 삭제되지 않습니다. 뉴스·공시는 최근 90일, 재료 평가는 최근 30일 기준으로 사용할 예정입니다."}</p>
+              <p className="watchlist-refresh-confirm-note">{"수급 MVP만 빠르게 갱신할 때는 최근7일수집을 사용하세요."}</p>
             </div>
             <div className="watchlist-refresh-confirm-actions">
               <button className="btn btn-secondary" type="button" disabled={actionLoading === "refresh-selected-price-market-metrics-full"} onClick={() => setFullRefreshConfirmOpen(false)}>

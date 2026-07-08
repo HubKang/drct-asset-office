@@ -33,6 +33,7 @@ from backend.app.api.routes_reports import router as reports_router
 from backend.app.api.routes_schema_comments import router as schema_comments_router
 from backend.app.api.routes_stocks import router as stocks_router
 from backend.app.api.routes_stock_prices import router as stock_prices_router
+from backend.app.api.routes_stock_investor_flows import router as stock_investor_flows_router
 from backend.app.api.routes_stock_tracking import router as stock_tracking_router
 from backend.app.api.routes_telegram import router as telegram_router
 from backend.app.api.routes_trade_training import router as trade_training_router
@@ -63,6 +64,7 @@ app.include_router(health_router)
 app.include_router(images_router)
 app.include_router(stocks_router)
 app.include_router(stock_prices_router)
+app.include_router(stock_investor_flows_router)
 app.include_router(stock_tracking_router)
 app.include_router(market_metrics_router)
 app.include_router(market_calendar_router)

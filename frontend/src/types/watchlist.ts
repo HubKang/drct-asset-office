@@ -14,6 +14,8 @@ export type Watchlist = {
   price_start_date?: string | null;
   price_end_date?: string | null;
   price_data_count?: number | null;
+  primary_theme_id?: number | null;
+  primary_theme_name?: string | null;
   registered_at: string;
   updated_at: string;
 };

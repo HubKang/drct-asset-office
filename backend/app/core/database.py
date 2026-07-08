@@ -174,6 +174,71 @@ def ensure_runtime_schema() -> None:
 
         conn.exec_driver_sql(
             """
+            CREATE TABLE IF NOT EXISTS stock_investor_flows (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                stock_id INTEGER NOT NULL,
+                stock_code TEXT NOT NULL,
+                flow_date TEXT NOT NULL,
+                foreign_buy_qty INTEGER,
+                foreign_sell_qty INTEGER,
+                foreign_net_qty INTEGER,
+                foreign_buy_amount INTEGER,
+                foreign_sell_amount INTEGER,
+                foreign_net_amount INTEGER,
+                foreign_holding_qty INTEGER,
+                foreign_holding_ratio REAL,
+                institution_buy_qty INTEGER,
+                institution_sell_qty INTEGER,
+                institution_net_qty INTEGER,
+                institution_buy_amount INTEGER,
+                institution_sell_amount INTEGER,
+                institution_net_amount INTEGER,
+                financial_investment_net_qty INTEGER,
+                insurance_net_qty INTEGER,
+                investment_trust_net_qty INTEGER,
+                bank_net_qty INTEGER,
+                other_finance_net_qty INTEGER,
+                pension_fund_net_qty INTEGER,
+                private_fund_net_qty INTEGER,
+                other_corporation_net_qty INTEGER,
+                program_buy_qty INTEGER,
+                program_sell_qty INTEGER,
+                program_net_qty INTEGER,
+                program_buy_amount INTEGER,
+                program_sell_amount INTEGER,
+                program_net_amount INTEGER,
+                program_arbitrage_net_qty INTEGER,
+                program_non_arbitrage_net_qty INTEGER,
+                source TEXT NOT NULL DEFAULT 'derived_price_flow',
+                data_source_type TEXT NOT NULL DEFAULT 'DERIVED_PRICE_FLOW',
+                source_method TEXT NOT NULL DEFAULT 'derived_price_flow',
+                is_real_investor_flow INTEGER NOT NULL DEFAULT 0,
+                collection_status TEXT NOT NULL DEFAULT 'SUCCESS',
+                raw_json TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE CASCADE
+            )            """
+        )
+        investor_flow_columns = {str(row[1]) for row in conn.exec_driver_sql("PRAGMA table_info(stock_investor_flows)").fetchall()}
+        investor_flow_add_columns = {
+            "foreign_holding_qty": "INTEGER",
+            "foreign_holding_ratio": "REAL",
+            "data_source_type": "TEXT NOT NULL DEFAULT 'DERIVED_PRICE_FLOW'",
+            "source_method": "TEXT NOT NULL DEFAULT 'derived_price_flow'",
+            "is_real_investor_flow": "INTEGER NOT NULL DEFAULT 0",
+        }
+        for column_name, column_def in investor_flow_add_columns.items():
+            if column_name not in investor_flow_columns:
+                conn.exec_driver_sql(f"ALTER TABLE stock_investor_flows ADD COLUMN {column_name} {column_def}")
+        conn.exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_stock_investor_flows_stock_date ON stock_investor_flows(stock_id, flow_date)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_stock_investor_flows_stock_date ON stock_investor_flows(stock_id, flow_date)"
+        )
+        conn.exec_driver_sql(
+            """
             CREATE TABLE IF NOT EXISTS stock_daily_market_metrics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 stock_id INTEGER NOT NULL,
