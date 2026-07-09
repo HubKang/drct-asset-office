@@ -557,7 +557,10 @@ function StockPricesPage() {
         <SectionCard
           title={(
             <span className="drct-left-panel-title">
-              <span>분석 종목 목록</span>
+              <span className="price-list-heading">
+                <span>분석 종목 목록</span>
+                <span className="hint-icon" title="필터 조건에 맞는 가격 데이터 보유 종목을 표시합니다.">ⓘ</span>
+              </span>
               <button type="button" className="sije-icon-button" onClick={() => setPanelCollapsed(true)} title="분석 종목 목록 접기" aria-label="분석 종목 목록 접기">
                 <ListCollapse size={17} />
               </button>
@@ -565,9 +568,6 @@ function StockPricesPage() {
           )}
           className="price-stock-list-card"
         >
-          <div className="price-list-title-row">
-            <span className="hint-icon" title="필터 조건에 맞는 가격 데이터 보유 종목을 표시합니다.">ⓘ</span>
-          </div>
           <form className="price-list-search-row" onSubmit={onSearch}>
             <select className="select-control" value={analysisScope} onChange={(e) => setAnalysisScope(e.target.value as AnalysisScope)}>
               <option value="watchlist">관심종목만</option>

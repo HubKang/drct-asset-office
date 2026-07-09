@@ -3,6 +3,7 @@ import type {
   InvestorFlowChartResponse,
   InvestorFlowCollectRequest,
   InvestorFlowCollectResponse,
+  FinancialCollectResponse,
   WatchlistEvaluateResponse,
   WatchlistEvaluationHistoryItem,
   WatchlistEvaluationListResponse,
@@ -29,6 +30,11 @@ export const watchlistEvaluationApiRepository = {
     apiRequest<InvestorFlowCollectResponse>("/watchlist/collect-investor-flows", {
       method: "POST",
       body: JSON.stringify(payload),
+    }),
+  collectFinancials: (stockIds: number[]) =>
+    apiRequest<FinancialCollectResponse>("/stock-financials/collect/selected", {
+      method: "POST",
+      body: JSON.stringify({ stock_ids: stockIds }),
     }),
   createGptPrompt: (watchlistId: number) =>
     apiRequest<WatchlistGptPromptResponse>(`/watchlist/sije-sucha-jae/${watchlistId}/gpt-prompt`, {

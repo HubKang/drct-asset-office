@@ -20025,7 +20025,7 @@ button.chip-light {
 }
 
 .stock-data-analysis-page .price-page-content {
-  grid-template-columns: 400px minmax(0, 1fr);
+  grid-template-columns: 280px minmax(0, 1fr);
   gap: 18px;
 }
 
@@ -20038,20 +20038,26 @@ button.chip-light {
   padding: 24px;
 }
 
-.stock-data-analysis-page .price-list-title-row {
+.stock-data-analysis-page .price-list-heading {
+  display: inline-flex;
   align-items: center;
-  justify-content: flex-start;
-  min-height: 0;
-  margin: -4px 0 12px;
-  color: #0f172a;
-  font-size: 17px;
-  font-weight: 700;
+  gap: 6px;
+  min-width: 0;
+}
+
+.stock-data-analysis-page .price-list-heading .hint-icon {
+  flex: 0 0 auto;
+  font-size: 14px;
 }
 
 .stock-data-analysis-page .price-list-search-row {
-  grid-template-columns: 124px minmax(0, 1fr) 86px;
-  gap: 10px;
+  grid-template-columns: 87px minmax(0, 1fr);
+  gap: 8px;
   margin-bottom: 14px;
+}
+
+.stock-data-analysis-page .price-list-search-row .btn {
+  grid-column: 1 / -1;
 }
 
 .stock-data-analysis-page .input-control,
@@ -26817,3 +26823,84 @@ button.chip-light {
     grid-template-columns: 1fr;
   }
 }
+
+/* Watchlist chart evaluation MVP */
+.sije-chart-factor-grid {
+  margin-top: 14px;
+}
+
+.sije-chart-metrics {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-hairline-cloud);
+}
+
+.sije-chart-metrics h4 {
+  margin: 0 0 10px;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.sije-chart-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.sije-chart-metric-grid > div {
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.sije-chart-metric-grid span,
+.sije-chart-metric-grid strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sije-chart-metric-grid span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.sije-chart-metric-grid strong {
+  margin-top: 3px;
+  color: #0f172a;
+  font-size: 14px;
+}
+
+@media (max-width: 1100px) {
+  .sije-chart-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 640px) {
+  .sije-chart-metric-grid { grid-template-columns: 1fr; }
+}
+
+/* Watchlist financial evaluation MVP */
+.sije-financial-metric-grid { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:8px; margin:14px 0; }
+.sije-financial-metric-grid > div { min-width:0; padding:12px; border:1px solid #dbe3ef; border-radius:8px; background:#f8fafc; }
+.sije-financial-metric-grid span,.sije-financial-metric-grid strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sije-financial-metric-grid span { color:#64748b; font-size:12px; }
+.sije-financial-metric-grid strong { margin-top:4px; color:#0f172a; font-size:16px; }
+.sije-financial-chart-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-top:16px; }
+.sije-financial-chart { min-width:0; padding:14px; border:1px solid #dbe3ef; border-radius:8px; }
+.sije-financial-chart h4 { margin:0 0 12px; font-size:14px; }
+.sije-financial-bars { display:flex; align-items:stretch; gap:8px; height:180px; border-bottom:1px solid #cbd5e1; }
+.sije-financial-period { display:flex; flex:1 1 0; min-width:0; flex-direction:column; justify-content:flex-end; align-items:center; gap:5px; color:#64748b; font-size:11px; }
+.sije-financial-bar-set { display:flex; align-items:flex-end; justify-content:center; gap:2px; width:100%; height:145px; }
+.sije-financial-bar { width:min(12px,28%); min-height:2px; background:#2563eb; }
+.sije-financial-bar.operating_profit { background:#16a34a; }
+.sije-financial-bar.net_income { background:#f59e0b; }
+.sije-financial-legend { display:flex; gap:12px; margin-top:10px; color:#64748b; font-size:11px; }
+.sije-financial-legend span::before { content:""; display:inline-block; width:8px; height:8px; margin-right:4px; background:#2563eb; }
+.sije-financial-legend span:nth-child(2)::before { background:#16a34a; }
+.sije-financial-legend span:nth-child(3)::before { background:#f59e0b; }
+@media (max-width:1100px) { .sije-financial-metric-grid { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+@media (max-width:760px) { .sije-financial-chart-grid { grid-template-columns:1fr; } .sije-financial-metric-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }

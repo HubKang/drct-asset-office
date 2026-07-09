@@ -358,7 +358,8 @@ function WatchlistPage() {
         prefer_real_source: true,
         fallback_to_derived: false,
       });
-      setActionMessage(`${formatPriceCollectMessage(mode, priceResult, metricsResult.failed_count)} · 투자주체별 수급 저장 ${investorFlowResult.saved_count.toLocaleString("ko-KR")}일, 실패 ${investorFlowResult.failed_count.toLocaleString("ko-KR")}건`);
+      const financialResult = await repositories.watchlistEvaluation.collectFinancials(selectedWatchlistStockIds);
+      setActionMessage(`${formatPriceCollectMessage(mode, priceResult, metricsResult.failed_count)} · 투자주체별 수급 저장 ${investorFlowResult.saved_count.toLocaleString("ko-KR")}일, 실패 ${investorFlowResult.failed_count.toLocaleString("ko-KR")}건 · 재무 ${financialResult.success_count.toLocaleString("ko-KR")}건 완료, ${financialResult.partial_count.toLocaleString("ko-KR")}건 일부, ${financialResult.failed_count.toLocaleString("ko-KR")}건 실패`);
       if (mode === "full") setFullRefreshConfirmOpen(false);
     });
   };
@@ -678,8 +679,8 @@ function WatchlistPage() {
                   </button>
                   {collectionHelpOpen ? (
                     <div className="watchlist-help-popover" role="tooltip">
-                      <p>최근7일수집은 시재수차재 수급 평가에 필요한 가격·거래대금·기술 데이터를 최근 7일 기준으로 갱신합니다.</p>
-                      <p>전체수집은 가격 데이터를 가능한 전체 기간으로 다시 요청합니다. 뉴스·공시는 최근 90일, 재료 평가는 최근 30일 기준으로 사용할 예정이며 기존 데이터는 삭제되지 않습니다.</p>
+                      <p>최근7일수집은 가격·거래대금·기술·수급 데이터와 최신 재무 상태를 갱신합니다.</p>
+                      <p>전체수집은 가격 전체 기간과 수급 데이터를 다시 확인하고 최신 재무 상태를 동기화합니다. 기존 데이터는 삭제되지 않습니다.</p>
                     </div>
                   ) : null}
                 </div>

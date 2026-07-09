@@ -995,3 +995,23 @@ INSERT OR IGNORE INTO classification_rules (
 ('disclosure_risk_level','disclosure','공시_저위험','배당,자사주,주주총회,임원 보유','ai_risk_level','low',0,30,1,'저위험 공시 분류',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
 
 
+
+
+CREATE TABLE IF NOT EXISTS stock_financial_snapshots (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, stock_id INTEGER NOT NULL, stock_code TEXT NOT NULL,
+ snapshot_date TEXT NOT NULL, source_type TEXT NOT NULL, source_method TEXT NOT NULL,
+ current_price REAL, market_cap INTEGER, listed_shares INTEGER, per REAL, pbr REAL, eps REAL, bps REAL,
+ roe REAL, debt_ratio REAL, reserve_ratio REAL, operating_margin REAL, net_margin REAL,
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+ UNIQUE(stock_id, snapshot_date, source_method), FOREIGN KEY(stock_id) REFERENCES stocks(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_stock_financial_snapshots_stock_date ON stock_financial_snapshots(stock_id, snapshot_date);
+CREATE TABLE IF NOT EXISTS stock_financial_statements (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, stock_id INTEGER NOT NULL, stock_code TEXT NOT NULL,
+ statement_type TEXT NOT NULL, fiscal_year INTEGER NOT NULL, fiscal_quarter INTEGER NOT NULL DEFAULT 0,
+ period_label TEXT NOT NULL, period_end_date TEXT, source_type TEXT NOT NULL, source_method TEXT NOT NULL,
+ revenue INTEGER, operating_profit INTEGER, net_income INTEGER, total_assets INTEGER, total_liabilities INTEGER,
+ total_equity INTEGER, operating_cash_flow INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+ UNIQUE(stock_id, statement_type, fiscal_year, fiscal_quarter, source_method), FOREIGN KEY(stock_id) REFERENCES stocks(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_stock_financial_statements_stock_period ON stock_financial_statements(stock_id, statement_type, fiscal_year, fiscal_quarter);

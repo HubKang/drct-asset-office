@@ -528,6 +528,96 @@ function MaterialThemeList({ item }: { item: WatchlistEvaluationListItem }) {
   );
 }
 
+function FinancialPerformanceChart({ title, rows }: { title: string; rows: Array<{ period_label?: string | null; revenue?: number | null; operating_profit?: number | null; net_income?: number | null }> }) {
+  const maxValue = Math.max(1, ...rows.flatMap((row) => [row.revenue || 0, Math.abs(row.operating_profit || 0), Math.abs(row.net_income || 0)]));
+  return (
+    <div className="sije-financial-chart">
+      <h4>{title}</h4>
+      {rows.length === 0 ? <div className="sije-material-empty">수집된 실적 데이터가 없습니다.</div> : (
+        <div className="sije-financial-bars">
+          {rows.map((row, index) => (
+            <div className="sije-financial-period" key={`${row.period_label}-${index}`}>
+              <div className="sije-financial-bar-set">
+                {(["revenue", "operating_profit", "net_income"] as const).map((key) => <span key={key} className={`sije-financial-bar ${key}`} style={{ height: `${Math.max(2, Math.abs(row[key] || 0) / maxValue * 100)}%` }} title={`${key}: ${formatCompactNumber(row[key])}`} />)}
+              </div>
+              <span>{row.period_label || "-"}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="sije-financial-legend"><span>매출액</span><span>영업이익</span><span>당기순이익</span></div>
+    </div>
+  );
+}
+
+function FinancialPanel({ item, onHelp }: { item: WatchlistEvaluationListItem; onHelp: () => void }) {
+  const snapshot = item.financial_snapshot || {};
+  const shareholder = item.shareholder_snapshot || {};
+  const metrics: Array<[string, string, string]> = [
+    ["PER", snapshot.per == null ? "미수집" : `${snapshot.per}배`, ""],
+    ["PBR", snapshot.pbr == null ? "미수집" : `${snapshot.pbr}배`, ""],
+    ["EPS", snapshot.eps == null ? "미수집" : formatCompactNumber(Number(snapshot.eps), "원"), ""],
+    ["BPS", snapshot.bps == null ? "미수집" : formatCompactNumber(Number(snapshot.bps), "원"), ""],
+    ["ROE", snapshot.roe == null ? "미수집" : `${snapshot.roe}%`, ""],
+    ["부채비율", snapshot.debt_ratio == null ? "미수집" : `${snapshot.debt_ratio}%`, ""],
+  ];
+  return (
+    <section className="sije-tab-panel">
+      <EvaluationSummaryPanel title="재무 평가" score={item.financial_score} onHelp={onHelp} helpTitle="재무 점수 산정 기준" summary={item.financial_summary || "재무 평가 전입니다."} subSummary="실제 수집된 재무 데이터만 사용하며 매수·매도 추천이 아닌 관찰용 리스크 평가입니다." badges={[{ label: item.financial_grade || "미평가", tone: gradeTone(item.financial_grade) }, { label: marketStatusLabel(item.financial_status), tone: statusTone(item.financial_status) }, { label: item.financial_model_version || "FINANCIAL_V1", tone: "blue" }]} metaLines={[`최근 결산 기준: ${String(snapshot.snapshot_date || "-")}`, `미수집 항목: ${(item.missing_financial_data || []).length}개`]} />
+      <div className="sije-financial-metric-grid">{metrics.map(([label,value]) => <div key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>
+      <div className="sije-market-factor-grid">{(item.financial_factors || []).length ? (item.financial_factors || []).map((factor) => <MarketFactorCard key={factor.factor_code} factor={factor} />) : <EmptyState message="재무 평가 factor가 없습니다. 관심종목 화면에서 수집 후 평가를 실행해 주세요." />}</div>
+      <div className="sije-financial-chart-grid"><FinancialPerformanceChart title="연도별 실적" rows={item.financial_annual_statements || []} /><FinancialPerformanceChart title="분기별 실적" rows={item.financial_quarterly_statements || []} /></div>
+      <div className="sije-chart-metrics"><h4>주주·지분 요약</h4><div className="sije-chart-metric-grid"><div><span>최대주주명</span><strong>미수집</strong></div><div><span>최대주주 지분율</span><strong>미수집</strong></div><div><span>외국인 보유율</span><strong>{shareholder.foreign_holding_ratio == null ? "미수집" : `${shareholder.foreign_holding_ratio}%`}</strong></div><div><span>기준일</span><strong>{String(shareholder.snapshot_date || "-")}</strong></div></div></div>
+    </section>
+  );
+}
+
+function ChartPanel({ item, onHelp }: { item: WatchlistEvaluationListItem; onHelp: () => void }) {
+  const factors = item.chart_factors || [];
+  const metrics = item.chart_metrics || {};
+  const metricItems = [
+    ["기준일", metrics.trade_date || "-"],
+    ["종가", formatCompactNumber(metrics.close_price)],
+    ["MA5", formatCompactNumber(metrics.ma5)],
+    ["MA10", formatCompactNumber(metrics.ma10)],
+    ["MA20", formatCompactNumber(metrics.ma20)],
+    ["MA60", formatCompactNumber(metrics.ma60)],
+    ["MA120", formatCompactNumber(metrics.ma120)],
+    ["20일선 이격률", formatPreciseScore(metrics.close_vs_ma20_pct, "%")],
+    ["60일선 이격률", formatPreciseScore(metrics.close_vs_ma60_pct, "%")],
+    ["60일선 5일 기울기", formatPreciseScore(metrics.ma60_slope_5d, "%")],
+    ["최근 5일 상승률", formatPreciseScore(metrics.recent_5d_return, "%")],
+    ["거래대금 20일 평균 대비", metrics.trading_value_ratio_20 == null ? "미수집" : `${metrics.trading_value_ratio_20.toFixed(2)}배`],
+  ];
+  return (
+    <section className="sije-tab-panel">
+      <EvaluationSummaryPanel
+        title="차트 평가"
+        score={item.chart_score}
+        onHelp={onHelp}
+        helpTitle="차트 점수 산정 기준"
+        summary={item.chart_summary || "차트 평가 전입니다."}
+        subSummary="20일선 눌림, 60일선 추세, 과열 이격, 최근 상승률과 거래대금 동반 여부를 관찰용으로 평가합니다."
+        badges={[
+          { label: item.chart_grade || "미평가", tone: gradeTone(item.chart_grade) },
+          { label: marketStatusLabel(item.chart_status), tone: statusTone(item.chart_status) },
+          { label: item.chart_model_version || "CHART_V1", tone: "blue" },
+        ]}
+        metaLines={[`평가 기준일: ${metrics.trade_date || item.last_evaluated_at?.slice(0, 10) || "-"}`, `미수집 항목: ${(item.missing_chart_data || []).length.toLocaleString("ko-KR")}개`]}
+      />
+      <div className="sije-market-factor-grid sije-chart-factor-grid">
+        {factors.length ? factors.map((factor) => <MarketFactorCard key={`${factor.factor_code}-${factor.id || factor.factor_name}`} factor={factor} />) : <EmptyState message="차트 평가 factor가 없습니다. 평가를 먼저 실행해 주세요." />}
+      </div>
+      <div className="sije-chart-metrics">
+        <h4>핵심 차트 지표</h4>
+        <div className="sije-chart-metric-grid">
+          {metricItems.map(([label, value]) => <div key={label}><span>{label}</span><strong>{value}</strong></div>)}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function MaterialPanel({ item, onHelp }: { item: WatchlistEvaluationListItem; onHelp: () => void }) {
   const factors = item.material_factors || [];
   const newsItems = (item.material_recent_news || []).map((row) => ({
@@ -846,6 +936,18 @@ function WatchlistSijeSuchaJaePage() {
       });
       return;
     }
+    if (title === "재무" && selected) {
+      setReasonModal({ title: "재무 점수 산정 기준", missing: selected.missing_financial_data || [], body: "재무 점수는 실제 수집된 데이터로 계산합니다.\n\n1. 성장성 25점\n2. 수익성 20점\n3. 안정성 20점\n4. 밸류에이션 부담 20점\n5. 주주·지분 안정성 15점\n\n데이터가 없는 항목은 0점이 아니라 평가에서 제외합니다. 업종 평균 비교는 1차 MVP에 반영하지 않으며 매수·매도 추천이 아닙니다." });
+      return;
+    }
+    if (title === "차트" && selected) {
+      setReasonModal({
+        title: "차트 점수 산정 기준",
+        missing: selected.missing_chart_data || [],
+        body: "차트 점수는 실제 일봉 가격과 거래대금으로 계산한 관찰용 평가입니다.\n\n반영 영역:\n1. 60일선 추세와 위치: 25점\n2. 20일선 눌림/근접도: 25점\n3. 과열 이격 위험: 20점\n4. 최근 5일 상승률 위험: 15점\n5. 거래대금 동반 여부: 15점\n\n데이터가 없는 항목은 0점이 아니라 평가에서 제외합니다. 이 평가는 매수·매도 추천이 아닙니다.",
+      });
+      return;
+    }
     setReasonModal({
       title: `${title} 점수 근거`,
       body: "이번 단계에서는 시장·수급 탭을 실제 산식과 연결했습니다. 재료·차트·재무 점수는 다음 단계까지 미평가 상태로 유지합니다.",
@@ -941,7 +1043,9 @@ function WatchlistSijeSuchaJaePage() {
 
               {tab === "material" ? <MaterialPanel item={selected} onHelp={() => openReason("재료")} /> : null}
 
-              {["chart", "financial"].includes(tab) ? <GenericEvaluationPanel item={selected} tab={tab as "chart" | "financial"} onHelp={() => openReason(TABS.find((item) => item.key === tab)?.label || "")} /> : null}
+              {tab === "chart" ? <ChartPanel item={selected} onHelp={() => openReason("차트")} /> : null}
+
+              {tab === "financial" ? <FinancialPanel item={selected} onHelp={() => openReason("재무")} /> : null}
 
 
               {tab === "gpt" ? (

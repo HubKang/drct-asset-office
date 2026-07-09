@@ -49,6 +49,39 @@ export type WatchlistEvaluationFactor = {
   created_at?: string;
 };
 
+export type ChartMetrics = {
+  trade_date?: string | null;
+  close_price?: number | null;
+  ma5?: number | null;
+  ma10?: number | null;
+  ma20?: number | null;
+  ma60?: number | null;
+  ma120?: number | null;
+  close_vs_ma20_pct?: number | null;
+  close_vs_ma60_pct?: number | null;
+  ma60_slope_5d?: number | null;
+  recent_5d_return?: number | null;
+  trading_value_ratio_20?: number | null;
+};
+
+export type FinancialStatementItem = {
+  period_label?: string | null;
+  period_end_date?: string | null;
+  revenue?: number | null;
+  operating_profit?: number | null;
+  net_income?: number | null;
+};
+
+export type FinancialSnapshot = Record<string, string | number | null | undefined>;
+export type FinancialCollectResponse = {
+  status: string;
+  target_count: number;
+  success_count: number;
+  partial_count: number;
+  failed_count: number;
+  skipped_count: number;
+};
+
 export type WatchlistEvaluationListItem = {
   watchlist_id: number;
   stock_id: number;
@@ -89,7 +122,24 @@ export type WatchlistEvaluationListItem = {
   supply_model_version?: string | null;
   investor_flow_summary?: Record<string, unknown>;
   chart_score: number | null;
+  chart_status?: EvaluationStatus | string | null;
+  chart_grade?: string | null;
+  chart_summary?: string | null;
+  chart_factors?: WatchlistEvaluationFactor[];
+  missing_chart_data?: string[];
+  chart_model_version?: string | null;
+  chart_metrics?: ChartMetrics;
   financial_score: number | null;
+  financial_status?: EvaluationStatus | string | null;
+  financial_grade?: string | null;
+  financial_summary?: string | null;
+  financial_factors?: WatchlistEvaluationFactor[];
+  missing_financial_data?: string[];
+  financial_model_version?: string | null;
+  financial_snapshot?: FinancialSnapshot;
+  financial_annual_statements?: FinancialStatementItem[];
+  financial_quarterly_statements?: FinancialStatementItem[];
+  shareholder_snapshot?: FinancialSnapshot;
   total_score: number | null;
   data_confidence: DataConfidence | string;
   last_evaluated_at: string | null;
@@ -149,7 +199,24 @@ export type WatchlistEvaluationHistoryItem = {
   supply_model_version?: string | null;
   investor_flow_summary?: Record<string, unknown>;
   chart_score?: number | null;
+  chart_status?: string | null;
+  chart_grade?: string | null;
+  chart_summary?: string | null;
+  chart_factors?: WatchlistEvaluationFactor[];
+  missing_chart_data?: string[];
+  chart_model_version?: string | null;
+  chart_metrics?: ChartMetrics;
   financial_score?: number | null;
+  financial_status?: string | null;
+  financial_grade?: string | null;
+  financial_summary?: string | null;
+  financial_factors?: WatchlistEvaluationFactor[];
+  missing_financial_data?: string[];
+  financial_model_version?: string | null;
+  financial_snapshot?: FinancialSnapshot;
+  financial_annual_statements?: FinancialStatementItem[];
+  financial_quarterly_statements?: FinancialStatementItem[];
+  shareholder_snapshot?: FinancialSnapshot;
   total_score: number | null;
   overall_status: string | null;
   data_confidence: string;

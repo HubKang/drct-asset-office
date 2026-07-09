@@ -147,6 +147,9 @@ export const watchlistEvaluationMockRepository = {
   async collectInvestorFlows(_payload: InvestorFlowCollectRequest): Promise<InvestorFlowCollectResponse> {
     return { status: "SUCCESS", requested_count: 1, success_count: 1, failed_count: 0, saved_count: 7, items: [] };
   },
+  async collectFinancials(stockIds: number[]) {
+    return { status: "SUCCESS", target_count: stockIds.length, success_count: 0, partial_count: 0, failed_count: 0, skipped_count: stockIds.length };
+  },
   async createGptPrompt(watchlistId: number): Promise<WatchlistGptPromptResponse> {
     const row = rows.find((item) => item.id === watchlistId);
     return {

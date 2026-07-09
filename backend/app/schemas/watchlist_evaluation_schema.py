@@ -91,7 +91,24 @@ class WatchlistEvaluationListItem(BaseModel):
     supply_model_version: str | None = None
     investor_flow_summary: dict[str, object] = {}
     chart_score: float | None = None
+    chart_status: str | None = None
+    chart_grade: str | None = None
+    chart_summary: str | None = None
+    chart_factors: list[WatchlistEvaluationFactorResponse] = []
+    missing_chart_data: list[str] = []
+    chart_model_version: str | None = None
+    chart_metrics: dict[str, object] = {}
     financial_score: float | None = None
+    financial_status: str | None = None
+    financial_grade: str | None = None
+    financial_summary: str | None = None
+    financial_factors: list[WatchlistEvaluationFactorResponse] = []
+    missing_financial_data: list[str] = []
+    financial_model_version: str | None = None
+    financial_snapshot: dict[str, object] = {}
+    financial_annual_statements: list[dict[str, object]] = []
+    financial_quarterly_statements: list[dict[str, object]] = []
+    shareholder_snapshot: dict[str, object] = {}
     total_score: float | None = None
     data_confidence: str
     last_evaluated_at: str | None = None
@@ -168,12 +185,25 @@ class WatchlistEvaluationScoreResponse(BaseModel):
     supply_model_version: str | None = None
     investor_flow_summary: dict[str, object] = {}
     chart_score: float | None
+    chart_grade: str | None = None
+    chart_summary: str | None = None
+    chart_factors: list[WatchlistEvaluationFactorResponse] = []
+    missing_chart_data: list[str] = []
+    chart_model_version: str | None = None
+    chart_metrics: dict[str, object] = {}
     financial_score: float | None
+    financial_status: str | None = None
+    financial_grade: str | None = None
+    financial_summary: str | None = None
+    financial_factors: list[WatchlistEvaluationFactorResponse] = []
+    missing_financial_data: list[str] = []
+    financial_model_version: str | None = None
+    financial_snapshot: dict[str, object] = {}
+    financial_annual_statements: list[dict[str, object]] = []
+    financial_quarterly_statements: list[dict[str, object]] = []
+    shareholder_snapshot: dict[str, object] = {}
     total_score: float | None
-    material_status: str | None
-    supply_status: str | None
     chart_status: str | None
-    financial_status: str | None
     overall_status: str | None
     data_confidence: str
     risk_flags: list[str]
@@ -216,7 +246,24 @@ class WatchlistEvaluationHistoryItem(BaseModel):
     supply_model_version: str | None = None
     investor_flow_summary: dict[str, object] = {}
     chart_score: float | None = None
+    chart_status: str | None = None
+    chart_grade: str | None = None
+    chart_summary: str | None = None
+    chart_factors: list[WatchlistEvaluationFactorResponse] = []
+    missing_chart_data: list[str] = []
+    chart_model_version: str | None = None
+    chart_metrics: dict[str, object] = {}
     financial_score: float | None = None
+    financial_status: str | None = None
+    financial_grade: str | None = None
+    financial_summary: str | None = None
+    financial_factors: list[WatchlistEvaluationFactorResponse] = []
+    missing_financial_data: list[str] = []
+    financial_model_version: str | None = None
+    financial_snapshot: dict[str, object] = {}
+    financial_annual_statements: list[dict[str, object]] = []
+    financial_quarterly_statements: list[dict[str, object]] = []
+    shareholder_snapshot: dict[str, object] = {}
     total_score: float | None
     overall_status: str | None
     data_confidence: str

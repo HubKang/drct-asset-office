@@ -177,7 +177,7 @@ class WatchlistEvaluationRepository:
         rows = self.db.execute(
             text(
                 """
-                SELECT stock_id, trade_date, close_price, change_rate, volume, trading_value
+                SELECT stock_id, trade_date, open_price, high_price, low_price, close_price, change_rate, volume, trading_value
                 FROM stock_daily_prices
                 WHERE stock_id = :stock_id
                   AND close_price IS NOT NULL

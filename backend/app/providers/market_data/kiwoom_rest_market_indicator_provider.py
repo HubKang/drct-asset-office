@@ -205,6 +205,17 @@ class KiwoomRestMarketIndicatorProvider:
             "trading_volume": self._get_first_int(row, ("trde_qty",)),
             "trading_value": self._to_krw_from_million_unit(self._get_first_int(row, ("trde_prica", "acml_tr_pbmn", "trading_value"))),
             "foreign_exhaustion_rate": self._get_first_str(row, ("for_exh_rt",)),
+            "per": self._get_first_float(row, ("per",)),
+            "pbr": self._get_first_float(row, ("pbr",)),
+            "eps": self._get_first_float(row, ("eps",)),
+            "bps": self._get_first_float(row, ("bps",)),
+            "roe": self._get_first_float(row, ("roe",)),
+            "debt_ratio": self._get_first_float(row, ("debt_rt", "debt_ratio")),
+            "reserve_ratio": self._get_first_float(row, ("rsrv_rt", "reserve_ratio")),
+            "revenue": self._get_first_int(row, ("sale_amt", "revenue")),
+            "operating_profit": self._get_first_int(row, ("bus_pro", "operating_profit")),
+            "net_income": self._get_first_int(row, ("cup_nga", "net_income")),
+            "financial_year": self._get_first_str(row, ("fiscal_year", "stlm_yy", "financial_year")),
         }
 
     def get_stock_daily_trade_detail(self, *, stock_code: str, base_dt: str | None = None) -> dict[str, Any]:

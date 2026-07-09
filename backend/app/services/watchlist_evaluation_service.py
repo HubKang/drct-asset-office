@@ -12,6 +12,7 @@ from backend.app.entities.watchlist import Watchlist
 from backend.app.entities.watchlist_evaluation import WatchlistEvaluationFactor, WatchlistEvaluationRun, WatchlistEvaluationScore
 from backend.app.repositories.stock_repository import StockRepository
 from backend.app.repositories.stock_investor_flow_repository import StockInvestorFlowRepository
+from backend.app.repositories.stock_financial_repository import StockFinancialRepository
 from backend.app.repositories.watchlist_evaluation_repository import WatchlistEvaluationRepository
 from backend.app.repositories.watchlist_repository import WatchlistRepository
 from backend.app.schemas.watchlist_evaluation_schema import (
@@ -31,6 +32,24 @@ from backend.app.schemas.watchlist_evaluation_schema import (
 )
 
 
+
+FINANCIAL_MODEL_VERSION = "FINANCIAL_V1"
+FINANCIAL_FACTOR_META = {
+    "FINANCIAL_GROWTH": ("성장성", 25.0),
+    "FINANCIAL_PROFITABILITY": ("수익성", 20.0),
+    "FINANCIAL_STABILITY": ("안정성", 20.0),
+    "FINANCIAL_VALUATION": ("밸류에이션 부담", 20.0),
+    "FINANCIAL_SHAREHOLDER_STABILITY": ("주주·지분 안정성", 15.0),
+}
+
+CHART_MODEL_VERSION = "CHART_V1"
+CHART_FACTOR_META = {
+    "CHART_MA60_TREND": ("60일선 추세", 25.0),
+    "CHART_MA20_PULLBACK": ("20일선 눌림/근접도", 25.0),
+    "CHART_OVERHEAT_DISTANCE": ("과열 이격 위험", 20.0),
+    "CHART_RECENT_5D_RISK": ("최근 5일 상승률 위험", 15.0),
+    "CHART_TRADING_VALUE_SUPPORT": ("거래대금 동반 여부", 15.0),
+}
 
 MATERIAL_FACTOR_META = {
     "MATERIAL_NEWS_STRENGTH": ("뉴스 재료 강도", 30.0),
@@ -148,6 +167,75 @@ def _simple_ma(rows: list[dict[str, Any]], window: int) -> float | None:
     if any(value is None for value in values):
         return None
     return sum(value for value in values if value is not None) / window
+
+
+def _financial_grade(score: float | None) -> str:
+    if score is None: return "미평가"
+    if score >= 80: return "재무 우호"
+    if score >= 65: return "재무 양호"
+    if score >= 50: return "재무 보통"
+    if score >= 35: return "재무 경계"
+    return "재무 부담"
+
+
+def _financial_status(count: int) -> str:
+    return "EVALUATED" if count >= 4 else "PARTIAL" if count >= 2 else "DATA_MISSING"
+
+
+def _financial_confidence(count: int) -> str:
+    return "ENOUGH" if count >= 4 else "PARTIAL" if count >= 2 else "LIMITED"
+
+def _chart_grade(score: float | None) -> str:
+    if score is None:
+        return "미평가"
+    if score >= 80:
+        return "차트 양호"
+    if score >= 65:
+        return "차트 적정"
+    if score >= 50:
+        return "차트 보통"
+    if score >= 35:
+        return "차트 경계"
+    return "차트 부담"
+
+
+def _chart_status_by_available_count(count: int) -> str:
+    if count >= 4:
+        return "EVALUATED"
+    if count >= 2:
+        return "PARTIAL"
+    return "DATA_MISSING"
+
+
+def _chart_confidence_by_available_count(count: int) -> str:
+    if count >= 4:
+        return "ENOUGH"
+    if count >= 2:
+        return "PARTIAL"
+    return "LIMITED"
+
+
+def _chart_summary(score: float | None, status_value: str, metrics: dict[str, Any], missing: list[str]) -> str:
+    if score is None:
+        return "가격 또는 이동평균 데이터가 부족해 차트 평가를 표시할 수 없습니다."
+    ma20_distance = _as_float(metrics.get("close_vs_ma20_pct"))
+    ma60_slope = _as_float(metrics.get("ma60_slope_5d"))
+    recent_return = _as_float(metrics.get("recent_5d_return"))
+    parts: list[str] = []
+    parts.append("60일선 추세가 상승 중입니다" if ma60_slope is not None and ma60_slope > 0 else "60일선 추세의 힘이 약합니다")
+    if ma20_distance is not None:
+        if -3 <= ma20_distance <= 5:
+            parts.append("현재가는 20일선 근처의 눌림 관찰 구간입니다")
+        elif ma20_distance >= 12:
+            parts.append("20일선 이격이 커 추격 판단에 주의가 필요합니다")
+        elif ma20_distance < -8:
+            parts.append("20일선 아래로 이탈해 추세 훼손 여부를 확인해야 합니다")
+    if recent_return is not None and recent_return >= 15:
+        parts.append("최근 5일 급등 부담이 있습니다")
+    summary = ". ".join(parts) + "."
+    if status_value == "PARTIAL" and missing:
+        summary += f" 다만 {', '.join(missing)} 데이터가 없어 일부 판단은 제한됩니다."
+    return summary
 
 
 def _score_grade(score: float | None) -> str:
@@ -326,6 +414,7 @@ class WatchlistEvaluationService:
         self.watchlist_repo = WatchlistRepository(db)
         self.stock_repo = StockRepository(db)
         self.investor_flow_repo = StockInvestorFlowRepository(db)
+        self.financial_repo = StockFinancialRepository(db)
 
     def list_sije_sucha_jae(self) -> WatchlistEvaluationListResponse:
         rows = self.repo.list_watchlist_with_latest_scores()
@@ -338,9 +427,14 @@ class WatchlistEvaluationService:
             market_factors = self._factor_responses(all_latest_factors, category="MARKET")
             material_factors = self._factor_responses(all_latest_factors, category="MATERIAL")
             supply_factors = self._factor_responses(all_latest_factors, category="SUPPLY")
+            chart_factors = self._factor_responses(all_latest_factors, category="CHART")
+            financial_factors = self._factor_responses(all_latest_factors, category="FINANCIAL")
             missing_market_data = self._missing_market_data_from_factors(market_factors)
             missing_material_data = self._missing_material_data_from_factors(material_factors)
             missing_supply_data = self._missing_supply_data_from_factors(supply_factors)
+            missing_chart_data = self._missing_chart_data_from_factors(chart_factors)
+            chart_context = self._evaluate_chart_for_watchlist_stock(stock.id)
+            financial_context = self._evaluate_financial_for_watchlist_stock(stock.id)
             material_context = self._evaluate_material_for_watchlist_stock(stock.id, (score.evaluated_at[:10] if score and score.evaluated_at else now_kst()[:10]))
             representative_theme_name, representative_theme_return_30d = self._representative_theme_from_factors(supply_factors)
             investor_flow_summary = self._investor_flow_summary(stock.id)
@@ -389,7 +483,24 @@ class WatchlistEvaluationService:
                     supply_model_version=supply_model_version,
                     investor_flow_summary=investor_flow_summary,
                     chart_score=score.chart_score if score else None,
+                    chart_status=score.chart_status if score else "NOT_EVALUATED",
+                    chart_grade=_chart_grade(score.chart_score if score else None),
+                    chart_summary=chart_context["summary"] if score else "차트 평가 전입니다.",
+                    chart_factors=chart_factors,
+                    missing_chart_data=missing_chart_data,
+                    chart_model_version=CHART_MODEL_VERSION,
+                    chart_metrics=chart_context["metrics"],
                     financial_score=score.financial_score if score else None,
+                    financial_status=score.financial_status if score else "NOT_EVALUATED",
+                    financial_grade=_financial_grade(score.financial_score if score else None),
+                    financial_summary=financial_context["summary"] if score else "재무 평가 전입니다.",
+                    financial_factors=financial_factors,
+                    missing_financial_data=[x.factor_name for x in financial_factors if x.contribution_score is None],
+                    financial_model_version=FINANCIAL_MODEL_VERSION,
+                    financial_snapshot=financial_context["snapshot"],
+                    financial_annual_statements=financial_context["annual"],
+                    financial_quarterly_statements=financial_context["quarterly"],
+                    shareholder_snapshot=financial_context["shareholder"],
                     total_score=score.total_score if score else None,
                     data_confidence=score.data_confidence if score else "NOT_EVALUATED",
                     last_evaluated_at=score.evaluated_at if score else None,
@@ -440,13 +551,21 @@ class WatchlistEvaluationService:
             market_result = self._evaluate_market_for_watchlist_stock(stock.market if stock else None)
             material_result = self._evaluate_material_for_watchlist_stock(item.stock_id, now[:10])
             supply_result = self._evaluate_supply_for_watchlist_stock(item.stock_id)
-            missing_data = ["financial"] + [f"market:{code}" for code in market_result["missing_codes"]]
+            chart_result = self._evaluate_chart_for_watchlist_stock(item.stock_id)
+            financial_result = self._evaluate_financial_for_watchlist_stock(item.stock_id)
+            missing_data = [f"market:{code}" for code in market_result["missing_codes"]]
             missing_data += [f"material:{code}" for code in material_result["missing_codes"]]
             missing_data += [f"supply:{code}" for code in supply_result["missing_codes"]]
+            missing_data += [f"chart:{code}" for code in chart_result["missing_codes"]]
+            missing_data += [f"financial:{code}" for code in financial_result["missing_codes"]]
             if material_result["status"] == "DATA_MISSING":
                 missing_data.append("material")
             if supply_result["status"] == "DATA_MISSING":
                 missing_data.append("supply")
+            if chart_result["status"] == "DATA_MISSING":
+                missing_data.append("chart")
+            if financial_result["status"] == "DATA_MISSING":
+                missing_data.append("financial")
             missing_data = list(dict.fromkeys(missing_data))
             score = self.repo.create_score(
                 WatchlistEvaluationScore(
@@ -457,16 +576,16 @@ class WatchlistEvaluationService:
                     market_score=market_result["score"],
                     material_score=material_result["score"],
                     supply_score=supply_result["score"],
-                    chart_score=None,
-                    financial_score=None,
+                    chart_score=chart_result["score"],
+                    financial_score=financial_result["score"],
                     total_score=None,
                     market_status=market_result["status"],
                     material_status=material_result["status"],
                     supply_status=supply_result["status"],
-                    chart_status="NOT_EVALUATED",
-                    financial_status="NOT_EVALUATED",
+                    chart_status=chart_result["status"],
+                    financial_status=financial_result["status"],
                     overall_status="미평가",
-                    data_confidence=_combine_confidence(market_result["confidence"], material_result["confidence"], supply_result["confidence"]),
+                    data_confidence=_combine_confidence(market_result["confidence"], material_result["confidence"], supply_result["confidence"], chart_result["confidence"], financial_result["confidence"]),
                     risk_flags_json="[]",
                     missing_data_json=json.dumps(missing_data, ensure_ascii=False),
                     summary_text=market_result["summary"],
@@ -474,7 +593,7 @@ class WatchlistEvaluationService:
                     updated_at=now,
                 )
             )
-            for factor in [*market_result["factors"], *material_result["factors"], *supply_result["factors"]]:
+            for factor in [*market_result["factors"], *material_result["factors"], *supply_result["factors"], *chart_result["factors"], *financial_result["factors"]]:
                 self.repo.create_factor(
                     WatchlistEvaluationFactor(
                         score_id=score.id,
@@ -1051,6 +1170,128 @@ class WatchlistEvaluationService:
             )
         return items
 
+    def _evaluate_financial_for_watchlist_stock(self, stock_id: int) -> dict[str, Any]:
+        snapshot=self.financial_repo.latest_snapshot(stock_id) or {}
+        annual=self.financial_repo.list_statements(stock_id, "ANNUAL", 5)
+        quarterly=self.financial_repo.list_statements(stock_id, "QUARTERLY", 8)
+        shareholder=self.financial_repo.latest_foreign_holding(stock_id) or {}
+        factors=[self._financial_growth_factor(annual, quarterly), self._financial_profitability_factor(snapshot, annual), self._financial_stability_factor(snapshot, annual), self._financial_valuation_factor(snapshot), self._financial_shareholder_factor(shareholder)]
+        available=[x for x in factors if x.get("contribution_score") is not None]
+        weight=sum(float(x["weight"]) for x in available); contribution=sum(float(x["contribution_score"]) for x in available)
+        score=round(contribution/weight*100,2) if weight and len(available) >= 2 else None
+        missing=[x["factor_code"] for x in factors if x.get("contribution_score") is None]
+        status_value=_financial_status(len(available))
+        summary="재무 데이터가 부족해 평가를 표시할 수 없습니다." if score is None else f"{_financial_grade(score)} 수준입니다. 실제 수집된 재무지표 {len(available)}개 영역을 기준으로 평가했으며 업종 평균 비교는 반영하지 않았습니다."
+        return {"score":score,"status":status_value,"confidence":_financial_confidence(len(available)),"grade":_financial_grade(score),"summary":summary,"missing_codes":missing,"factors":factors,"snapshot":snapshot,"annual":annual,"quarterly":quarterly,"shareholder":shareholder,"model_version":FINANCIAL_MODEL_VERSION}
+
+    def _financial_factor(self, code: str, score: float | None, raw: str | None, reason: str, source_table: str | None, source_date: str | None) -> dict[str, Any]:
+        name,weight=FINANCIAL_FACTOR_META[code]; normalized=None if score is None else max(0.0,min(weight,round(score,2)))
+        return {"category":"FINANCIAL","factor_code":code,"factor_name":name,"raw_value":raw,"normalized_score":normalized,"weight":weight,"contribution_score":normalized,"reason":reason,"source_table":source_table,"source_date":source_date}
+
+    def _financial_growth_factor(self, annual: list[dict[str, Any]], quarterly: list[dict[str, Any]]) -> dict[str, Any]:
+        rows=annual if len(annual)>=2 else quarterly
+        valid=[x for x in rows if _as_float(x.get("revenue")) is not None and _as_float(x.get("operating_profit")) is not None]
+        if len(valid)<2: return self._financial_factor("FINANCIAL_GROWTH",None,None,"비교 가능한 연도별 또는 분기별 실적이 2개 미만입니다.",None,None)
+        first,last=valid[0],valid[-1]; rev_up=float(last["revenue"])>float(first["revenue"]); op_up=float(last["operating_profit"])>float(first["operating_profit"])
+        score=25 if rev_up and op_up else 18 if rev_up else 15 if op_up else 6
+        return self._financial_factor("FINANCIAL_GROWTH",score,f"매출 {'증가' if rev_up else '감소'}, 영업이익 {'증가' if op_up else '감소'}","수집된 기간의 시작값과 최신값 추세를 비교했습니다.","stock_financial_statements",last.get("period_end_date"))
+
+    def _financial_profitability_factor(self, snapshot: dict[str, Any], annual: list[dict[str, Any]]) -> dict[str, Any]:
+        roe=_as_float(snapshot.get("roe")); latest=annual[-1] if annual else {}; op=_as_float(latest.get("operating_profit")); net=_as_float(latest.get("net_income"))
+        if roe is None and op is None and net is None: return self._financial_factor("FINANCIAL_PROFITABILITY",None,None,"ROE와 최근 이익 데이터가 없습니다.",None,None)
+        if (roe is not None and roe < 0) or (op is not None and op<0) or (net is not None and net<0): score=4
+        elif roe is not None and roe>=10 and (net is None or net>0): score=20
+        elif net is None or net>=0: score=14
+        else: score=10
+        return self._financial_factor("FINANCIAL_PROFITABILITY",score,f"ROE {roe if roe is not None else '-'}%, 영업이익 {op if op is not None else '-'}, 순이익 {net if net is not None else '-'}","ROE와 최신 손익의 흑자 여부를 평가했습니다.","stock_financial_snapshots",snapshot.get("snapshot_date"))
+
+    def _financial_stability_factor(self, snapshot: dict[str, Any], annual: list[dict[str, Any]]) -> dict[str, Any]:
+        debt=_as_float(snapshot.get("debt_ratio")); latest=annual[-1] if annual else {}; equity=_as_float(latest.get("total_equity")); cash=_as_float(latest.get("operating_cash_flow"))
+        if debt is None and equity is None and cash is None: return self._financial_factor("FINANCIAL_STABILITY",None,None,"부채비율·자본·영업현금흐름 데이터가 없습니다.",None,None)
+        score=2 if equity is not None and equity<0 else 20 if debt is not None and debt<80 and (cash is None or cash>=0) else 14 if debt is not None and debt<150 else 8
+        return self._financial_factor("FINANCIAL_STABILITY",score,f"부채비율 {debt if debt is not None else '-'}%","부채비율과 제공된 자본·현금흐름 신호를 평가했습니다.","stock_financial_snapshots",snapshot.get("snapshot_date"))
+
+    def _financial_valuation_factor(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        per,pbr,eps,bps=(_as_float(snapshot.get(k)) for k in ("per","pbr","eps","bps"))
+        if per is None and pbr is None: return self._financial_factor("FINANCIAL_VALUATION",None,None,"PER/PBR 데이터가 없습니다.",None,None)
+        score=4 if (eps is not None and eps<0) or (per is not None and per<0) else 20 if (per is None or per<=12) and (pbr is None or pbr<=1.2) else 14 if (per is None or per<=20) and (pbr is None or pbr<=2) else 8
+        return self._financial_factor("FINANCIAL_VALUATION",score,f"PER {per if per is not None else '-'}배, PBR {pbr if pbr is not None else '-'}배, EPS {eps if eps is not None else '-'}, BPS {bps if bps is not None else '-'}","업종 평균 비교 없이 절대 PER/PBR 부담만 제한적으로 평가했습니다.","stock_financial_snapshots",snapshot.get("snapshot_date"))
+
+    def _financial_shareholder_factor(self, shareholder: dict[str, Any]) -> dict[str, Any]:
+        ratio=_as_float(shareholder.get("foreign_holding_ratio"))
+        if ratio is None: return self._financial_factor("FINANCIAL_SHAREHOLDER_STABILITY",None,None,"최대주주와 외국인 보유율 데이터가 없습니다.",None,None)
+        score=10 if ratio>=5 else 7 if ratio>=1 else 5
+        return self._financial_factor("FINANCIAL_SHAREHOLDER_STABILITY",score,f"외국인 보유율 {ratio:.2f}%","ka10008 최신 외국인 보유율만 반영했으며 최대주주 정보는 미수집입니다.","stock_investor_flows",shareholder.get("snapshot_date"))
+
+    def _evaluate_chart_for_watchlist_stock(self, stock_id: int) -> dict[str, Any]:
+        rows = self.repo.list_stock_daily_price_rows(stock_id, limit=130)
+        metrics = self._chart_metrics(rows)
+        factors = [self._chart_ma60_factor(metrics), self._chart_ma20_factor(metrics), self._chart_overheat_factor(metrics), self._chart_recent_5d_factor(metrics), self._chart_trading_value_factor(metrics)]
+        available = [factor for factor in factors if factor.get("contribution_score") is not None]
+        available_weight = sum(float(factor["weight"]) for factor in available)
+        contribution_sum = sum(float(factor["contribution_score"]) for factor in available)
+        score_value = round(contribution_sum / available_weight * 100, 2) if available_weight else None
+        missing_codes = [factor["factor_code"] for factor in factors if factor.get("contribution_score") is None]
+        missing_labels = [CHART_FACTOR_META[code][0] for code in missing_codes]
+        status_value = _chart_status_by_available_count(len(available))
+        return {"score": score_value, "status": status_value, "confidence": _chart_confidence_by_available_count(len(available)), "grade": _chart_grade(score_value), "summary": _chart_summary(score_value, status_value, metrics, missing_labels), "missing_codes": missing_codes, "factors": factors, "metrics": metrics, "model_version": CHART_MODEL_VERSION}
+
+    def _chart_metrics(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        if not rows:
+            return {}
+        latest = rows[-1]
+        close = _as_float(latest.get("close_price"))
+        mas = {window: _simple_ma(rows, window) for window in (5, 10, 20, 60, 120)}
+        ma60_5d_ago = _simple_ma(rows[:-5], 60) if len(rows) >= 65 else None
+        ma60_slope = ((mas[60] / ma60_5d_ago - 1) * 100) if mas[60] is not None and ma60_5d_ago not in (None, 0) else None
+        trading_values = [_as_float(row.get("trading_value")) for row in rows[-21:-1]]
+        valid_values = [value for value in trading_values if value is not None and value > 0]
+        current_value = _as_float(latest.get("trading_value"))
+        average_value = sum(valid_values) / len(valid_values) if valid_values else None
+        ratio = current_value / average_value if current_value is not None and average_value not in (None, 0) else None
+        return {"trade_date": _date_text(latest.get("trade_date")), "close_price": _round(close), "ma5": _round(mas[5]), "ma10": _round(mas[10]), "ma20": _round(mas[20]), "ma60": _round(mas[60]), "ma120": _round(mas[120]), "close_vs_ma20_pct": _round((close / mas[20] - 1) * 100 if close is not None and mas[20] not in (None, 0) else None), "close_vs_ma60_pct": _round((close / mas[60] - 1) * 100 if close is not None and mas[60] not in (None, 0) else None), "ma60_slope_5d": _round(ma60_slope), "recent_5d_return": _round(_recent_return(rows, 5)), "trading_value_ratio_20": _round(ratio)}
+
+    def _chart_factor(self, code: str, score: float | None, raw: str | None, reason: str, source_date: str | None) -> dict[str, Any]:
+        name, weight = CHART_FACTOR_META[code]
+        normalized = None if score is None else max(0.0, min(weight, round(score, 2)))
+        return {"category": "CHART", "factor_code": code, "factor_name": name, "raw_value": raw, "normalized_score": normalized, "weight": weight, "contribution_score": normalized, "reason": reason, "source_table": "stock_daily_prices" if score is not None else None, "source_date": source_date if score is not None else None}
+
+    def _chart_ma60_factor(self, m: dict[str, Any]) -> dict[str, Any]:
+        close, ma60, slope, distance = (_as_float(m.get(k)) for k in ("close_price", "ma60", "ma60_slope_5d", "close_vs_ma60_pct"))
+        if None in (close, ma60, slope, distance):
+            return self._chart_factor("CHART_MA60_TREND", None, None, "60일선 추세를 계산할 가격 데이터가 부족합니다.", None)
+        score = 25 if close >= ma60 and slope > 0 else 20 if close >= ma60 else 16 if abs(distance) <= 3 and slope > 0 else 10 if distance >= -3 else 4
+        raw = f"종가 {close:,.0f}, MA60 {ma60:,.1f}, 5일 기울기 {slope:+.2f}%, 이격 {distance:+.2f}%"
+        return self._chart_factor("CHART_MA60_TREND", score, raw, "현재가의 60일선 위치와 최근 5거래일 60일선 방향을 함께 평가했습니다.", m.get("trade_date"))
+
+    def _chart_ma20_factor(self, m: dict[str, Any]) -> dict[str, Any]:
+        distance = _as_float(m.get("close_vs_ma20_pct"))
+        if distance is None:
+            return self._chart_factor("CHART_MA20_PULLBACK", None, None, "20일선 이격을 계산할 가격 데이터가 부족합니다.", None)
+        score = 25 if -3 <= distance <= 5 else 20 if 5 < distance < 8 else 16 if -8 < distance < -3 else 10 if 8 <= distance < 12 else 4 if distance >= 12 else 6
+        return self._chart_factor("CHART_MA20_PULLBACK", score, f"20일선 이격 {distance:+.2f}%", "20일선과 현재가의 거리를 눌림·근접 관찰 기준으로 평가했습니다.", m.get("trade_date"))
+
+    def _chart_overheat_factor(self, m: dict[str, Any]) -> dict[str, Any]:
+        d20, d60 = _as_float(m.get("close_vs_ma20_pct")), _as_float(m.get("close_vs_ma60_pct"))
+        if d20 is None or d60 is None:
+            return self._chart_factor("CHART_OVERHEAT_DISTANCE", None, None, "20일선과 60일선 이격 데이터가 부족합니다.", None)
+        score = 3 if d20 >= 15 or d60 >= 35 else 8 if d20 >= 10 or d60 >= 25 else 15 if d20 >= 7 else 20
+        return self._chart_factor("CHART_OVERHEAT_DISTANCE", score, f"MA20 {d20:+.2f}%, MA60 {d60:+.2f}%", "이동평균선 대비 이격으로 단기·중기 과열 부담을 평가했습니다.", m.get("trade_date"))
+
+    def _chart_recent_5d_factor(self, m: dict[str, Any]) -> dict[str, Any]:
+        value = _as_float(m.get("recent_5d_return"))
+        if value is None:
+            return self._chart_factor("CHART_RECENT_5D_RISK", None, None, "최근 5거래일 수익률을 계산할 데이터가 부족합니다.", None)
+        score = 15 if -3 <= value <= 5 else 12 if 5 < value < 10 else 7 if 10 <= value < 15 else 2 if value >= 15 else 5 if value <= -10 else 10
+        return self._chart_factor("CHART_RECENT_5D_RISK", score, f"최근 5일 수익률 {value:+.2f}%", "최근 5거래일 급등·급락에 따른 추격 위험을 평가했습니다.", m.get("trade_date"))
+
+    def _chart_trading_value_factor(self, m: dict[str, Any]) -> dict[str, Any]:
+        ratio = _as_float(m.get("trading_value_ratio_20"))
+        if ratio is None:
+            return self._chart_factor("CHART_TRADING_VALUE_SUPPORT", None, None, "최근 거래대금 또는 20일 평균 거래대금이 부족합니다.", None)
+        score = 15 if ratio >= 1.5 else 12 if ratio >= 1.2 else 9 if ratio >= 1 else 5 if ratio >= .7 else 2
+        return self._chart_factor("CHART_TRADING_VALUE_SUPPORT", score, f"20일 평균 대비 {ratio:.2f}배", "현재 거래대금이 최근 20일 평균을 얼마나 동반하는지 평가했습니다.", m.get("trade_date"))
+
     def _evaluate_supply_for_watchlist_stock(self, stock_id: int) -> dict[str, Any]:
         price_rows = self.repo.list_stock_daily_price_rows(stock_id, limit=80)
         theme_metrics = self._representative_theme_metrics(stock_id)
@@ -1527,6 +1768,16 @@ class WatchlistEvaluationService:
     @staticmethod
     def _missing_supply_data_from_factors(factors: list[WatchlistEvaluationFactorResponse]) -> list[str]:
         return [factor.factor_name for factor in factors if factor.contribution_score is None]
+    @staticmethod
+    def _missing_chart_data_from_factors(factors: list[WatchlistEvaluationFactorResponse]) -> list[str]:
+        return [factor.factor_name for factor in factors if factor.contribution_score is None]
+
+    def _chart_summary_from_score(self, score: WatchlistEvaluationScore) -> str:
+        factors = self._factor_responses(self.repo.list_factors(score.id), category="CHART")
+        missing = self._missing_chart_data_from_factors(factors)
+        metrics = self._evaluate_chart_for_watchlist_stock(score.stock_id)["metrics"]
+        return _chart_summary(score.chart_score, score.chart_status or "NOT_EVALUATED", metrics, missing)
+
     def get_history(self, watchlist_id: int) -> list[WatchlistEvaluationHistoryItem]:
         if not self.watchlist_repo.get_by_id(watchlist_id):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="watchlist not found")
@@ -1555,7 +1806,24 @@ class WatchlistEvaluationService:
                 supply_status=score.supply_status,
                 supply_grade=_supply_grade(score.supply_score),
                 chart_score=score.chart_score,
+                chart_status=score.chart_status,
+                chart_grade=_chart_grade(score.chart_score),
+                chart_summary=self._chart_summary_from_score(score),
+                chart_factors=self._factor_responses(self.repo.list_factors(score.id), category="CHART"),
+                missing_chart_data=self._missing_chart_data_from_factors(self._factor_responses(self.repo.list_factors(score.id), category="CHART")),
+                chart_model_version=CHART_MODEL_VERSION,
+                chart_metrics=self._evaluate_chart_for_watchlist_stock(score.stock_id)["metrics"],
                 financial_score=score.financial_score,
+                financial_status=score.financial_status,
+                financial_grade=_financial_grade(score.financial_score),
+                financial_summary=self._evaluate_financial_for_watchlist_stock(score.stock_id)["summary"],
+                financial_factors=self._factor_responses(self.repo.list_factors(score.id), category="FINANCIAL"),
+                missing_financial_data=[x.factor_name for x in self._factor_responses(self.repo.list_factors(score.id), category="FINANCIAL") if x.contribution_score is None],
+                financial_model_version=FINANCIAL_MODEL_VERSION,
+                financial_snapshot=self._evaluate_financial_for_watchlist_stock(score.stock_id)["snapshot"],
+                financial_annual_statements=self._evaluate_financial_for_watchlist_stock(score.stock_id)["annual"],
+                financial_quarterly_statements=self._evaluate_financial_for_watchlist_stock(score.stock_id)["quarterly"],
+                shareholder_snapshot=self._evaluate_financial_for_watchlist_stock(score.stock_id)["shareholder"],
                 total_score=score.total_score,
                 overall_status=score.overall_status,
                 data_confidence=score.data_confidence,
@@ -1572,6 +1840,10 @@ class WatchlistEvaluationService:
         market_factors = [factor for factor in factors if factor.category == "MARKET"]
         material_factors = [factor for factor in factors if factor.category == "MATERIAL"]
         supply_factors = [factor for factor in factors if factor.category == "SUPPLY"]
+        chart_factors = [factor for factor in factors if factor.category == "CHART"]
+        chart_context = self._evaluate_chart_for_watchlist_stock(score.stock_id)
+        financial_factors = [factor for factor in factors if factor.category == "FINANCIAL"]
+        financial_context = self._evaluate_financial_for_watchlist_stock(score.stock_id)
         material_context = self._evaluate_material_for_watchlist_stock(score.stock_id, score.evaluated_at[:10])
         representative_theme_name, representative_theme_return_30d = self._representative_theme_from_factors(supply_factors)
         missing_supply_data = self._missing_supply_data_from_factors(supply_factors)
@@ -1614,7 +1886,22 @@ class WatchlistEvaluationService:
             supply_model_version=supply_model_version,
             investor_flow_summary=investor_flow_summary,
             chart_score=score.chart_score,
+            chart_grade=_chart_grade(score.chart_score),
+            chart_summary=self._chart_summary_from_score(score),
+            chart_factors=chart_factors,
+            missing_chart_data=self._missing_chart_data_from_factors(chart_factors),
+            chart_model_version=CHART_MODEL_VERSION,
+            chart_metrics=chart_context["metrics"],
             financial_score=score.financial_score,
+            financial_grade=_financial_grade(score.financial_score),
+            financial_summary=financial_context["summary"],
+            financial_factors=financial_factors,
+            missing_financial_data=[x.factor_name for x in financial_factors if x.contribution_score is None],
+            financial_model_version=FINANCIAL_MODEL_VERSION,
+            financial_snapshot=financial_context["snapshot"],
+            financial_annual_statements=financial_context["annual"],
+            financial_quarterly_statements=financial_context["quarterly"],
+            shareholder_snapshot=financial_context["shareholder"],
             total_score=score.total_score,
             supply_status=score.supply_status,
             chart_status=score.chart_status,
@@ -1666,10 +1953,16 @@ class WatchlistEvaluationService:
                 f"- 최근 뉴스: {material_context['material_news_count']}건",
                 f"- 최근 공시: {material_context['material_disclosure_count']}건",
                 f"- 연결 테마: {', '.join(material_context['material_theme_names']) if material_context['material_theme_names'] else '-'}",
+                f"- 차트 점수/등급: {latest_score.chart_score if latest_score else '미평가'} / {_chart_grade(latest_score.chart_score) if latest_score else '미평가'}",
+                f"- 차트 상태: {latest_score.chart_status if latest_score else '미평가'}",
+                f"- 차트 요약: {self._chart_summary_from_score(latest_score) if latest_score else '차트 평가 전입니다.'}",
+                f"- 재무 점수/등급: {latest_score.financial_score if latest_score else '미평가'} / {_financial_grade(latest_score.financial_score) if latest_score else '미평가'}",
+                f"- 재무 상태: {latest_score.financial_status if latest_score else '미평가'}",
+                f"- 재무 요약: {self._evaluate_financial_for_watchlist_stock(item.stock_id)['summary']}",
                 f"- 미수집/미반영 데이터: {', '.join(missing) if missing else '없음'}",
                 "",
                 "시장, 재료, 수급, 차트, 재무 관점에서 현재 사용할 수 있는 근거와 부족한 근거를 구분해 주세요.",
-                "매수/매도 추천은 하지 말고, 재료의 강도·지속성·리스크 여부와 추가 확인 항목만 정리해 주세요.",
+                "매수/매도 추천은 하지 말고, 20일선 눌림·60일선 추세·과열 이격·최근 5일 상승률·거래대금 동반 여부를 중심으로 설명해 주세요.",
             ]
         )
         return WatchlistGptPromptResponse(watchlist_id=watchlist_id, prompt=prompt)
