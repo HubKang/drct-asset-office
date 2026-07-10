@@ -501,6 +501,7 @@ class WatchlistEvaluationService:
                     financial_annual_statements=financial_context["annual"],
                     financial_quarterly_statements=financial_context["quarterly"],
                     shareholder_snapshot=financial_context["shareholder"],
+                    financial_data_sources=financial_context["data_sources"],
                     total_score=score.total_score if score else None,
                     data_confidence=score.data_confidence if score else "NOT_EVALUATED",
                     last_evaluated_at=score.evaluated_at if score else None,
@@ -1024,10 +1025,12 @@ class WatchlistEvaluationService:
         else:
             score = 12 if primary else 8
         theme_names = ", ".join(str(row.get("theme_name")) for row in theme_rows[:3] if row.get("theme_name"))
+        ret30_text = f"{ret30:.1f}" if ret30 is not None else "-"
+        ret5_text = f"{ret5:.1f}" if ret5 is not None else "-"
         return self._material_factor(
             "MATERIAL_THEME_ALIGNMENT",
             score=float(score),
-            raw=f"\uc5f0\uacb0 \ud14c\ub9c8: {theme_names or '-'}; \ub300\ud45c \ud14c\ub9c8 30\uc77c \uc218\uc775\ub960: {ret30 if ret30 is not None else '-'}%; 5\uc77c \uc218\uc775\ub960: {ret5 if ret5 is not None else '-'}%",
+            raw=f"\uc5f0\uacb0 \ud14c\ub9c8: {theme_names or '-'}; \ub300\ud45c \ud14c\ub9c8 30\uc77c \uc218\uc775\ub960: {ret30_text}%; 5\uc77c \uc218\uc775\ub960: {ret5_text}%",
             reason="\uc885\ubaa9\uc5d0 \uc5f0\uacb0\ub41c \ud65c\uc131 \ud14c\ub9c8\uc640 \ub300\ud45c \ud14c\ub9c8\uc758 \ucd5c\uadfc \ud750\ub984\uc744 \uc7ac\ub8cc \uc5f0\uacb0 \uadfc\uac70\ub85c \ubc18\uc601\ud588\uc2b5\ub2c8\ub2e4.",
             source_table="market_theme_stocks, stock_daily_prices",
             source_date=theme_metrics.get("source_date") if theme_metrics else None,
@@ -1171,30 +1174,107 @@ class WatchlistEvaluationService:
         return items
 
     def _evaluate_financial_for_watchlist_stock(self, stock_id: int) -> dict[str, Any]:
-        snapshot=self.financial_repo.latest_snapshot(stock_id) or {}
+        snapshot=dict(self.financial_repo.latest_snapshot(stock_id) or {})
         annual=self.financial_repo.list_statements(stock_id, "ANNUAL", 5)
         quarterly=self.financial_repo.list_statements(stock_id, "QUARTERLY", 8)
-        shareholder=self.financial_repo.latest_foreign_holding(stock_id) or {}
-        factors=[self._financial_growth_factor(annual, quarterly), self._financial_profitability_factor(snapshot, annual), self._financial_stability_factor(snapshot, annual), self._financial_valuation_factor(snapshot), self._financial_shareholder_factor(shareholder)]
+        self._enrich_financial_snapshot(snapshot, annual, quarterly)
+        foreign_holding=self.financial_repo.latest_foreign_holding(stock_id) or {}
+        shareholder_snapshot=self.financial_repo.latest_shareholder_snapshot(stock_id) or {}
+        shareholder={**foreign_holding, **shareholder_snapshot}
+        factors=[self._financial_growth_factor(annual, quarterly), self._financial_profitability_factor(snapshot, annual), self._financial_stability_factor(snapshot, annual, quarterly), self._financial_valuation_factor(snapshot), self._financial_shareholder_factor(shareholder)]
         available=[x for x in factors if x.get("contribution_score") is not None]
         weight=sum(float(x["weight"]) for x in available); contribution=sum(float(x["contribution_score"]) for x in available)
         score=round(contribution/weight*100,2) if weight and len(available) >= 2 else None
         missing=[x["factor_code"] for x in factors if x.get("contribution_score") is None]
         status_value=_financial_status(len(available))
         summary="재무 데이터가 부족해 평가를 표시할 수 없습니다." if score is None else f"{_financial_grade(score)} 수준입니다. 실제 수집된 재무지표 {len(available)}개 영역을 기준으로 평가했으며 업종 평균 비교는 반영하지 않았습니다."
-        return {"score":score,"status":status_value,"confidence":_financial_confidence(len(available)),"grade":_financial_grade(score),"summary":summary,"missing_codes":missing,"factors":factors,"snapshot":snapshot,"annual":annual,"quarterly":quarterly,"shareholder":shareholder,"model_version":FINANCIAL_MODEL_VERSION}
+        data_sources=self._financial_data_sources(snapshot, annual, quarterly, shareholder)
+        return {"score":score,"status":status_value,"confidence":_financial_confidence(len(available)),"grade":_financial_grade(score),"summary":summary,"missing_codes":missing,"factors":factors,"snapshot":snapshot,"annual":annual,"quarterly":quarterly,"shareholder":shareholder,"data_sources":data_sources,"model_version":FINANCIAL_MODEL_VERSION}
+
+    def _financial_data_sources(self, snapshot: dict[str, Any], annual: list[dict[str, Any]], quarterly: list[dict[str, Any]], shareholder: dict[str, Any]) -> list[dict[str, Any]]:
+        return [
+            {"source_name":"Kiwoom ka10001","status":"COLLECTED" if snapshot else "NOT_COLLECTED","used_for":["PER","PBR","EPS","BPS","ROE","시가총액"]},
+            {"source_name":"OpenDART","status":"COLLECTED" if annual and quarterly and shareholder.get("largest_shareholder_name") else "PARTIAL" if annual or quarterly or shareholder.get("largest_shareholder_name") else "NOT_COLLECTED","used_for":["연도별 실적","분기별 실적","최대주주","주요주주 변동"]},
+            {"source_name":"Kiwoom ka10008","status":"COLLECTED" if shareholder.get("foreign_holding_ratio") is not None else "NOT_COLLECTED","used_for":["외국인 보유율"]},
+        ]
 
     def _financial_factor(self, code: str, score: float | None, raw: str | None, reason: str, source_table: str | None, source_date: str | None) -> dict[str, Any]:
         name,weight=FINANCIAL_FACTOR_META[code]; normalized=None if score is None else max(0.0,min(weight,round(score,2)))
         return {"category":"FINANCIAL","factor_code":code,"factor_name":name,"raw_value":raw,"normalized_score":normalized,"weight":weight,"contribution_score":normalized,"reason":reason,"source_table":source_table,"source_date":source_date}
 
+    def _enrich_financial_snapshot(self, snapshot: dict[str, Any], annual: list[dict[str, Any]], quarterly: list[dict[str, Any]]) -> None:
+        self._enrich_per_snapshot(snapshot)
+        if _as_float(snapshot.get("debt_ratio")) is not None:
+            snapshot.setdefault("debt_ratio_source", snapshot.get("source_type") or "KIWOOM_REAL")
+            return
+        row=self._latest_statement_with_balance(annual, quarterly)
+        if not row:
+            return
+        liabilities=_as_float(row.get("total_liabilities")); equity=_as_float(row.get("total_equity"))
+        if liabilities is None or equity is None or equity <= 0:
+            return
+        snapshot["debt_ratio"]=round(liabilities / equity * 100, 2)
+        snapshot["debt_ratio_source"]="OPENDART"
+        snapshot["debt_ratio_calculation_method"]="OPENDART_LIABILITIES_EQUITY_RATIO"
+        snapshot["debt_ratio_source_date"]=row.get("period_end_date")
+
+    def _enrich_per_snapshot(self, snapshot: dict[str, Any]) -> None:
+        per=_as_float(snapshot.get("per")); eps=_as_float(snapshot.get("eps")); current_price=_as_float(snapshot.get("current_price"))
+        if per is not None:
+            snapshot.setdefault("per_status", "COLLECTED")
+            snapshot.setdefault("per_display_label", f"{per:g}배")
+            snapshot.setdefault("per_source", snapshot.get("source_type") or "KIWOOM_REAL")
+            return
+        if eps is not None and eps <= 0:
+            snapshot["per_status"]="LOSS_EXCLUDED"
+            snapshot["per_display_label"]="적자 PER"
+            snapshot["per_calculation_method"]="EPS_NEGATIVE_PER_EXCLUDED"
+            return
+        if eps is not None and eps > 0 and current_price is not None:
+            calculated=round(current_price / eps, 2)
+            snapshot["per"]=calculated
+            snapshot["per_status"]="CALCULATED"
+            snapshot["per_display_label"]=f"{calculated:g}배"
+            snapshot["per_calculation_method"]="CURRENT_PRICE_EPS_PER"
+            snapshot["per_source"]="CALCULATED"
+            return
+        snapshot.setdefault("per_status", "NOT_COLLECTED")
+
+    def _latest_statement_with_balance(self, annual: list[dict[str, Any]], quarterly: list[dict[str, Any]]) -> dict[str, Any] | None:
+        for row in reversed(annual or []):
+            if any(_as_float(row.get(key)) is not None for key in ("total_assets","total_liabilities","total_equity")):
+                return row
+        for row in reversed(quarterly or []):
+            if any(_as_float(row.get(key)) is not None for key in ("total_assets","total_liabilities","total_equity")):
+                return row
+        return None
+
     def _financial_growth_factor(self, annual: list[dict[str, Any]], quarterly: list[dict[str, Any]]) -> dict[str, Any]:
         rows=annual if len(annual)>=2 else quarterly
-        valid=[x for x in rows if _as_float(x.get("revenue")) is not None and _as_float(x.get("operating_profit")) is not None]
-        if len(valid)<2: return self._financial_factor("FINANCIAL_GROWTH",None,None,"비교 가능한 연도별 또는 분기별 실적이 2개 미만입니다.",None,None)
-        first,last=valid[0],valid[-1]; rev_up=float(last["revenue"])>float(first["revenue"]); op_up=float(last["operating_profit"])>float(first["operating_profit"])
-        score=25 if rev_up and op_up else 18 if rev_up else 15 if op_up else 6
-        return self._financial_factor("FINANCIAL_GROWTH",score,f"매출 {'증가' if rev_up else '감소'}, 영업이익 {'증가' if op_up else '감소'}","수집된 기간의 시작값과 최신값 추세를 비교했습니다.","stock_financial_statements",last.get("period_end_date"))
+        basis="연도별" if rows is annual and len(annual)>=2 else "분기별"
+        valid=[x for x in rows if _as_float(x.get("revenue")) is not None or _as_float(x.get("operating_profit")) is not None]
+        if len(valid)<2:
+            return self._financial_factor("FINANCIAL_GROWTH",None,None,"비교 가능한 연도별 또는 분기별 실적이 2개 미만입니다.","stock_financial_statements",None)
+        first,last=valid[0],valid[-1]
+        first_rev,last_rev=_as_float(first.get("revenue")),_as_float(last.get("revenue"))
+        first_op,last_op=_as_float(first.get("operating_profit")),_as_float(last.get("operating_profit"))
+        rev_available=first_rev is not None and last_rev is not None
+        op_available=first_op is not None and last_op is not None
+        rev_up=bool(rev_available and last_rev > first_rev)
+        op_up=bool(op_available and last_op > first_op)
+        if rev_available and op_available:
+            score=25 if rev_up and op_up else 18 if rev_up and not op_up else 16 if (not rev_up and op_up) else 6
+            raw=f"{basis} 매출 {'증가' if rev_up else '감소'}, 영업이익 {'증가' if op_up else '감소'}"
+            reason=f"{basis} 실적 {len(valid)}개 row의 시작값과 최신값을 기준으로 성장성을 평가했습니다."
+        elif rev_available:
+            score=16 if rev_up else 7
+            raw=f"{basis} 매출 {'증가' if rev_up else '감소'}, 영업이익 미수집"
+            reason=f"{basis} 매출액은 비교 가능하지만 영업이익 일부가 누락되어 성장성을 부분 평가했습니다."
+        else:
+            score=14 if op_up else 6
+            raw=f"{basis} 매출 미수집, 영업이익 {'개선' if op_up else '악화'}"
+            reason=f"{basis} 영업이익은 비교 가능하지만 매출액 일부가 누락되어 성장성을 부분 평가했습니다."
+        return self._financial_factor("FINANCIAL_GROWTH",score,raw,reason,"stock_financial_statements",last.get("period_end_date"))
 
     def _financial_profitability_factor(self, snapshot: dict[str, Any], annual: list[dict[str, Any]]) -> dict[str, Any]:
         roe=_as_float(snapshot.get("roe")); latest=annual[-1] if annual else {}; op=_as_float(latest.get("operating_profit")); net=_as_float(latest.get("net_income"))
@@ -1205,23 +1285,61 @@ class WatchlistEvaluationService:
         else: score=10
         return self._financial_factor("FINANCIAL_PROFITABILITY",score,f"ROE {roe if roe is not None else '-'}%, 영업이익 {op if op is not None else '-'}, 순이익 {net if net is not None else '-'}","ROE와 최신 손익의 흑자 여부를 평가했습니다.","stock_financial_snapshots",snapshot.get("snapshot_date"))
 
-    def _financial_stability_factor(self, snapshot: dict[str, Any], annual: list[dict[str, Any]]) -> dict[str, Any]:
-        debt=_as_float(snapshot.get("debt_ratio")); latest=annual[-1] if annual else {}; equity=_as_float(latest.get("total_equity")); cash=_as_float(latest.get("operating_cash_flow"))
-        if debt is None and equity is None and cash is None: return self._financial_factor("FINANCIAL_STABILITY",None,None,"부채비율·자본·영업현금흐름 데이터가 없습니다.",None,None)
-        score=2 if equity is not None and equity<0 else 20 if debt is not None and debt<80 and (cash is None or cash>=0) else 14 if debt is not None and debt<150 else 8
-        return self._financial_factor("FINANCIAL_STABILITY",score,f"부채비율 {debt if debt is not None else '-'}%","부채비율과 제공된 자본·현금흐름 신호를 평가했습니다.","stock_financial_snapshots",snapshot.get("snapshot_date"))
+    def _financial_stability_factor(self, snapshot: dict[str, Any], annual: list[dict[str, Any]], quarterly: list[dict[str, Any]]) -> dict[str, Any]:
+        latest=self._latest_statement_with_balance(annual, quarterly) or {}
+        debt=_as_float(snapshot.get("debt_ratio")); assets=_as_float(latest.get("total_assets")); liabilities=_as_float(latest.get("total_liabilities")); equity=_as_float(latest.get("total_equity")); cash=_as_float(latest.get("operating_cash_flow"))
+        if debt is None and liabilities is not None and equity is not None and equity > 0:
+            debt=round(liabilities / equity * 100, 2)
+        if debt is None and assets is None and liabilities is None and equity is None:
+            return self._financial_factor("FINANCIAL_STABILITY",None,None,"자산·부채·자본 데이터가 없어 안정성 평가는 제외했습니다.",None,None)
+        if equity is not None and equity <= 0:
+            score=2
+            reason="자본총계가 0 이하로 재무 위험이 큽니다."
+        elif debt is not None:
+            score=20 if debt < 80 and (cash is None or cash >= 0) else 15 if debt < 150 else 9 if debt < 250 else 5
+            reason="OpenDART 최신 재무상태표의 부채총계와 자본총계를 기준으로 부채비율을 계산했습니다." if snapshot.get("debt_ratio_source") == "OPENDART" else "수집된 부채비율과 재무상태표 신호를 기준으로 안정성을 평가했습니다."
+            if cash is None:
+                reason += " 영업현금흐름 데이터가 없어 안정성은 부분 평가했습니다."
+        else:
+            available=sum(value is not None for value in (assets, liabilities, equity))
+            score=12 if available>=2 else 8
+            reason="자산·부채·자본 중 일부 데이터만 있어 안정성을 부분 평가했습니다."
+        raw=f"부채비율 {debt if debt is not None else '-'}%, 자산 {assets if assets is not None else '-'}, 부채 {liabilities if liabilities is not None else '-'}, 자본 {equity if equity is not None else '-'}"
+        return self._financial_factor("FINANCIAL_STABILITY",score,raw,reason,"stock_financial_statements",latest.get("period_end_date") or snapshot.get("snapshot_date"))
 
     def _financial_valuation_factor(self, snapshot: dict[str, Any]) -> dict[str, Any]:
         per,pbr,eps,bps=(_as_float(snapshot.get(k)) for k in ("per","pbr","eps","bps"))
-        if per is None and pbr is None: return self._financial_factor("FINANCIAL_VALUATION",None,None,"PER/PBR 데이터가 없습니다.",None,None)
-        score=4 if (eps is not None and eps<0) or (per is not None and per<0) else 20 if (per is None or per<=12) and (pbr is None or pbr<=1.2) else 14 if (per is None or per<=20) and (pbr is None or pbr<=2) else 8
-        return self._financial_factor("FINANCIAL_VALUATION",score,f"PER {per if per is not None else '-'}배, PBR {pbr if pbr is not None else '-'}배, EPS {eps if eps is not None else '-'}, BPS {bps if bps is not None else '-'}","업종 평균 비교 없이 절대 PER/PBR 부담만 제한적으로 평가했습니다.","stock_financial_snapshots",snapshot.get("snapshot_date"))
+        per_status=str(snapshot.get("per_status") or "")
+        if per is None and pbr is None and eps is None: return self._financial_factor("FINANCIAL_VALUATION",None,None,"PER/PBR/EPS 데이터가 없습니다.",None,None)
+        if eps is not None and eps < 0:
+            score=4
+            reason="EPS가 음수라 PER은 적자 PER으로 표시하고 밸류에이션 긍정 점수로 반영하지 않았습니다."
+        elif per_status == "LOSS_EXCLUDED":
+            score=4
+            reason="EPS가 0 이하라 PER 계산을 제외했습니다."
+        else:
+            score=20 if (per is None or per<=12) and (pbr is None or pbr<=1.2) else 14 if (per is None or per<=20) and (pbr is None or pbr<=2) else 8
+            reason="업종 평균 비교 없이 절대 PER/PBR 부담만 제한적으로 평가했습니다."
+        per_label=snapshot.get("per_display_label") or (f"{per:g}배" if per is not None else "-")
+        raw=f"PER {per_label}, PBR {pbr if pbr is not None else '-'}배, EPS {eps if eps is not None else '-'}, BPS {bps if bps is not None else '-'}"
+        return self._financial_factor("FINANCIAL_VALUATION",score,raw,reason,"stock_financial_snapshots",snapshot.get("snapshot_date"))
 
     def _financial_shareholder_factor(self, shareholder: dict[str, Any]) -> dict[str, Any]:
-        ratio=_as_float(shareholder.get("foreign_holding_ratio"))
-        if ratio is None: return self._financial_factor("FINANCIAL_SHAREHOLDER_STABILITY",None,None,"최대주주와 외국인 보유율 데이터가 없습니다.",None,None)
-        score=10 if ratio>=5 else 7 if ratio>=1 else 5
-        return self._financial_factor("FINANCIAL_SHAREHOLDER_STABILITY",score,f"외국인 보유율 {ratio:.2f}%","ka10008 최신 외국인 보유율만 반영했으며 최대주주 정보는 미수집입니다.","stock_investor_flows",shareholder.get("snapshot_date"))
+        foreign_ratio=_as_float(shareholder.get("foreign_holding_ratio"))
+        largest_ratio=_as_float(shareholder.get("largest_shareholder_ratio"))
+        largest_name=shareholder.get("largest_shareholder_name")
+        if foreign_ratio is None and largest_ratio is None:
+            return self._financial_factor("FINANCIAL_SHAREHOLDER_STABILITY",None,None,"최대주주와 외국인 보유율 데이터가 없습니다.",None,None)
+        score=0.0
+        if largest_ratio is not None:
+            score += 8 if largest_ratio >= 30 else 6 if largest_ratio >= 15 else 3
+        if foreign_ratio is not None:
+            score += 7 if foreign_ratio >= 5 else 4 if foreign_ratio >= 1 else 2
+        score=min(15.0, score)
+        raw=f"최대주주 {largest_name or '-'} {largest_ratio if largest_ratio is not None else '-'}%, 외국인 보유율 {foreign_ratio if foreign_ratio is not None else '-'}%"
+        reason="OpenDART 최대주주 현황과 ka10008 외국인 보유율을 함께 반영했습니다."
+        source_table="stock_shareholder_snapshots, stock_investor_flows"
+        return self._financial_factor("FINANCIAL_SHAREHOLDER_STABILITY",score,raw,reason,source_table,shareholder.get("snapshot_date"))
 
     def _evaluate_chart_for_watchlist_stock(self, stock_id: int) -> dict[str, Any]:
         rows = self.repo.list_stock_daily_price_rows(stock_id, limit=130)
@@ -1928,6 +2046,127 @@ class WatchlistEvaluationService:
     def _missing_market_data_from_factors(factors: list[WatchlistEvaluationFactorResponse]) -> list[str]:
         return [factor.factor_name for factor in factors if factor.contribution_score is None]
 
+    def _overall_prompt_lines(self, score: WatchlistEvaluationScore | None, missing: list[str], material_context: dict[str, Any], financial_context: dict[str, Any]) -> list[str]:
+        if not score:
+            return ["- \uc885\ud569 \ud3c9\uac00: \ubbf8\ud3c9\uac00", "- \uc8fc\uc758: \ub9e4\uc218\u00b7\ub9e4\ub3c4 \ucd94\ucc9c \ubb38\uad6c\ub97c \uc0ac\uc6a9\ud558\uc9c0 \ub9c8\uc138\uc694."]
+        axis_scores = {
+            "market": score.market_score,
+            "material": score.material_score,
+            "supply": score.supply_score,
+            "chart": score.chart_score,
+            "financial": score.financial_score,
+        }
+        axis_labels = {
+            "market": "\uc2dc\uc7a5",
+            "material": "\uc7ac\ub8cc",
+            "supply": "\uc218\uae09",
+            "chart": "\ucc28\ud2b8",
+            "financial": "\uc7ac\ubb34",
+        }
+        weighted = [
+            (score.material_score, 0.30),
+            (score.supply_score, 0.30),
+            (score.chart_score, 0.25),
+            (score.market_score, 0.15),
+        ]
+        available = [(float(value), weight) for value, weight in weighted if value is not None]
+        observation = round(sum(value * weight for value, weight in available) / sum(weight for _, weight in available), 1) if len(available) >= 2 and sum(weight for _, weight in available) else None
+
+        grade_order = ["\uc6b0\uc120 \uad00\ucc30", "\uad00\uc2ec \uc720\uc9c0", "\uc870\uac74\ubd80 \uad00\ucc30", "\uad00\ucc30 \ubcf4\ub958", "\uad00\ucc30 \uc6b0\uc120\uc21c\uc704 \ub0ae\uc74c"]
+        def obs_grade(value: float | None) -> str:
+            if value is None: return "\ubbf8\ud3c9\uac00"
+            if value >= 80: return grade_order[0]
+            if value >= 65: return grade_order[1]
+            if value >= 50: return grade_order[2]
+            if value >= 35: return grade_order[3]
+            return grade_order[4]
+        def limit_grade(current: str, max_grade: str) -> str:
+            if current not in grade_order or max_grade not in grade_order:
+                return current
+            return grade_order[max(grade_order.index(current), grade_order.index(max_grade))]
+
+        risk = 0
+        risk_items: list[tuple[int, int, str, str]] = []
+        def add_risk(condition: bool, label: str, penalty: int, priority: int, check: str) -> None:
+            nonlocal risk
+            if condition:
+                risk += penalty
+                risk_items.append((priority, penalty, label, check))
+
+        financial_score = axis_scores["financial"]
+        supply_score = axis_scores["supply"]
+        chart_score = axis_scores["chart"]
+        market_score = axis_scores["market"]
+        add_risk(financial_score is not None and financial_score < 35, "\uc7ac\ubb34 \ub9ac\uc2a4\ud06c", 30, 10, "EPS\u00b7\ubd80\ucc44\ube44\uc728\u00b7\uc601\uc5c5\uc774\uc775 \uac1c\uc120 \uc5ec\ubd80")
+        add_risk(financial_score is not None and 35 <= financial_score < 50, "\uc7ac\ubb34 \ubd80\ub2f4", 20, 10, "EPS\u00b7\ubd80\ucc44\ube44\uc728\u00b7\uc601\uc5c5\uc774\uc775 \uac1c\uc120 \uc5ec\ubd80")
+        snapshot = financial_context.get("snapshot") or {}
+        eps = _as_float(snapshot.get("eps"))
+        debt = _as_float(snapshot.get("debt_ratio"))
+        add_risk(eps is not None and eps < 0, "EPS \uc74c\uc218", 8, 11, "EPS \ud751\uc790 \uc804\ud658 \uc5ec\ubd80")
+        add_risk(debt is not None and debt >= 200, "\ubd80\ucc44\ube44\uc728 \uacfc\ub2e4", 8, 12, "\ubd80\ucc44\ube44\uc728 \uc644\ud654 \uc5ec\ubd80")
+        add_risk(supply_score is not None and supply_score < 35, "\uc218\uae09 \ubd80\uc871", 18, 20, "\uc678\uad6d\uc778\u00b7\uae30\uad00\u00b7\ud504\ub85c\uadf8\ub7a8 \uc21c\ub9e4\uc218 \uc804\ud658 \uc5ec\ubd80")
+        add_risk(supply_score is not None and 35 <= supply_score < 50, "\uc218\uae09 \uacbd\uacc4", 10, 20, "\uc678\uad6d\uc778\u00b7\uae30\uad00\u00b7\ud504\ub85c\uadf8\ub7a8 \uc21c\ub9e4\uc218 \uc804\ud658 \uc5ec\ubd80")
+        add_risk(chart_score is not None and chart_score < 35, "\ucc28\ud2b8 \uc704\ud5d8", 20, 30, "20\uc77c\uc120 \ud68c\ubcf5\uacfc 60\uc77c\uc120 \ucd94\uc138 \ud655\uc778")
+        add_risk(chart_score is not None and 35 <= chart_score < 50, "\ucc28\ud2b8 \uacbd\uacc4", 12, 30, "20\uc77c\uc120 \ud68c\ubcf5\uacfc 60\uc77c\uc120 \ucd94\uc138 \ud655\uc778")
+        add_risk(market_score is not None and market_score < 35, "\uc2dc\uc7a5 \ud658\uacbd \uc704\ud5d8", 12, 40, "KOSDAQ\u00b7\uc2dc\uc7a5 \uac70\ub798\ub300\uae08 \ud68c\ubcf5 \uc5ec\ubd80")
+        add_risk(market_score is not None and 35 <= market_score < 50, "\uc2dc\uc7a5 \uacbd\uacc4", 8, 40, "KOSDAQ\u00b7\uc2dc\uc7a5 \uac70\ub798\ub300\uae08 \ud68c\ubcf5 \uc5ec\ubd80")
+        add_risk(bool(missing), "\ubbf8\uc218\uc9d1 \ud56d\ubaa9", min(24, len(missing) * 8), 50, "\ubbf8\uc218\uc9d1 \ud3c9\uac00\ucd95 \uc218\uc9d1 \ud6c4 \uc7ac\ud3c9\uac00")
+        theme_return = material_context.get("representative_theme_return_30d")
+        add_risk(_as_float(theme_return) is not None and _as_float(theme_return) <= -20, "\ud14c\ub9c8 \uc9c0\uc18d\uc131 \ud655\uc778", 6, 60, "\ub300\ud45c \ud14c\ub9c8 \ud750\ub984 \uc9c0\uc18d \uc5ec\ubd80")
+        risk = min(100, risk)
+        risk_grade = "\ub192\uc74c" if risk >= 50 else "\uacbd\uacc4" if risk >= 30 else "\ubcf4\ud1b5" if risk >= 15 else "\ub0ae\uc74c"
+
+        overall_grade = obs_grade(observation)
+        confidence = score.data_confidence or "NOT_EVALUATED"
+        if overall_grade != "\ubbf8\ud3c9\uac00":
+            if risk_grade == "\ub192\uc74c": overall_grade = limit_grade(overall_grade, "\uad00\ucc30 \ubcf4\ub958")
+            elif risk_grade == "\uacbd\uacc4": overall_grade = limit_grade(overall_grade, "\uc870\uac74\ubd80 \uad00\ucc30")
+            if confidence in {"LOW", "NOT_EVALUATED"}: overall_grade = limit_grade(overall_grade, "\uad00\ucc30 \ubcf4\ub958")
+            elif confidence == "LIMITED": overall_grade = limit_grade(overall_grade, "\uc870\uac74\ubd80 \uad00\ucc30")
+            if financial_score is not None and financial_score < 35: overall_grade = limit_grade(overall_grade, "\uad00\ucc30 \ubcf4\ub958")
+            if financial_score is not None and financial_score < 50 and ((supply_score is not None and supply_score < 50) or (chart_score is not None and chart_score < 50)):
+                overall_grade = limit_grade(overall_grade, "\uad00\ucc30 \ubcf4\ub958")
+            if (supply_score is not None and supply_score < 35) or (chart_score is not None and chart_score < 35):
+                overall_grade = limit_grade(overall_grade, "\uad00\ucc30 \ubcf4\ub958")
+            if supply_score is not None and supply_score < 50 and chart_score is not None and chart_score < 50:
+                overall_grade = limit_grade(overall_grade, "\uc870\uac74\ubd80 \uad00\ucc30")
+
+        strengths = []
+        weaknesses = []
+        for key, value in sorted(axis_scores.items(), key=lambda row: -1 if row[1] is None else float(row[1])):
+            if value is not None and value >= 65 and len(strengths) < 3:
+                strengths.append(f"{axis_labels[key]} {round(value)}\uc810")
+        for key, value in sorted(axis_scores.items(), key=lambda row: 101 if row[1] is None else float(row[1])):
+            if value is not None and value < 50 and len(weaknesses) < 3:
+                weaknesses.append(f"{axis_labels[key]} {round(value)}\uc810")
+        ordered_risks: list[str] = []
+        checks: list[str] = []
+        for _, _, label, check in sorted(risk_items, key=lambda row: (row[0], -row[1])):
+            if label not in ordered_risks and len(ordered_risks) < 4:
+                ordered_risks.append(label)
+            if check not in checks and len(checks) < 5:
+                checks.append(check)
+        if not checks:
+            checks.append("5\ub300 \ud3c9\uac00\ucd95 \ubcc0\ud654 \uc5ec\ubd80")
+        checklist = [
+            "\uc678\uad6d\uc778\u00b7\uae30\uad00 \uc21c\ub9e4\ub3c4\uac00 3\uc77c \uc774\uc0c1 \uc774\uc5b4\uc9c0\ub294\uac00?",
+            "20\uc77c\uc120 \uadfc\ucc98\uc5d0\uc11c \uc9c0\uc9c0 \ub610\ub294 \ud68c\ubcf5 \ud750\ub984\uc774 \ub098\uc624\ub294\uac00?",
+            "\ud6c4\uc18d \ub274\uc2a4\u00b7\uacf5\uc2dc\uac00 \uc774\uc5b4\uc9c0\ub294\uac00?",
+            "EPS \ub610\ub294 \uc601\uc5c5\uc774\uc775 \uac1c\uc120 \uc2e0\ud638\uac00 \ud655\uc778\ub418\ub294\uac00?",
+            "\ubbf8\uc218\uc9d1 \ud3c9\uac00\ucd95\uc744 \uc218\uc9d1\ud55c \ub4a4 \uc7ac\ud3c9\uac00\ud588\ub294\uac00?",
+        ]
+        return [
+            f"- \uc885\ud569 \ub4f1\uae09: {overall_grade}",
+            f"- \uad00\ucc30 \ub9e4\ub825\ub3c4: {observation if observation is not None else '\ubbf8\ud3c9\uac00'}",
+            f"- \ub9ac\uc2a4\ud06c: {risk_grade}({risk}\uc810)",
+            f"- \ub370\uc774\ud130 \uc2e0\ub8b0\ub3c4: {confidence}",
+            f"- \uac15\uc810: {', '.join(strengths) if strengths else '\uba85\ud655\ud55c \uac15\uc810 \ubd80\uc871'}",
+            f"- \uc57d\uc810: {', '.join(weaknesses) if weaknesses else '\ud06c\uac8c \ubd80\uac01\ub418\ub294 \uc57d\uc810 \uc5c6\uc74c'}",
+            f"- \ub9ac\uc2a4\ud06c \uc694\uc778: {', '.join(ordered_risks) if ordered_risks else '\uc8fc\uc694 \ub9ac\uc2a4\ud06c \ub0ae\uc74c'}",
+            f"- \ub2e4\uc74c \ud655\uc778 \ud56d\ubaa9: {', '.join(checks[:5])}",
+            f"- \uad00\ucc30 \uccb4\ud06c\ub9ac\uc2a4\ud2b8: {', '.join(checklist[:6])}",
+            "- \uc8fc\uc758: \uc774 \uc885\ud569 \ud3c9\uac00\ub294 \ub9e4\uc218\u00b7\ub9e4\ub3c4 \ucd94\ucc9c\uc774 \uc544\ub2c8\ub77c \uad00\ucc30 \uc6b0\uc120\uc21c\uc704\uc640 \ud655\uc778 \ud56d\ubaa9 \uc815\ub9ac\uc785\ub2c8\ub2e4. \ub9e4\uc218 \ucd94\ucc9c, \uc9c0\uae08 \ub9e4\uc218, \uc9c4\uc785 \uc801\ud569, \ub9e4\ub3c4 \ud544\uc694\uc640 \uac19\uc740 \ubb38\uad6c\ub97c \uc0ac\uc6a9\ud558\uc9c0 \ub9c8\uc138\uc694.",
+        ]
     def create_gpt_prompt(self, watchlist_id: int) -> WatchlistGptPromptResponse:
         item = self.watchlist_repo.get_by_id(watchlist_id)
         if not item:
@@ -1939,6 +2178,8 @@ class WatchlistEvaluationService:
         latest_score = latest[2] if latest and latest[2] else None
         missing = _json_list(latest_score.missing_data_json) if latest_score else []
         material_context = self._evaluate_material_for_watchlist_stock(item.stock_id, latest_score.evaluated_at[:10] if latest_score else now_kst()[:10])
+        financial_context = self._evaluate_financial_for_watchlist_stock(item.stock_id)
+        overall_prompt_lines = self._overall_prompt_lines(latest_score, missing, material_context, financial_context)
         prompt = "\n".join(
             [
                 f"DrCT 관심종목 시재수차재 평가 검토 요청: {stock.stock_name}({stock.stock_code})",
@@ -1958,7 +2199,9 @@ class WatchlistEvaluationService:
                 f"- 차트 요약: {self._chart_summary_from_score(latest_score) if latest_score else '차트 평가 전입니다.'}",
                 f"- 재무 점수/등급: {latest_score.financial_score if latest_score else '미평가'} / {_financial_grade(latest_score.financial_score) if latest_score else '미평가'}",
                 f"- 재무 상태: {latest_score.financial_status if latest_score else '미평가'}",
-                f"- 재무 요약: {self._evaluate_financial_for_watchlist_stock(item.stock_id)['summary']}",
+                f"- \uc7ac\ubb34 \uc694\uc57d: {financial_context['summary']}",
+                "",
+                *overall_prompt_lines,
                 f"- 미수집/미반영 데이터: {', '.join(missing) if missing else '없음'}",
                 "",
                 "시장, 재료, 수급, 차트, 재무 관점에서 현재 사용할 수 있는 근거와 부족한 근거를 구분해 주세요.",

@@ -63,6 +63,13 @@ export type MarketThemeReturnRefreshResponse = {
   failed_stock_count: number;
   inserted_count: number;
   updated_count: number;
+  theme_stock_link_count?: number;
+  unique_stock_count?: number;
+  price_api_call_count?: number;
+  price_fetch_ms?: number;
+  calc_ms?: number;
+  db_upsert_ms?: number;
+  total_ms?: number;
   items: MarketThemeReturnRefreshItem[];
   message?: string | null;
 };

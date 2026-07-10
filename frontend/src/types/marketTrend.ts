@@ -320,6 +320,14 @@ export type SaveKiwoomMarketEventsResponse = {
   unmatched_items: string[];
 };
 
+export type ExistingMarketEventTheme = {
+  theme_id: number;
+  theme_name: string;
+  theme_group_id?: number | null;
+  theme_group_name?: string | null;
+  is_active: number | boolean;
+};
+
 export type KiwoomMarketEventItem = {
   event_id: number;
   trade_date: string;
@@ -334,6 +342,7 @@ export type KiwoomMarketEventItem = {
   user_memo: string | null;
   detected_at: string | null;
   updated_at: string | null;
+  existing_themes?: ExistingMarketEventTheme[];
 };
 
 export type KiwoomMarketEventListResponse = {

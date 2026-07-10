@@ -1015,3 +1015,66 @@ CREATE TABLE IF NOT EXISTS stock_financial_statements (
  UNIQUE(stock_id, statement_type, fiscal_year, fiscal_quarter, source_method), FOREIGN KEY(stock_id) REFERENCES stocks(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_stock_financial_statements_stock_period ON stock_financial_statements(stock_id, statement_type, fiscal_year, fiscal_quarter);
+
+
+CREATE TABLE IF NOT EXISTS stock_external_identifiers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    stock_id INTEGER NOT NULL,
+    stock_code TEXT NOT NULL,
+    corp_code TEXT NOT NULL,
+    corp_name TEXT,
+    source_type TEXT NOT NULL,
+    source_method TEXT NOT NULL,
+    mapped_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(stock_code, source_type),
+    FOREIGN KEY(stock_id) REFERENCES stocks(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_stock_external_identifiers_stock ON stock_external_identifiers(stock_id, source_type);
+
+CREATE TABLE IF NOT EXISTS stock_shareholder_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    stock_id INTEGER NOT NULL,
+    stock_code TEXT NOT NULL,
+    snapshot_date TEXT NOT NULL,
+    source_type TEXT NOT NULL,
+    source_method TEXT NOT NULL,
+    report_code TEXT,
+    receipt_no TEXT,
+    largest_shareholder_name TEXT,
+    largest_shareholder_shares INTEGER,
+    largest_shareholder_ratio REAL,
+    major_shareholder_name TEXT,
+    major_shareholder_shares INTEGER,
+    major_shareholder_ratio REAL,
+    ownership_change_flag INTEGER,
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(stock_id, snapshot_date, source_method),
+    FOREIGN KEY(stock_id) REFERENCES stocks(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_stock_shareholder_snapshots_stock_date ON stock_shareholder_snapshots(stock_id, snapshot_date);
+
+CREATE TABLE IF NOT EXISTS stock_shareholder_changes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    stock_id INTEGER NOT NULL,
+    stock_code TEXT NOT NULL,
+    report_date TEXT NOT NULL,
+    source_type TEXT NOT NULL,
+    source_method TEXT NOT NULL,
+    report_type TEXT,
+    receipt_no TEXT,
+    reporter_name TEXT,
+    shares INTEGER,
+    ratio REAL,
+    previous_ratio REAL,
+    change_flag INTEGER,
+    reason TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(stock_id, report_date, source_method, receipt_no),
+    FOREIGN KEY(stock_id) REFERENCES stocks(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_stock_shareholder_changes_stock_date ON stock_shareholder_changes(stock_id, report_date);

@@ -124,12 +124,17 @@ class KmsService:
                     (
                         SELECT COUNT(*)
                         FROM kms_posts p
-                        WHERE p.category_id = c.id AND p.is_active = 1
+                        JOIN kms_categories pc ON pc.id = p.category_id
+                        WHERE p.is_active = 1
+                          AND pc.name = c.name
+                          AND COALESCE(pc.parent_id, -1) = COALESCE(c.parent_id, -1)
                     ) AS post_count,
                     (
                         SELECT COUNT(*)
                         FROM kms_posts p
-                        WHERE p.category_id = c.id
+                        JOIN kms_categories pc ON pc.id = p.category_id
+                        WHERE pc.name = c.name
+                          AND COALESCE(pc.parent_id, -1) = COALESCE(c.parent_id, -1)
                     ) AS total_post_count,
                     (
                         SELECT COUNT(*)
@@ -197,12 +202,17 @@ class KmsService:
                     (
                         SELECT COUNT(*)
                         FROM kms_posts p
-                        WHERE p.category_id = c.id AND p.is_active = 1
+                        JOIN kms_categories pc ON pc.id = p.category_id
+                        WHERE p.is_active = 1
+                          AND pc.name = c.name
+                          AND COALESCE(pc.parent_id, -1) = COALESCE(c.parent_id, -1)
                     ) AS post_count,
                     (
                         SELECT COUNT(*)
                         FROM kms_posts p
-                        WHERE p.category_id = c.id
+                        JOIN kms_categories pc ON pc.id = p.category_id
+                        WHERE pc.name = c.name
+                          AND COALESCE(pc.parent_id, -1) = COALESCE(c.parent_id, -1)
                     ) AS total_post_count,
                     (
                         SELECT COUNT(*)
@@ -308,7 +318,17 @@ class KmsService:
             filters.append("(p.title LIKE :keyword OR p.summary LIKE :keyword OR p.content LIKE :keyword)")
             params["keyword"] = f"%{keyword.strip()}%"
         if category_id:
-            filters.append("p.category_id = :category_id")
+            filters.append(
+                """
+                p.category_id IN (
+                    SELECT sibling.id
+                    FROM kms_categories sibling
+                    JOIN kms_categories selected ON selected.id = :category_id
+                    WHERE sibling.name = selected.name
+                      AND COALESCE(sibling.parent_id, -1) = COALESCE(selected.parent_id, -1)
+                )
+                """
+            )
             params["category_id"] = category_id
         if learning_status:
             filters.append("p.learning_status = :learning_status")

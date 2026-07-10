@@ -598,9 +598,11 @@ function StockPricesPage() {
                       className={`price-stock-card-item ${selected ? "selected" : ""}`}
                       onClick={() => setSelectedStock(item)}
                     >
-                      <strong>{item.stock_name}</strong>
-                      <p>{`${item.stock_code} · 데이터 ${fmtNumber(item.price_count)}건`}</p>
-                      <p>{fmtRange(item.min_trade_date, item.max_trade_date)}</p>
+                      <div className="price-stock-card-main">
+                        <strong className="price-stock-card-name">{item.stock_name}</strong>
+                        <span className="price-stock-card-count">{`${fmtNumber(item.price_count)}\uAC74`}</span>
+                      </div>
+                      <p className="price-stock-card-period">{fmtRange(item.min_trade_date, item.max_trade_date)}</p>
                     </button>
                   );
                 })}
@@ -671,7 +673,7 @@ function StockPricesPage() {
                   {!summaryLoading && !summaryError && selectedSummary ? (
                     <div className="price-meta-grid">
                       <div className="price-meta-card"><p className="price-meta-label">최근 종가</p><strong>{fmtPrice(selectedSummary.latest_close_price)}</strong></div>
-                      <div className="price-meta-card"><p className="price-meta-label">최근 5거래일 등락률</p><strong>{fmtPercent(selectedSummary.recent_5d_change_rate)}</strong></div>
+                      <div className="price-meta-card"><p className="price-meta-label">{`\uCD5C\uADFC 5\uAC70\uB798\uC77C \uB4F1\uB77D\uB960`}</p><strong className={selectedSummary.recent_5d_change_rate == null ? "" : selectedSummary.recent_5d_change_rate > 0 ? "price-metric-positive" : selectedSummary.recent_5d_change_rate < 0 ? "price-metric-negative" : "price-metric-neutral"}>{fmtPercent(selectedSummary.recent_5d_change_rate)}</strong></div>
                       <div className="price-meta-card"><p className="price-meta-label">최근 20거래일 평균 거래량</p><strong>{fmtNumber(selectedSummary.avg_volume_20d)}</strong></div>
                       <div className="price-meta-card"><p className="price-meta-label">52주 고점 대비 위치</p><strong>{fmtPercent(selectedSummary.price_position_vs_52w_high)}</strong></div>
                       <div className="price-meta-card"><p className="price-meta-label">최근 거래일</p><strong>{selectedSummary.latest_trade_date || "-"}</strong></div>

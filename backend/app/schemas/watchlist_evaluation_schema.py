@@ -109,6 +109,7 @@ class WatchlistEvaluationListItem(BaseModel):
     financial_annual_statements: list[dict[str, object]] = []
     financial_quarterly_statements: list[dict[str, object]] = []
     shareholder_snapshot: dict[str, object] = {}
+    financial_data_sources: list[dict[str, object]] = []
     total_score: float | None = None
     data_confidence: str
     last_evaluated_at: str | None = None
@@ -202,6 +203,7 @@ class WatchlistEvaluationScoreResponse(BaseModel):
     financial_annual_statements: list[dict[str, object]] = []
     financial_quarterly_statements: list[dict[str, object]] = []
     shareholder_snapshot: dict[str, object] = {}
+    financial_data_sources: list[dict[str, object]] = []
     total_score: float | None
     chart_status: str | None
     overall_status: str | None
@@ -264,6 +266,7 @@ class WatchlistEvaluationHistoryItem(BaseModel):
     financial_annual_statements: list[dict[str, object]] = []
     financial_quarterly_statements: list[dict[str, object]] = []
     shareholder_snapshot: dict[str, object] = {}
+    financial_data_sources: list[dict[str, object]] = []
     total_score: float | None
     overall_status: str | None
     data_confidence: str

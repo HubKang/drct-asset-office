@@ -12,6 +12,8 @@ class StockFinancialCollectItem(BaseModel):
     snapshot_saved: bool = False
     annual_rows_saved: int = 0
     quarterly_rows_saved: int = 0
+    shareholder_rows_saved: int = 0
+    opendart_corp_code_saved: bool = False
     message: str | None = None
 
 class StockFinancialCollectResponse(BaseModel):

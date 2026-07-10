@@ -140,6 +140,14 @@ class KiwoomMarketEventSaveResponse(BaseModel):
     unmatched_items: list[str] = Field(default_factory=list)
 
 
+class KiwoomMarketEventExistingThemeOut(BaseModel):
+    theme_id: int
+    theme_name: str
+    theme_group_id: int | None = None
+    theme_group_name: str | None = None
+    is_active: int = 1
+
+
 class KiwoomMarketEventItemOut(BaseModel):
     event_id: int
     trade_date: str
@@ -154,6 +162,7 @@ class KiwoomMarketEventItemOut(BaseModel):
     user_memo: str | None = None
     detected_at: str | None = None
     updated_at: str | None = None
+    existing_themes: list[KiwoomMarketEventExistingThemeOut] = Field(default_factory=list)
 
 
 class KiwoomMarketEventListResponse(BaseModel):
@@ -252,6 +261,13 @@ class MarketThemeReturnRefreshResponse(BaseModel):
     failed_stock_count: int = 0
     inserted_count: int = 0
     updated_count: int = 0
+    theme_stock_link_count: int = 0
+    unique_stock_count: int = 0
+    price_api_call_count: int = 0
+    price_fetch_ms: int = 0
+    calc_ms: int = 0
+    db_upsert_ms: int = 0
+    total_ms: int = 0
     items: list[MarketThemeReturnRefreshItem] = Field(default_factory=list)
     message: str | None = None
 

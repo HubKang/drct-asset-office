@@ -627,15 +627,33 @@ function MarketThemesPage() {
   };
 
   const onRefreshThemeReturns = async () => {
+    if (refreshingReturns) {
+      return;
+    }
     setRefreshingReturns(true);
     setError("");
-    setMessage("테마등락률 갱신 중...");
+    setMessage("\ud14c\ub9c8\ub4f1\ub77d\ub960 \uac31\uc2e0 \uc911...");
     try {
       const res = await repositories.marketThemes.refreshReturns({ scope: "all_active" });
       await Promise.all([loadThemes(), loadThemeReturnTrend()]);
-      setMessage(res.message || `테마등락률 갱신 완료: ${res.theme_count}개 테마, ${res.stock_count}개 종목 반영`);
+      const totalSeconds = typeof res.total_ms === "number" ? (res.total_ms / 1000).toFixed(1) : null;
+      const fallbackMessage = `\ud14c\ub9c8\ub4f1\ub77d\ub960 \uac31\uc2e0 \uc644\ub8cc: ${res.theme_count}\uac1c \ud14c\ub9c8, \uace0\uc720 ${res.unique_stock_count ?? res.stock_count}\uac1c \uc885\ubaa9${totalSeconds ? `, ${totalSeconds}\ucd08` : ""}`;
+      setMessage(res.message || fallbackMessage);
+      console.info("[theme-return-refresh]", {
+        themes: res.theme_count,
+        links: res.theme_stock_link_count,
+        uniqueStocks: res.unique_stock_count,
+        priceApiCalls: res.price_api_call_count,
+        stockRows: res.stock_count,
+        inserted: res.inserted_count,
+        updated: res.updated_count,
+        priceFetchMs: res.price_fetch_ms,
+        calcMs: res.calc_ms,
+        dbUpsertMs: res.db_upsert_ms,
+        totalMs: res.total_ms,
+      });
     } catch (e) {
-      setError(toErrorMessage(e, "테마등락률 갱신에 실패했습니다. 키움 REST 토큰/연결 상태를 확인해 주세요."));
+      setError(toErrorMessage(e, "\ud14c\ub9c8\ub4f1\ub77d\ub960 \uac31\uc2e0\uc5d0 \uc2e4\ud328\ud588\uc2b5\ub2c8\ub2e4. Kiwoom REST \ud1a0\ud070/\uc5f0\uacb0 \uc0c1\ud0dc\ub97c \ud655\uc778\ud574 \uc8fc\uc138\uc694."));
     } finally {
       setRefreshingReturns(false);
     }

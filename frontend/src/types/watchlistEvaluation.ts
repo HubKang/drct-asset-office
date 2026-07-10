@@ -70,6 +70,12 @@ export type FinancialStatementItem = {
   revenue?: number | null;
   operating_profit?: number | null;
   net_income?: number | null;
+  total_assets?: number | null;
+  total_liabilities?: number | null;
+  total_equity?: number | null;
+  operating_cash_flow?: number | null;
+  value_type?: string | null;
+  calculation_method?: string | null;
 };
 
 export type FinancialSnapshot = Record<string, string | number | null | undefined>;
@@ -80,6 +86,17 @@ export type FinancialCollectResponse = {
   partial_count: number;
   failed_count: number;
   skipped_count: number;
+  items?: Array<{
+    stock_id: number;
+    stock_code: string;
+    status: string;
+    snapshot_saved?: boolean;
+    annual_rows_saved?: number;
+    quarterly_rows_saved?: number;
+    shareholder_rows_saved?: number;
+    opendart_corp_code_saved?: boolean;
+    message?: string | null;
+  }>;
 };
 
 export type WatchlistEvaluationListItem = {
@@ -140,6 +157,7 @@ export type WatchlistEvaluationListItem = {
   financial_annual_statements?: FinancialStatementItem[];
   financial_quarterly_statements?: FinancialStatementItem[];
   shareholder_snapshot?: FinancialSnapshot;
+  financial_data_sources?: Array<{ source_name: string; status: string; used_for: string[] }>;
   total_score: number | null;
   data_confidence: DataConfidence | string;
   last_evaluated_at: string | null;
@@ -217,6 +235,7 @@ export type WatchlistEvaluationHistoryItem = {
   financial_annual_statements?: FinancialStatementItem[];
   financial_quarterly_statements?: FinancialStatementItem[];
   shareholder_snapshot?: FinancialSnapshot;
+  financial_data_sources?: Array<{ source_name: string; status: string; used_for: string[] }>;
   total_score: number | null;
   overall_status: string | null;
   data_confidence: string;

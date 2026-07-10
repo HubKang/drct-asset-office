@@ -28,6 +28,8 @@ DART_API_KEY = os.getenv("DART_API_KEY")
 DART_RAW_DIR = os.getenv("DART_RAW_DIR", "./data/raw/dart")
 DART_DISCLOSURE_DEFAULT_DAYS = int(os.getenv("DART_DISCLOSURE_DEFAULT_DAYS", "30"))
 DART_PAGE_COUNT = int(os.getenv("DART_PAGE_COUNT", "100"))
+OPENDART_BASE_URL = os.getenv("OPENDART_BASE_URL", "https://opendart.fss.or.kr/api").strip()
+OPENDART_TIMEOUT_SECONDS = int(os.getenv("OPENDART_TIMEOUT_SECONDS", "30"))
 DATA_API_SERVICE_KEY = os.getenv("DATA_API_SERVICE_KEY", "").strip()
 DATA_API_BASE_URL = os.getenv(
     "DATA_API_BASE_URL",

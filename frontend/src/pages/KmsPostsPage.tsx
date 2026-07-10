@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import PageHeader from "@/components/common/PageHeader";
 import StatusBadge from "@/components/common/StatusBadge";
 import KmsRichEditor from "@/components/kms/KmsRichEditor";
@@ -17,6 +17,27 @@ import { sanitizeKmsHtml, toKmsDisplayHtml, toKmsEditableHtml, toKmsPlainText } 
 
 const pageSize = 20;
 const categoryAccentColors = ["#2563eb", "#f97316", "#8b5cf6", "#10b981", "#06b6d4", "#6366f1", "#ec4899", "#64748b", "#a855f7", "#0f766e"];
+const KMS_CATEGORY_VISUALS: Record<string, { key: string; accent: string; bg: string }> = {
+  "\uc2dc\uc7a5": { key: "market", accent: "#2563eb", bg: "#f3f8ff" },
+  "\uc7ac\ub8cc": { key: "material", accent: "#f97316", bg: "#fff7ed" },
+  "\uc218\uae09": { key: "supply", accent: "#8b5cf6", bg: "#f5f3ff" },
+  "\ucc28\ud2b8": { key: "chart", accent: "#10b981", bg: "#f0fdf4" },
+  "\uc7ac\ubb34": { key: "finance", accent: "#06b6d4", bg: "#ecfeff" },
+  "\uae30\ubc95": { key: "method", accent: "#6366f1", bg: "#eef2ff" },
+  "\uc2ec\ub9ac": { key: "psychology", accent: "#ec4899", bg: "#fdf2f8" },
+  "\ub9ac\uc2a4\ud06c": { key: "risk", accent: "#64748b", bg: "#f8fafc" },
+};
+
+const getKmsCategoryVisual = (categoryName?: string | null, fallbackIndex = 0) => {
+  const normalized = (categoryName || "").trim();
+  return KMS_CATEGORY_VISUALS[normalized] || {
+    key: "default",
+    accent: categoryAccentColors[fallbackIndex % categoryAccentColors.length] || "#2563eb",
+    bg: "#ffffff",
+  };
+};
+
+const getKmsCategoryCount = (category: KmsCategory) => category.post_count ?? category.total_post_count ?? 0;
 
 const emptyForm: KmsPostPayload = {
   category_id: 0,
@@ -44,7 +65,6 @@ const toKmsUserMessage = (error: unknown, fallback: string) => {
 };
 
 function KmsPostsPage() {
-  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [categories, setCategories] = useState<KmsCategory[]>([]);
   const [posts, setPosts] = useState<KmsPost[]>([]);
@@ -76,23 +96,46 @@ function KmsPostsPage() {
     return Array.from({ length: end - start + 1 }, (_, index) => start + index);
   }, [currentPage, totalPages]);
 
-  const loadCategories = async () => {
-    const rows = await repositories.kms.listCategories();
+  const applyCategoryRows = (rows: KmsCategory[]) => {
+    const nextCounts: Record<number, number> = {};
+    rows.forEach((category) => {
+      nextCounts[category.id] = getKmsCategoryCount(category);
+    });
     setCategories(rows);
+    setCategoryCounts(nextCounts);
+    setTotalPostCount(rows.reduce((sum, category) => sum + getKmsCategoryCount(category), 0));
     setForm((prev) => ({ ...prev, category_id: prev.category_id || rows[0]?.id || 0 }));
+  };
+
+  const applyPostCountFallback = (rows: KmsPost[]) => {
+    const nextCounts: Record<number, number> = {};
+    rows.forEach((post) => {
+      nextCounts[post.category_id] = (nextCounts[post.category_id] || 0) + 1;
+    });
+    setCategoryCounts((prev) => ({ ...prev, ...nextCounts }));
+    setTotalPostCount(rows.length);
+  };
+
+  const loadCategories = async () => {
+    await loadCategoryCounts();
   };
 
   const loadCategoryCounts = async () => {
     try {
-      const rows = await repositories.kms.listPosts({ is_active: true, limit: 1000 });
-      const nextCounts: Record<number, number> = {};
-      rows.forEach((post) => {
-        nextCounts[post.category_id] = (nextCounts[post.category_id] || 0) + 1;
-      });
-      setCategoryCounts(nextCounts);
-      setTotalPostCount(rows.length);
+      const rows = await repositories.kms.listCategories();
+      applyCategoryRows(rows);
+      const categoryTotal = rows.reduce((sum, category) => sum + getKmsCategoryCount(category), 0);
+      if (categoryTotal === 0) {
+        const activePosts = await repositories.kms.listPosts({ is_active: true, limit: 1000 });
+        if (activePosts.length > 0) applyPostCountFallback(activePosts);
+      }
     } catch (error) {
-      setMessage(toKmsUserMessage(error, "카테고리별 지식글 수를 불러오지 못했습니다."));
+      try {
+        const activePosts = await repositories.kms.listPosts({ is_active: true, limit: 1000 });
+        applyPostCountFallback(activePosts);
+      } catch {
+        setMessage(toKmsUserMessage(error, "\uce74\ud14c\uace0\ub9ac\ubcc4 \uc9c0\uc2dd\uae00 \uc218\ub97c \ubd88\ub7ec\uc624\uc9c0 \ubabb\ud588\uc2b5\ub2c8\ub2e4."));
+      }
     }
   };
 
@@ -109,6 +152,9 @@ function KmsPostsPage() {
         limit: 200,
       });
       setPosts(rows);
+      if (rows.length > 0 && Object.values(categoryCounts).every((count) => count === 0)) {
+        applyPostCountFallback(rows);
+      }
       setCurrentPage(1);
       setSelectedPost((prev) => (prev && rows.some((post) => post.id === prev.id) ? prev : null));
     } catch (error) {
@@ -119,7 +165,6 @@ function KmsPostsPage() {
   };
 
   useEffect(() => {
-    void loadCategories();
     void loadCategoryCounts();
   }, []);
 
@@ -423,10 +468,6 @@ function KmsPostsPage() {
                 );
               })}
             </div>
-            <div className="kms-posts-category-footer">
-              <span>카테고리는 KMS 설정에서 관리합니다.</span>
-              <button type="button" className="kms-posts-category-settings-link" onClick={() => navigate("/kms/settings")}>KMS 설정으로 이동</button>
-            </div>
           </aside>
           <div className="kms-post-list-panel">
             <div className="kms-search-control-box">
@@ -454,24 +495,41 @@ function KmsPostsPage() {
               <strong>{activeCategory ? `${activeCategory.name} 지식` : "전체 지식"}</strong>
               <span>총 {posts.length.toLocaleString("ko-KR")}건</span>
             </div>
-            <div className="kms-posts-table" role="table" aria-label="지식글 목록">
+            <div className="kms-posts-table" role="table" aria-label={"\uc9c0\uc2dd\uae00 \ubaa9\ub85d"}>
               <div className="kms-posts-table-head" role="row">
-                <span>제목</span>
-                <span>수정일</span>
+                <span>{"\uc9c0\uc2dd\uae00"}</span>
+                <span>{"\uc218\uc815\uc77c"}</span>
               </div>
-              {pagedPosts.map((post) => (
-                <button key={post.id} type="button" className={selectedPost?.id === post.id ? "kms-posts-row active" : "kms-posts-row"} onClick={() => setSelectedPost(post)}>
-                  <span className="kms-posts-title-cell">
-                    <strong>{post.is_pinned ? "★ " : ""}{post.title}</strong>
-                    <small>
-                      {post.category_name || "미분류"} · {post.importance} · {post.learning_status}
-                      {post.tags.length ? ` · ${post.tags.map((tag) => `#${tag}`).join(" ")}` : ""}
-                    </small>
-                    <em>{post.summary || toKmsPlainText(post.content).slice(0, 100)}</em>
-                  </span>
-                  <span className="kms-posts-date-cell">{post.updated_at}</span>
-                </button>
-              ))}
+              {pagedPosts.map((post, index) => {
+                const visual = getKmsCategoryVisual(post.category_name, index);
+                const rowClassName = [
+                  "kms-posts-row",
+                  `kms-posts-row-${visual.key}`,
+                  selectedPost?.id === post.id ? "active" : "",
+                ].filter(Boolean).join(" ");
+                return (
+                  <button
+                    key={post.id}
+                    type="button"
+                    className={rowClassName}
+                    style={{ "--kms-category-accent": visual.accent, "--kms-category-bg": visual.bg } as CSSProperties}
+                    onClick={() => setSelectedPost(post)}
+                  >
+                    <span className="kms-posts-title-cell">
+                      <span className="kms-posts-title-meta">
+                        <span className="kms-knowledge-badge kms-category-badge">{post.category_name || "\ubbf8\ubd84\ub958"}</span>
+                        <span className="kms-knowledge-badge">{post.learning_status}</span>
+                        <span className="kms-knowledge-badge kms-importance-badge">{post.importance}</span>
+                        {post.is_pinned ? <span className="kms-knowledge-badge kms-pinned-badge">{"\uace0\uc815"}</span> : null}
+                      </span>
+                      <strong>{post.title}</strong>
+                      <em>{post.summary || toKmsPlainText(post.content).slice(0, 120)}</em>
+                      {post.tags.length ? <small>{post.tags.slice(0, 5).map((tag) => `#${tag}`).join(" ")}</small> : null}
+                    </span>
+                    <span className="kms-posts-date-cell">{post.updated_at}</span>
+                  </button>
+                );
+              })}
               {!posts.length ? (
                 <div className="kms-empty-state">
                   <strong>조건에 맞는 지식글이 없습니다.</strong>

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import math
+import time
+from collections import defaultdict
 from calendar import monthrange
 from datetime import date, datetime, timedelta
 
@@ -1501,7 +1503,7 @@ class ExternalKiwoomService:
         rows = self.db.execute(
             text(
                 """
-                SELECT id AS event_id, trade_date, stock_code, stock_name, market_type, change_rate,
+                SELECT id AS event_id, trade_date, stock_id, stock_code, stock_name, market_type, change_rate,
                        theme_status, condition_seq, condition_name, detection_source, user_memo, detected_at, updated_at
                 FROM market_trend_events
                 WHERE detection_source IN ('kiwoom_condition', 'manual')
@@ -1513,7 +1515,58 @@ class ExternalKiwoomService:
             ),
             {"trade_date": trade_date, "limit": limit},
         ).mappings().all()
-        return KiwoomMarketEventListResponse(items=[KiwoomMarketEventItemOut(**dict(r)) for r in rows])
+        stock_ids = sorted({int(row["stock_id"]) for row in rows if row.get("stock_id") is not None})
+        themes_by_stock_id: dict[int, list[dict[str, object]]] = {stock_id: [] for stock_id in stock_ids}
+        if stock_ids:
+            placeholders = ", ".join(f":stock_id_{idx}" for idx, _ in enumerate(stock_ids))
+            params = {f"stock_id_{idx}": stock_id for idx, stock_id in enumerate(stock_ids)}
+            theme_rows = self.db.execute(
+                text(
+                    f"""
+                    SELECT mts.stock_id,
+                           mt.id AS theme_id,
+                           mt.theme_name,
+                           parent.id AS theme_group_id,
+                           parent.theme_name AS theme_group_name,
+                           COALESCE(mt.is_active, 1) AS is_active,
+                           COALESCE(mts.is_primary, 0) AS is_primary,
+                           mts.id AS mapping_id
+                    FROM market_theme_stocks mts
+                    JOIN market_themes mt ON mt.id = mts.theme_id
+                    LEFT JOIN market_themes parent ON parent.id = mt.parent_theme_id
+                    WHERE mts.stock_id IN ({placeholders})
+                      AND COALESCE(mts.is_active, 1) = 1
+                      AND COALESCE(mt.is_active, 1) = 1
+                      AND COALESCE(mt.theme_level, 'THEME') = 'THEME'
+                    ORDER BY COALESCE(mts.is_primary, 0) DESC, mt.theme_name ASC, mts.id ASC
+                    """
+                ),
+                params,
+            ).mappings().all()
+            seen: set[tuple[int, int]] = set()
+            for theme_row in theme_rows:
+                stock_id = int(theme_row["stock_id"])
+                theme_id = int(theme_row["theme_id"])
+                key = (stock_id, theme_id)
+                if key in seen:
+                    continue
+                seen.add(key)
+                themes_by_stock_id.setdefault(stock_id, []).append(
+                    {
+                        "theme_id": theme_id,
+                        "theme_name": theme_row["theme_name"],
+                        "theme_group_id": theme_row["theme_group_id"],
+                        "theme_group_name": theme_row["theme_group_name"],
+                        "is_active": int(theme_row["is_active"] or 0),
+                    }
+                )
+        items = []
+        for row in rows:
+            item = dict(row)
+            stock_id = item.pop("stock_id", None)
+            item["existing_themes"] = themes_by_stock_id.get(int(stock_id), []) if stock_id is not None else []
+            items.append(KiwoomMarketEventItemOut(**item))
+        return KiwoomMarketEventListResponse(items=items)
 
     def patch_market_event(self, event_id: int, payload: KiwoomMarketEventPatchRequest) -> KiwoomMarketEventPatchResponse:
         existing = self.db.execute(
@@ -1873,6 +1926,7 @@ class ExternalKiwoomService:
         self.db.commit()
         return KiwoomMarketEventThemeLinkDeleteResponse(success=True, link_id=link_id, theme_stock_sync=theme_stock_sync)
     def refresh_market_theme_returns(self, payload: MarketThemeReturnRefreshRequest) -> MarketThemeReturnRefreshResponse:
+        total_started_at = time.perf_counter()
         refreshed_at = now_kst()
         return_date = refreshed_at[:10]
         provider = KiwoomRestMarketIndicatorProvider()
@@ -1884,12 +1938,33 @@ class ExternalKiwoomService:
         total_success_count = 0
         total_failed_count = 0
 
+        theme_ids = [int(theme["theme_id"]) for theme in themes]
+        link_rows = self._list_active_theme_return_stock_links(theme_ids)
+        links_by_theme: dict[int, list[dict[str, object]]] = defaultdict(list)
+        unique_stocks: dict[int, dict[str, object]] = {}
+        for row in link_rows:
+            theme_id = int(row["theme_id"])
+            stock_id = int(row["stock_id"])
+            links_by_theme[theme_id].append(row)
+            unique_stocks.setdefault(stock_id, {
+                "stock_id": stock_id,
+                "stock_code": row.get("stock_code"),
+                "stock_name": row.get("stock_name"),
+            })
+
+        price_started_at = time.perf_counter()
+        stock_return_cache: dict[int, dict[str, object]] = {}
+        for stock_id, stock in unique_stocks.items():
+            stock_return_cache[stock_id] = self._fetch_theme_stock_return(provider, stock, return_date)
+        price_fetch_ms = int((time.perf_counter() - price_started_at) * 1000)
+        price_api_call_count = len(unique_stocks)
+
+        calc_started_at = time.perf_counter()
+        theme_results: list[dict[str, object]] = []
         for theme in themes:
             theme_id = int(theme["theme_id"])
-            stocks = self._list_active_theme_return_stocks(theme_id)
-            stock_results: list[dict[str, object]] = []
-            for stock in stocks:
-                stock_results.append(self._fetch_theme_stock_return(provider, stock, return_date))
+            stocks = links_by_theme.get(theme_id, [])
+            stock_results = [dict(stock_return_cache[int(stock["stock_id"])]) for stock in stocks if int(stock["stock_id"]) in stock_return_cache]
 
             stock_count = len(stocks)
             success_results = [row for row in stock_results if row.get("data_status") == "success" and row.get("change_rate") is not None]
@@ -1898,20 +1973,21 @@ class ExternalKiwoomService:
             total_success_count += len(success_results)
             total_failed_count += failed_count
 
-            self._delete_market_theme_stock_daily_returns(theme_id=theme_id, return_date=return_date)
             if not success_results:
-                self._delete_market_theme_daily_return(theme_id=theme_id, return_date=return_date)
-                items.append(MarketThemeReturnRefreshItem(
-                    theme_id=theme_id,
-                    theme_name=str(theme["theme_name"]),
-                    return_date=return_date,
-                    avg_change_rate=None,
-                    stock_count=stock_count,
-                    success_stock_count=0,
-                    failed_stock_count=failed_count,
-                    total_trading_value_100m=None,
-                    save_action="skipped",
-                ))
+                theme_results.append({
+                    "theme_id": theme_id,
+                    "theme_name": str(theme["theme_name"]),
+                    "stock_count": stock_count,
+                    "success_stock_count": 0,
+                    "failed_stock_count": failed_count,
+                    "stock_results": stock_results,
+                    "avg_change_rate": None,
+                    "total_trading_value": 0,
+                    "total_trading_value_100m": None,
+                    "rising_count": 0,
+                    "falling_count": 0,
+                    "flat_count": 0,
+                })
                 continue
 
             change_rates = [float(row["change_rate"]) for row in success_results if row.get("change_rate") is not None]
@@ -1922,21 +1998,61 @@ class ExternalKiwoomService:
             falling_count = sum(1 for rate in change_rates if rate < 0)
             flat_count = sum(1 for rate in change_rates if rate == 0)
 
+            theme_results.append({
+                "theme_id": theme_id,
+                "theme_name": str(theme["theme_name"]),
+                "stock_count": stock_count,
+                "success_stock_count": len(success_results),
+                "failed_stock_count": failed_count,
+                "stock_results": stock_results,
+                "avg_change_rate": avg_change_rate,
+                "total_trading_value": total_trading_value,
+                "total_trading_value_100m": total_trading_value_100m,
+                "rising_count": rising_count,
+                "falling_count": falling_count,
+                "flat_count": flat_count,
+            })
+        calc_ms = int((time.perf_counter() - calc_started_at) * 1000)
+
+        db_started_at = time.perf_counter()
+        for result in theme_results:
+            theme_id = int(result["theme_id"])
+            stock_count = int(result["stock_count"])
+            success_stock_count = int(result["success_stock_count"])
+            failed_count = int(result["failed_stock_count"])
+            avg_change_rate = result["avg_change_rate"]
+            total_trading_value_100m = result["total_trading_value_100m"]
+            if success_stock_count <= 0:
+                self._delete_market_theme_daily_return(theme_id=theme_id, return_date=return_date)
+                items.append(MarketThemeReturnRefreshItem(
+                    theme_id=theme_id,
+                    theme_name=str(result["theme_name"]),
+                    return_date=return_date,
+                    avg_change_rate=None,
+                    stock_count=stock_count,
+                    success_stock_count=0,
+                    failed_stock_count=failed_count,
+                    total_trading_value_100m=None,
+                    save_action="skipped",
+                ))
+                continue
+
+            self._delete_market_theme_stock_daily_returns(theme_id=theme_id, return_date=return_date)
             daily_return_id, save_action = self._upsert_market_theme_daily_return(
                 theme_id=theme_id,
                 return_date=return_date,
-                avg_change_rate=avg_change_rate,
+                avg_change_rate=avg_change_rate if avg_change_rate is None else float(avg_change_rate),
                 stock_count=stock_count,
-                success_stock_count=len(success_results),
+                success_stock_count=success_stock_count,
                 failed_stock_count=failed_count,
-                rising_stock_count=rising_count,
-                falling_stock_count=falling_count,
-                flat_stock_count=flat_count,
-                total_trading_value=total_trading_value,
-                total_trading_value_100m=total_trading_value_100m,
+                rising_stock_count=int(result["rising_count"]),
+                falling_stock_count=int(result["falling_count"]),
+                flat_stock_count=int(result["flat_count"]),
+                total_trading_value=int(result["total_trading_value"]),
+                total_trading_value_100m=total_trading_value_100m if total_trading_value_100m is None else float(total_trading_value_100m),
                 now=refreshed_at,
             )
-            for stock_result in stock_results:
+            for stock_result in result["stock_results"]:
                 self._upsert_market_theme_stock_daily_return(daily_return_id=daily_return_id, theme_id=theme_id, return_date=return_date, row=stock_result, now=refreshed_at)
 
             if save_action == "inserted":
@@ -1945,20 +2061,28 @@ class ExternalKiwoomService:
                 updated_count += 1
             items.append(MarketThemeReturnRefreshItem(
                 theme_id=theme_id,
-                theme_name=str(theme["theme_name"]),
+                theme_name=str(result["theme_name"]),
                 return_date=return_date,
-                avg_change_rate=avg_change_rate,
+                avg_change_rate=avg_change_rate if avg_change_rate is None else float(avg_change_rate),
                 stock_count=stock_count,
-                success_stock_count=len(success_results),
+                success_stock_count=success_stock_count,
                 failed_stock_count=failed_count,
-                total_trading_value_100m=total_trading_value_100m,
+                total_trading_value_100m=total_trading_value_100m if total_trading_value_100m is None else float(total_trading_value_100m),
                 save_action=save_action,
             ))
 
         self.db.commit()
-        message = f"테마등락률 갱신 완료: {len(themes)}개 테마, {total_stock_count}개 종목 반영"
+        db_upsert_ms = int((time.perf_counter() - db_started_at) * 1000)
+        total_ms = int((time.perf_counter() - total_started_at) * 1000)
+        message = f"\ud14c\ub9c8\ub4f1\ub77d\ub960 \uac31\uc2e0 \uc644\ub8cc: {len(themes)}\uac1c \ud14c\ub9c8, \uace0\uc720 {len(unique_stocks)}\uac1c \uc885\ubaa9, {total_stock_count}\uac74 \ubc18\uc601"
         if total_failed_count:
-            message = f"테마등락률 갱신 완료: {len(themes)}개 테마 반영, {total_failed_count}개 종목 조회 실패"
+            message = f"\ud14c\ub9c8\ub4f1\ub77d\ub960 \uac31\uc2e0 \uc644\ub8cc: {len(themes)}\uac1c \ud14c\ub9c8, \uace0\uc720 {len(unique_stocks)}\uac1c \uc885\ubaa9, {total_failed_count}\uac1c \uc885\ubaa9 \uc870\ud68c \uc2e4\ud328"
+        print(
+            "[theme-return-refresh] "
+            f"themes={len(themes)} links={len(link_rows)} unique_stocks={len(unique_stocks)} "
+            f"price_api_calls={price_api_call_count} price_fetch_ms={price_fetch_ms} "
+            f"calc_ms={calc_ms} db_upsert_ms={db_upsert_ms} total_ms={total_ms}"
+        )
         return MarketThemeReturnRefreshResponse(
             success=True,
             return_date=return_date,
@@ -1971,6 +2095,13 @@ class ExternalKiwoomService:
             updated_count=updated_count,
             items=items,
             message=message,
+            theme_stock_link_count=len(link_rows),
+            unique_stock_count=len(unique_stocks),
+            price_api_call_count=price_api_call_count,
+            price_fetch_ms=price_fetch_ms,
+            calc_ms=calc_ms,
+            db_upsert_ms=db_upsert_ms,
+            total_ms=total_ms,
         )
 
     def get_market_theme_latest_return(self, theme_id: int) -> MarketThemeLatestReturnResponse:
@@ -2381,6 +2512,36 @@ class ExternalKiwoomService:
                 FROM market_themes t
                 {where}
                 ORDER BY t.is_supply_theme DESC, t.sort_order ASC, t.theme_name ASC
+                """
+            ),
+            params,
+        ).mappings().all()
+        return [dict(row) for row in rows]
+
+    def _list_active_theme_return_stock_links(self, theme_ids: list[int]) -> list[dict[str, object]]:
+        if not theme_ids:
+            return []
+        params: dict[str, object] = {}
+        placeholders = []
+        for idx, theme_id in enumerate(theme_ids):
+            key = f"theme_id_{idx}"
+            placeholders.append(f":{key}")
+            params[key] = int(theme_id)
+        rows = self.db.execute(
+            text(
+                f"""
+                SELECT
+                    mts.theme_id,
+                    s.id AS stock_id,
+                    s.stock_code,
+                    s.stock_name,
+                    COALESCE(mts.is_primary, 0) AS is_primary
+                FROM market_theme_stocks mts
+                JOIN stocks s ON s.id=mts.stock_id
+                WHERE mts.theme_id IN ({', '.join(placeholders)})
+                  AND mts.is_active=1
+                  AND COALESCE(s.is_active, 1)=1
+                ORDER BY mts.theme_id ASC, mts.is_primary DESC, s.stock_name ASC
                 """
             ),
             params,

@@ -67,6 +67,38 @@ function formatCompactNumber(value: number | null | undefined, suffix = ""): str
   return `${new Intl.NumberFormat("ko-KR", { notation: "compact", maximumFractionDigits: 1 }).format(value)}${suffix}`;
 }
 
+function formatFinancialAmount(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return "미수집";
+  const eok = Number(value) / 100000000;
+  const absEok = Math.abs(eok);
+  if (absEok >= 10000) return `${new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 1 }).format(eok / 10000)}조`;
+  return `${new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 0 }).format(eok)}억`;
+}
+
+function formatWonAsEok(value: string): string {
+  const parsed = Number(value.replace(/,/g, ""));
+  if (!Number.isFinite(parsed)) return value;
+  return `${new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 1 }).format(parsed / 100000000)}억원`;
+}
+
+function formatFactorRawValue(factor: WatchlistEvaluationFactor): string {
+  const rawValue = factor.raw_value || "사용 가능한 원천 데이터가 없습니다.";
+  if (factor.factor_code === "FINANCIAL_PROFITABILITY") {
+    return rawValue.replace(/(영업이익|순이익)\s+(-?[\d,]+(?:\.\d+)?)/g, (_match, label: string, value: string) => `${label} ${formatWonAsEok(value)}`);
+  }
+  if (factor.factor_code === "FINANCIAL_STABILITY") {
+    return rawValue.replace(/(자산|부채|자본)\s+(-?[\d,]+(?:\.\d+)?)/g, (_match, label: string, value: string) => `${label} ${formatWonAsEok(value)}`);
+  }
+  if (factor.factor_code === "SUPPLY_INVESTOR_FLOW") {
+    const lines = [...rawValue.matchAll(/((?:외국인|기관|프로그램)\s*5일\s*누적\s*[+-]?[\d,]+주),\s*(연속\s*[+-]?\d+일)/g)]
+      .map((match) => `${match[1]} | ${match[2]}`);
+    return lines.length ? lines.join("\n") : rawValue;
+  }
+  if (factor.factor_code === "SUPPLY_THEME_ALIGNMENT") return rawValue.replace(/;\s*/g, ";\n");
+  if (factor.factor_code === "SUPPLY_CONTINUITY") return rawValue.replace(/,\s*/g, "\n");
+  return rawValue;
+}
+
 function formatFlowDate(value: string): string {
   const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   return match ? `${Number(match[2])}/${Number(match[3])}` : value.slice(5) || value;
@@ -104,20 +136,6 @@ function marketStatusLabel(value?: string | null): string {
   return MARKET_STATUS_LABELS[value || ""] || value || "미평가";
 }
 
-function watchCardStatusLabel(item: WatchlistEvaluationListItem): string {
-  if (item.last_evaluated_at && !(item.missing_market_data || []).length && !(item.missing_supply_data || []).length && !item.missing_data.length) return "평가 완료";
-  if ((item.missing_market_data || []).length || (item.missing_supply_data || []).length) return "평가 데이터 일부 누락";
-  if (item.missing_data.length) return "데이터 부족";
-  return item.last_evaluated_at ? "평가 완료" : "미평가";
-}
-
-function watchCardStatusClass(item: WatchlistEvaluationListItem): string {
-  const label = watchCardStatusLabel(item);
-  if (label === "평가 완료") return "sije-watch-card-status--complete";
-  if (label === "데이터 부족") return "sije-watch-card-status--danger";
-  if (label === "평가 데이터 일부 누락") return "sije-watch-card-status--warning";
-  return "sije-watch-card-status--muted";
-}
 
 function ScoreBlock({
   title,
@@ -245,18 +263,157 @@ function GenericEvaluationPanel({ item, tab, onHelp }: { item: WatchlistEvaluati
 
 function MarketFactorCard({ factor }: { factor: WatchlistEvaluationFactor }) {
   const reflected = factor.contribution_score !== null && factor.contribution_score !== undefined;
+  const rawValue = formatFactorRawValue(factor);
   return (
     <div className={`sije-market-factor ${reflected ? "" : "missing"}`}>
       <div className="sije-market-factor-head">
         <strong>{factor.factor_name}</strong>
-        <span>{reflected ? `${formatPreciseScore(factor.contribution_score)} / ${formatPreciseScore(factor.weight)}` : "미수집 / 점수 미반영"}</span>
+        <span>{reflected ? `${formatPreciseScore(factor.contribution_score)} / ${formatPreciseScore(factor.weight)}` : "미수집/ 점수 미반영"}</span>
       </div>
       <p>{factor.reason || "해석 문구가 없습니다."}</p>
       <div className="sije-market-factor-meta">
-        <span>{factor.raw_value || "사용 가능한 원천 데이터가 없습니다."}</span>
+        <span>{rawValue}</span>
         <small>기준일: {factor.source_date || "-"}</small>
       </div>
     </div>
+  );
+}
+
+
+type OverallAxisKey = "market" | "material" | "supply" | "chart" | "financial";
+type OverallInsight = { category: OverallAxisKey | "DATA"; title: string; description: string };
+type OverallAxisCard = { key: OverallAxisKey; label: string; role: string; score: number | null; grade: string; summary: string };
+type OverallEvaluationView = {
+  observationScore: number | null;
+  riskScore: number;
+  riskGrade: string;
+  dataConfidence: string;
+  overallScore: number | null;
+  overallGrade: string;
+  summary: string;
+  axes: OverallAxisCard[];
+  strengths: OverallInsight[];
+  weaknesses: OverallInsight[];
+  risks: OverallInsight[];
+  checklist: string[];
+};
+
+function overallGradeFromScore(score: number | null): string {
+  if (score === null) return "미평가";
+  if (score >= 75) return "우선 관찰";
+  if (score >= 60) return "조건부 관찰";
+  if (score >= 40) return "관찰 보류";
+  return "관찰 우선순위 낮음";
+}
+
+function axisGrade(score: number | null, fallback?: string | null): string {
+  if (fallback) return fallback;
+  if (score === null) return "미평가";
+  if (score >= 70) return "양호";
+  if (score >= 50) return "확인 필요";
+  return "부족";
+}
+
+function calculateOverallEvaluation(item: WatchlistEvaluationListItem): OverallEvaluationView {
+  const axes: OverallAxisCard[] = [
+    { key: "market", label: "시장", role: "시장 환경", score: item.market_score, grade: axisGrade(item.market_score, item.market_grade), summary: item.market_summary || "시장 평가 요약이 없습니다." },
+    { key: "material", label: "재료", role: "뉴스·공시·테마", score: item.material_score, grade: axisGrade(item.material_score, item.material_grade), summary: item.material_summary || "재료 평가 요약이 없습니다." },
+    { key: "supply", label: "수급", role: "거래대금·투자주체", score: item.supply_score, grade: axisGrade(item.supply_score, item.supply_grade), summary: item.supply_summary || "수급 평가 요약이 없습니다." },
+    { key: "chart", label: "차트", role: "추세·이평·거래대금", score: item.chart_score, grade: axisGrade(item.chart_score, item.chart_grade), summary: item.chart_summary || "차트 평가 요약이 없습니다." },
+    { key: "financial", label: "재무", role: "OpenDART 재무지표", score: item.financial_score, grade: axisGrade(item.financial_score, item.financial_grade), summary: item.financial_summary || "재무 평가 요약이 없습니다." },
+  ];
+  const scores = axes.map((axis) => axis.score).filter((score): score is number => typeof score === "number");
+  const overallScore = item.total_score ?? (scores.length ? Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length) : null);
+  const sorted = [...axes].filter((axis) => axis.score !== null).sort((a, b) => (b.score || 0) - (a.score || 0));
+  const strengths = sorted.filter((axis) => (axis.score || 0) >= 60).slice(0, 3).map((axis) => ({ category: axis.key, title: `${axis.label} ${axis.grade}`, description: axis.summary }));
+  const weaknesses = sorted.filter((axis) => (axis.score || 0) < 50).slice(-3).map((axis) => ({ category: axis.key, title: `${axis.label} ${axis.grade}`, description: axis.summary }));
+  const risks = [
+    ...(item.missing_data.length ? [{ category: "DATA" as const, title: "미수집 항목 확인", description: `${item.missing_data.length}개 항목이 아직 부족합니다.` }] : []),
+    ...axes.filter((axis) => (axis.score || 0) < 40).map((axis) => ({ category: axis.key, title: `${axis.label} 리스크`, description: axis.summary })),
+  ].slice(0, 3);
+  const checklist = [
+    "시장·재료·수급·차트·재무 축을 함께 확인",
+    "점수가 낮은 축은 각 탭의 factor 근거를 먼저 점검",
+    "미수집 항목이 있으면 관심종목 수집 후 재평가",
+  ];
+  return {
+    observationScore: overallScore,
+    riskScore: risks.length,
+    riskGrade: risks.length >= 2 ? "경계" : risks.length === 1 ? "보통" : "낮음",
+    dataConfidence: String(item.data_confidence),
+    overallScore,
+    overallGrade: overallGradeFromScore(overallScore),
+    summary: overallScore === null ? "종합 평가를 위한 점수가 아직 부족합니다." : `5대 평가축을 기준으로 ${overallScore}점, ${overallGradeFromScore(overallScore)}으로 정리했습니다.`,
+    axes,
+    strengths: strengths.length ? strengths : [{ category: "DATA", title: "강점 확인 중", description: "평가 축별 점수를 더 확보한 뒤 강점을 정리합니다." }],
+    weaknesses: weaknesses.length ? weaknesses : [{ category: "DATA", title: "약점 확인 중", description: "현재 데이터로는 뚜렷한 약점을 한정하기 어렵습니다." }],
+    risks: risks.length ? risks : [{ category: "DATA", title: "주요 리스크 낮음", description: "현재 점수상 크게 돋보이는 리스크는 제한적입니다." }],
+    checklist,
+  };
+}
+
+
+type OverallDisplay = {
+  gradeLabel: string;
+  scoreLabel: string;
+  combinedLabel: string;
+  isEvaluated: boolean;
+};
+
+function overallDisplayFromView(overall: Pick<OverallEvaluationView, "overallGrade" | "overallScore">): OverallDisplay {
+  const isEvaluated = overall.overallScore !== null;
+  const gradeLabel = isEvaluated ? overall.overallGrade : "\uBBF8\uD3C9\uAC00";
+  const scoreLabel = isEvaluated ? `${overall.overallScore}\uC810` : "\uBBF8\uD3C9\uAC00";
+  return {
+    gradeLabel,
+    scoreLabel,
+    combinedLabel: isEvaluated ? `${gradeLabel} \u00B7 ${scoreLabel}` : "\uBBF8\uD3C9\uAC00",
+    isEvaluated,
+  };
+}
+
+function getOverallDisplay(item: WatchlistEvaluationListItem): OverallDisplay {
+  return overallDisplayFromView(calculateOverallEvaluation(item));
+}
+
+function OverallInsightList({ title, items, empty }: { title: string; items: OverallInsight[]; empty: string }) {
+  return <div className="sije-overall-insight-card"><h4>{title}</h4>{items.length ? <ul>{items.map((item, index) => <li key={`${item.category}-${item.title}-${index}`}><strong>{item.title}</strong><span>{item.description}</span></li>)}</ul> : <p>{empty}</p>}</div>;
+}
+
+function OverallChecklist({ title, items }: { title: string; items: string[] }) {
+  return <div className="sije-overall-check-card"><h4>{title}</h4><ul>{items.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul></div>;
+}
+
+function OverallPanel({ item, onHelp, onSelectTab }: { item: WatchlistEvaluationListItem; onHelp: (title: string) => void; onSelectTab: (tab: SijeTab) => void }) {
+  const overall = calculateOverallEvaluation(item);
+  const overallDisplay = overallDisplayFromView(overall);
+  return (
+    <section className="sije-tab-panel sije-overall-panel">
+      <div className="sije-overall-summary-card">
+        <div>
+          <span className="sije-overall-eyebrow">{"종합 평가"}</span>
+          <h3><span>{overallDisplay.combinedLabel}</span><button type="button" className="overall-axis-info-button" onClick={() => onHelp("overall-info")} aria-label={"\uC885\uD569\uD3C9\uAC00 \uC124\uBA85"}><HelpCircle size={15} /></button></h3>
+          <p>{overall.summary}</p>
+        </div>
+        <aside>
+          <StatusBadge label={`관찰 매력도 ${overall.observationScore === null ? "미평가" : `${overall.observationScore}점`}`} tone={gradeTone(overall.overallGrade)} />
+          <StatusBadge label={`리스크 ${overall.riskGrade}`} tone={overall.riskGrade === "경계" ? "amber" : overall.riskGrade === "보통" ? "blue" : "emerald"} />
+          <StatusBadge label={`신뢰도 ${overall.dataConfidence}`} tone={confidenceTone(overall.dataConfidence)} />
+        </aside>
+      </div>
+      <div className="sije-overall-axis-grid">
+        {overall.axes.map((axis) => <button key={axis.key} type="button" className="sije-overall-axis-card" onClick={() => onSelectTab(axis.key)}><span>{axis.label}</span><strong>{formatScore(axis.score)}</strong><em>{axis.grade}</em><small>{axis.role}</small></button>)}
+      </div>
+      <div className="sije-overall-insight-grid">
+        <OverallInsightList title="강점" items={overall.strengths} empty="확인된 강점이 없습니다." />
+        <OverallInsightList title="약점" items={overall.weaknesses} empty="확인된 약점이 없습니다." />
+        <OverallInsightList title="리스크" items={overall.risks} empty="확인된 리스크가 없습니다." />
+      </div>
+      <div className="sije-overall-check-grid">
+        <OverallChecklist title="관찰 체크리스트" items={overall.checklist} />
+        <OverallChecklist title="다음 확인" items={["부족한 탭을 선택해 factor 근거 확인", "GPT 판단 탭에서 종합 평가 근거 패키지 확인"]} />
+      </div>
+    </section>
   );
 }
 
@@ -528,25 +685,93 @@ function MaterialThemeList({ item }: { item: WatchlistEvaluationListItem }) {
   );
 }
 
-function FinancialPerformanceChart({ title, rows }: { title: string; rows: Array<{ period_label?: string | null; revenue?: number | null; operating_profit?: number | null; net_income?: number | null }> }) {
-  const maxValue = Math.max(1, ...rows.flatMap((row) => [row.revenue || 0, Math.abs(row.operating_profit || 0), Math.abs(row.net_income || 0)]));
+type FinancialStatementRow = {
+  period_label?: string | null;
+  revenue?: number | null;
+  operating_profit?: number | null;
+  net_income?: number | null;
+};
+
+type FinancialSeriesKey = "revenue" | "operating_profit" | "net_income";
+
+type FinancialSeriesMeta = { key: FinancialSeriesKey; label: string; className: string };
+
+const FINANCIAL_REVENUE_SERIES: FinancialSeriesMeta[] = [
+  { key: "revenue", label: "매출액", className: "revenue" },
+];
+
+const FINANCIAL_PROFIT_SERIES: FinancialSeriesMeta[] = [
+  { key: "operating_profit", label: "영업이익", className: "operating_profit" },
+  { key: "net_income", label: "당기순이익", className: "net_income" },
+];
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function financialLatestSummary(row?: FinancialStatementRow | null): string {
+  if (!row) return "최신 실적 미수집";
+  return `최근 ${row.period_label || "-"} · 매출액 ${formatFinancialAmount(row.revenue)} · 영업이익 ${formatFinancialAmount(row.operating_profit)} · 당기순이익 ${formatFinancialAmount(row.net_income)}`;
+}
+
+function FinancialMiniChart({ rows, series }: { rows: FinancialStatementRow[]; series: FinancialSeriesMeta[] }) {
+  const values = rows.flatMap((row) => series.map((meta) => row[meta.key]).filter(isFiniteNumber));
+  const hasNegative = values.some((value) => value < 0);
+  const maxAbs = Math.max(1, ...values.map((value) => Math.abs(value)));
   return (
-    <div className="sije-financial-chart">
-      <h4>{title}</h4>
-      {rows.length === 0 ? <div className="sije-material-empty">수집된 실적 데이터가 없습니다.</div> : (
-        <div className="sije-financial-bars">
-          {rows.map((row, index) => (
-            <div className="sije-financial-period" key={`${row.period_label}-${index}`}>
-              <div className="sije-financial-bar-set">
-                {(["revenue", "operating_profit", "net_income"] as const).map((key) => <span key={key} className={`sije-financial-bar ${key}`} style={{ height: `${Math.max(2, Math.abs(row[key] || 0) / maxValue * 100)}%` }} title={`${key}: ${formatCompactNumber(row[key])}`} />)}
-              </div>
-              <span>{row.period_label || "-"}</span>
-            </div>
-          ))}
+    <div className={`financial-mini-chart ${series.length > 1 ? "financial-mini-chart--series-2" : ""}`}>
+      {rows.map((row, index) => (
+        <div className="financial-mini-period" key={`${row.period_label || index}-${index}`}>
+          <div className="financial-mini-bar-zone">
+            {hasNegative ? <span className="financial-mini-zero-line" /> : null}
+            {series.map((meta) => {
+              const value = row[meta.key];
+              const missing = !isFiniteNumber(value);
+              const height = missing ? 0 : Math.max(3, Math.abs(value) / maxAbs * (hasNegative ? 48 : 92));
+              const style = hasNegative
+                ? value && value < 0
+                  ? { height: `${height}%`, top: "50%" }
+                  : { height: `${height}%`, bottom: "50%" }
+                : { height: `${height}%`, bottom: 0 };
+              return <span key={meta.key} className={`financial-mini-bar ${meta.className} ${value && value < 0 ? "negative" : ""} ${missing ? "missing" : ""}`} style={style} title={`${row.period_label || "-"} ${meta.label}: ${formatFinancialAmount(value)}`} />;
+            })}
+          </div>
+          <span className="financial-mini-period-label">{row.period_label || "-"}</span>
         </div>
-      )}
-      <div className="sije-financial-legend"><span>매출액</span><span>영업이익</span><span>당기순이익</span></div>
+      ))}
     </div>
+  );
+}
+
+function FinancialChartPanel({ title, rows, series }: { title: string; rows: FinancialStatementRow[]; series: FinancialSeriesMeta[] }) {
+  return (
+    <div className="financial-chart-panel">
+      <div className="financial-chart-panel-header">
+        <span>{title}</span>
+        {series.length > 1 ? <div className="financial-chart-legend">{series.map((meta) => <span key={meta.key} className={meta.className}>{meta.label}</span>)}</div> : null}
+      </div>
+      {rows.length === 0 ? <div className="sije-material-empty">수집된 실적 데이터가 없습니다.</div> : <FinancialMiniChart rows={rows} series={series} />}
+    </div>
+  );
+}
+
+function FinancialPerformanceChart({ title, description, rows }: { title: string; description: string; rows: FinancialStatementRow[] }) {
+  const chartRows = rows.slice(-8);
+  const latest = chartRows.length ? chartRows[chartRows.length - 1] : null;
+  return (
+    <section className="financial-performance-card">
+      <div className="financial-performance-header">
+        <div>
+          <h4>{title}</h4>
+          <p>{description}</p>
+        </div>
+        <div className="financial-performance-latest-summary">{financialLatestSummary(latest)}</div>
+      </div>
+      <div className="financial-performance-split">
+        <FinancialChartPanel title="매출액 추이" rows={chartRows} series={FINANCIAL_REVENUE_SERIES} />
+        <FinancialChartPanel title="이익 추이" rows={chartRows} series={FINANCIAL_PROFIT_SERIES} />
+      </div>
+    </section>
   );
 }
 
@@ -566,7 +791,7 @@ function FinancialPanel({ item, onHelp }: { item: WatchlistEvaluationListItem; o
       <EvaluationSummaryPanel title="재무 평가" score={item.financial_score} onHelp={onHelp} helpTitle="재무 점수 산정 기준" summary={item.financial_summary || "재무 평가 전입니다."} subSummary="실제 수집된 재무 데이터만 사용하며 매수·매도 추천이 아닌 관찰용 리스크 평가입니다." badges={[{ label: item.financial_grade || "미평가", tone: gradeTone(item.financial_grade) }, { label: marketStatusLabel(item.financial_status), tone: statusTone(item.financial_status) }, { label: item.financial_model_version || "FINANCIAL_V1", tone: "blue" }]} metaLines={[`최근 결산 기준: ${String(snapshot.snapshot_date || "-")}`, `미수집 항목: ${(item.missing_financial_data || []).length}개`]} />
       <div className="sije-financial-metric-grid">{metrics.map(([label,value]) => <div key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>
       <div className="sije-market-factor-grid">{(item.financial_factors || []).length ? (item.financial_factors || []).map((factor) => <MarketFactorCard key={factor.factor_code} factor={factor} />) : <EmptyState message="재무 평가 factor가 없습니다. 관심종목 화면에서 수집 후 평가를 실행해 주세요." />}</div>
-      <div className="sije-financial-chart-grid"><FinancialPerformanceChart title="연도별 실적" rows={item.financial_annual_statements || []} /><FinancialPerformanceChart title="분기별 실적" rows={item.financial_quarterly_statements || []} /></div>
+      <div className="sije-financial-chart-grid"><FinancialPerformanceChart title="연도별 실적" description="최근 5개년 OpenDART 재무제표 기준입니다." rows={item.financial_annual_statements || []} /><FinancialPerformanceChart title="분기별 실적" description="최근 8개 분기 OpenDART 재무제표 기준입니다." rows={item.financial_quarterly_statements || []} /></div>
       <div className="sije-chart-metrics"><h4>주주·지분 요약</h4><div className="sije-chart-metric-grid"><div><span>최대주주명</span><strong>미수집</strong></div><div><span>최대주주 지분율</span><strong>미수집</strong></div><div><span>외국인 보유율</span><strong>{shareholder.foreign_holding_ratio == null ? "미수집" : `${shareholder.foreign_holding_ratio}%`}</strong></div><div><span>기준일</span><strong>{String(shareholder.snapshot_date || "-")}</strong></div></div></div>
     </section>
   );
@@ -826,6 +1051,7 @@ function WatchlistSijeSuchaJaePage() {
   }, [activeFilter, items, keyword]);
 
   const selected = items.find((item) => item.watchlist_id === selectedId) || filteredItems[0] || null;
+  const selectedOverallDisplay = selected ? getOverallDisplay(selected) : null;
 
   useEffect(() => {
     if (!selected) return;
@@ -982,22 +1208,24 @@ function WatchlistSijeSuchaJaePage() {
               {loading ? <p className="text-sm text-muted">목록 로딩 중입니다.</p> : null}
               {!loading && filteredItems.length === 0 ? <EmptyState message="조회된 관심종목이 없습니다." /> : null}
               <div className="sije-stock-list">
-                {filteredItems.map((item) => (
-                  <button key={item.watchlist_id} type="button" className={`sije-stock-card ${selected?.watchlist_id === item.watchlist_id ? "selected" : ""}`} onClick={() => { setSelectedId(item.watchlist_id); setGptPrompt(""); }}>
-                    <div className="sije-watch-card-main">
-                      <div className="sije-watch-card-left">
-                        <strong className="sije-watch-card-name">{item.stock_name}</strong>
-                        <span className="sije-watch-card-meta">{item.stock_code} {"·"} {item.market || "-"}</span>
-                        <span className="sije-watch-card-line">{item.total_score === null ? "종합: 미평가" : `종합: ${item.total_score}점`}</span>
+                {filteredItems.map((item) => {
+                  const overallDisplay = getOverallDisplay(item);
+                  return (
+                    <button key={item.watchlist_id} type="button" className={`sije-stock-card ${selected?.watchlist_id === item.watchlist_id ? "selected" : ""}`} onClick={() => { setSelectedId(item.watchlist_id); setGptPrompt(""); }}>
+                      <div className="sije-watch-card-main">
+                        <div className="sije-watch-card-left">
+                          <strong className="sije-watch-card-name">{item.stock_name}</strong>
+                          <span className="sije-watch-card-meta">{item.stock_code} {"\u00B7"} {item.market || "-"}</span>
+                        </div>
+                        <div className="sije-watch-card-right">
+                          <span className="sije-watch-card-label">{"\uC885\uD569\uD3C9\uAC00"}</span>
+                          <strong className={`sije-watch-card-score ${overallDisplay.isEvaluated ? "" : "muted"}`}>{overallDisplay.gradeLabel}</strong>
+                          <span className="sije-watch-card-line">{overallDisplay.isEvaluated ? overallDisplay.scoreLabel : ""}</span>
+                        </div>
                       </div>
-                      <div className="sije-watch-card-right">
-                        <em className={`sije-watch-card-status ${watchCardStatusClass(item)}`}>{watchCardStatusLabel(item)}</em>
-                        <span className="sije-watch-card-line">시장: {formatScore(item.market_score)}{item.market_grade ? ` · ${item.market_grade}` : ""}</span>
-                        <span className="sije-watch-card-line">수급: {formatScore(item.supply_score)}{item.supply_grade ? ` · ${item.supply_grade}` : ""}</span>
-                      </div>
-                    </div>
-                  </button>
-                ))}
+                    </button>
+                  );
+                })}
               </div>
             </>
           ) : null}
@@ -1019,23 +1247,12 @@ function WatchlistSijeSuchaJaePage() {
                     <StatusBadge label={selected.data_confidence} tone={confidenceTone(selected.data_confidence)} />
                   </div>
                 </div>
-                <div className="sije-total-score"><span>종합점수</span><strong className={selected.total_score === null ? "muted" : ""}>{formatScore(selected.total_score)}</strong></div>
+                <div className="sije-total-score"><span>{"\uC885\uD569\uD3C9\uAC00"}</span><strong className={selectedOverallDisplay?.isEvaluated ? "" : "muted"}>{selectedOverallDisplay?.gradeLabel || "\uBBF8\uD3C9\uAC00"}</strong>{selectedOverallDisplay?.isEvaluated ? <small>{selectedOverallDisplay.scoreLabel}</small> : null}</div>
               </section>
 
               <div className="sije-tabs">{TABS.map((item) => <button key={item.key} type="button" className={tab === item.key ? "active" : ""} onClick={() => setTab(item.key)}>{item.label}</button>)}</div>
 
-              {tab === "overall" ? (
-                <section className="sije-tab-panel">
-                  <div className="sije-score-grid">
-                    <ScoreBlock title="시장" score={selected.market_score} status={`${selected.market_grade || "미평가"} · ${marketStatusLabel(selected.market_status)}`} dataList={["KOSPI/KOSDAQ", "시장지표", "미국지수", "환율/금리"]} onReason={() => openReason("시장")} />
-                    <ScoreBlock title="재료" score={selected.material_score} dataList={["뉴스", "공시", "테마"]} onReason={() => openReason("재료")} />
-                    <ScoreBlock title="수급" score={selected.supply_score} status={`${selected.supply_grade || "미평가"} · ${marketStatusLabel(selected.supply_status)}`} dataList={["거래대금", "테마 흐름", "테마 내 순위", "투자주체별 수급"]} onReason={() => openReason("수급")} />
-                    <ScoreBlock title="차트" score={selected.chart_score} dataList={["일봉", "이동평균", "거래대금"]} onReason={() => openReason("차트")} />
-                    <ScoreBlock title="재무" score={selected.financial_score} status="재무정보 준비중" dataList={[]} onReason={() => openReason("재무")} />
-                  </div>
-                  <div className="sije-note">{[selected.market_summary, selected.supply_summary].filter(Boolean).join(" ") || "평가를 실행하면 종합 탭에 시장·수급 요약이 반영됩니다."}</div>
-                </section>
-              ) : null}
+              {tab === "overall" ? <OverallPanel item={selected} onHelp={openReason} onSelectTab={setTab} /> : null}
 
               {tab === "market" ? <MarketPanel item={selected} onHelp={() => openReason("시장")} /> : null}
 

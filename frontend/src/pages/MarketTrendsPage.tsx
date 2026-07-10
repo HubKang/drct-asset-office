@@ -17,6 +17,7 @@ import type {
   DailyThemeFlowSummary,
   KiwoomConditionItem,
   KiwoomConditionResultItem,
+  ExistingMarketEventTheme,
   KiwoomMarketEventItem,
   MarketEventThemeLink,
   MonthlyThemeFlowCalendarDay,
@@ -263,6 +264,7 @@ function MarketTrendsPage() {
   const [eventThemeLinksMap, setEventThemeLinksMap] = useState<Record<number, MarketEventThemeLink[]>>({});
   const [eventDrafts, setEventDrafts] = useState<Record<number, { theme_status: string; user_memo: string; selected_theme_id: string }>>({});
   const [eventThemeSearchMap, setEventThemeSearchMap] = useState<Record<number, string>>({});
+  const [existingThemePopoverEventId, setExistingThemePopoverEventId] = useState<number | null>(null);
   const [marketThemes, setMarketThemes] = useState<MarketTrendThemeOption[]>([]);
 
   const [tradeDate, setTradeDate] = useState(() => todayInKst());
@@ -410,6 +412,14 @@ function MarketTrendsPage() {
     return { stockCount, representative: rep };
   }, [selectedFlowTheme, flowSummaries, flowStocks]);
   const sortMark = (active: boolean, order: SortOrder) => (active ? (order === "asc" ? " ▲" : " ▼") : "");
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setExistingThemePopoverEventId(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   const loadConditions = async () => {
     setError("");
@@ -880,6 +890,18 @@ ${tableRows}
     } catch (e) {
       setError(toErr(e, "메모 저장에 실패했습니다."));
     }
+  };
+
+  const applyExistingTheme = (eventId: number, theme: ExistingMarketEventTheme) => {
+    setExistingThemePopoverEventId(null);
+    setEventThemeSearchMap((prev) => ({ ...prev, [eventId]: theme.theme_name }));
+    setEventDrafts((prev) => ({
+      ...prev,
+      [eventId]: {
+        ...(prev[eventId] ?? { theme_status: "unassigned", user_memo: "", selected_theme_id: "" }),
+        selected_theme_id: String(theme.theme_id),
+      },
+    }));
   };
 
   const addThemeLink = async (eventId: number, searchTextOverride?: string) => {
@@ -1524,10 +1546,48 @@ ${tableRows}
                         <td><input type="checkbox" checked={selectedTrackingCandidateSet.has(e.event_id)} onChange={(ev) => toggleTrackingCandidate(e.event_id, ev.target.checked)} aria-label="후보 선택" /></td>
                         <td>{formatDate(e.detected_at)}</td>
                         <td>
-                          <div className="stock-cell">
-                            <strong>{e.stock_name || "-"}</strong>
-                            <span>{e.stock_code || "-"}</span>
-                            {e.detection_source === "manual" ? <span className="manual-candidate-badge">직접등록</span> : null}
+                          <div className="saved-candidate-stock-cell" title={e.stock_code || undefined}>
+                            <div className="saved-candidate-stock-name-row">
+                              <strong className="saved-candidate-stock-name">{e.stock_name || "-"}</strong>
+                              {e.detection_source === "manual" ? <span className="manual-candidate-badge">{"\uC9C1\uC811\uB4F1\uB85D"}</span> : null}
+                            </div>
+                            <div className="saved-candidate-theme-chips">
+                              {(e.existing_themes || []).length === 0 ? <span className="existing-theme-empty">{"\uAE30\uC874 \uD14C\uB9C8 \uC5C6\uC74C"}</span> : null}
+                              {(e.existing_themes || []).slice(0, 3).map((theme) => (
+                                <button
+                                  key={`${e.event_id}-${theme.theme_id}`}
+                                  type="button"
+                                  className="existing-theme-chip"
+                                  onClick={() => applyExistingTheme(e.event_id, theme)}
+                                  title={theme.theme_group_name ? `${theme.theme_group_name} \u00B7 ${theme.theme_name}` : theme.theme_name}
+                                >
+                                  {theme.theme_name}
+                                </button>
+                              ))}
+                              {(e.existing_themes || []).length > 3 ? (
+                                <span className="existing-theme-more-wrap">
+                                  <button
+                                    type="button"
+                                    className="existing-theme-chip more"
+                                    onClick={() => setExistingThemePopoverEventId((prev) => (prev === e.event_id ? null : e.event_id))}
+                                  >
+                                    +{(e.existing_themes || []).length - 3}
+                                  </button>
+                                  {existingThemePopoverEventId === e.event_id ? (
+                                    <div className="existing-theme-popover">
+                                      <strong>{e.stock_name || "-"} {"\uAE30\uC874 \uC5F0\uACB0 \uD14C\uB9C8"}</strong>
+                                      <div className="existing-theme-popover-list">
+                                        {(e.existing_themes || []).map((theme) => (
+                                          <button key={`popover-${e.event_id}-${theme.theme_id}`} type="button" className="existing-theme-chip" onClick={() => applyExistingTheme(e.event_id, theme)}>
+                                            {theme.theme_name}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  ) : null}
+                                </span>
+                              ) : null}
+                            </div>
                           </div>
                         </td>
                         <td>{e.market_type || "-"}</td><td className="text-right">{fmtPct(e.change_rate)}</td>
