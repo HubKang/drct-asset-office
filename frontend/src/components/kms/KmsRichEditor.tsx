@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type MouseEvent } from "react";
-import type { Editor } from "@tiptap/core";
+import { Extension, type Editor } from "@tiptap/core";
 import Color from "@tiptap/extension-color";
 import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
@@ -50,6 +50,51 @@ const KmsImage = Image.extend({
   },
 });
 
+const KmsTextStyleAttributes = Extension.create({
+  name: "kmsTextStyleAttributes",
+  addGlobalAttributes() {
+    return [
+      {
+        types: ["textStyle"],
+        attributes: {
+          fontSize: {
+            default: null,
+            parseHTML: (element) => element.style.fontSize || null,
+            renderHTML: (attributes) => (attributes.fontSize ? { style: `font-size: ${attributes.fontSize}` } : {}),
+          },
+          backgroundColor: {
+            default: null,
+            parseHTML: (element) => element.style.backgroundColor || null,
+            renderHTML: (attributes) => (attributes.backgroundColor ? { style: `background-color: ${attributes.backgroundColor}` } : {}),
+          },
+        },
+      },
+    ];
+  },
+});
+
+const KmsTextAlign = Extension.create({
+  name: "kmsTextAlign",
+  addGlobalAttributes() {
+    return [
+      {
+        types: ["heading", "paragraph"],
+        attributes: {
+          textAlign: {
+            default: null,
+            parseHTML: (element) => element.style.textAlign || null,
+            renderHTML: (attributes) => (attributes.textAlign ? { style: `text-align: ${attributes.textAlign}` } : {}),
+          },
+        },
+      },
+    ];
+  },
+});
+
+const fontSizeOptions = ["12px", "14px", "16px", "18px", "20px", "24px", "28px"];
+const textColorOptions = ["#0f172a", "#2563eb", "#16a34a", "#dc2626", "#9333ea", "#ea580c"];
+const backgroundColorOptions = ["transparent", "#fef3c7", "#dcfce7", "#dbeafe", "#fce7f3", "#fee2e2"];
+
 function KmsRichEditor({
   value,
   onChange,
@@ -73,6 +118,8 @@ function KmsRichEditor({
       StarterKit,
       Underline,
       TextStyle,
+      KmsTextStyleAttributes,
+      KmsTextAlign,
       Color,
       Link.configure({
         openOnClick: false,
@@ -241,6 +288,12 @@ function KmsRichEditor({
   };
 
   const insertTable = () => run(() => editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run());
+  const setFontSize = (fontSize: string) => run(() => editor?.chain().focus().setMark("textStyle", { fontSize }).run());
+  const setTextColor = (color: string) => run(() => editor?.chain().focus().setMark("textStyle", { color }).run());
+  const setBackgroundColor = (backgroundColor: string) =>
+    run(() => editor?.chain().focus().setMark("textStyle", { backgroundColor: backgroundColor === "transparent" ? null : backgroundColor }).run());
+  const setTextAlign = (textAlign: "left" | "center" | "right") =>
+    run(() => editor?.chain().focus().updateAttributes("paragraph", { textAlign }).updateAttributes("heading", { textAlign }).run());
   const setImageWidth = (activeEditor: Editor | null, widthPercent: number) => {
     if (!activeEditor) return;
     run(() => activeEditor.chain().focus().updateAttributes("image", { width: `${widthPercent}%`, height: null }).run());
@@ -252,9 +305,24 @@ function KmsRichEditor({
         <button type="button" title="Paragraph" className={buttonClass(editor?.isActive("paragraph"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().setParagraph().run())}>P</button>
         <button type="button" title="Heading 1" className={buttonClass(editor?.isActive("heading", { level: 1 }))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleHeading({ level: 1 }).run())}>H1</button>
         <button type="button" title="Heading 2" className={buttonClass(editor?.isActive("heading", { level: 2 }))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleHeading({ level: 2 }).run())}>H2</button>
+        <select className="kms-editor-select" title="Font size" defaultValue="" onMouseDown={(event) => event.stopPropagation()} onChange={(event) => { if (event.target.value) setFontSize(event.target.value); event.target.value = ""; }}>
+          <option value="">Size</option>
+          {fontSizeOptions.map((size) => <option key={size} value={size}>{size}</option>)}
+        </select>
+        <select className="kms-editor-select" title="Text color" defaultValue="" onMouseDown={(event) => event.stopPropagation()} onChange={(event) => { if (event.target.value) setTextColor(event.target.value); event.target.value = ""; }}>
+          <option value="">Text</option>
+          {textColorOptions.map((color) => <option key={color} value={color}>{color}</option>)}
+        </select>
+        <select className="kms-editor-select" title="Background color" defaultValue="" onMouseDown={(event) => event.stopPropagation()} onChange={(event) => { if (event.target.value) setBackgroundColor(event.target.value); event.target.value = ""; }}>
+          <option value="">Bg</option>
+          {backgroundColorOptions.map((color) => <option key={color} value={color}>{color}</option>)}
+        </select>
         <button type="button" title="Bold" className={buttonClass(editor?.isActive("bold"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleBold().run())}>B</button>
         <button type="button" title="Italic" className={buttonClass(editor?.isActive("italic"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleItalic().run())}>I</button>
         <button type="button" title="Underline" className={buttonClass(editor?.isActive("underline"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleUnderline().run())}>U</button>
+        <button type="button" title="Align left" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => setTextAlign("left")}>Left</button>
+        <button type="button" title="Align center" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => setTextAlign("center")}>Center</button>
+        <button type="button" title="Align right" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => setTextAlign("right")}>Right</button>
         <button type="button" title="Bullet list" className={buttonClass(editor?.isActive("bulletList"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleBulletList().run())}>List</button>
         <button type="button" title="Ordered list" className={buttonClass(editor?.isActive("orderedList"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleOrderedList().run())}>1.</button>
         <button type="button" title="Quote" className={buttonClass(editor?.isActive("blockquote"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleBlockquote().run())}>Quote</button>

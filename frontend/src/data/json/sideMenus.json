@@ -46,7 +46,7 @@
   },
   {
     "menuKey": "market",
-    "title": "시장 수급 분석",
+    "title": "시장 수급 테마(종목)",
     "routeKey": "market-trends"
   },
   {
@@ -86,7 +86,7 @@
   },
   {
     "menuKey": "kms",
-    "title": "지식 게시판",
+    "title": "지식 보드",
     "routeKey": "kms-posts"
   },
   {

@@ -1,4 +1,5 @@
 export type NaverStockCandlePeriod = "day" | "week" | "month";
+export type NaverTraderChartType = "foreign" | "institution";
 export type NaverKoreaMarketCode = "KOSPI" | "KOSDAQ";
 export type NaverWorldIndexCode = "DJI@DJI" | "NAS@IXIC" | "SPI@SPX";
 export type NaverWorldIndexPeriod = "month3";
@@ -26,6 +27,15 @@ export function buildNaverStockCandleChartUrl(
 ): string {
   const normalizedCode = normalizeNaverStockCode(stockCode);
   return `https://ssl.pstatic.net/imgfinance/chart/item/candle/${period}/${normalizedCode}.png?sidcode=${sidcode}`;
+}
+
+export function buildNaverTraderChartUrl(
+  type: NaverTraderChartType,
+  stockCode: string | number | null | undefined,
+): string {
+  const normalizedCode = normalizeNaverStockCode(stockCode);
+  const prefix = type === "foreign" ? "F" : "I";
+  return `https://ssl.pstatic.net/imgfinance/chart/trader/month3/${prefix}_${normalizedCode}.png`;
 }
 
 export function buildNaverKoreaMarketChartUrl(market: NaverKoreaMarketCode, sidcode: string | number): string {

@@ -264,6 +264,10 @@ class MarketThemeReturnRefreshResponse(BaseModel):
     theme_stock_link_count: int = 0
     unique_stock_count: int = 0
     price_api_call_count: int = 0
+    rest_post_calls: int = 0
+    auth_token_issue_count: int = 0
+    ka10001_calls: int = 0
+    ka10015_calls: int = 0
     price_fetch_ms: int = 0
     calc_ms: int = 0
     db_upsert_ms: int = 0
@@ -406,6 +410,7 @@ class MonthlyThemeFlowStockItem(BaseModel):
     stock_id: int | None = None
     stock_code: str | None = None
     stock_name: str
+    change_rate: float | None = None
 
 
 class MonthlyThemeFlowMemoItem(BaseModel):

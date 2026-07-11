@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { CSSProperties, DragEvent } from "react";
 import PageHeader from "@/components/common/PageHeader";
@@ -20,7 +20,9 @@ import type {
   ExistingMarketEventTheme,
   KiwoomMarketEventItem,
   MarketEventThemeLink,
+  MonthlyThemeFlowCalendarTheme,
   MonthlyThemeFlowCalendarDay,
+  MonthlyThemeFlowTrendPoint,
   MonthlyThemeFlowTrendResponse,
   MonthlyThemeFlowTrendTheme,
 } from "@/types/marketTrend";
@@ -36,6 +38,16 @@ type ThemeFlowViewMode = "THEME" | "THEME_GROUP";
 type SelectedDayDetailTab = "themes" | "memos";
 type TrackingRegisterSource = "saved-candidates" | "condition-results";
 type MarketTrendThemeOption = Pick<MarketTheme, "id" | "theme_name" | "latest_return">;
+type MonthlyThemeFlowView = "heatmap" | "treemap";
+type MonthlySupplyHeatmapRow = {
+  marketThemeId: number;
+  themeName: string;
+  themeGroupName: string | null;
+  avgChangeRate: number | null;
+  stockCount: number;
+  eventCount: number;
+  dailyMap: Map<string, MonthlyThemeFlowTrendPoint>;
+};
 type MonthlyThemeTreemapItem = {
   marketThemeId: number;
   themeName: string;
@@ -109,6 +121,24 @@ const changeRateClass = (value: number | null | undefined) => {
   return "";
 };
 
+const heatmapReturnClass = (value: number | null | undefined) => {
+  if (value == null || Number.isNaN(Number(value))) return "is-empty";
+  const n = Number(value);
+  if (n <= -10) return "negative-strong";
+  if (n <= -5) return "negative-medium";
+  if (n < 0) return "negative-soft";
+  if (n >= 10) return "positive-strong";
+  if (n >= 5) return "positive-medium";
+  if (n > 0) return "positive-soft";
+  return "neutral";
+};
+
+const fmtHeatmapPct = (value: number | null | undefined) => {
+  if (value == null || Number.isNaN(Number(value))) return "-";
+  const n = Number(value);
+  return `${n > 0 ? "+" : ""}${n.toFixed(1)}`;
+};
+
 const getResultRowKey = (row: KiwoomConditionResultItem) => `${row.stock_code || "NA"}|${row.stock_name || "NA"}|${row.detected_at || "NA"}|${row.source_api || "NA"}`;
 const escapeMarkdownCell = (value: string | number | null | undefined) => String(value ?? "-").replace(/\|/g, "\\|").replace(/\r?\n/g, " ").trim() || "-";
 const getConditionResultMarket = (row: KiwoomConditionResultItem) => {
@@ -154,14 +184,15 @@ const subtractOneMonth = (baseDate: string) => {
 
 const getMonthKey = (date: string) => date.slice(0, 7);
 
-const getMonthKeysBetween = (startDate: string, endDate: string) => {
-  const start = new Date(`${getMonthKey(startDate)}-01T00:00:00Z`);
-  const end = new Date(`${getMonthKey(endDate)}-01T00:00:00Z`);
+const getDateKeysBetween = (startDate: string, endDate: string) => {
+  const start = new Date(`${startDate}T00:00:00Z`);
+  const end = new Date(`${endDate}T00:00:00Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) return [];
   const keys: string[] = [];
   const cursor = new Date(start);
   while (cursor <= end) {
-    keys.push(`${cursor.getUTCFullYear()}-${String(cursor.getUTCMonth() + 1).padStart(2, "0")}`);
-    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+    keys.push(new Intl.DateTimeFormat("sv-SE", { timeZone: "UTC" }).format(cursor));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
   return keys;
 };
@@ -296,6 +327,7 @@ function MarketTrendsPage() {
   const [selectedMonthlyTreemapId, setSelectedMonthlyTreemapId] = useState<number | null>(null);
   const [monthlyTreemapTooltip, setMonthlyTreemapTooltip] = useState<{ x: number; y: number; item: MonthlyThemeTreemapItem; share: number } | null>(null);
   const [monthlyTrendViewMode, setMonthlyTrendViewMode] = useState<ThemeFlowViewMode>("THEME");
+  const [monthlyThemeFlowView, setMonthlyThemeFlowView] = useState<MonthlyThemeFlowView>("heatmap");
   const [monthlyStartDate, setMonthlyStartDate] = useState<string>("");
   const [monthlyEndDate, setMonthlyEndDate] = useState<string>("");
   const [selectedMonthlyDate, setSelectedMonthlyDate] = useState<string>("");
@@ -1033,15 +1065,18 @@ ${tableRows}
     try {
       const today = todayInKst();
       const treemapStartDate = subtractOneMonth(today);
-      const treemapMonths = getMonthKeysBetween(treemapStartDate, today);
-      const [calendarRes, trendRes, treemapTrendResponses] = await Promise.all([
+      const [calendarRes, trendRes, recentTrendRes] = await Promise.all([
         repositories.marketTrends.getExternalMonthlyThemeFlowCalendar(targetMonth),
         repositories.marketTrends.getExternalMonthlyThemeFlowTrend(targetMonth, { view_mode: monthlyTrendViewMode }),
-        Promise.all(treemapMonths.map((month) => repositories.marketTrends.getExternalMonthlyThemeFlowTrend(month, { view_mode: monthlyTrendViewMode }))),
+        repositories.marketTrends.getExternalMonthlyThemeFlowTrend(getMonthKey(today), {
+          view_mode: monthlyTrendViewMode,
+          start_date: treemapStartDate,
+          end_date: today,
+        }),
       ]);
       setMonthlyCalendarDays(calendarRes.days ?? []);
       setMonthlyTrendThemes(trendRes.themes ?? []);
-      setMonthlyTrendResponses(treemapTrendResponses);
+      setMonthlyTrendResponses([recentTrendRes]);
       setSelectedMonthlyTreemapId(null);
       setMonthlyStartDate(calendarRes.start_date);
       setMonthlyEndDate(calendarRes.end_date);
@@ -1265,12 +1300,65 @@ ${tableRows}
     () => monthlyTreemapItems.reduce((sum, item) => sum + item.scoreSum, 0),
     [monthlyTreemapItems],
   );
+  const monthlyHeatmapDates = useMemo(
+    () => getDateKeysBetween(monthlyTreemapPeriodStart, todayDate),
+    [monthlyTreemapPeriodStart, todayDate],
+  );
+  const monthlySupplyHeatmapRows = useMemo<MonthlySupplyHeatmapRow[]>(() => {
+    const map = new Map<number, MonthlySupplyHeatmapRow & { changeRateSum: number; changeRateCount: number }>();
+    monthlyTrendResponses.forEach((response) => {
+      (response.themes ?? []).forEach((theme) => {
+        const current = map.get(theme.market_theme_id) ?? {
+          marketThemeId: theme.market_theme_id,
+          themeName: theme.theme_name,
+          themeGroupName: theme.theme_group_name ?? null,
+          avgChangeRate: null,
+          stockCount: 0,
+          eventCount: 0,
+          dailyMap: new Map<string, MonthlyThemeFlowTrendPoint>(),
+          changeRateSum: 0,
+          changeRateCount: 0,
+        };
+        current.themeGroupName = theme.theme_group_name ?? current.themeGroupName;
+        (theme.series ?? [])
+          .filter((point) => point.trade_date >= monthlyTreemapPeriodStart && point.trade_date <= todayDate)
+          .forEach((point) => {
+            if (Number(point.daily_score || 0) <= 0 && Number(point.event_count || 0) <= 0) return;
+            current.stockCount += Number(point.stock_count || 0);
+            current.eventCount += Number(point.event_count || 0);
+            current.dailyMap.set(point.trade_date, point);
+            if (point.avg_change_rate != null && Number.isFinite(Number(point.avg_change_rate))) {
+              current.changeRateSum += Number(point.avg_change_rate);
+              current.changeRateCount += 1;
+            }
+          });
+        map.set(theme.market_theme_id, current);
+      });
+    });
+    return Array.from(map.values())
+      .map((row) => ({
+        marketThemeId: row.marketThemeId,
+        themeName: row.themeName,
+        themeGroupName: row.themeGroupName,
+        avgChangeRate: row.changeRateCount > 0 ? row.changeRateSum / row.changeRateCount : null,
+        stockCount: row.stockCount,
+        eventCount: row.eventCount,
+        dailyMap: row.dailyMap,
+      }))
+      .sort((a, b) => {
+        const aValue = a.avgChangeRate ?? Number.NEGATIVE_INFINITY;
+        const bValue = b.avgChangeRate ?? Number.NEGATIVE_INFINITY;
+        if (aValue !== bValue) return bValue - aValue;
+        return a.themeName.localeCompare(b.themeName, "ko");
+      })
+      .slice(0, 20);
+  }, [monthlyTrendResponses, monthlyTreemapPeriodStart, todayDate]);
 
   return (
     <div className="space-y-4">
       <PageHeader
-        title="시장 수급 분석"
-        description="조건검색 결과를 수급 이벤트 후보로 저장하고 분석 우선순위를 관리합니다."
+        title="시장 수급 테마(종목)"
+        description="조건검색 결과 수급 이벤트 후보를 저장하고 테마/종목 단위 수급 흐름을 분석합니다."
         action={(
           <button
             type="button"
@@ -1303,7 +1391,7 @@ ${tableRows}
               }`}
               onClick={() => setActiveTab("kiwoom")}
             >
-              키움 조건검색 수급 이벤트
+              키움 조건검색
             </button>
             <button
               type="button"
@@ -1314,7 +1402,7 @@ ${tableRows}
               }`}
               onClick={() => setActiveTab("flow")}
             >
-              일별 테마 수급 흐름
+              일별 수급 테마(종목)
             </button>
             <button
               type="button"
@@ -1325,7 +1413,7 @@ ${tableRows}
               }`}
               onClick={() => setActiveTab("monthly")}
             >
-              월별 테마 수급 흐름
+              월별 수급 테마(종목)
             </button>
           </nav>
         </div>
@@ -1842,7 +1930,7 @@ ${tableRows}
         <div className="space-y-4">
           <SectionCard title="" className="daily-theme-flow-section">
             <div className="watchlist-card-title-wrap">
-              <h3 className="section-title m-0">일별 테마 수급 흐름</h3>
+              <h3 className="section-title m-0">일별 수급 테마(종목)</h3>
               <button
                 type="button"
                 className="hint-icon hint-icon-button"
@@ -2053,7 +2141,7 @@ ${tableRows}
         <div className="space-y-4">
           <SectionCard title="">
             <div className="watchlist-card-title-wrap">
-              <h3 className="section-title m-0">월별 테마 수급 흐름</h3>
+              <h3 className="section-title m-0">월별 수급 테마(종목)</h3>
               <span className="hint-icon" title="저장된 수급 이벤트 후보를 월 단위로 집계하여 날짜별·테마별 수급 흐름을 보여줍니다.">i</span>
             </div>
             <div className="monthly-flow-toolbar">
@@ -2169,6 +2257,7 @@ ${tableRows}
                                   theme.stocks.map((stock) => (
                                     <span key={`${theme.market_theme_id}-${stock.stock_code ?? stock.stock_id ?? stock.stock_name}`} className="selected-stock-chip">
                                       <span className="selected-stock-name">{stock.stock_name || stock.stock_code || "-"}</span>
+                                      {stock.change_rate != null ? <strong className={`monthly-supply-change-rate ${changeRateClass(stock.change_rate)}`}>{fmtSignedPct(stock.change_rate)}</strong> : null}
                                       {stock.stock_code ? <small>{stock.stock_code}</small> : null}
                                     </span>
                                   ))
@@ -2245,32 +2334,108 @@ ${tableRows}
             <div className="theme-flow-graph-header monthly-theme-treemap-header">
               <div className="watchlist-card-title-wrap monthly-theme-treemap-title-wrap">
                 <div>
-                  <h3 className="section-title m-0">최근 1개월 테마 수급 트리맵</h3>
-                  <p className="monthly-theme-treemap-description">최근 1개월 기준 월간 테마 누적 흐름 점수를 합산하여, 테마별 수급 집중도를 면적과 색상으로 표현합니다. 작은 타일은 롤오버로 상세를 확인할 수 있습니다.</p>
+                  <h3 className="section-title m-0">최근 1개월 수급 테마(종목) 흐름</h3>
+                  <p className="monthly-theme-treemap-description">저장된 수급 이벤트 후보 종목의 등락률을 기준으로 월간 테마 흐름을 표시합니다. 히트맵은 날짜별 테마 평균 등락률, 트리맵은 누적 수급 점수 기준입니다.</p>
                 </div>
                 <span className="hint-icon" title="월간 테마 누적 흐름의 daily_score를 최근 1개월 기준으로 합산합니다. 타일 면적은 종목수가 아니라 점수 합산값 기준입니다.">i</span>
               </div>
               <div className="monthly-theme-treemap-controls">
-                <div className="theme-flow-view-toggle" aria-label="최근 1개월 트리맵 표시 기준">
+                <div className="market-trend-flow-view-toggle" aria-label="최근 1개월 수급 테마 보기">
                   <button
                     type="button"
-                    className={`theme-flow-toggle-button ${monthlyTrendViewMode === "THEME" ? "active" : ""}`}
-                    onClick={() => setMonthlyTrendViewMode("THEME")}
+                    className={monthlyThemeFlowView === "heatmap" ? "active" : ""}
+                    onClick={() => setMonthlyThemeFlowView("heatmap")}
                   >
-                    테마 기준
+                    히트맵
                   </button>
                   <button
                     type="button"
-                    className={`theme-flow-toggle-button ${monthlyTrendViewMode === "THEME_GROUP" ? "active" : ""}`}
-                    onClick={() => setMonthlyTrendViewMode("THEME_GROUP")}
+                    className={monthlyThemeFlowView === "treemap" ? "active" : ""}
+                    onClick={() => setMonthlyThemeFlowView("treemap")}
                   >
-                    테마그룹 기준
+                    트리맵
                   </button>
                 </div>
+                {monthlyThemeFlowView === "treemap" ? (
+                  <div className="theme-flow-view-toggle" aria-label="최근 1개월 트리맵 표시 기준">
+                    <button
+                      type="button"
+                      className={`theme-flow-toggle-button ${monthlyTrendViewMode === "THEME" ? "active" : ""}`}
+                      onClick={() => setMonthlyTrendViewMode("THEME")}
+                    >
+                      테마 기준
+                    </button>
+                    <button
+                      type="button"
+                      className={`theme-flow-toggle-button ${monthlyTrendViewMode === "THEME_GROUP" ? "active" : ""}`}
+                      onClick={() => setMonthlyTrendViewMode("THEME_GROUP")}
+                    >
+                      테마그룹 기준
+                    </button>
+                  </div>
+                ) : null}
                 <span className="monthly-theme-treemap-period">기간 {monthlyTreemapPeriodStart} ~ {todayDate}</span>
               </div>
             </div>
-            {monthlyTreemapItems.length === 0 ? (
+            {monthlyThemeFlowView === "heatmap" ? (
+              monthlySupplyHeatmapRows.length === 0 ? (
+                <div className="monthly-theme-treemap-empty">
+                  최근 1개월 기준으로 표시할 수급 테마(종목) 히트맵 데이터가 없습니다.
+                </div>
+              ) : (
+                <div className="monthly-supply-heatmap-wrap">
+                  <div className="monthly-supply-heatmap-legend">
+                    <span><i className="negative-strong" />-10% 이하</span>
+                    <span><i className="negative-medium" />-5%</span>
+                    <span><i className="neutral" />0%</span>
+                    <span><i className="positive-medium" />+5%</span>
+                    <span><i className="positive-strong" />+10% 이상</span>
+                  </div>
+                  <div className="monthly-supply-heatmap-scroll">
+                    <div className="monthly-supply-heatmap" style={{ gridTemplateColumns: `minmax(180px, 220px) repeat(${Math.max(monthlyHeatmapDates.length, 1)}, minmax(44px, 1fr))` }}>
+                      <div className="monthly-supply-heatmap-theme-cell monthly-supply-heatmap-header-cell">테마</div>
+                      {monthlyHeatmapDates.map((date) => (
+                        <div key={`heat-date-${date}`} className="monthly-supply-heatmap-date-cell" title={date}>{date.slice(8, 10)}</div>
+                      ))}
+                      {monthlySupplyHeatmapRows.map((row) => (
+                        <Fragment key={`heat-row-${row.marketThemeId}`}>
+                          <div className="monthly-supply-heatmap-theme-cell" title={row.themeGroupName ? `${row.themeGroupName} / ${row.themeName}` : row.themeName}>
+                            <strong>{row.themeName}</strong>
+                            <span>{fmtHeatmapPct(row.avgChangeRate)}% · {row.stockCount}종목</span>
+                          </div>
+                          {monthlyHeatmapDates.map((date) => {
+                            const dayTheme = row.dailyMap.get(date);
+                            const value = dayTheme?.avg_change_rate ?? null;
+                            return (
+                              <button
+                                key={`heat-cell-${row.marketThemeId}-${date}`}
+                                type="button"
+                                className={`monthly-supply-heatmap-cell ${heatmapReturnClass(value)}`}
+                                title={dayTheme ? `${date} ${row.themeName} 평균 ${fmtSignedPct(value)} · ${dayTheme.stock_count}종목` : `${date} 데이터 없음`}
+                                onClick={() => {
+                                  const dateMonth = getMonthKey(date);
+                                  if (dateMonth !== monthlyBaseMonth) {
+                                    void applyMonthlyFlowMonth(dateMonth).then(() => {
+                                      setSelectedMonthlyDate(date);
+                                      setSelectedDayDetailTab("themes");
+                                    });
+                                    return;
+                                  }
+                                  setSelectedMonthlyDate(date);
+                                  setSelectedDayDetailTab("themes");
+                                }}
+                              >
+                                <span>{fmtHeatmapPct(value)}</span>
+                              </button>
+                            );
+                          })}
+                        </Fragment>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )
+            ) : monthlyTreemapItems.length === 0 ? (
               <div className="monthly-theme-treemap-empty">
                 최근 1개월 기준으로 집계된 테마 수급 데이터가 없습니다.
               </div>

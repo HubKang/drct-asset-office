@@ -12,6 +12,8 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from backend.app.clients.kiwoom import KiwoomApiError
+from backend.app.clients.kiwoom.kiwoom_auth_client import KiwoomAuthClient
+from backend.app.clients.kiwoom.kiwoom_rest_client import KiwoomRestClient
 from backend.app.core.config import now_kst
 from backend.app.providers.market_data.kiwoom_rest_condition_provider import KiwoomRestConditionProvider
 from backend.app.providers.market_data.kiwoom_rest_market_indicator_provider import KiwoomRestMarketIndicatorProvider
@@ -1041,7 +1043,8 @@ class ExternalKiwoomService:
                     mt.id AS market_theme_id,
                     mte.stock_id AS stock_id,
                     mte.stock_code AS stock_code,
-                    COALESCE(mte.stock_name, s.stock_name, mte.stock_code, '-') AS stock_name
+                    COALESCE(mte.stock_name, s.stock_name, mte.stock_code, '-') AS stock_name,
+                    mte.change_rate AS change_rate
                 FROM market_trend_events mte
                 JOIN market_trend_event_theme_links l ON l.event_id = mte.id
                 JOIN market_themes mt ON mt.id = l.market_theme_id
@@ -1074,6 +1077,7 @@ class ExternalKiwoomService:
                     stock_id=int(row["stock_id"]) if row["stock_id"] is not None else None,
                     stock_code=stock_code or None,
                     stock_name=str(row["stock_name"] or stock_code or "-"),
+                    change_rate=float(row["change_rate"]) if row["change_rate"] is not None else None,
                 )
             )
 
@@ -1234,8 +1238,10 @@ class ExternalKiwoomService:
         view_mode: str = "THEME",
         theme_group_id: int | None = None,
         limit: int | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
     ) -> MonthlyThemeFlowTrendResponse:
-        month_start, month_end = self._resolve_month_window(month)
+        month_start, month_end = self._resolve_theme_flow_trend_window(month, start_date, end_date)
         normalized_view_mode = (view_mode or "THEME").strip().upper()
         if normalized_view_mode not in {"THEME_GROUP", "THEME"}:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="view_mode는 THEME_GROUP 또는 THEME이어야 합니다.")
@@ -1483,6 +1489,26 @@ class ExternalKiwoomService:
             end_date=month_end.isoformat(),
             themes=themes,
         )
+
+    def _resolve_theme_flow_trend_window(
+        self,
+        month: str,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> tuple[date, date]:
+        if start_date or end_date:
+            if not start_date or not end_date:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="start_date and end_date are required together.")
+            try:
+                start = datetime.strptime(start_date, "%Y-%m-%d").date()
+                end = datetime.strptime(end_date, "%Y-%m-%d").date()
+            except ValueError:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="start_date/end_date must be YYYY-MM-DD.")
+            if start > end:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="start_date must be before or equal to end_date.")
+            return start, end
+
+        return self._resolve_month_window(month)
 
     def _resolve_month_window(self, month: str) -> tuple[date, date]:
         try:
@@ -1930,6 +1956,8 @@ class ExternalKiwoomService:
         refreshed_at = now_kst()
         return_date = refreshed_at[:10]
         provider = KiwoomRestMarketIndicatorProvider()
+        rest_diagnostics_before = KiwoomRestClient.diagnostics_snapshot()
+        auth_diagnostics_before = KiwoomAuthClient.diagnostics_snapshot()
         themes = self._list_return_refresh_themes(payload)
         items: list[MarketThemeReturnRefreshItem] = []
         inserted_count = 0
@@ -2074,13 +2102,21 @@ class ExternalKiwoomService:
         self.db.commit()
         db_upsert_ms = int((time.perf_counter() - db_started_at) * 1000)
         total_ms = int((time.perf_counter() - total_started_at) * 1000)
+        rest_diagnostics_after = KiwoomRestClient.diagnostics_snapshot()
+        auth_diagnostics_after = KiwoomAuthClient.diagnostics_snapshot()
+        rest_post_calls = int(rest_diagnostics_after.get("rest_post_calls", 0)) - int(rest_diagnostics_before.get("rest_post_calls", 0))
+        auth_token_issue_count = int(auth_diagnostics_after.get("auth_token_issue_count", 0)) - int(auth_diagnostics_before.get("auth_token_issue_count", 0))
+        ka10001_calls = int(rest_diagnostics_after.get("ka10001_calls", 0)) - int(rest_diagnostics_before.get("ka10001_calls", 0))
+        ka10015_calls = int(rest_diagnostics_after.get("ka10015_calls", 0)) - int(rest_diagnostics_before.get("ka10015_calls", 0))
         message = f"\ud14c\ub9c8\ub4f1\ub77d\ub960 \uac31\uc2e0 \uc644\ub8cc: {len(themes)}\uac1c \ud14c\ub9c8, \uace0\uc720 {len(unique_stocks)}\uac1c \uc885\ubaa9, {total_stock_count}\uac74 \ubc18\uc601"
         if total_failed_count:
             message = f"\ud14c\ub9c8\ub4f1\ub77d\ub960 \uac31\uc2e0 \uc644\ub8cc: {len(themes)}\uac1c \ud14c\ub9c8, \uace0\uc720 {len(unique_stocks)}\uac1c \uc885\ubaa9, {total_failed_count}\uac1c \uc885\ubaa9 \uc870\ud68c \uc2e4\ud328"
         print(
             "[theme-return-refresh] "
             f"themes={len(themes)} links={len(link_rows)} unique_stocks={len(unique_stocks)} "
-            f"price_api_calls={price_api_call_count} price_fetch_ms={price_fetch_ms} "
+            f"price_api_calls={price_api_call_count} rest_post_calls={rest_post_calls} "
+            f"auth_token_issue_count={auth_token_issue_count} ka10001_calls={ka10001_calls} ka10015_calls={ka10015_calls} "
+            f"price_fetch_ms={price_fetch_ms} "
             f"calc_ms={calc_ms} db_upsert_ms={db_upsert_ms} total_ms={total_ms}"
         )
         return MarketThemeReturnRefreshResponse(
@@ -2098,6 +2134,10 @@ class ExternalKiwoomService:
             theme_stock_link_count=len(link_rows),
             unique_stock_count=len(unique_stocks),
             price_api_call_count=price_api_call_count,
+            rest_post_calls=rest_post_calls,
+            auth_token_issue_count=auth_token_issue_count,
+            ka10001_calls=ka10001_calls,
+            ka10015_calls=ka10015_calls,
             price_fetch_ms=price_fetch_ms,
             calc_ms=calc_ms,
             db_upsert_ms=db_upsert_ms,
@@ -2584,10 +2624,11 @@ class ExternalKiwoomService:
             return base_row
         try:
             basic = provider.get_stock_basic_info(stock_code=stock_code)
-            daily = provider.get_stock_daily_trade_detail(stock_code=stock_code, base_dt=return_date)
+            # Theme return refresh needs only current price, change rate, and accumulated trading value.
+            # ka10001 provides all three, so avoid the per-stock ka10015 daily-detail call here.
             change_rate = self._normalize_change_rate(basic.get("change_rate"))
-            current_price = self._to_abs_int(basic.get("close_price") or daily.get("close_price"))
-            trading_value = self._to_int_or_none(daily.get("trading_value") or basic.get("trading_value"))
+            current_price = self._to_abs_int(basic.get("close_price"))
+            trading_value = self._to_int_or_none(basic.get("trading_value"))
             if change_rate is None:
                 base_row["data_status"] = "failed"
                 base_row["error_message"] = "change_rate_missing"

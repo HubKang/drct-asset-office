@@ -467,6 +467,7 @@ export type MonthlyThemeFlowStock = {
   stock_id?: number | null;
   stock_code?: string | null;
   stock_name: string;
+  change_rate?: number | null;
 };
 
 export type MonthlyThemeFlowMemoItem = {

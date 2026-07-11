@@ -54,6 +54,10 @@ export const marketThemeMockRepository = {
       failed_stock_count: 0,
       inserted_count: 0,
       updated_count: 0,
+      rest_post_calls: 0,
+      auth_token_issue_count: 0,
+      ka10001_calls: 0,
+      ka10015_calls: 0,
       items: [],
       message: "mock mode: 갱신할 테마가 없습니다.",
     };

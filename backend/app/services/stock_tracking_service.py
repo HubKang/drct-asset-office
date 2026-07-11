@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta
 import logging
 from pathlib import Path
 import re
+import time
 from uuid import uuid4
 
 from fastapi import HTTPException, status
@@ -1251,17 +1252,57 @@ class StockTrackingService:
     ) -> tuple[str, date]:
         if force_full_refresh:
             return "full_refresh_from_target_start", target_start_date
-        if not latest_trade_date:
-            return "initial_tracking_backfill", target_start_date
 
-        latest = self._parse_date(str(latest_trade_date))
-        overlap_start = latest - timedelta(days=max(0, overlap_days))
-        return "tracking_incremental_overlap", max(target_start_date, overlap_start)
+        if latest_trade_date:
+            latest = self._parse_date(str(latest_trade_date))
+            overlap_start = latest - timedelta(days=max(0, overlap_days))
+            return "tracking_incremental_overlap", max(target_start_date, overlap_start)
+
+        recent_start = today - timedelta(days=max(0, overlap_days))
+        return "tracking_recent_7d", max(target_start_date, recent_start)
+
+    def _list_collectable_tracking_item_ids(self) -> list[int]:
+        rows = self.db.execute(
+            text(
+                """
+                SELECT id
+                FROM stock_tracking_items
+                WHERE status IN ('TRACKING', 'HOLD')
+                  AND COALESCE(price_status, 'NOT_COLLECTED') != 'STOPPED'
+                ORDER BY tracking_base_date DESC, updated_at DESC, id DESC
+                """
+            )
+        ).mappings().all()
+        return [int(row["id"]) for row in rows]
+
+    @staticmethod
+    def _resolve_collect_action(payload: CollectStockTrackingPricesRequest) -> tuple[str, str, bool]:
+        raw_action = (payload.action or "").strip()
+        if raw_action:
+            action = raw_action
+        elif payload.force_full_refresh:
+            action = "selected_full" if payload.item_ids else "all_full"
+        else:
+            action = "selected_recent_7d" if payload.item_ids else "all_recent_7d"
+        if action not in {"selected_recent_7d", "all_recent_7d", "selected_full", "all_full"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"invalid tracking collect action: {action}")
+        is_full = action.endswith("_full")
+        mode = (payload.mode or "").strip() or ("tracking_full_refresh" if is_full else "tracking_incremental_overlap")
+        return action, mode, is_full
 
     def collect_prices(self, payload: CollectStockTrackingPricesRequest) -> CollectStockTrackingPricesResponse:
-        item_ids = list(dict.fromkeys([int(v) for v in payload.item_ids if int(v) > 0]))
+        total_started_at = time.perf_counter()
+        selected_item_ids = list(dict.fromkeys([int(v) for v in payload.item_ids if int(v) > 0]))
+        action, requested_mode, is_full_refresh = self._resolve_collect_action(payload)
+        if action.startswith("selected_") and not selected_item_ids:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="선택한 트래킹 종목이 없습니다.")
+        item_ids = selected_item_ids if action.startswith("selected_") else self._list_collectable_tracking_item_ids()
         if not item_ids:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="????? ??? ??? ??? ???.")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="수집할 트래킹 종목이 없습니다.")
+        print(
+            "[TRACKING COLLECT] "
+            f"action={action} selected_count={len(selected_item_ids)} target_count={len(item_ids)} mode={requested_mode}"
+        )
         price_service = StockPriceService(self.db)
         stock_repo = StockRepository(self.db)
         now = now_kst()
@@ -1269,6 +1310,9 @@ class StockTrackingService:
         success_count = 0
         partial_count = 0
         failed_count = 0
+        total_pages = 0
+        total_collected = 0
+        total_saved = 0
         for item_id in item_ids:
             try:
                 item = self._item_row(item_id)
@@ -1312,7 +1356,7 @@ class StockTrackingService:
                     target_start_date=target_start_date,
                     latest_trade_date=latest_trade_date_before,
                     overlap_days=payload.overlap_days,
-                    force_full_refresh=payload.force_full_refresh,
+                    force_full_refresh=is_full_refresh,
                     today=end_date,
                 )
                 logger.info(
@@ -1328,9 +1372,32 @@ class StockTrackingService:
                     start_date.isoformat(),
                     end_date.isoformat(),
                     payload.overlap_days,
-                    payload.force_full_refresh,
+                    is_full_refresh,
                 )
-                normalized, collected_count, saved_count = price_service._collect_and_upsert(stock=stock, source=payload.source, start_date=start_date, end_date=end_date)
+                print(
+                    "[TRACKING PRICE DEBUG] "
+                    f"item_id={item_id} stock_id={stock.id} stock_name={stock.stock_name} stock_code={stock.stock_code} "
+                    f"source={payload.source} mode={collection_mode} target_start_date={target_start_date.isoformat()} "
+                    f"latest_trade_date={latest_trade_date_before} requested_start_date={start_date.isoformat()} "
+                    f"requested_end_date={end_date.isoformat()} overlap_days={payload.overlap_days} "
+                    f"force_full_refresh={is_full_refresh}"
+                )
+                collect_result = price_service._collect_and_upsert_with_stats(
+                    stock=stock,
+                    source=payload.source,
+                    start_date=start_date,
+                    end_date=end_date,
+                    mode=collection_mode,
+                    stop_at_start_date=True,
+                )
+                normalized = str(collect_result["normalized"])
+                collected_count = int(collect_result.get("collected_count") or 0)
+                saved_count = int(collect_result.get("saved_count") or 0)
+                pages_fetched = int(collect_result.get("pages_fetched") or 0)
+                stop_reason = str(collect_result.get("stop_reason") or "")
+                total_pages += pages_fetched
+                total_collected += collected_count
+                total_saved += saved_count
                 last_collected = self._latest_price_date(stock.id, source=payload.source)
                 next_status = "LATEST" if collected_count > 0 else "PARTIAL"
                 target_status = "ACTIVE" if collected_count > 0 else "PARTIAL"
@@ -1368,8 +1435,10 @@ class StockTrackingService:
                     "requested_start_date": start_date.isoformat(),
                     "requested_end_date": end_date.isoformat(),
                     "collection_mode": collection_mode,
+                    "pages_fetched": pages_fetched,
+                    "stop_reason": stop_reason or None,
                     "overlap_days": payload.overlap_days,
-                    "force_full_refresh": payload.force_full_refresh,
+                    "force_full_refresh": is_full_refresh,
                     "message": message,
                 })
             except Exception as exc:
@@ -1399,11 +1468,26 @@ class StockTrackingService:
                     "last_collected_date": None,
                     "message": str(exc)[:900],
                 })
+        total_ms = int((time.perf_counter() - total_started_at) * 1000)
+        print(
+            "[TRACKING COLLECT DONE] "
+            f"action={action} target_count={len(item_ids)} success={success_count} failed={failed_count} "
+            f"partial={partial_count} total_pages={total_pages} total_collected={total_collected} "
+            f"total_saved={total_saved} total_ms={total_ms}"
+        )
         return CollectStockTrackingPricesResponse(
             requested_count=len(item_ids),
+            selected_count=len(selected_item_ids),
+            target_count=len(item_ids),
+            action=action,
+            mode=requested_mode,
             success_count=success_count,
             partial_count=partial_count,
             failed_count=failed_count,
+            total_pages=total_pages,
+            total_collected=total_collected,
+            total_saved=total_saved,
+            total_ms=total_ms,
             items=results,
             message=f"???? ?? ??: ?? {success_count}?, ?? ?? {partial_count}?, ?? {failed_count}?",
         )

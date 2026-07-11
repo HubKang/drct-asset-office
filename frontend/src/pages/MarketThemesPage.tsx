@@ -4,9 +4,11 @@ import SectionCard from "@/components/common/SectionCard";
 import StatusBadge from "@/components/common/StatusBadge";
 import { repositories } from "@/services";
 import {
+  buildNaverTraderChartUrl,
   buildNaverStockCandleChartUrl,
   createNaverChartSidcode,
   normalizeNaverStockCode,
+  type NaverTraderChartType,
   type NaverStockCandlePeriod,
 } from "@/utils/naverChart";
 import type {
@@ -111,6 +113,51 @@ function ThemeLinkedStockChart({
         loading="lazy"
         onError={() => setHasError(true)}
       />
+    </button>
+  );
+}
+
+function ThemeLinkedStockTraderChart({
+  stockCode,
+  stockName,
+  type,
+  title,
+  onOpen,
+}: {
+  stockCode: string;
+  stockName: string;
+  type: NaverTraderChartType;
+  title: string;
+  onOpen: (chart: { url: string; alt: string; title?: string }) => void;
+}) {
+  const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    setHasError(false);
+  }, [stockCode, type]);
+
+  if (!stockCode) {
+    return <p className="selected-empty-message">종목코드가 없어 매매동향 이미지를 표시할 수 없습니다.</p>;
+  }
+
+  const url = buildNaverTraderChartUrl(type, stockCode);
+  const alt = `${stockName || stockCode} ${title}`;
+
+  return (
+    <button
+      type="button"
+      className={`theme-stock-trader-chart-card ${hasError ? "is-error" : ""}`}
+      onClick={() => {
+        if (!hasError) onOpen({ url, alt, title });
+      }}
+      disabled={hasError}
+    >
+      <div className="theme-stock-trader-chart-title">{title}</div>
+      {hasError ? (
+        <div className="theme-stock-trader-chart-fallback">이미지를 불러오지 못했습니다.</div>
+      ) : (
+        <img src={url} alt={alt} loading="lazy" onError={() => setHasError(true)} />
+      )}
     </button>
   );
 }
@@ -442,7 +489,7 @@ function MarketThemesPage() {
   const [selectedReturnDetail, setSelectedReturnDetail] = useState<MarketThemeLatestReturnDetail | null>(null);
   const [stockDrawerOpen, setStockDrawerOpen] = useState(false);
   const [selectedLinkedStock, setSelectedLinkedStock] = useState<MarketThemeStock | null>(null);
-  const [zoomedChart, setZoomedChart] = useState<{ url: string; alt: string } | null>(null);
+  const [zoomedChart, setZoomedChart] = useState<{ url: string; alt: string; title?: string } | null>(null);
   const [stockMemos, setStockMemos] = useState<MarketThemeStockMemo[]>([]);
   const [stockMemoLoading, setStockMemoLoading] = useState(false);
   const [stockMemoError, setStockMemoError] = useState("");
@@ -558,6 +605,7 @@ function MarketThemesPage() {
   );
   const activeThemeStocks = useMemo(() => themeStocks.filter((x) => x.is_active === 1), [themeStocks]);
   const chartSidcode = useMemo(() => createNaverChartSidcode(), [selectedThemeId, activeThemeStocks.length]);
+  const selectedLinkedStockCode = useMemo(() => normalizeNaverStockCode(selectedLinkedStock?.stock_code), [selectedLinkedStock?.stock_code]);
   const connectedStockIdSet = useMemo(() => new Set(activeThemeStocks.map((x) => x.stock_id)), [activeThemeStocks]);
   const primaryCount = useMemo(() => activeThemeStocks.filter((x) => x.is_primary === 1).length, [activeThemeStocks]);
 
@@ -644,6 +692,10 @@ function MarketThemesPage() {
         links: res.theme_stock_link_count,
         uniqueStocks: res.unique_stock_count,
         priceApiCalls: res.price_api_call_count,
+        restPostCalls: res.rest_post_calls,
+        authTokenIssueCount: res.auth_token_issue_count,
+        ka10001Calls: res.ka10001_calls,
+        ka10015Calls: res.ka10015_calls,
         stockRows: res.stock_count,
         inserted: res.inserted_count,
         updated: res.updated_count,
@@ -755,11 +807,21 @@ function MarketThemesPage() {
   useEffect(() => {
     if (!stockDrawerOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
+      if (zoomedChart) return;
       if (event.key === "Escape") closeStockDrawer();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [stockDrawerOpen]);
+  }, [stockDrawerOpen, zoomedChart]);
+
+  useEffect(() => {
+    if (!zoomedChart) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setZoomedChart(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [zoomedChart]);
 
   useEffect(() => {
     if (!selectedLinkedStock) return;
@@ -1563,15 +1625,17 @@ function MarketThemesPage() {
       ) : null}
       {zoomedChart ? (
         <div className="theme-linked-stock-chart-modal" onClick={() => setZoomedChart(null)}>
-          <img
-            src={zoomedChart.url}
-            alt={zoomedChart.alt}
-            className="theme-linked-stock-chart-modal-image"
-            onClick={(event) => {
-              event.stopPropagation();
-              setZoomedChart(null);
-            }}
-          />
+          <div className="theme-linked-stock-chart-modal-panel" onClick={(event) => event.stopPropagation()}>
+            <div className="theme-linked-stock-chart-modal-header">
+              <h3>{zoomedChart.title || zoomedChart.alt}</h3>
+              <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => setZoomedChart(null)}>닫기</button>
+            </div>
+            <img
+              src={zoomedChart.url}
+              alt={zoomedChart.alt}
+              className="theme-linked-stock-chart-modal-image"
+            />
+          </div>
         </div>
       ) : null}
       {stockDrawerOpen && selectedLinkedStock ? (
@@ -1588,16 +1652,16 @@ function MarketThemesPage() {
             </div>
 
             <div className="market-theme-stock-drawer-body">
-              <section>
-                <h4 className="market-theme-stock-section-title">연결 정보</h4>
-                <div className="market-theme-stock-detail-grid">
-                  <div className="market-theme-stock-detail-card"><span>테마그룹</span><strong>{selectedThemeGroup?.theme_name || selectedTheme?.parent_theme_name || "미지정"}</strong></div>
-                  <div className="market-theme-stock-detail-card"><span>테마</span><strong>{selectedTheme?.theme_name || "-"}</strong></div>
-                  <div className="market-theme-stock-detail-card"><span>종목명</span><strong>{selectedLinkedStock.stock_name}</strong></div>
-                  <div className="market-theme-stock-detail-card"><span>종목코드</span><strong>{selectedLinkedStock.stock_code}</strong></div>
-                  <div className="market-theme-stock-detail-card"><span>시장</span><strong>{selectedLinkedStock.market ?? "-"}</strong></div>
-                  <div className="market-theme-stock-detail-card"><span>대표 여부</span><strong>{selectedLinkedStock.is_primary === 1 ? "대표" : "일반"}</strong></div>
-                </div>
+              <section className="market-theme-stock-trader-section">
+                <h4 className="market-theme-stock-section-title">매매동향</h4>
+                {selectedLinkedStockCode ? (
+                  <div className="theme-stock-trader-chart-grid">
+                    <ThemeLinkedStockTraderChart stockCode={selectedLinkedStockCode} stockName={selectedLinkedStock.stock_name} type="foreign" title="외국인매매동향 3개월" onOpen={setZoomedChart} />
+                    <ThemeLinkedStockTraderChart stockCode={selectedLinkedStockCode} stockName={selectedLinkedStock.stock_name} type="institution" title="기관매매동향 3개월" onOpen={setZoomedChart} />
+                  </div>
+                ) : (
+                  <p className="selected-empty-message">종목코드가 없어 매매동향 이미지를 표시할 수 없습니다.</p>
+                )}
               </section>
 
               <section className="market-theme-stock-memo-section">

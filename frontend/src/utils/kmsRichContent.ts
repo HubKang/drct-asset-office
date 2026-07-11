@@ -10,34 +10,73 @@ const escapeHtml = (value: string) =>
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 
-export const sanitizeKmsHtml = (value: string) =>
-  DOMPurify.sanitize(value || "", {
-    ALLOWED_TAGS: [
-      "p",
-      "h1",
-      "h2",
-      "h3",
-      "strong",
-      "em",
-      "u",
-      "ul",
-      "ol",
-      "li",
-      "blockquote",
-      "table",
-      "thead",
-      "tbody",
-      "tr",
-      "th",
-      "td",
-      "a",
-      "img",
-      "br",
-      "span",
-    ],
-    ALLOWED_ATTR: ["href", "src", "alt", "title", "target", "rel", "colspan", "rowspan", "width", "height", "style"],
-    ADD_DATA_URI_TAGS: ["img"],
+const allowedStyleProperties = new Set(["color", "background-color", "font-size", "text-align", "width", "height", "max-width"]);
+
+const cleanStyleValue = (property: string, value: string) => {
+  const normalized = value.trim();
+  if (!normalized) return "";
+  if (/expression\s*\(|url\s*\(|javascript:/i.test(normalized)) return "";
+  if (property === "text-align" && !/^(left|center|right)$/i.test(normalized)) return "";
+  if ((property === "width" || property === "height" || property === "max-width" || property === "font-size") && !/^\d+(\.\d+)?(px|%|em|rem)$/i.test(normalized)) return "";
+  if ((property === "color" || property === "background-color") && !/^(#[0-9a-f]{3,8}|rgb\([^)]+\)|rgba\([^)]+\)|[a-z]+)$/i.test(normalized)) return "";
+  return normalized;
+};
+
+const filterAllowedStyles = (html: string) => {
+  if (!html || typeof document === "undefined") return html;
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  container.querySelectorAll<HTMLElement>("[style]").forEach((element) => {
+    const nextStyles: string[] = [];
+    element.getAttribute("style")?.split(";").forEach((rule) => {
+      const [rawProperty, ...rawValue] = rule.split(":");
+      const property = rawProperty?.trim().toLowerCase();
+      if (!property || !allowedStyleProperties.has(property)) return;
+      const value = cleanStyleValue(property, rawValue.join(":"));
+      if (value) nextStyles.push(`${property}: ${value}`);
+    });
+    if (nextStyles.length) element.setAttribute("style", nextStyles.join("; "));
+    else element.removeAttribute("style");
   });
+  return container.innerHTML;
+};
+
+export const sanitizeKmsHtml = (value: string) =>
+  filterAllowedStyles(
+    DOMPurify.sanitize(value || "", {
+      ALLOWED_TAGS: [
+        "p",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "strong",
+        "b",
+        "em",
+        "i",
+        "u",
+        "ul",
+        "ol",
+        "li",
+        "blockquote",
+        "table",
+        "thead",
+        "tbody",
+        "tr",
+        "th",
+        "td",
+        "a",
+        "img",
+        "br",
+        "span",
+        "div",
+      ],
+      ALLOWED_ATTR: ["href", "src", "alt", "title", "target", "rel", "colspan", "rowspan", "width", "height", "style"],
+      ADD_DATA_URI_TAGS: ["img"],
+      FORBID_TAGS: ["script", "iframe", "object", "embed"],
+      FORBID_ATTR: ["onerror", "onclick", "onload", "onmouseover"],
+    }),
+  );
 
 export const toKmsEditableHtml = (value: string) => {
   if (!value) return "";

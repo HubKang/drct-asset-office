@@ -12,6 +12,7 @@ import {
   type KmsLearningStatus,
   type KmsPost,
   type KmsPostPayload,
+  type KmsSettingItem,
 } from "@/types/kms";
 import { sanitizeKmsHtml, toKmsDisplayHtml, toKmsEditableHtml, toKmsPlainText } from "@/utils/kmsRichContent";
 
@@ -25,21 +26,29 @@ function KmsPostDetailPage() {
   const [form, setForm] = useState<KmsPostPayload | null>(null);
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
+  const [importanceOptions, setImportanceOptions] = useState<string[]>([...KMS_IMPORTANCE_OPTIONS]);
+  const [learningStatusOptions, setLearningStatusOptions] = useState<string[]>([...KMS_LEARNING_STATUS_OPTIONS]);
 
   const load = async () => {
     setMessage("");
     try {
-      const [postRow, categoryRows] = await Promise.all([
+      const [postRow, categoryRows, importanceRows, statusRows] = await Promise.all([
         repositories.kms.getPost(numericPostId),
         repositories.kms.listCategories(),
+        repositories.kms.listSettingItems({ group_code: "IMPORTANCE_LEVEL" }),
+        repositories.kms.listSettingItems({ group_code: "KNOWLEDGE_STATUS" }),
       ]);
+      const toNames = (rows: KmsSettingItem[], fallback: readonly string[]) =>
+        rows.length ? rows.map((item) => item.item_name) : [...fallback];
+      setImportanceOptions(toNames(importanceRows, KMS_IMPORTANCE_OPTIONS));
+      setLearningStatusOptions(toNames(statusRows, KMS_LEARNING_STATUS_OPTIONS));
       setPost(postRow);
       setCategories(categoryRows);
       setForm({
         category_id: postRow.category_id,
         title: postRow.title,
         summary: postRow.summary || "",
-        content: toKmsEditableHtml(postRow.content_html || postRow.content),
+        content: toKmsEditableHtml(postRow.content),
         source_url: postRow.source_url || "",
         importance: postRow.importance,
         learning_status: postRow.learning_status,
@@ -59,8 +68,7 @@ function KmsPostDetailPage() {
   const save = async () => {
     if (!form) return;
     const cleanContent = sanitizeKmsHtml(form.content);
-    const contentText = toKmsPlainText(cleanContent);
-    if (!form.category_id || !form.title.trim() || !contentText) {
+    if (!form.category_id || !form.title.trim() || !toKmsPlainText(cleanContent)) {
       setMessage("카테고리, 제목, 본문은 필수입니다.");
       return;
     }
@@ -72,13 +80,10 @@ function KmsPostDetailPage() {
         title: form.title.trim(),
         summary: form.summary || null,
         content: cleanContent,
-        content_format: "html",
-        content_html: cleanContent,
-        content_text: contentText,
         source_url: form.source_url || null,
       });
       setPost(updated);
-      setForm((prev) => prev && ({ ...prev, content: toKmsEditableHtml(updated.content_html || updated.content) }));
+      setForm((prev) => prev && ({ ...prev, content: toKmsEditableHtml(updated.content) }));
       setIsEditing(false);
       setMessage("수정되었습니다.");
     } catch (error) {
@@ -152,13 +157,13 @@ function KmsPostDetailPage() {
               <label className="kms-form-field">
                 <span className="kms-form-label">중요도</span>
                 <select className="select kms-form-control" value={form.importance} onChange={(event) => setForm((prev) => prev && ({ ...prev, importance: event.target.value as KmsImportance }))}>
-                  {KMS_IMPORTANCE_OPTIONS.map((option) => <option key={option}>{option}</option>)}
+                  {importanceOptions.map((option) => <option key={option}>{option}</option>)}
                 </select>
               </label>
               <label className="kms-form-field">
                 <span className="kms-form-label">학습 상태</span>
                 <select className="select kms-form-control" value={form.learning_status} onChange={(event) => setForm((prev) => prev && ({ ...prev, learning_status: event.target.value as KmsLearningStatus }))}>
-                  {KMS_LEARNING_STATUS_OPTIONS.map((option) => <option key={option}>{option}</option>)}
+                  {learningStatusOptions.map((option) => <option key={option}>{option}</option>)}
                 </select>
               </label>
             </div>
@@ -226,7 +231,7 @@ function KmsPostDetailPage() {
               ) : null}
               <section className="kms-content-section">
                 <h3>본문</h3>
-                <div className="kms-detail-content kms-rich-content" dangerouslySetInnerHTML={{ __html: toKmsDisplayHtml(post.content_html || post.content) }} />
+                <div className="kms-detail-content kms-rich-content" dangerouslySetInnerHTML={{ __html: toKmsDisplayHtml(post.content) }} />
               </section>
               {post.source_url ? (
                 <a className="kms-source-link" href={post.source_url} target="_blank" rel="noreferrer">참고 URL 새 창 열기</a>

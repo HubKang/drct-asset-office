@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from typing import Any
 
@@ -28,6 +29,10 @@ BLOCKED_ORDER_API_IDS = {
 
 
 class KiwoomRestClient:
+    _diagnostics_lock = threading.Lock()
+    _rest_post_calls = 0
+    _api_id_calls: dict[str, int] = {}
+
     def __init__(self) -> None:
         self._timeout_seconds = max(int(config.KIWOOM_REST_TIMEOUT_SECONDS or 10), 1)
         self._rate_limiter = KiwoomRateLimiter(config.KIWOOM_REST_RATE_LIMIT_PER_SECOND)
@@ -56,6 +61,22 @@ class KiwoomRestClient:
                 message=f"Order API blocked: {api_id}",
             )
 
+    @classmethod
+    def diagnostics_snapshot(cls) -> dict[str, int]:
+        with cls._diagnostics_lock:
+            return {
+                "rest_post_calls": cls._rest_post_calls,
+                "ka10001_calls": cls._api_id_calls.get("ka10001", 0),
+                "ka10015_calls": cls._api_id_calls.get("ka10015", 0),
+            }
+
+    @classmethod
+    def _record_post_call(cls, api_id: str) -> None:
+        normalized_api_id = str(api_id or "").strip()
+        with cls._diagnostics_lock:
+            cls._rest_post_calls += 1
+            cls._api_id_calls[normalized_api_id] = cls._api_id_calls.get(normalized_api_id, 0) + 1
+
     def post_json(
         self,
         path: str,
@@ -79,8 +100,31 @@ class KiwoomRestClient:
         if not token:
             raise KiwoomApiError(code=KiwoomErrorCode.KIWOOM_TOKEN_MISSING, message="access token is missing")
 
-        self._rate_limiter.throttle()
         url = f"{self.base_url}/{request.path.lstrip('/')}"
+        return self._send_with_token_retry(request, url=url, token=token)
+
+    def _send_with_token_retry(self, request: KiwoomRestRequest, *, url: str, token: str) -> KiwoomRestResponse:
+        response = self._send_once(request, url=url, token=token)
+        if response.status_code != 401:
+            return response
+
+        logger.info("[KIWOOM REST] token rejected status=401 api_id=%s retrying_with_fresh_token", request.api_id)
+        fresh_token = KiwoomAuthClient.get_access_token(force_refresh=True)
+        if not fresh_token:
+            raise KiwoomApiError(code=KiwoomErrorCode.KIWOOM_TOKEN_MISSING, message="access token is missing")
+        retried = self._send_once(request, url=url, token=fresh_token)
+        if retried.status_code == 401:
+            preview = (retried.raw_text_preview or "")[:300].replace("\n", " ")
+            raise KiwoomApiError(
+                code=KiwoomErrorCode.KIWOOM_HTTP_ERROR,
+                message=preview or "401 Unauthorized",
+                status_code=401,
+                raw_preview=preview,
+            )
+        return retried
+
+    def _send_once(self, request: KiwoomRestRequest, *, url: str, token: str) -> KiwoomRestResponse:
+        self._rate_limiter.throttle()
         headers = {
             "authorization": f"Bearer {token}",
             "api-id": request.api_id,
@@ -97,6 +141,7 @@ class KiwoomRestClient:
 
         started = time.perf_counter()
         try:
+            self._record_post_call(request.api_id)
             resp = requests.post(url, headers=headers, data=json.dumps(request.body, ensure_ascii=False), timeout=self._timeout_seconds)
         except requests.RequestException as exc:
             raise KiwoomApiError(
@@ -105,6 +150,16 @@ class KiwoomRestClient:
             ) from exc
         elapsed_ms = int((time.perf_counter() - started) * 1000)
 
+        if resp.status_code == 401:
+            return KiwoomRestResponse(
+                status_code=resp.status_code,
+                headers=dict(resp.headers),
+                json_body={},
+                raw_text_preview=(resp.text or "")[:500],
+                elapsed_ms=elapsed_ms,
+                cont_yn=resp.headers.get("cont-yn", "") or "",
+                next_key=resp.headers.get("next-key", "") or "",
+            )
         if resp.status_code == 429:
             raise KiwoomApiError(code=KiwoomErrorCode.KIWOOM_RATE_LIMITED, message="429 Too Many Requests", status_code=429)
         if resp.status_code >= 400:

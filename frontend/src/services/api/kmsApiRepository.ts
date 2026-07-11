@@ -6,11 +6,21 @@ import type {
   KmsCategorySortOrderItem,
   KmsCategorySortOrderResponse,
   KmsHomeSummary,
+  KmsKnowledgeItem,
+  KmsKnowledgeItemPayload,
+  KmsKnowledgeItemUpdatePayload,
   KmsLocalImageSelectResponse,
   KmsPost,
   KmsPostListParams,
   KmsPostPayload,
   KmsPostUpdatePayload,
+  KmsSettingGroup,
+  KmsSettingItem,
+  KmsSettingItemPayload,
+  KmsSettingItemSortOrderItem,
+  KmsSettingItemUpdatePayload,
+  KmsSummaryHelpApplyPayload,
+  KmsSummaryHelpResponse,
   KmsTag,
   KmsTagSearchParams,
 } from "@/types/kms";
@@ -22,6 +32,90 @@ const appendOptional = (search: URLSearchParams, key: string, value: unknown) =>
 
 export const kmsApiRepository = {
   getHomeSummary: () => apiRequest<KmsHomeSummary>("/kms/home/summary"),
+
+  listSettingGroups: (includeInactive = false, includeItems = true) =>
+    apiRequest<KmsSettingGroup[]>(`/kms/settings/groups?include_inactive=${String(includeInactive)}&include_items=${String(includeItems)}`),
+
+  listSettingItems: (params?: { group_code?: string; include_inactive?: boolean }) => {
+    const search = new URLSearchParams();
+    appendOptional(search, "group_code", params?.group_code);
+    appendOptional(search, "include_inactive", params?.include_inactive ?? false);
+    return apiRequest<KmsSettingItem[]>(`/kms/settings/items?${search.toString()}`);
+  },
+
+  createSettingItem: (payload: KmsSettingItemPayload) =>
+    apiRequest<KmsSettingItem>("/kms/settings/items", { method: "POST", body: JSON.stringify(payload) }),
+
+  updateSettingItem: (itemId: number, payload: KmsSettingItemUpdatePayload) =>
+    apiRequest<KmsSettingItem>(`/kms/settings/items/${itemId}`, { method: "PUT", body: JSON.stringify(payload) }),
+
+  updateSettingItemActive: (itemId: number, isActive: boolean) =>
+    apiRequest<KmsSettingItem>(`/kms/settings/items/${itemId}/active`, { method: "PATCH", body: JSON.stringify({ is_active: isActive }) }),
+
+  updateSettingItemDefault: (itemId: number) =>
+    apiRequest<KmsSettingItem>(`/kms/settings/items/${itemId}/default`, { method: "PATCH" }),
+
+  reorderSettingItems: (items: KmsSettingItemSortOrderItem[]) =>
+    apiRequest<{ success: boolean; updated_count: number }>("/kms/settings/items/reorder", { method: "PATCH", body: JSON.stringify({ items }) }),
+
+  listKnowledgeItems: (params?: {
+    keyword?: string;
+    para_type_id?: number;
+    category_id?: number;
+    status_id?: number;
+    importance_id?: number;
+    usage_context_id?: number;
+    source_type_id?: number;
+    tag?: string;
+    tag_id?: number;
+    is_active?: boolean;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const search = new URLSearchParams();
+    appendOptional(search, "keyword", params?.keyword);
+    appendOptional(search, "para_type_id", params?.para_type_id);
+    appendOptional(search, "category_id", params?.category_id);
+    appendOptional(search, "status_id", params?.status_id);
+    appendOptional(search, "importance_id", params?.importance_id);
+    appendOptional(search, "usage_context_id", params?.usage_context_id);
+    appendOptional(search, "source_type_id", params?.source_type_id);
+    appendOptional(search, "tag", params?.tag);
+    appendOptional(search, "tag_id", params?.tag_id);
+    appendOptional(search, "is_active", params?.is_active ?? true);
+    appendOptional(search, "limit", params?.limit ?? 100);
+    appendOptional(search, "offset", params?.offset ?? 0);
+    return apiRequest<KmsKnowledgeItem[]>(`/kms/knowledge-items?${search.toString()}`);
+  },
+
+  getKnowledgeItem: (itemId: number) => apiRequest<KmsKnowledgeItem>(`/kms/knowledge-items/${itemId}`),
+
+  createKnowledgeItem: (payload: KmsKnowledgeItemPayload) =>
+    apiRequest<KmsKnowledgeItem>("/kms/knowledge-items", { method: "POST", body: JSON.stringify(payload) }),
+
+  updateKnowledgeItem: (itemId: number, payload: KmsKnowledgeItemUpdatePayload) =>
+    apiRequest<KmsKnowledgeItem>(`/kms/knowledge-items/${itemId}`, { method: "PUT", body: JSON.stringify(payload) }),
+
+  updateKnowledgeItemActive: (itemId: number, isActive: boolean) =>
+    apiRequest<KmsKnowledgeItem>(`/kms/knowledge-items/${itemId}/active`, { method: "PATCH", body: JSON.stringify({ is_active: isActive }) }),
+
+  deleteKnowledgeItem: (itemId: number) =>
+    apiRequest<KmsKnowledgeItem>(`/kms/knowledge-items/${itemId}`, { method: "DELETE" }),
+
+  generateKnowledgeItemSummaryHelp: (itemId: number) =>
+    apiRequest<KmsSummaryHelpResponse>(`/kms/knowledge-items/${itemId}/ai/summary`, { method: "POST" }),
+
+  applyKnowledgeItemSummaryHelp: (itemId: number, payload: KmsSummaryHelpApplyPayload) =>
+    apiRequest<KmsSummaryHelpResponse>(`/kms/knowledge-items/${itemId}/ai/summary/apply`, { method: "POST", body: JSON.stringify(payload) }),
+
+  replaceKnowledgeItemTags: (itemId: number, tagNames: string[] | string) =>
+    apiRequest<KmsKnowledgeItem>(`/kms/knowledge-items/${itemId}/tags`, { method: "POST", body: JSON.stringify({ tag_names: tagNames }) }),
+
+  syncKnowledgeItemTags: (itemId: number, tagNames: string[] | string) =>
+    apiRequest<KmsKnowledgeItem>(`/kms/knowledge-items/${itemId}/tags/sync`, { method: "POST", body: JSON.stringify({ tag_names: tagNames }) }),
+
+  removeKnowledgeItemTag: (itemId: number, tagId: number) =>
+    apiRequest<KmsKnowledgeItem>(`/kms/knowledge-items/${itemId}/tags/${tagId}`, { method: "DELETE" }),
 
   listCategories: (includeInactive = false) =>
     apiRequest<KmsCategory[]>(`/kms/categories?include_inactive=${String(includeInactive)}`),

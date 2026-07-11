@@ -4,6 +4,7 @@ import EmptyState from "@/components/common/EmptyState";
 import PageHeader from "@/components/common/PageHeader";
 import StatusBadge from "@/components/common/StatusBadge";
 import { repositories } from "@/services";
+import type { StockDailyPrice } from "@/types/stockPrice";
 import type { InvestorFlowChartItem, InvestorFlowChartResponse, InvestorFlowMetricMode, WatchlistEvaluationFactor, WatchlistEvaluationHistoryItem, WatchlistEvaluationListItem } from "@/types/watchlistEvaluation";
 
 type ActiveFilter = "all" | "active" | "inactive";
@@ -65,6 +66,28 @@ function formatPreciseScore(value: number | null | undefined, suffix = "점"): s
 function formatCompactNumber(value: number | null | undefined, suffix = ""): string {
   if (value === null || value === undefined) return "-";
   return `${new Intl.NumberFormat("ko-KR", { notation: "compact", maximumFractionDigits: 1 }).format(value)}${suffix}`;
+}
+
+function formatPlainNumber(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return "-";
+  return new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 0 }).format(Number(value));
+}
+
+function formatSignedPercent(value: number | null | undefined, digits = 1): string {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return "-";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${new Intl.NumberFormat("ko-KR", { maximumFractionDigits: digits }).format(value)}%`;
+}
+
+function sijeReturnClass(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return "neutral";
+  if (value > 0) return "positive";
+  if (value < 0) return "negative";
+  return "neutral";
+}
+
+function pathFromPoints(points: Array<{ x: number; y: number }>): string {
+  return points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(" ");
 }
 
 function formatFinancialAmount(value: number | null | undefined): string {
@@ -797,7 +820,155 @@ function FinancialPanel({ item, onHelp }: { item: WatchlistEvaluationListItem; o
   );
 }
 
-function ChartPanel({ item, onHelp }: { item: WatchlistEvaluationListItem; onHelp: () => void }) {
+function SijeCandlestickChart({ prices, baseDate, loading, error }: { prices: StockDailyPrice[]; baseDate?: string | null; loading: boolean; error?: string }) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const rows = useMemo(
+    () => [...prices]
+      .filter((row) => row.trade_date && row.close_price !== null && row.close_price !== undefined)
+      .sort((a, b) => a.trade_date.localeCompare(b.trade_date)),
+    [prices],
+  );
+
+  useEffect(() => {
+    const node = scrollRef.current;
+    if (!node || !rows.length) return;
+    const scrollToLatest = () => {
+      node.scrollLeft = node.scrollWidth - node.clientWidth;
+    };
+    scrollToLatest();
+    const frame = window.requestAnimationFrame(scrollToLatest);
+    return () => window.cancelAnimationFrame(frame);
+  }, [rows.length]);
+
+  if (loading) return <div className="sije-candle-card"><div className="sije-candle-card-inner"><EmptyState message="차트 데이터를 불러오는 중입니다." /></div></div>;
+  if (error) return <div className="sije-candle-card"><div className="sije-candle-card-inner"><EmptyState message={error} /></div></div>;
+  if (!rows.length) return <div className="sije-candle-card"><div className="sije-candle-card-inner"><EmptyState message="표시할 일봉 데이터가 없습니다. 가격 수집 후 다시 확인해 주세요." /></div></div>;
+
+  const width = Math.max(940, rows.length * 10 + 96);
+  const height = 390;
+  const pad = { left: 58, right: 28, top: 18 };
+  const priceHeight = 240;
+  const volumeTop = 282;
+  const volumeHeight = 68;
+  const plotWidth = width - pad.left - pad.right;
+  const step = rows.length > 1 ? plotWidth / (rows.length - 1) : plotWidth;
+  const xOf = (index: number) => pad.left + index * step;
+  const candleWidth = Math.max(3, Math.min(7, step * 0.55));
+  const priceValues = rows
+    .flatMap((row) => [row.open_price, row.high_price, row.low_price, row.close_price, row.ma5, row.ma10, row.ma20, row.ma60, row.ma120])
+    .filter((value): value is number => value !== null && value !== undefined && Number.isFinite(value));
+  const low = Math.min(...priceValues);
+  const high = Math.max(...priceValues);
+  const pricePad = Math.max(1, (high - low) * 0.08);
+  const minPrice = low - pricePad;
+  const maxPrice = high + pricePad;
+  const yOf = (value: number) => pad.top + (maxPrice - value) / Math.max(1, maxPrice - minPrice) * priceHeight;
+  const maxVolume = Math.max(1, ...rows.map((row) => Number(row.volume || 0)));
+  const volumeY = (value: number) => volumeTop + volumeHeight - value / maxVolume * volumeHeight;
+  let baseIdx = -1;
+  if (baseDate) {
+    baseIdx = rows.findIndex((row) => row.trade_date === baseDate);
+    if (baseIdx < 0) baseIdx = rows.reduce((best, row, index) => (row.trade_date <= baseDate ? index : best), -1);
+  }
+  const baseStartIdx = Math.max(0, baseIdx);
+  const latest = rows[rows.length - 1];
+  const baseRow = baseIdx >= 0 ? rows[baseIdx] : rows[0];
+  const baseClose = Number(baseRow?.close_price || 0);
+  const latestClose = Number(latest?.close_price || 0);
+  const currentReturn = baseClose > 0 ? (latestClose - baseClose) / baseClose * 100 : null;
+  const highReturns = rows.slice(baseStartIdx).map((row) => Number(row.high_price || row.close_price || 0)).filter(Boolean).map((value) => (value - baseClose) / baseClose * 100);
+  const lowReturns = rows.slice(baseStartIdx).map((row) => Number(row.low_price || row.close_price || 0)).filter(Boolean).map((value) => (value - baseClose) / baseClose * 100);
+  const highReturn = baseClose > 0 && highReturns.length ? Math.max(...highReturns) : null;
+  const maxDrawdown = baseClose > 0 && lowReturns.length ? Math.min(...lowReturns) : null;
+  const series = [
+    { key: "ma5", label: "MA5", className: "ma5" },
+    { key: "ma20", label: "MA20", className: "ma20" },
+    { key: "ma60", label: "MA60", className: "ma60" },
+    { key: "ma120", label: "MA120", className: "ma120" },
+  ] as const;
+  const yTicks = Array.from({ length: 5 }, (_, index) => minPrice + (maxPrice - minPrice) * index / 4).reverse();
+  const xTickEvery = Math.max(1, Math.ceil(rows.length / 7));
+
+  return (
+    <div className="sije-candle-card">
+      <div className="sije-candle-card-inner">
+        <div className="sije-candle-card-head">
+          <div>
+            <h4>기준일 캔들차트</h4>
+            <p>{rows[0].trade_date} ~ {latest.trade_date} · 가격/이동평균/거래량</p>
+          </div>
+          <div className="sije-candle-summary">
+            <span className={`sije-candle-return-${sijeReturnClass(currentReturn)}`}>현재 {formatSignedPercent(currentReturn)}</span>
+            <span className={`sije-candle-return-${sijeReturnClass(highReturn)}`}>고점 {formatSignedPercent(highReturn)}</span>
+            <span className={`sije-candle-return-${sijeReturnClass(maxDrawdown)}`}>저점 {formatSignedPercent(maxDrawdown)}</span>
+            <span>{Math.max(0, rows.length - baseStartIdx)}거래일</span>
+          </div>
+        </div>
+        <div className="sije-candle-chart-scroll" ref={scrollRef}>
+          <svg className="sije-candle-svg" width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label="기준일 캔들차트">
+            {yTicks.map((tick) => {
+              const y = yOf(tick);
+              return (
+                <g key={`ytick-${tick}`}>
+                  <line className="sije-candle-grid-line" x1={pad.left} x2={width - pad.right} y1={y} y2={y} />
+                  <text className="sije-candle-axis-text" x={pad.left - 8} y={y + 4} textAnchor="end">{formatPlainNumber(tick)}</text>
+                </g>
+              );
+            })}
+            <line className="sije-candle-volume-base" x1={pad.left} x2={width - pad.right} y1={volumeTop + volumeHeight} y2={volumeTop + volumeHeight} />
+            {rows.map((row, index) => {
+              const x = xOf(index);
+              const open = Number(row.open_price ?? row.close_price ?? 0);
+              const close = Number(row.close_price ?? open);
+              const highPrice = Number(row.high_price ?? Math.max(open, close));
+              const lowPrice = Number(row.low_price ?? Math.min(open, close));
+              const rising = close >= open;
+              const bodyY = Math.min(yOf(open), yOf(close));
+              const bodyHeight = Math.max(2, Math.abs(yOf(open) - yOf(close)));
+              const volume = Number(row.volume || 0);
+              const showDate = index === 0 || index === rows.length - 1 || index % xTickEvery === 0;
+              return (
+                <g key={row.trade_date}>
+                  <rect className={`sije-candle-volume-bar ${rising ? "rising" : "falling"}`} x={x - candleWidth / 2} y={volumeY(volume)} width={candleWidth} height={Math.max(1, volumeTop + volumeHeight - volumeY(volume))}>
+                    <title>{row.trade_date} 거래량 {formatPlainNumber(volume)}</title>
+                  </rect>
+                  <line className={`sije-candle-wick ${rising ? "rising" : "falling"}`} x1={x} x2={x} y1={yOf(highPrice)} y2={yOf(lowPrice)} />
+                  <rect className={`sije-candle-body ${rising ? "rising" : "falling"}`} x={x - candleWidth / 2} y={bodyY} width={candleWidth} height={bodyHeight} rx={1}>
+                    <title>{row.trade_date} 시 {formatPlainNumber(open)} 고 {formatPlainNumber(highPrice)} 저 {formatPlainNumber(lowPrice)} 종 {formatPlainNumber(close)}</title>
+                  </rect>
+                  {showDate ? <text className="sije-candle-axis-text" x={x} y={height - 8} textAnchor="middle">{row.trade_date.slice(5)}</text> : null}
+                </g>
+              );
+            })}
+            {series.map((item) => {
+              const points = rows
+                .map((row, index) => {
+                  const value = row[item.key];
+                  return value === null || value === undefined ? null : { x: xOf(index), y: yOf(value) };
+                })
+                .filter((point): point is { x: number; y: number } => point !== null);
+              return points.length > 1 ? <path key={item.key} className={`sije-candle-ma-line ${item.className}`} d={pathFromPoints(points)} /> : null;
+            })}
+            {baseIdx >= 0 ? (
+              <g>
+                <line className="sije-candle-base-line" x1={xOf(baseIdx)} x2={xOf(baseIdx)} y1={pad.top} y2={volumeTop + volumeHeight} />
+                <text className="sije-candle-base-label" x={xOf(baseIdx) + 5} y={pad.top + 14}>기준일</text>
+              </g>
+            ) : null}
+          </svg>
+        </div>
+        <div className="sije-candle-legend">
+          <span className="rising">상승</span>
+          <span className="falling">하락</span>
+          {series.map((item) => <span key={item.key} className={item.className}>{item.label}</span>)}
+          <span className="base">평가 기준일</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ChartPanel({ item, onHelp, prices, pricesLoading, pricesError }: { item: WatchlistEvaluationListItem; onHelp: () => void; prices: StockDailyPrice[]; pricesLoading: boolean; pricesError: string }) {
   const factors = item.chart_factors || [];
   const metrics = item.chart_metrics || {};
   const metricItems = [
@@ -836,9 +1007,10 @@ function ChartPanel({ item, onHelp }: { item: WatchlistEvaluationListItem; onHel
       <div className="sije-chart-metrics">
         <h4>핵심 차트 지표</h4>
         <div className="sije-chart-metric-grid">
-          {metricItems.map(([label, value]) => <div key={label}><span>{label}</span><strong>{value}</strong></div>)}
+          {metricItems.map(([label, value]) => <div className="sije-chart-metric-card" key={label}><span>{label}</span><strong>{value}</strong></div>)}
         </div>
       </div>
+      <SijeCandlestickChart prices={prices} baseDate={metrics.trade_date || item.last_evaluated_at?.slice(0, 10)} loading={pricesLoading} error={pricesError} />
     </section>
   );
 }
@@ -1021,6 +1193,9 @@ function WatchlistSijeSuchaJaePage() {
   const [flowMetric, setFlowMetric] = useState<InvestorFlowMetricMode>("qty");
   const [flowChart, setFlowChart] = useState<InvestorFlowChartResponse | null>(null);
   const [flowLoading, setFlowLoading] = useState(false);
+  const [chartPrices, setChartPrices] = useState<StockDailyPrice[]>([]);
+  const [chartLoading, setChartLoading] = useState(false);
+  const [chartError, setChartError] = useState("");
 
   const load = async () => {
     setLoading(true);
@@ -1058,7 +1233,8 @@ function WatchlistSijeSuchaJaePage() {
     setHistory([]);
     if (tab === "history") void loadHistory(selected.watchlist_id);
     if (tab === "supply") void loadInvestorFlows(selected.watchlist_id, flowDays);
-  }, [selected?.watchlist_id, tab, flowDays]);
+    if (tab === "chart") void loadChartPrices(selected.stock_id);
+  }, [selected?.watchlist_id, selected?.stock_id, tab, flowDays]);
 
   const runAction = async (key: string, action: () => Promise<void>) => {
     setActionLoading(key);
@@ -1093,6 +1269,20 @@ function WatchlistSijeSuchaJaePage() {
       setError(safeMessage(flowError, "투자주체별 수급 그래프를 불러오지 못했습니다."));
     } finally {
       setFlowLoading(false);
+    }
+  };
+
+  const loadChartPrices = async (stockId: number) => {
+    setChartLoading(true);
+    setChartError("");
+    try {
+      const result = await repositories.stockPrices.listDaily(stockId, { source: "kiwoom_rest", limit: 180 });
+      setChartPrices([...result.items].sort((a, b) => a.trade_date.localeCompare(b.trade_date)));
+    } catch (chartLoadError) {
+      setChartPrices([]);
+      setChartError(safeMessage(chartLoadError, "차트 데이터를 불러오지 못했습니다."));
+    } finally {
+      setChartLoading(false);
     }
   };
 
@@ -1260,7 +1450,7 @@ function WatchlistSijeSuchaJaePage() {
 
               {tab === "material" ? <MaterialPanel item={selected} onHelp={() => openReason("재료")} /> : null}
 
-              {tab === "chart" ? <ChartPanel item={selected} onHelp={() => openReason("차트")} /> : null}
+              {tab === "chart" ? <ChartPanel item={selected} onHelp={() => openReason("차트")} prices={chartPrices} pricesLoading={chartLoading} pricesError={chartError} /> : null}
 
               {tab === "financial" ? <FinancialPanel item={selected} onHelp={() => openReason("재무")} /> : null}
 

@@ -76,7 +76,16 @@ class StockPriceService:
             )
         self.price_repo.commit()
 
-    def _collect_rows_by_source(self, stock, start_date: date, end_date: date, source: str) -> tuple[str, list[dict]]:
+    def _collect_rows_by_source(
+        self,
+        stock,
+        start_date: date,
+        end_date: date,
+        source: str,
+        *,
+        mode: str | None = None,
+        stop_at_start_date: bool = True,
+    ) -> tuple[str, list[dict], dict[str, object]]:
         if source == "mock":
             rows = self.mock_collector.collect_daily(stock.id, stock.stock_code, start_date, end_date)
             payload = [
@@ -93,7 +102,7 @@ class StockPriceService:
                 }
                 for r in rows
             ]
-            return normalize_kr_stock_code(stock.stock_code), payload
+            return normalize_kr_stock_code(stock.stock_code), payload, {"pages_fetched": 0, "stop_reason": "mock"}
         if source == "pykrx":
             normalized, rows = self.pykrx_collector.collect_daily(
                 stock.stock_code,
@@ -115,12 +124,14 @@ class StockPriceService:
                 }
                 for r in rows
             ]
-            return normalized, payload
+            return normalized, payload, {"pages_fetched": 0, "stop_reason": "pykrx_single_fetch"}
         if source == "kiwoom_rest":
             response = self.kiwoom_rest_provider.get_daily_prices(
                 stock.stock_code,
                 start_date=start_date.isoformat(),
                 end_date=end_date.isoformat(),
+                mode=mode,
+                stop_at_start_date=stop_at_start_date,
             )
             payload = [
                 {
@@ -138,7 +149,12 @@ class StockPriceService:
                 if isinstance(r, dict) and r.get("trade_date")
             ]
             normalized = response.get("normalized_stock_code") or normalize_kr_stock_code(stock.stock_code)
-            return normalized, payload
+            return normalized, payload, {
+                "pages_fetched": int(response.get("pages_fetched") or response.get("api_call_count") or 0),
+                "stop_reason": response.get("stop_reason"),
+                "raw_count": response.get("raw_count"),
+                "mapped_count": response.get("mapped_count"),
+            }
         if source == "broker_kis":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -213,8 +229,24 @@ class StockPriceService:
             str(latest_trade_date),
         )
 
-    def _collect_and_upsert(self, stock, source: str, start_date: date, end_date: date) -> tuple[str, int, int]:
-        normalized, payload = self._collect_rows_by_source(stock, start_date, end_date, source)
+    def _collect_and_upsert_with_stats(
+        self,
+        stock,
+        source: str,
+        start_date: date,
+        end_date: date,
+        *,
+        mode: str | None = None,
+        stop_at_start_date: bool = True,
+    ) -> dict[str, object]:
+        normalized, payload, diagnostics = self._collect_rows_by_source(
+            stock,
+            start_date,
+            end_date,
+            source,
+            mode=mode,
+            stop_at_start_date=stop_at_start_date,
+        )
         collected_count = len(payload)
         saved = self.price_repo.upsert_daily_rows(stock.id, source, payload)
         if payload:
@@ -232,7 +264,16 @@ class StockPriceService:
             start_date.isoformat(),
             end_date.isoformat(),
         )
-        return normalized, collected_count, saved
+        return {
+            "normalized": normalized,
+            "collected_count": collected_count,
+            "saved_count": saved,
+            **diagnostics,
+        }
+
+    def _collect_and_upsert(self, stock, source: str, start_date: date, end_date: date) -> tuple[str, int, int]:
+        result = self._collect_and_upsert_with_stats(stock, source, start_date, end_date)
+        return str(result["normalized"]), int(result["collected_count"] or 0), int(result["saved_count"] or 0)
 
     def collect_selected_backfill(self, stock_ids: list[int], period_years: int, source: str, overlap_days: int = 7, force_full_refresh: bool = False, start_date: str | None = None, end_date: str | None = None) -> dict:
         selected_ids = self._validate_selected_stock_ids(stock_ids)

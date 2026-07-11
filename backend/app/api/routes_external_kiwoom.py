@@ -242,6 +242,8 @@ def get_monthly_theme_flow_trend(
     view_mode: str = Query(default="THEME", description="THEME_GROUP 또는 THEME"),
     theme_group_id: int | None = Query(default=None),
     limit: int | None = Query(default=None, ge=1, le=500),
+    start_date: str | None = Query(default=None, description="YYYY-MM-DD"),
+    end_date: str | None = Query(default=None, description="YYYY-MM-DD"),
     db: Session = Depends(get_db),
 ) -> MonthlyThemeFlowTrendResponse:
     return ExternalKiwoomService(db).get_monthly_theme_flow_trend(
@@ -249,4 +251,6 @@ def get_monthly_theme_flow_trend(
         view_mode=view_mode,
         theme_group_id=theme_group_id,
         limit=limit,
+        start_date=start_date,
+        end_date=end_date,
     )

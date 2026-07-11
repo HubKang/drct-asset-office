@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+import logging
 from typing import Any
 
 from backend.app.clients.kiwoom import KiwoomApiError, KiwoomRestClient
 from backend.app.core import config
 from backend.app.utils.stock_code import normalize_stock_code
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -36,6 +39,8 @@ class KiwoomRestMarketDataProvider:
         max_pages: int | None = None,
         api_id: str | None = None,
         endpoint: str | None = None,
+        mode: str | None = None,
+        stop_at_start_date: bool = True,
     ) -> dict[str, Any]:
         normalized = normalize_stock_code(stock_code)
         if len(normalized) != 6 or not normalized.isdigit():
@@ -62,8 +67,11 @@ class KiwoomRestMarketDataProvider:
         top_level_keys: list[str] = []
         list_candidates: list[dict[str, Any]] = []
         first_item_keys: list[str] = []
+        page_summaries: list[dict[str, Any]] = []
+        stop_reason: str | None = None
+        mode_label = mode or "daily_price_collection"
 
-        for _ in range(page_limit):
+        for page_index in range(1, page_limit + 1):
             body = self._build_request_body(
                 api_id=api_id,
                 stock_code=normalized,
@@ -82,10 +90,12 @@ class KiwoomRestMarketDataProvider:
 
             extracted = self._extract_rows(response.json_body)
             raw_items.extend(extracted)
+            page_rows: list[KiwoomDailyPriceRow] = []
             for row in extracted:
                 mapped = self._map_row(row)
                 if mapped is not None:
                     mapped_items.append(mapped)
+                    page_rows.append(mapped)
             if extracted and not first_item_keys and isinstance(extracted[0], dict):
                 first_item_keys = list(extracted[0].keys())
 
@@ -96,10 +106,52 @@ class KiwoomRestMarketDataProvider:
             if next_header:
                 used_next_key = True
 
+            page_dates = [row.trade_date for row in page_rows]
+            newest_date = max(page_dates) if page_dates else None
+            oldest_date = min(page_dates) if page_dates else None
+            matched_count = sum(1 for row in page_rows if start_dt.isoformat() <= row.trade_date <= end_dt.isoformat())
+            stop_after_page = False
+            page_stop_reason = ""
+            if stop_at_start_date and oldest_date and oldest_date < start_dt.isoformat():
+                stop_after_page = True
+                page_stop_reason = "oldest_before_requested_start"
+                stop_reason = page_stop_reason
+            page_summaries.append({
+                "page": page_index,
+                "rows": len(extracted),
+                "newest": newest_date,
+                "oldest": oldest_date,
+                "matched": matched_count,
+                "stop": stop_after_page,
+                "reason": page_stop_reason,
+            })
+            logger.info(
+                "[PRICE PAGE] stock_code=%s mode=%s page=%s rows=%s newest=%s oldest=%s matched=%s stop=%s reason=%s",
+                normalized,
+                mode_label,
+                page_index,
+                len(extracted),
+                newest_date,
+                oldest_date,
+                matched_count,
+                stop_after_page,
+                page_stop_reason or "continue",
+            )
+            print(
+                "[PRICE PAGE] "
+                f"stock_code={normalized} mode={mode_label} page={page_index} rows={len(extracted)} "
+                f"newest={newest_date} oldest={oldest_date} matched={matched_count} "
+                f"stop={stop_after_page} reason={page_stop_reason or 'continue'}"
+            )
+            if stop_after_page:
+                break
             if cont_header != "Y" or not next_header:
+                stop_reason = "no_next_key"
                 break
             cont_yn = "Y"
             next_key = next_header
+        else:
+            stop_reason = "max_pages_reached"
 
         unique = self._dedup_and_sort(mapped_items)
         unique = [
@@ -123,6 +175,9 @@ class KiwoomRestMarketDataProvider:
             "return_code": response_return_code,
             "return_msg": response_return_msg,
             "api_call_count": api_call_count,
+            "pages_fetched": api_call_count,
+            "stop_reason": stop_reason,
+            "page_summaries": page_summaries,
             "cont_yn_used": used_cont,
             "next_key_used": used_next_key,
             "elapsed_ms": elapsed_total,

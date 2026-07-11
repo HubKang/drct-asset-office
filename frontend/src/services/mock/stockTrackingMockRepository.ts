@@ -412,22 +412,34 @@ export const stockTrackingMockRepository = {
   collectPrices: async (payload: CollectStockTrackingPricesPayload) => {
     let successCount = 0;
     let partialCount = 0;
-    const results = payload.item_ids.map((itemId) => {
+    const action = payload.action ?? (payload.force_full_refresh ? "selected_full" : "selected_recent_7d");
+    const targetIds = action.startsWith("all_")
+      ? items.filter((row) => ["TRACKING", "HOLD"].includes(row.status) && row.price_status !== "STOPPED").map((row) => row.id)
+      : payload.item_ids;
+    const results = targetIds.map((itemId) => {
       const item = items.find((row) => row.id === itemId);
       if (!item || !["TRACKING", "HOLD"].includes(item.status)) {
         partialCount += 1;
-        return { item_id: itemId, stock_code: item?.stock_code ?? null, stock_name: item?.stock_name ?? null, status: "SKIPPED" as const, collected_count: 0, last_collected_date: null, message: "갱신 대상이 아닙니다." };
+        return { item_id: itemId, stock_code: item?.stock_code ?? null, stock_name: item?.stock_name ?? null, status: "SKIPPED" as const, collected_count: 0, saved_count: 0, pages_fetched: 0, stop_reason: "skipped", last_collected_date: null, message: "갱신 대상이 아닙니다." };
       }
       const prices = generateChart(itemId);
       items = items.map((row) => (row.id === itemId ? { ...row, price_status: "LATEST", updated_at: new Date().toISOString() } : row));
       successCount += 1;
-      return { item_id: itemId, stock_code: item.stock_code, stock_name: item.stock_name, status: "SUCCESS" as const, collected_count: prices.length, last_collected_date: prices[prices.length - 1]?.date ?? today(), message: null };
+      return { item_id: itemId, stock_code: item.stock_code, stock_name: item.stock_name, status: "SUCCESS" as const, collected_count: prices.length, saved_count: prices.length, pages_fetched: 1, stop_reason: "mock", last_collected_date: prices[prices.length - 1]?.date ?? today(), message: null };
     });
     return {
-      requested_count: payload.item_ids.length,
+      requested_count: targetIds.length,
+      selected_count: payload.item_ids.length,
+      target_count: targetIds.length,
+      action,
+      mode: payload.mode ?? (payload.force_full_refresh ? "tracking_full_refresh" : "tracking_incremental_overlap"),
       success_count: successCount,
       partial_count: partialCount,
       failed_count: 0,
+      total_pages: successCount,
+      total_collected: results.reduce((sum, item) => sum + Number(item.collected_count || 0), 0),
+      total_saved: results.reduce((sum, item) => sum + Number(item.saved_count || 0), 0),
+      total_ms: 0,
       items: results,
       message: `가격정보 갱신 완료: 성공 ${successCount}건, 일부 누락 ${partialCount}건, 실패 0건`,
     };

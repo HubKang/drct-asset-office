@@ -999,10 +999,27 @@ function StockTrackingPage() {
     const targetIds = new Set(targetItems.map((item) => item.id));
     setItems((prev) => prev.map((item) => targetIds.has(item.id) ? { ...item, price_status: "COLLECTING" } : item));
     try {
+      const isSelectedScope = scope === "checked" || scope === "detail";
+      const action = collectionMode === "full"
+        ? (isSelectedScope ? "selected_full" : "all_full")
+        : (isSelectedScope ? "selected_recent_7d" : "all_recent_7d");
+      const mode = collectionMode === "full" ? "tracking_full_refresh" : "tracking_incremental_overlap";
       const response = await repositories.stockTracking.collectPrices({
-        item_ids: Array.from(targetIds),
+        item_ids: isSelectedScope ? Array.from(targetIds) : [],
         overlap_days: 7,
         force_full_refresh: collectionMode === "full",
+        action,
+        mode,
+      });
+      console.info("[TRACKING COLLECT]", {
+        action: response.action,
+        selectedCount: response.selected_count,
+        targetCount: response.target_count,
+        mode: response.mode,
+        totalPages: response.total_pages,
+        totalCollected: response.total_collected,
+        totalSaved: response.total_saved,
+        totalMs: response.total_ms,
       });
       await refreshAfterCollect(response, collectionMode, selectedItem && targetIds.has(selectedItem.id) ? selectedItem.id : undefined);
       if (collectionMode === "full") setFullRefreshTarget(null);
@@ -1247,8 +1264,8 @@ function StockTrackingPage() {
                       <td colSpan={8}>
                         <div className="stock-tracking-empty-state compact">
                           <strong>등록된 트래킹 종목이 없습니다.</strong>
-                          <p>시장 수급 분석의 저장된 수급 이벤트 후보에서 종목을 선택해 종목트래킹 그룹에 등록할 수 있습니다.</p>
-                          <button type="button" className="btn btn-secondary" onClick={() => navigate("/market-trends")}>시장 수급 분석으로 이동</button>
+                          <p>시장 수급 테마(종목)의 저장된 수급 이벤트 후보에서 종목을 선택해 종목트래킹 그룹에 등록할 수 있습니다.</p>
+                          <button type="button" className="btn btn-secondary" onClick={() => navigate("/market-trends")}>시장 수급 테마(종목) 화면으로 이동</button>
                         </div>
                       </td>
                     </tr>

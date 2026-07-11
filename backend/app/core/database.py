@@ -54,6 +54,157 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
+def _ensure_column(conn, table_name: str, column_name: str, column_sql: str) -> None:  # type: ignore[no-untyped-def]
+    rows = conn.exec_driver_sql(f"PRAGMA table_info({table_name})").fetchall()
+    existing = {str(row[1]) for row in rows}
+    if column_name not in existing:
+        conn.exec_driver_sql(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_sql}")
+
+
+def _drop_column_if_exists(conn, table_name: str, column_name: str) -> None:  # type: ignore[no-untyped-def]
+    rows = conn.exec_driver_sql(f"PRAGMA table_info({table_name})").fetchall()
+    existing = {str(row[1]) for row in rows}
+    if column_name not in existing:
+        return
+    try:
+        conn.exec_driver_sql(f"ALTER TABLE {table_name} DROP COLUMN {column_name}")
+    except Exception:
+        # Older SQLite versions cannot drop columns. The application no longer
+        # reads or writes this legacy preservation column, so leaving it is safe.
+        pass
+
+
+KMS_SETTING_SEEDS: list[tuple[str, str, str, int, list[tuple[str, str, str | None, str | None, str | None, int, int, int]]]] = [
+    (
+        "PARA_TYPE",
+        "PARA 유형",
+        "지식의 PARA 분류",
+        10,
+        [
+            ("PROJECT", "진행 과제", "목표가 있는 진행성 지식", "#dbeafe", "P", 10, 0, 1),
+            ("AREA", "지속 관리 영역", "반복적으로 관리할 영역", "#dcfce7", "A", 20, 0, 1),
+            ("RESOURCE", "참고 자료", "나중에 참고할 자료", "#fef3c7", "R", 30, 1, 1),
+            ("ARCHIVE", "보관", "현재는 비활성인 보관 지식", "#e5e7eb", "AR", 40, 0, 1),
+        ],
+    ),
+    (
+        "KNOWLEDGE_CATEGORY",
+        "지식 카테고리",
+        "KMS 지식 분류",
+        20,
+        [
+            ("UNCATEGORIZED", "미분류", None, "#f1f5f9", None, 10, 1, 1),
+            ("MARKET", "시장", None, "#dbeafe", None, 20, 0, 1),
+            ("MATERIAL", "재료", None, "#ffedd5", None, 30, 0, 1),
+            ("SUPPLY", "수급", None, "#ede9fe", None, 40, 0, 1),
+            ("CHART", "차트", None, "#dcfce7", None, 50, 0, 1),
+            ("FINANCE", "재무", None, "#cffafe", None, 60, 0, 1),
+            ("METHOD", "기법", None, "#e0e7ff", None, 70, 0, 1),
+            ("PSYCHOLOGY", "심리", None, "#fce7f3", None, 80, 0, 1),
+            ("RISK", "리스크", None, "#fee2e2", None, 90, 0, 1),
+        ],
+    ),
+    (
+        "KNOWLEDGE_STATUS",
+        "지식 상태",
+        "지식 정리 및 활용 상태",
+        30,
+        [
+            ("COLLECTED", "수집됨", None, "#e0f2fe", None, 10, 1, 1),
+            ("ORGANIZED", "정리됨", None, "#dcfce7", None, 20, 0, 1),
+            ("VERIFYING", "검증중", None, "#fef3c7", None, 30, 0, 1),
+            ("APPLIED", "적용됨", None, "#ede9fe", None, 40, 0, 1),
+            ("ARCHIVED", "보관", None, "#e5e7eb", None, 50, 0, 1),
+        ],
+    ),
+    (
+        "IMPORTANCE_LEVEL",
+        "중요도",
+        "지식 중요도",
+        40,
+        [
+            ("LOW", "낮음", None, "#f1f5f9", None, 10, 0, 1),
+            ("NORMAL", "보통", None, "#dbeafe", None, 20, 1, 1),
+            ("HIGH", "높음", None, "#fef3c7", None, 30, 0, 1),
+            ("CORE", "핵심", None, "#fee2e2", None, 40, 0, 1),
+        ],
+    ),
+    (
+        "TAG_TYPE",
+        "태그 유형",
+        "수동/AI 태그 유형",
+        50,
+        [
+            ("CONCEPT", "개념", None, "#e0f2fe", None, 10, 1, 1),
+            ("MARKET", "시장", None, "#dbeafe", None, 20, 0, 1),
+            ("THEME", "테마", None, "#ede9fe", None, 30, 0, 1),
+            ("STOCK", "종목", None, "#dcfce7", None, 40, 0, 1),
+            ("INDICATOR", "지표", None, "#cffafe", None, 50, 0, 1),
+            ("TRADE_METHOD", "매매기법", None, "#e0e7ff", None, 60, 0, 1),
+            ("RISK", "리스크", None, "#fee2e2", None, 70, 0, 1),
+            ("PSYCHOLOGY", "심리", None, "#fce7f3", None, 80, 0, 1),
+            ("SCREEN", "화면", None, "#f1f5f9", None, 90, 0, 1),
+        ],
+    ),
+    (
+        "USAGE_CONTEXT",
+        "사용처",
+        "지식 활용 맥락",
+        60,
+        [
+            ("UNSPECIFIED", "미지정", None, "#f1f5f9", None, 10, 1, 1),
+            ("MARKET_JUDGMENT", "시장판단", None, "#dbeafe", None, 20, 0, 1),
+            ("STOCK_ANALYSIS", "종목분석", None, "#dcfce7", None, 30, 0, 1),
+            ("THEME_ANALYSIS", "테마분석", None, "#ede9fe", None, 40, 0, 1),
+            ("TRADE_TRAINING", "매매훈련", None, "#e0e7ff", None, 50, 0, 1),
+            ("PATTERN_RESEARCH", "패턴연구", None, "#fef3c7", None, 60, 0, 1),
+            ("RISK_CHECK", "리스크점검", None, "#fee2e2", None, 70, 0, 1),
+            ("GPT_JUDGMENT", "GPT판단", None, "#cffafe", None, 80, 0, 1),
+        ],
+    ),
+    (
+        "SOURCE_TYPE",
+        "출처 유형",
+        "지식 출처 유형",
+        70,
+        [
+            ("MANUAL", "직접작성", None, "#dbeafe", None, 10, 1, 1),
+            ("NEWS", "기사", None, "#e0f2fe", None, 20, 0, 1),
+            ("YOUTUBE", "유튜브", None, "#fee2e2", None, 30, 0, 1),
+            ("REPORT", "리포트", None, "#ede9fe", None, 40, 0, 1),
+            ("BOOK", "책", None, "#fef3c7", None, 50, 0, 1),
+            ("PAPER", "논문", None, "#dcfce7", None, 60, 0, 1),
+            ("SYSTEM", "시스템생성", None, "#e5e7eb", None, 70, 0, 1),
+        ],
+    ),
+]
+
+
+def _seed_kms_settings(conn) -> None:  # type: ignore[no-untyped-def]
+    for group_code, group_name, description, sort_order, items in KMS_SETTING_SEEDS:
+        conn.exec_driver_sql(
+            """
+            INSERT OR IGNORE INTO kms_setting_groups
+            (group_code, group_name, description, sort_order, is_active, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """,
+            (group_code, group_name, description, sort_order),
+        )
+        group_id = conn.exec_driver_sql(
+            "SELECT id FROM kms_setting_groups WHERE group_code = ?",
+            (group_code,),
+        ).scalar()
+        for item_code, item_name, item_description, color, icon, item_order, is_default, is_system in items:
+            conn.exec_driver_sql(
+                """
+                INSERT OR IGNORE INTO kms_setting_items
+                (group_id, item_code, item_name, description, color, icon, sort_order, is_default, is_system, is_active, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                (group_id, item_code, item_name, item_description, color, icon, item_order, is_default, is_system),
+            )
+
+
 def ensure_runtime_schema() -> None:
     if not DATABASE_URL.startswith("sqlite"):
         return
@@ -2788,6 +2939,179 @@ def ensure_runtime_schema() -> None:
             "CREATE INDEX IF NOT EXISTS idx_kms_post_tags_tag_id "
             "ON kms_post_tags(tag_id)"
         )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS kms_setting_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_code TEXT NOT NULL UNIQUE,
+                group_name TEXT NOT NULL,
+                description TEXT,
+                sort_order INTEGER NOT NULL DEFAULT 100,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS kms_setting_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER NOT NULL,
+                item_code TEXT NOT NULL,
+                item_name TEXT NOT NULL,
+                description TEXT,
+                color TEXT,
+                icon TEXT,
+                sort_order INTEGER NOT NULL DEFAULT 100,
+                is_default INTEGER NOT NULL DEFAULT 0,
+                is_system INTEGER NOT NULL DEFAULT 0,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (group_id) REFERENCES kms_setting_groups(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_kms_setting_items_group_code "
+            "ON kms_setting_items(group_id, item_code)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_kms_setting_items_group_sort "
+            "ON kms_setting_items(group_id, is_active, sort_order)"
+        )
+        for column_name, column_sql in {
+            "tag_type_id": "INTEGER",
+            "color": "TEXT",
+            "entity_type": "TEXT",
+            "entity_id": "INTEGER",
+        }.items():
+            _ensure_column(conn, "kms_tags", column_name, column_sql)
+        for column_name, column_sql in {
+            "one_line_conclusion": "TEXT",
+            "legacy_source_type": "TEXT",
+            "legacy_source_id": "INTEGER",
+            "para_type_id": "INTEGER",
+            "knowledge_category_id": "INTEGER",
+            "status_id": "INTEGER",
+            "importance_id": "INTEGER",
+            "usage_context_id": "INTEGER",
+            "source_type_id": "INTEGER",
+            "source_title": "TEXT",
+            "ai_extract_status": "TEXT NOT NULL DEFAULT 'PENDING'",
+            "embedding_status": "TEXT NOT NULL DEFAULT 'PENDING'",
+        }.items():
+            _ensure_column(conn, "kms_posts", column_name, column_sql)
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS kms_knowledge_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                legacy_post_id INTEGER UNIQUE,
+                legacy_source_type TEXT,
+                legacy_source_id INTEGER,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                content_format TEXT NOT NULL DEFAULT 'HTML',
+                one_line_conclusion TEXT,
+                summary TEXT,
+                para_type_id INTEGER,
+                category_id INTEGER,
+                status_id INTEGER,
+                importance_id INTEGER,
+                usage_context_id INTEGER,
+                source_type_id INTEGER,
+                source_url TEXT,
+                source_title TEXT,
+                ai_extract_status TEXT NOT NULL DEFAULT 'PENDING',
+                embedding_status TEXT NOT NULL DEFAULT 'PENDING',
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (legacy_post_id) REFERENCES kms_posts(id) ON DELETE SET NULL
+            )
+            """
+        )
+        for column_name, column_sql in {
+            "legacy_source_type": "TEXT",
+            "legacy_source_id": "INTEGER",
+            "content_format": "TEXT NOT NULL DEFAULT 'HTML'",
+        }.items():
+            _ensure_column(conn, "kms_knowledge_items", column_name, column_sql)
+        _drop_column_if_exists(conn, "kms_knowledge_items", "content_html")
+        _drop_column_if_exists(conn, "kms_knowledge_items", "content_markdown")
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_kms_knowledge_items_filters "
+            "ON kms_knowledge_items(para_type_id, category_id, status_id, importance_id, is_active)"
+        )
+        conn.exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_kms_knowledge_items_legacy_source "
+            "ON kms_knowledge_items(legacy_source_type, legacy_source_id)"
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS kms_knowledge_extractions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                knowledge_item_id INTEGER NOT NULL,
+                extraction_type TEXT NOT NULL,
+                extraction_text TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'USER',
+                model_name TEXT,
+                confidence_score REAL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (knowledge_item_id) REFERENCES kms_knowledge_items(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS kms_knowledge_item_tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                knowledge_item_id INTEGER NOT NULL,
+                tag_id INTEGER NOT NULL,
+                weight REAL NOT NULL DEFAULT 1.0,
+                source TEXT NOT NULL DEFAULT 'USER',
+                is_confirmed INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                UNIQUE (knowledge_item_id, tag_id),
+                FOREIGN KEY (knowledge_item_id) REFERENCES kms_knowledge_items(id) ON DELETE CASCADE,
+                FOREIGN KEY (tag_id) REFERENCES kms_tags(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_kms_knowledge_item_tags_tag_id "
+            "ON kms_knowledge_item_tags(tag_id)"
+        )
+        conn.exec_driver_sql(
+            "DELETE FROM kms_knowledge_item_tags "
+            "WHERE knowledge_item_id IN (SELECT id FROM kms_knowledge_items WHERE UPPER(COALESCE(content_format, '')) = 'MARKDOWN')"
+        )
+        conn.exec_driver_sql(
+            "DELETE FROM kms_knowledge_extractions "
+            "WHERE knowledge_item_id IN (SELECT id FROM kms_knowledge_items WHERE UPPER(COALESCE(content_format, '')) = 'MARKDOWN')"
+        )
+        conn.exec_driver_sql(
+            """
+            DELETE FROM kms_knowledge_extractions
+            WHERE source = 'AI'
+              AND extraction_type NOT IN ('SUMMARY_HELP', 'AI_ERROR')
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            DELETE FROM kms_knowledge_item_tags
+            WHERE source = 'AI'
+              AND is_confirmed = 0
+            """
+        )
+        conn.exec_driver_sql("DELETE FROM kms_knowledge_items WHERE UPPER(COALESCE(content_format, '')) = 'MARKDOWN'")
+        conn.exec_driver_sql(
+            "UPDATE kms_knowledge_items SET content_format = 'HTML' "
+            "WHERE content_format IS NULL OR UPPER(content_format) <> 'HTML'"
+        )
+        _seed_kms_settings(conn)
         for sort_order, category_name in enumerate(
             ["시장", "재료", "수급", "차트", "재무", "기법", "심리", "리스크", "복기", "자료"],
             start=1,

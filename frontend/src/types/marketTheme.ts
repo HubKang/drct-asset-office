@@ -66,6 +66,10 @@ export type MarketThemeReturnRefreshResponse = {
   theme_stock_link_count?: number;
   unique_stock_count?: number;
   price_api_call_count?: number;
+  rest_post_calls?: number;
+  auth_token_issue_count?: number;
+  ka10001_calls?: number;
+  ka10015_calls?: number;
   price_fetch_ms?: number;
   calc_ms?: number;
   db_upsert_ms?: number;

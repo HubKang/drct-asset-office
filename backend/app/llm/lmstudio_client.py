@@ -53,6 +53,7 @@ class LMStudioClient:
         timeout: int | None = None,
         purpose: str | None = None,
         system_prompt: str | None = None,
+        response_format: dict | None = None,
     ) -> str:
         url = f"{self.base_url}/chat/completions"
         resolved_max_tokens = max_tokens if max_tokens is not None else LLM_MAX_OUTPUT_TOKENS
@@ -72,6 +73,8 @@ class LMStudioClient:
                 {"role": "user", "content": prompt},
             ],
         }
+        if response_format:
+            payload["response_format"] = response_format
 
         try:
             retries = max(0, LLM_RETRY_COUNT)
@@ -81,6 +84,23 @@ class LMStudioClient:
                 if response.status_code == 400:
                     body_text = response.text or ""
                     lowered = body_text.lower()
+                    if "response_format" in payload and ("response_format" in lowered or "unsupported" in lowered or "json" in lowered):
+                        payload.pop("response_format", None)
+                        response = requests.post(url, json=payload, timeout=resolved_timeout)
+                        if response.status_code != 400:
+                            response.raise_for_status()
+                            data = response.json()
+                            content, finish_reason, reasoning_len = self._extract_content(data)
+                            last_finish_reason = finish_reason
+                            if content:
+                                return content
+                            print(
+                                f"[LLM DEBUG] empty content after response_format fallback, "
+                                f"purpose={purpose or 'unknown'}, finish_reason={finish_reason}, reasoning_len={reasoning_len}"
+                            )
+                            continue
+                        body_text = response.text or ""
+                        lowered = body_text.lower()
                     if "context" in lowered or "tokens" in lowered or "exceeds" in lowered:
                         raise RuntimeError(
                             f"LM Studio context size exceeded during {purpose or 'unknown'}. "

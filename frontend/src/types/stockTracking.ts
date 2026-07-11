@@ -130,6 +130,8 @@ export type CollectStockTrackingPricesPayload = {
   source?: string;
   overlap_days?: number;
   force_full_refresh?: boolean;
+  action?: "selected_recent_7d" | "all_recent_7d" | "selected_full" | "all_full";
+  mode?: "tracking_incremental_overlap" | "tracking_recent_7d" | "tracking_full_refresh" | string;
 };
 
 export type CollectStockTrackingPriceItemResult = {
@@ -145,6 +147,8 @@ export type CollectStockTrackingPriceItemResult = {
   requested_start_date?: string | null;
   requested_end_date?: string | null;
   collection_mode?: string | null;
+  pages_fetched?: number;
+  stop_reason?: string | null;
   overlap_days?: number;
   force_full_refresh?: boolean;
   message: string | null;
@@ -152,9 +156,17 @@ export type CollectStockTrackingPriceItemResult = {
 
 export type CollectStockTrackingPricesResponse = {
   requested_count: number;
+  selected_count?: number;
+  target_count?: number;
+  action?: string | null;
+  mode?: string | null;
   success_count: number;
   partial_count: number;
   failed_count: number;
+  total_pages?: number;
+  total_collected?: number;
+  total_saved?: number;
+  total_ms?: number;
   items: CollectStockTrackingPriceItemResult[];
   message: string;
 };
