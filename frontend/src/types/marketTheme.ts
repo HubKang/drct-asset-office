@@ -81,6 +81,7 @@ export type MarketThemeReturnRefreshResponse = {
 export type MarketThemeMonthlyReturnDailyItem = {
   return_date: string;
   avg_change_rate: number | null;
+  rolling_30d_change_rate?: number | null;
   total_trading_value_100m: number | null;
   rising_stock_count: number;
   falling_stock_count: number;

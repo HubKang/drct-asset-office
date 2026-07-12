@@ -303,8 +303,8 @@ function ThemeReturnLineChart({
   const validDateSet = new Set<string>();
   themes.forEach((theme) => {
     theme.daily_returns.forEach((day) => {
-      const value = Number(day.avg_change_rate);
-      if (day.avg_change_rate != null && Number.isFinite(value)) {
+      const value = Number(day.rolling_30d_change_rate);
+      if (day.rolling_30d_change_rate != null && Number.isFinite(value)) {
         validDateSet.add(day.return_date);
       }
     });
@@ -312,20 +312,25 @@ function ThemeReturnLineChart({
   const lineDates = dates.filter((date) => validDateSet.has(date));
 
   const series = themes.map((theme, index) => {
-    const dailyMap = new Map(theme.daily_returns.map((item) => [item.return_date, item.avg_change_rate]));
+    const dailyMap = new Map(theme.daily_returns.map((item) => [item.return_date, item]));
     const values = lineDates.map((date) => {
-      const raw = dailyMap.get(date);
+      const dailyReturn = dailyMap.get(date);
+      const raw = dailyReturn?.rolling_30d_change_rate;
       const numberValue = Number(raw);
       const value = raw == null || !Number.isFinite(numberValue) ? null : numberValue;
       return { date, returnRate: value };
     });
     const lastValue = [...values].reverse().find((item) => item.returnRate != null)?.returnRate ?? null;
+    const lastDailyValue = [...lineDates]
+      .reverse()
+      .map((date) => dailyMap.get(date)?.avg_change_rate)
+      .find((value) => value != null && Number.isFinite(Number(value))) ?? null;
     return {
       themeId: theme.theme_id,
       themeName: theme.theme_name,
       color: THEME_RETURN_LINE_COLORS[index % THEME_RETURN_LINE_COLORS.length],
-      cumulativeReturn: theme.period_compound_return ?? theme.monthly_compound_return,
       lastValue,
+      lastDailyValue,
       values,
     };
   });
@@ -361,13 +366,13 @@ function ThemeReturnLineChart({
     <div className="theme-return-line-panel" style={linePanelStyle}>
       <div className="theme-return-line-header">
         <div>
-          <strong>테마별 30일 등락률 선그래프</strong>
-          <span>거래일 기준 일별 테마 등락률을 선으로 비교합니다. 데이터가 없는 휴장일은 x축에서 제외합니다.</span>
+          <strong>테마별 30일 누적 등락률 선그래프</strong>
+          <span>각 날짜 기준 최근 30일 일별 테마 등락률을 단순 합산해 비교합니다. 히트맵은 기존처럼 일별 등락률을 표시합니다.</span>
         </div>
       </div>
       <div className="theme-return-line-body">
         <div className="theme-return-line-chart">
-          <svg className="theme-return-line-svg" viewBox={`0 0 ${chartWidth} ${chartHeight}`} preserveAspectRatio="none" role="img" aria-label="테마별 30일 등락률 선그래프">
+          <svg className="theme-return-line-svg" viewBox={`0 0 ${chartWidth} ${chartHeight}`} preserveAspectRatio="none" role="img" aria-label="테마별 30일 누적 등락률 선그래프">
             {yTicks.map((tick) => {
               const y = yScale(tick);
               return (
@@ -407,7 +412,9 @@ function ThemeReturnLineChart({
                   stroke={item.color}
                   onMouseEnter={() => onHoverTheme(item.themeId)}
                   onMouseLeave={() => onHoverTheme(null)}
-                />
+                >
+                  <title>{`${item.themeName} / 30일 누적 ${fmtPct(item.lastValue)} / 최근 일별 ${fmtPct(item.lastDailyValue)}`}</title>
+                </path>
               ));
             })}
           </svg>
@@ -429,7 +436,7 @@ function ThemeReturnLineChart({
                   <span className="theme-return-line-legend-color" style={{ background: item.color }} />
                   <span className="theme-return-line-legend-text">
                     <strong>{item.themeName}</strong>
-                    <em>누적 {fmtPct(item.cumulativeReturn)} · 최근 {fmtPct(item.lastValue)}</em>
+                    <em>30일 누적 {fmtPct(item.lastValue)} · 최근 일별 {fmtPct(item.lastDailyValue)}</em>
                   </span>
                 </button>
               );
@@ -1465,7 +1472,7 @@ function MarketThemesPage() {
                   <button
                     type="button"
                     className="theme-search-combobox__toggle"
-                    aria-label="테마 목록 열기"
+                    aria-label="테마 선택 목록 열기"
                     onClick={() => setMappingThemeDropdownOpen((prev) => !prev)}
                   >
                     ▾

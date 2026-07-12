@@ -307,6 +307,7 @@ class MarketThemeLatestReturnResponse(BaseModel):
 class MarketThemeMonthlyReturnDailyItem(BaseModel):
     return_date: str
     avg_change_rate: float | None = None
+    rolling_30d_change_rate: float | None = None
     total_trading_value_100m: float | None = None
     rising_stock_count: int = 0
     falling_stock_count: int = 0

@@ -2350,7 +2350,12 @@ class ExternalKiwoomService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="end_date는 YYYY-MM-DD 형식이어야 합니다.")
         normalized_days = max(1, min(int(days or 30), 120))
         start = end - timedelta(days=normalized_days - 1)
-        params: dict[str, object] = {"start_date": start.isoformat(), "end_date": end.isoformat()}
+        calc_start = start - timedelta(days=29)
+        params: dict[str, object] = {
+            "start_date": start.isoformat(),
+            "calc_start_date": calc_start.isoformat(),
+            "end_date": end.isoformat(),
+        }
         where = ["COALESCE(t.theme_level, 'THEME')='THEME'"]
         if active_only:
             where.append("t.is_active=1")
@@ -2370,7 +2375,7 @@ class ExternalKiwoomService:
                 FROM market_themes t
                 LEFT JOIN market_themes p ON p.id=t.parent_theme_id
                 LEFT JOIN market_theme_daily_returns d
-                  ON d.theme_id=t.id AND d.return_date BETWEEN :start_date AND :end_date
+                  ON d.theme_id=t.id AND d.return_date BETWEEN :calc_start_date AND :end_date
                 WHERE {sql_where}
                 ORDER BY t.is_supply_theme DESC, COALESCE(p.theme_name, '미지정') ASC, t.sort_order ASC, t.theme_name ASC, d.return_date ASC
                 """
@@ -2401,7 +2406,30 @@ class ExternalKiwoomService:
         themes: list[MarketThemeMonthlyReturnThemeItem] = []
         continuous_rising_by_theme: dict[int, int] = {}
         for item in grouped.values():
-            daily_returns = item["daily_returns"]
+            all_daily_returns = item["daily_returns"]
+            all_rate_by_date = {
+                date.fromisoformat(day.return_date): float(day.avg_change_rate)
+                for day in all_daily_returns
+                if day.avg_change_rate is not None
+            }
+            daily_returns: list[MarketThemeMonthlyReturnDailyItem] = []
+            for day in all_daily_returns:
+                day_date = date.fromisoformat(day.return_date)
+                if day_date < start or day_date > end:
+                    continue
+                window_start = day_date - timedelta(days=29)
+                window_rates = [
+                    rate
+                    for rate_date, rate in all_rate_by_date.items()
+                    if window_start <= rate_date <= day_date
+                ]
+                daily_returns.append(
+                    day.model_copy(
+                        update={
+                            "rolling_30d_change_rate": round(sum(window_rates), 4) if window_rates else None,
+                        }
+                    )
+                )
             rates = [float(day.avg_change_rate) for day in daily_returns if day.avg_change_rate is not None]
             compound: float | None = None
             if rates:
