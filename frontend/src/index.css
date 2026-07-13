@@ -9744,9 +9744,12 @@ a:focus-visible {
 
 .selected-stock-chip {
   display: inline-flex;
+  flex: 0 1 calc(50% - 3px);
   align-items: baseline;
-  gap: 4px;
-  max-width: 100%;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+  max-width: calc(50% - 3px);
   border: 1px solid #fecaca;
   border-radius: 999px;
   background: #fff1f2;
@@ -9757,14 +9760,21 @@ a:focus-visible {
   line-height: 1.2;
 }
 
-.selected-stock-name {
-  color: #111827;
+.selected-stock-chip--wide {
+  flex-basis: 100%;
+  max-width: 100%;
 }
 
-.selected-stock-chip small {
-  color: #64748b;
-  font-size: 11px;
-  font-weight: 600;
+.selected-stock-name {
+  min-width: 0;
+  overflow: hidden;
+  color: #111827;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selected-stock-chip .monthly-supply-change-rate {
+  flex: 0 0 auto;
 }
 
 .selected-empty-message {
@@ -14726,11 +14736,20 @@ a:focus-visible {
 
 .monthly-theme-treemap-header {
   align-items: flex-start;
+  flex-wrap: nowrap;
   margin-bottom: 12px;
 }
 
 .monthly-theme-treemap-title-wrap {
+  flex: 1 1 auto;
   align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.monthly-theme-treemap-title-row {
+  display: flex;
+  align-items: center;
   gap: 8px;
 }
 
@@ -14741,12 +14760,23 @@ a:focus-visible {
   line-height: 1.45;
 }
 
+.monthly-theme-treemap-description span {
+  display: block;
+}
+
 .monthly-theme-treemap-controls {
   display: flex;
-  align-items: center;
+  flex: 0 0 auto;
+  align-items: flex-start;
   justify-content: flex-end;
   gap: 8px;
-  flex-wrap: wrap;
+  white-space: nowrap;
+}
+
+.monthly-theme-treemap-subcontrols {
+  display: flex;
+  justify-content: flex-start;
+  margin: 0 0 12px;
 }
 
 .monthly-theme-treemap-period {
@@ -25006,7 +25036,7 @@ button.chip-light {
 
 .monthly-supply-heatmap-scroll {
   width: 100%;
-  overflow-x: auto;
+  overflow-x: hidden;
   border: 1px solid #dbe3ef;
   border-radius: 8px;
   background: #ffffff;
@@ -25014,7 +25044,8 @@ button.chip-light {
 
 .monthly-supply-heatmap {
   display: grid;
-  min-width: 920px;
+  width: 100%;
+  min-width: 0;
 }
 
 .monthly-supply-heatmap-header-cell,
@@ -25070,12 +25101,21 @@ button.chip-light {
   display: flex;
   align-items: center;
   justify-content: center;
+  min-width: 0;
   border-top: 0;
   border-left: 0;
+  padding: 3px 1px;
   font-size: 11px;
+  line-height: 1;
   font-weight: 850;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
+}
+
+.monthly-supply-heatmap-cell span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .monthly-supply-heatmap-cell.is-empty {

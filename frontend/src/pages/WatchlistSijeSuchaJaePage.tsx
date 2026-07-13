@@ -1371,7 +1371,7 @@ function WatchlistSijeSuchaJaePage() {
   };
   return (
     <div className="sije-page">
-      <PageHeader title="관심 종목 시재수차재" description="관심종목의 시장·재료·수급·차트·재무 상태를 평가하고 평가 이력을 관리합니다." />
+      <PageHeader title="관심 종목 시재수차재" description="시장·재료·수급 = 파도 | 차트·재무 = 서핑기술" />
 
 
       <div className="sije-action-bar">
