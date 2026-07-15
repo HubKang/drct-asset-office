@@ -465,6 +465,7 @@ function MarketThemesPage() {
   const [expandedThemeGroupIds, setExpandedThemeGroupIds] = useState<Set<number>>(() => new Set());
   const [mappingThemeGroupId, setMappingThemeGroupId] = useState<"all" | string>("all");
   const [mappingThemeSearchText, setMappingThemeSearchText] = useState("");
+  const [mappingAllThemesSelected, setMappingAllThemesSelected] = useState(false);
   const [mappingThemeDropdownOpen, setMappingThemeDropdownOpen] = useState(false);
   const [themePage, setThemePage] = useState(1);
 
@@ -604,13 +605,15 @@ function MarketThemesPage() {
       : rows;
     return filtered.slice(0, 10);
   }, [mappingSelectableThemes, mappingThemeSearchText]);
-  const mappingThemeInputValue = mappingThemeSearchText || selectedTheme?.theme_name || "";
+  const mappingThemeInputValue = mappingAllThemesSelected && mappingThemeGroupId === "all" ? "테마 전체" : mappingThemeSearchText || selectedTheme?.theme_name || "";
+  const showMappingThemeAllOption = mappingThemeGroupId === "all";
 
   const selectedThemeGroup = useMemo(
     () => themeGroups.find((row) => String(row.id) === mappingThemeGroupId) ?? null,
     [mappingThemeGroupId, themeGroups],
   );
   const activeThemeStocks = useMemo(() => themeStocks.filter((x) => x.is_active === 1), [themeStocks]);
+  const isMappingAllThemesSelected = mappingAllThemesSelected && !selectedThemeId && mappingThemeGroupId === "all";
   const chartSidcode = useMemo(() => createNaverChartSidcode(), [selectedThemeId, activeThemeStocks.length]);
   const selectedLinkedStockCode = useMemo(() => normalizeNaverStockCode(selectedLinkedStock?.stock_code), [selectedLinkedStock?.stock_code]);
   const connectedStockIdSet = useMemo(() => new Set(activeThemeStocks.map((x) => x.stock_id)), [activeThemeStocks]);
@@ -668,19 +671,37 @@ function MarketThemesPage() {
   };
 
   const loadThemeStocks = async (themeId: number | null) => {
-    if (!themeId) {
-      setThemeStocks([]);
-      return;
-    }
     try {
-      const rows = await repositories.marketThemes.listThemeStocks(themeId);
+      if (themeId) {
+        const rows = await repositories.marketThemes.listThemeStocks(themeId);
+        setThemeStocks(rows);
+        return;
+      }
+      if (!isMappingAllThemesSelected) {
+        setThemeStocks([]);
+        return;
+      }
+      const targetThemes = mappingSelectableThemes.filter((row) => row.theme_level !== "THEME_GROUP" && row.is_active === 1);
+      if (targetThemes.length === 0) {
+        setThemeStocks([]);
+        return;
+      }
+      const results = await Promise.all(targetThemes.map((theme) => repositories.marketThemes.listThemeStocks(theme.id)));
+      const uniqueByStock = new Map<number, MarketThemeStock>();
+      results.flat().forEach((row) => {
+        if (row.is_active !== 1) return;
+        const current = uniqueByStock.get(row.stock_id);
+        if (!current || (row.is_primary === 1 && current.is_primary !== 1)) {
+          uniqueByStock.set(row.stock_id, row);
+        }
+      });
+      const rows = Array.from(uniqueByStock.values()).sort((a, b) => a.stock_name.localeCompare(b.stock_name, "ko-KR"));
       setThemeStocks(rows);
     } catch (e) {
       setError(toErrorMessage(e, "테마 연결 종목을 불러오지 못했습니다."));
       setThemeStocks([]);
     }
   };
-
   const onRefreshThemeReturns = async () => {
     if (refreshingReturns) {
       return;
@@ -809,7 +830,7 @@ function MarketThemesPage() {
 
   useEffect(() => {
     void loadThemeStocks(selectedThemeId);
-  }, [selectedThemeId]);
+  }, [selectedThemeId, mappingThemeGroupId, mappingSelectableThemes, mappingAllThemesSelected]);
 
   useEffect(() => {
     if (!stockDrawerOpen) return;
@@ -1000,6 +1021,7 @@ function MarketThemesPage() {
   };
 
   const openThemeStockMappings = (theme: MarketTheme) => {
+    setMappingAllThemesSelected(false);
     if (theme.theme_level === "THEME_GROUP") {
       const firstChildTheme = sortedThemes.find((row) => row.parent_theme_id === theme.id && row.theme_level !== "THEME_GROUP" && row.is_active === 1);
       setMappingThemeGroupId(String(theme.id));
@@ -1017,14 +1039,32 @@ function MarketThemesPage() {
   };
 
   const selectMappingTheme = (theme: MarketTheme) => {
+    setMappingAllThemesSelected(false);
     setSelectedThemeId(theme.id);
     setMappingThemeSearchText(theme.theme_name);
     setMappingThemeDropdownOpen(false);
   };
 
+  const selectMappingAllThemes = () => {
+    setMappingAllThemesSelected(true);
+    setSelectedThemeId(null);
+    setMappingThemeSearchText("");
+    setStockSearchResults([]);
+    setMappingThemeDropdownOpen(false);
+  };
+
+  const clearMappingThemeInput = () => {
+    setMappingAllThemesSelected(false);
+    setSelectedThemeId(null);
+    setMappingThemeSearchText("");
+    setStockSearchResults([]);
+    setThemeStocks([]);
+    setMappingThemeDropdownOpen(true);
+  };
   const applyMappingThemeSearchValue = (value: string) => {
     const matchedTheme = mappingSelectableThemes.find((row) => row.theme_name === value)
       ?? mappingSelectableThemes.find((row) => row.theme_name.toLowerCase() === value.trim().toLowerCase());
+    setMappingAllThemesSelected(false);
     setMappingThemeSearchText(value);
     setSelectedThemeId(matchedTheme ? matchedTheme.id : null);
     setMappingThemeDropdownOpen(true);
@@ -1443,6 +1483,7 @@ function MarketThemesPage() {
                 value={mappingThemeGroupId}
                 onChange={(e) => {
                   setMappingThemeGroupId(e.target.value);
+                  setMappingAllThemesSelected(false);
                   setMappingThemeSearchText("");
                   setSelectedThemeId(null);
                 }}
@@ -1469,6 +1510,17 @@ function MarketThemesPage() {
                       }
                     }}
                   />
+                  {mappingThemeInputValue ? (
+                    <button
+                      type="button"
+                      className="theme-search-combobox__clear"
+                      aria-label="테마 입력값 초기화"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={clearMappingThemeInput}
+                    >
+                      x
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className="theme-search-combobox__toggle"
@@ -1480,7 +1532,19 @@ function MarketThemesPage() {
                 </div>
                 {mappingThemeDropdownOpen ? (
                   <div className="theme-search-combobox__menu" role="listbox">
-                    {mappingThemePickerOptions.length === 0 ? (
+                    {showMappingThemeAllOption ? (
+                      <button
+                        type="button"
+                        className={`theme-search-combobox__item ${isMappingAllThemesSelected ? "theme-search-combobox__item--active" : ""}`}
+                        onClick={selectMappingAllThemes}
+                        role="option"
+                        aria-selected={isMappingAllThemesSelected}
+                      >
+                        <span className="theme-search-combobox__item-title">전체</span>
+                        <span className="theme-search-combobox__item-meta">테마그룹 전체</span>
+                      </button>
+                    ) : null}
+                    {mappingThemePickerOptions.length === 0 && !showMappingThemeAllOption ? (
                       <div className="theme-search-combobox__empty">검색된 테마가 없습니다.</div>
                     ) : (
                       mappingThemePickerOptions.map((row) => (
@@ -1510,7 +1574,7 @@ function MarketThemesPage() {
               <table className="data-table compact-table">
                 <thead><tr><th>종목</th><th>시장</th><th>추가</th></tr></thead>
                 <tbody>
-                  {!selectedThemeId ? <tr><td colSpan={3} className="text-center text-muted">테마를 선택해 주세요.</td></tr> : null}
+                  {!selectedThemeId ? <tr><td colSpan={3} className="text-center text-muted">{isMappingAllThemesSelected ? "테마 전체 선택 상태입니다. 아래 연결 종목 목록에서 전체 종목을 확인하세요." : "테마명을 입력하거나 드롭다운에서 테마를 선택해 주세요."}</td></tr> : null}
                   {selectedThemeId && stockSearchResults.length === 0 ? <tr><td colSpan={3} className="text-center text-muted">종목을 검색해 주세요.</td></tr> : null}
                   {stockSearchResults.map((row) => {
                     const alreadyLinked = connectedStockIdSet.has(row.id);
@@ -1527,7 +1591,7 @@ function MarketThemesPage() {
             </div>
           </SectionCard>
 
-          <SectionCard title={`연결 종목 목록${selectedTheme ? ` - ${selectedThemeGroup ? `${selectedThemeGroup.theme_name} / ` : ""}${selectedTheme.theme_name}` : ""} (${activeThemeStocks.length}종목 · 대표 ${primaryCount})`}>
+          <SectionCard title={`연결 종목 목록${selectedTheme ? ` - ${selectedThemeGroup ? `${selectedThemeGroup.theme_name} / ` : ""}${selectedTheme.theme_name}` : isMappingAllThemesSelected ? " - 테마 전체" : ""} (${activeThemeStocks.length}종목 · 대표 ${primaryCount})`}>
             <div className="table-shell theme-linked-stock-table-shell">
               <table className="data-table compact-table theme-linked-stock-table">
                 <colgroup>
@@ -1560,7 +1624,7 @@ function MarketThemesPage() {
                         <td><ThemeLinkedStockChart stockCode={stockCode} stockName={row.stock_name} period="day" label="일봉" sidcode={chartSidcode} onOpen={setZoomedChart} /></td>
                         <td><ThemeLinkedStockChart stockCode={stockCode} stockName={row.stock_name} period="week" label="주봉" sidcode={chartSidcode} onOpen={setZoomedChart} /></td>
                         <td><ThemeLinkedStockChart stockCode={stockCode} stockName={row.stock_name} period="month" label="월봉" sidcode={chartSidcode} onOpen={setZoomedChart} /></td>
-                        <td><button type="button" className="btn btn-secondary btn-table-sm theme-linked-stock-action" onClick={() => void onDeactivateMapping(row.mapping_id)}>해제</button></td>
+                        <td><button type="button" className="btn btn-secondary btn-table-sm theme-linked-stock-action" onClick={() => void onDeactivateMapping(row.mapping_id)} disabled={!selectedThemeId}>해제</button></td>
                       </tr>
                     );
                   })}

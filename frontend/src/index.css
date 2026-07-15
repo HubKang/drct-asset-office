@@ -5538,9 +5538,30 @@ a:focus-visible {
 
 .theme-search-combobox__input {
   width: 100%;
-  padding-right: 34px;
+  padding-right: 62px;
 }
 
+.theme-search-combobox__clear {
+  position: absolute;
+  right: 34px;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  transform: translateY(-50%);
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.theme-search-combobox__clear:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
 .theme-search-combobox__toggle {
   position: absolute;
   right: 10px;

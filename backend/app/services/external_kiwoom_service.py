@@ -2657,6 +2657,13 @@ class ExternalKiwoomService:
             change_rate = self._normalize_change_rate(basic.get("change_rate"))
             current_price = self._to_abs_int(basic.get("close_price"))
             trading_value = self._to_int_or_none(basic.get("trading_value"))
+            if trading_value is None:
+                try:
+                    daily = provider.get_stock_daily_trade_detail(stock_code=stock_code, base_dt=return_date)
+                    trading_value = self._to_int_or_none(daily.get("trading_value"))
+                    current_price = current_price if current_price is not None else self._to_abs_int(daily.get("close_price"))
+                except Exception:
+                    trading_value = None
             if change_rate is None:
                 base_row["data_status"] = "failed"
                 base_row["error_message"] = "change_rate_missing"
