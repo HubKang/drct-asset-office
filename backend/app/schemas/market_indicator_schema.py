@@ -65,6 +65,36 @@ class MarketIndicatorValueResponse(BaseModel):
     items: list[MarketIndicatorValue] = Field(default_factory=list)
 
 
+class MarketIndicatorReadiness(BaseModel):
+    indicator_code: str
+    indicator_name: str | None = None
+    provider: str | None = None
+    provider_symbol: str | None = None
+    data_frequency: str | None = None
+    unit_label: str | None = None
+    collection_status: str | None = None
+    readiness: str
+    readiness_reason: str | None = None
+    data_count: int = 0
+    first_value_date: str | None = None
+    latest_value_date: str | None = None
+    latest_value: float | None = None
+    latest_collected_at: str | None = None
+    recommended_minimum_count: int = 0
+    insufficient_count: int = 0
+    mapping_ready: bool = False
+    data_ready: bool = False
+    chart_ready: bool = False
+    compare_ready: bool = False
+    signal_ready: bool = False
+    supported_transforms: list[str] = Field(default_factory=list)
+
+
+class MarketIndicatorReadinessListResponse(BaseModel):
+    items: list[MarketIndicatorReadiness] = Field(default_factory=list)
+    summary_counts: dict[str, int] = Field(default_factory=dict)
+
+
 class MarketIndicatorProviderMapping(BaseModel):
     id: int | None = None
     indicator_code: str
@@ -246,6 +276,12 @@ class MarketIndicatorCollectResult(BaseModel):
     status: str
     message: str
     saved_count: int = 0
+    received_count: int = 0
+    inserted_count: int = 0
+    updated_count: int = 0
+    unchanged_count: int = 0
+    requested_from: str | None = None
+    requested_to: str | None = None
     latest_value: float | None = None
     latest_value_date: str | None = None
 
@@ -254,6 +290,7 @@ class MarketIndicatorCollectResponse(BaseModel):
     requested_count: int
     success_count: int = 0
     waiting_count: int = 0
+    skipped_count: int = 0
     failed_count: int = 0
     message: str
     results: list[MarketIndicatorCollectResult] = Field(default_factory=list)

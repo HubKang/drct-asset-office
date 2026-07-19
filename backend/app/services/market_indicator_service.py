@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+import math
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.providers.economic_data.bok_ecos_provider import BokEcosProvider
 from backend.app.providers.economic_data.fred_provider import FredProvider
+from backend.app.providers.economic_data.kosis_provider import KosisProvider
 
 ECOS_DISCOVERY_TARGETS: dict[str, dict[str, Any]] = {
     "USD_KRW": {
@@ -108,6 +110,7 @@ class MarketIndicatorService:
         self.db = db
         self.bok_ecos = BokEcosProvider()
         self.fred = FredProvider()
+        self.kosis = KosisProvider()
 
     @staticmethod
     def _as_bool(value: Any) -> bool:
@@ -177,6 +180,54 @@ class MarketIndicatorService:
             params,
         ).mappings().all()
         return {"indicator_code": indicator["indicator_code"], "indicator_name": indicator["indicator_name"], "items": [self._value_item(row) for row in rows]}
+
+    def list_readiness(self, *, indicator_codes: list[str] | None = None) -> dict[str, Any]:
+        clauses = ["i.is_active = 1"]
+        params: dict[str, Any] = {}
+        if indicator_codes:
+            normalized = [code.strip().upper() for code in indicator_codes if code and code.strip()]
+            placeholders = ", ".join(f":code_{idx}" for idx, _ in enumerate(normalized))
+            clauses.append(f"i.indicator_code IN ({placeholders})")
+            params.update({f"code_{idx}": code for idx, code in enumerate(normalized)})
+        rows = self.db.execute(
+            text(
+                f"""
+                SELECT i.indicator_code, i.indicator_name, i.data_frequency, i.unit_label, i.collection_status,
+                       i.latest_value, i.latest_value_date,
+                       m.provider, m.provider_symbol, m.is_enabled, m.is_verified, m.last_test_status, m.last_test_message,
+                       COALESCE(v.data_count, 0) AS data_count,
+                       v.first_value_date, v.latest_value_date AS value_latest_date, v.latest_collected_at
+                FROM market_indicators i
+                LEFT JOIN market_indicator_provider_mappings m
+                  ON m.indicator_code = i.indicator_code AND m.is_enabled = 1
+                LEFT JOIN (
+                    SELECT indicator_code,
+                           COUNT(*) AS data_count,
+                           MIN(value_date) AS first_value_date,
+                           MAX(value_date) AS latest_value_date,
+                           MAX(collected_at) AS latest_collected_at
+                    FROM market_indicator_values
+                    WHERE COALESCE(value, close_value) IS NOT NULL
+                    GROUP BY indicator_code
+                ) v ON v.indicator_code = i.indicator_code
+                WHERE {' AND '.join(clauses)}
+                ORDER BY i.display_order, i.indicator_code
+                """
+            ),
+            params,
+        ).mappings().all()
+        items = [self._readiness_item(dict(row)) for row in rows]
+        summary: dict[str, int] = {}
+        for item in items:
+            key = str(item["readiness"])
+            summary[key] = summary.get(key, 0) + 1
+        return {"items": items, "summary_counts": summary}
+
+    def get_readiness(self, indicator_code: str) -> dict[str, Any]:
+        result = self.list_readiness(indicator_codes=[indicator_code])
+        if not result["items"]:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="market indicator readiness not found")
+        return result["items"][0]
 
     def list_provider_mappings(self) -> dict[str, Any]:
         rows = self.db.execute(
@@ -447,30 +498,52 @@ class MarketIndicatorService:
         self.db.commit()
         return self._get_mapping(indicator["indicator_code"], provider)
 
-    def collect_indicator(self, indicator_codes: list[str] | None = None, *, start_date: str | None = None, end_date: str | None = None) -> dict[str, Any]:
+    def collect_indicator(
+        self,
+        indicator_codes: list[str] | None = None,
+        *,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        skip_error_status: bool = False,
+    ) -> dict[str, Any]:
         targets = self._collection_targets(indicator_codes)
         date_to = end_date or date.today().isoformat()
-        date_from = start_date or (date.today() - timedelta(days=370)).isoformat()
         results: list[dict[str, Any]] = []
         success_count = 0
         waiting_count = 0
+        skipped_count = 0
         failed_count = 0
         for code in targets:
             try:
+                master = self.get_indicator(code)
+                if skip_error_status and str(master.get("collection_status") or "").upper() == "ERROR":
+                    skipped_count += 1
+                    results.append({"indicator_code": code, "status": "SKIPPED", "message": "previous ERROR is skipped by incremental all policy", "saved_count": 0})
+                    continue
+                date_from, mode = self._resolve_collect_window(
+                    item_type="INDICATOR",
+                    item_code=code,
+                    frequency=str(master.get("data_frequency") or "DAILY"),
+                    start_date=start_date,
+                    end_date=end_date,
+                    latest_date=self._latest_value_date(code),
+                )
                 mapping = self._get_enabled_mapping(code)
                 if not mapping:
                     waiting_count += 1
                     results.append({"indicator_code": code, "status": "WAITING", "message": "enabled and verified provider mapping is required", "saved_count": 0})
                     continue
                 provider = str(mapping.get("provider") or "").upper()
-                values = self._provider_client(provider).collect_values(code, mapping, start_date=date_from, end_date=date_to)
+                if provider == "DERIVED":
+                    values = self._collect_derived_values(code, start_date=date_from, end_date=date_to)
+                else:
+                    values = self._provider_client(provider).collect_values(code, mapping, start_date=date_from, end_date=date_to)
                 if not values:
                     waiting_count += 1
                     self._mark_indicator_status(code, "WAITING")
                     results.append({"indicator_code": code, "status": "WAITING", "message": f"{provider} returned no collectable rows", "saved_count": 0})
                     continue
-                for value in values:
-                    self._upsert_value(value)
+                counts = self._upsert_values(values)
                 latest = values[-1]
                 self._update_indicator_latest(code, latest)
                 success_count += 1
@@ -478,8 +551,14 @@ class MarketIndicatorService:
                     {
                         "indicator_code": code,
                         "status": "SUCCESS",
-                        "message": f"saved {len(values)} {provider} rows",
-                        "saved_count": len(values),
+                        "message": f"{mode}: received {len(values)} {provider} rows, inserted {counts['inserted_count']}, updated {counts['updated_count']}, unchanged {counts['unchanged_count']}",
+                        "saved_count": counts["inserted_count"] + counts["updated_count"],
+                        "received_count": len(values),
+                        "inserted_count": counts["inserted_count"],
+                        "updated_count": counts["updated_count"],
+                        "unchanged_count": counts["unchanged_count"],
+                        "requested_from": date_from,
+                        "requested_to": date_to,
                         "latest_value": latest.get("value"),
                         "latest_value_date": latest.get("value_date"),
                     }
@@ -493,10 +572,74 @@ class MarketIndicatorService:
             "requested_count": len(results),
             "success_count": success_count,
             "waiting_count": waiting_count,
+            "skipped_count": skipped_count,
             "failed_count": failed_count,
             "message": f"market indicator collection completed: success {success_count}, waiting {waiting_count}, failed {failed_count}.",
             "results": results,
         }
+
+    def _resolve_collect_window(
+        self,
+        *,
+        item_type: str,
+        item_code: str,
+        frequency: str,
+        start_date: str | None,
+        end_date: str | None,
+        latest_date: str | None,
+    ) -> tuple[str, str]:
+        if start_date or end_date:
+            return (start_date or self._initial_start_date(item_type, item_code, frequency), "manual_range")
+        if latest_date:
+            return self._apply_overlap(latest_date, item_type, item_code, frequency), "incremental_overlap"
+        return self._initial_start_date(item_type, item_code, frequency), "initial_backfill"
+
+    def _policy(self, item_type: str, item_code: str) -> dict[str, Any]:
+        row = self.db.execute(
+            text(
+                """
+                SELECT *
+                FROM market_data_collection_policies
+                WHERE item_type = :item_type AND item_code = :item_code
+                """
+            ),
+            {"item_type": item_type.upper(), "item_code": item_code.upper()},
+        ).mappings().first()
+        return dict(row) if row else {}
+
+    def _initial_start_date(self, item_type: str, item_code: str, frequency: str) -> str:
+        policy = self._policy(item_type, item_code)
+        value = int(policy.get("initial_lookback_value") or 5)
+        unit = str(policy.get("initial_lookback_unit") or "YEARS").upper()
+        today = date.today()
+        if unit.startswith("YEAR"):
+            return (today - timedelta(days=365 * value)).isoformat()
+        if unit.startswith("MONTH"):
+            return self._add_months(today, -value).isoformat()
+        if unit.startswith("QUARTER"):
+            return self._add_months(today, -value * 3).isoformat()
+        return (today - timedelta(days=value)).isoformat()
+
+    def _apply_overlap(self, latest_date: str, item_type: str, item_code: str, frequency: str) -> str:
+        policy = self._policy(item_type, item_code)
+        value = int(policy.get("overlap_value") or (6 if frequency.upper() == "MONTHLY" else 10))
+        unit = str(policy.get("overlap_unit") or ("MONTHS" if frequency.upper() == "MONTHLY" else "DAYS")).upper()
+        base = datetime.strptime(str(latest_date)[:10], "%Y-%m-%d").date()
+        if unit.startswith("MONTH"):
+            return self._add_months(base, -value).isoformat()
+        if unit.startswith("QUARTER"):
+            return self._add_months(base, -value * 3).isoformat()
+        if unit.startswith("WEEK"):
+            return (base - timedelta(weeks=value)).isoformat()
+        return (base - timedelta(days=value)).isoformat()
+
+    @staticmethod
+    def _add_months(source: date, months: int) -> date:
+        month_index = source.year * 12 + source.month - 1 + months
+        year = month_index // 12
+        month = month_index % 12 + 1
+        day = min(source.day, 28)
+        return date(year, month, day)
 
     def _build_mapping_candidate(self, indicator_code: str, indicator_name: str | None, table: dict[str, Any], raw_item: dict[str, Any]) -> dict[str, Any] | None:
         item_code = self._first_text(raw_item, "ITEM_CODE", "ITEM_CODE1", "CODE", "item_code", "item_code1")
@@ -699,7 +842,116 @@ class MarketIndicatorService:
             return self.fred
         if normalized == "BOK_ECOS":
             return self.bok_ecos
+        if normalized == "KOSIS":
+            return self.kosis
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"unsupported provider: {provider}")
+
+    def _collect_derived_values(self, indicator_code: str, *, start_date: str, end_date: str) -> list[dict[str, Any]]:
+        row = self.db.execute(
+            text("SELECT * FROM market_indicator_derivations WHERE indicator_code = :code AND is_active = 1"),
+            {"code": indicator_code.strip().upper()},
+        ).mappings().first()
+        if not row:
+            raise RuntimeError("derived formula is not configured")
+        formula = str(row["formula_type"]).upper()
+        sources = json.loads(str(row["source_codes_json"] or "[]"))
+        source_values = {code: self._source_value_map(str(code), start_date=start_date, end_date=end_date) for code in sources}
+        values: list[dict[str, Any]] = []
+
+        def emit(value_date: str, value: float | None, period_label: str | None = None) -> None:
+            if value is None or not math.isfinite(float(value)):
+                return
+            values.append(
+                {
+                    "indicator_code": indicator_code,
+                    "value_date": value_date,
+                    "period_label": period_label,
+                    "value": round(float(value), 6),
+                    "change_value": None,
+                    "change_pct": None,
+                    "mom_pct": None,
+                    "yoy_pct": None,
+                    "source_provider": "DERIVED",
+                    "source_unit": None,
+                    "is_preliminary": 0,
+                    "release_date": None,
+                    "raw_payload_json": None,
+                }
+            )
+
+        if formula in {"US_10Y_MINUS_US_2Y", "KR_10Y_MINUS_KR_3Y"} and len(sources) >= 2:
+            left, right = source_values[sources[0]], source_values[sources[1]]
+            for value_date in sorted(set(left).intersection(right)):
+                emit(value_date, left[value_date]["value"] - right[value_date]["value"])
+        elif formula in {"BASE_RATE_MINUS_CPI_YOY", "FED_FUNDS_MINUS_CORE_PCE_YOY"} and len(sources) >= 2:
+            rate_map, inflation_map = source_values[sources[0]], source_values[sources[1]]
+            rate_dates = sorted(rate_map)
+            for value_date in sorted(inflation_map):
+                inflation = inflation_map[value_date]
+                inflation_yoy = inflation.get("yoy_pct")
+                if inflation_yoy is None:
+                    continue
+                rate_date = self._latest_key_on_or_before(rate_dates, value_date)
+                if not rate_date:
+                    continue
+                emit(value_date, rate_map[rate_date]["value"] - float(inflation_yoy), value_date[:7])
+        elif formula == "ROLLING_RETURN_STD_20D" and sources:
+            rows = sorted(source_values[sources[0]].items())
+            returns: list[tuple[str, float]] = []
+            for idx in range(1, len(rows)):
+                prev_value = rows[idx - 1][1]["value"]
+                value = rows[idx][1]["value"]
+                if prev_value:
+                    returns.append((rows[idx][0], (value / prev_value - 1) * 100))
+            for idx in range(19, len(returns)):
+                window = [item[1] for item in returns[idx - 19 : idx + 1]]
+                mean = sum(window) / len(window)
+                variance = sum((item - mean) ** 2 for item in window) / len(window)
+                emit(returns[idx][0], math.sqrt(variance))
+        elif formula == "RATIO_X100" and len(sources) >= 2:
+            left, right = source_values[sources[0]], source_values[sources[1]]
+            for value_date in sorted(set(left).intersection(right)):
+                denominator = right[value_date]["value"]
+                if denominator:
+                    emit(value_date, left[value_date]["value"] / denominator * 100)
+        else:
+            raise RuntimeError(f"unsupported derived formula: {formula}")
+
+        return values
+
+    @staticmethod
+    def _latest_key_on_or_before(sorted_keys: list[str], target_key: str) -> str | None:
+        latest: str | None = None
+        for key in sorted_keys:
+            if key > target_key:
+                break
+            latest = key
+        return latest
+
+    def _source_value_map(self, indicator_code: str, *, start_date: str, end_date: str) -> dict[str, dict[str, float | str | None]]:
+        rows = self.db.execute(
+            text(
+                """
+                SELECT value_date, period_label, value, close_value, yoy_pct
+                FROM market_indicator_values
+                WHERE indicator_code = :code
+                  AND value_date BETWEEN :start_date AND :end_date
+                ORDER BY value_date
+                """
+            ),
+            {"code": indicator_code.strip().upper(), "start_date": start_date, "end_date": end_date},
+        ).mappings().all()
+        result: dict[str, dict[str, float | str | None]] = {}
+        for row in rows:
+            value = row["value"] if row["value"] is not None else row["close_value"]
+            if value is None:
+                continue
+            result[str(row["value_date"])] = {
+                "value": float(value),
+                "period_label": row.get("period_label"),
+                "yoy_pct": float(row["yoy_pct"]) if row["yoy_pct"] is not None else None,
+            }
+        return result
 
     def _get_mapping(self, indicator_code: str, provider: str) -> dict[str, Any]:
         row = self.db.execute(
@@ -762,6 +1014,82 @@ class MarketIndicatorService:
             value,
         )
 
+    def _upsert_values(self, values: list[dict[str, Any]]) -> dict[str, int]:
+        if not values:
+            return {"inserted_count": 0, "updated_count": 0, "unchanged_count": 0}
+        inserted = 0
+        updated = 0
+        unchanged = 0
+        normalized: list[dict[str, Any]] = []
+        for value in values:
+            existing = self.db.execute(
+                text(
+                    """
+                    SELECT value, change_value, change_pct, mom_pct, yoy_pct, source_unit
+                    FROM market_indicator_values
+                    WHERE indicator_code = :indicator_code AND value_date = :value_date
+                    """
+                ),
+                {"indicator_code": value.get("indicator_code"), "value_date": value.get("value_date")},
+            ).mappings().first()
+            value = {**value, "raw_payload_json": None}
+            normalized.append(value)
+            if not existing:
+                inserted += 1
+                value["revised_at"] = None
+                continue
+            comparable_keys = ("value", "change_value", "change_pct", "mom_pct", "yoy_pct", "source_unit")
+            changed = any((existing.get(key) != value.get(key)) for key in comparable_keys)
+            if changed:
+                updated += 1
+                value["revised_at"] = datetime.now().isoformat(timespec="seconds")
+            else:
+                unchanged += 1
+                value["revised_at"] = None
+        self.db.execute(
+            text(
+                """
+                INSERT INTO market_indicator_values
+                (indicator_code, value_date, period_label, value, change_value, change_pct, mom_pct, yoy_pct, source_provider, source_unit,
+                 is_preliminary, release_date, raw_payload_json, collected_at, revised_at, created_at, updated_at)
+                VALUES (:indicator_code, :value_date, :period_label, :value, :change_value, :change_pct, :mom_pct, :yoy_pct, :source_provider,
+                        :source_unit, :is_preliminary, :release_date, NULL, CURRENT_TIMESTAMP, :revised_at, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(indicator_code, value_date) DO UPDATE SET
+                    period_label = excluded.period_label,
+                    value = excluded.value,
+                    change_value = excluded.change_value,
+                    change_pct = excluded.change_pct,
+                    mom_pct = excluded.mom_pct,
+                    yoy_pct = excluded.yoy_pct,
+                    source_provider = excluded.source_provider,
+                    source_unit = excluded.source_unit,
+                    is_preliminary = excluded.is_preliminary,
+                    release_date = excluded.release_date,
+                    raw_payload_json = NULL,
+                    collected_at = CURRENT_TIMESTAMP,
+                    revised_at = COALESCE(excluded.revised_at, market_indicator_values.revised_at),
+                    updated_at = CASE
+                        WHEN market_indicator_values.value IS NOT excluded.value
+                          OR market_indicator_values.change_value IS NOT excluded.change_value
+                          OR market_indicator_values.change_pct IS NOT excluded.change_pct
+                          OR market_indicator_values.mom_pct IS NOT excluded.mom_pct
+                          OR market_indicator_values.yoy_pct IS NOT excluded.yoy_pct
+                          OR COALESCE(market_indicator_values.source_unit, '') <> COALESCE(excluded.source_unit, '')
+                        THEN CURRENT_TIMESTAMP
+                        ELSE market_indicator_values.updated_at
+                    END
+                """
+            ),
+            normalized,
+        )
+        return {"inserted_count": inserted, "updated_count": updated, "unchanged_count": unchanged}
+
+    def _latest_value_date(self, indicator_code: str) -> str | None:
+        return self.db.execute(
+            text("SELECT MAX(value_date) FROM market_indicator_values WHERE indicator_code = :code"),
+            {"code": indicator_code.strip().upper()},
+        ).scalar()
+
     def _update_indicator_latest(self, indicator_code: str, latest: dict[str, Any]) -> None:
         self.db.execute(
             text(
@@ -818,6 +1146,78 @@ class MarketIndicatorService:
         item.pop("created_at", None)
         item.pop("updated_at", None)
         return item
+
+    def _readiness_item(self, row: dict[str, Any]) -> dict[str, Any]:
+        data_count = int(row.get("data_count") or 0)
+        mapping_ready = self._as_bool(row.get("is_enabled")) and self._as_bool(row.get("is_verified"))
+        data_ready = data_count > 0
+        signal_min = self._signal_minimum_rows(str(row.get("data_frequency") or "DAILY"), str(row.get("indicator_code") or ""))
+        signal_ready = data_count >= signal_min
+        status_value = str(row.get("collection_status") or "").upper()
+        if status_value == "ERROR":
+            readiness = "ERROR"
+            reason = row.get("last_test_message") or "collection status is ERROR"
+        elif signal_ready:
+            readiness = "SIGNAL_READY"
+            reason = None
+        elif data_ready:
+            readiness = "COMPARE_READY"
+            reason = f"data exists but signal transforms need at least {signal_min} rows"
+        elif mapping_ready:
+            readiness = "MAPPING_READY"
+            reason = "provider mapping is active; collection has no stored values yet"
+        else:
+            readiness = "MASTER_ONLY"
+            reason = "active and verified provider mapping is required"
+        return {
+            "indicator_code": row.get("indicator_code"),
+            "indicator_name": row.get("indicator_name"),
+            "provider": row.get("provider"),
+            "provider_symbol": row.get("provider_symbol"),
+            "data_frequency": row.get("data_frequency"),
+            "unit_label": row.get("unit_label"),
+            "collection_status": row.get("collection_status"),
+            "readiness": readiness,
+            "readiness_reason": reason,
+            "data_count": data_count,
+            "first_value_date": row.get("first_value_date"),
+            "latest_value_date": row.get("value_latest_date") or row.get("latest_value_date"),
+            "latest_value": row.get("latest_value"),
+            "latest_collected_at": row.get("latest_collected_at"),
+            "recommended_minimum_count": signal_min,
+            "insufficient_count": max(signal_min - data_count, 0),
+            "mapping_ready": mapping_ready,
+            "data_ready": data_ready,
+            "chart_ready": data_ready,
+            "compare_ready": data_ready,
+            "signal_ready": signal_ready,
+            "supported_transforms": self._supported_transforms_for_readiness(data_count),
+        }
+
+    @staticmethod
+    def _signal_minimum_rows(frequency: str, indicator_code: str | None = None) -> int:
+        code = str(indicator_code or "").upper()
+        if code in {"KR_REAL_POLICY_RATE", "US_REAL_POLICY_RATE"}:
+            return 60
+        if code == "USD_KRW_VOLATILITY":
+            return 252
+        normalized = frequency.upper()
+        if normalized == "MONTHLY":
+            return 24
+        if normalized == "WEEKLY":
+            return 26
+        return 60
+
+    @staticmethod
+    def _supported_transforms_for_readiness(data_count: int) -> list[str]:
+        transforms = ["RAW_VALUE"] if data_count >= 1 else []
+        if data_count >= 2:
+            transforms.extend(["CHANGE", "CHANGE_RATE", "MOM"])
+        if data_count >= 20:
+            transforms.extend(["MOVING_AVERAGE", "SLOPE", "TURN_UP", "TURN_DOWN", "DISTANCE_FROM_MA", "CONSECUTIVE_UP", "CONSECUTIVE_DOWN", "PERSISTENCE"])
+        if data_count >= 60:
+            transforms.extend(["Z_SCORE", "PERCENTILE", "N_PERIOD_HIGH", "N_PERIOD_LOW", "YOY"])
+        return transforms
 
     def _mapping_item(self, row: Any) -> dict[str, Any]:
         item = dict(row)

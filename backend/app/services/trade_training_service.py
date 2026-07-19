@@ -8,12 +8,19 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from backend.app.repositories.trade_training_repository import TradeTrainingRepository
-from backend.app.schemas.trade_training_schema import SimulationReviewSaveRequest, TrainingOrderRequest, TrainingSessionCreate
+from backend.app.schemas.trade_training_schema import (
+    SimulationReviewSaveRequest,
+    TradeTrainingAccountCreate,
+    TradeTrainingAccountUpdate,
+    TrainingOrderRequest,
+    TrainingSessionCreate,
+)
 
 
 RUNNING_STATUS = "진행중"
 FINISHED_STATUS = "완료"
 ABORTED_STATUS = "중단"
+TRAINING_ACCOUNT_STATUSES = {"ACTIVE", "PAUSED", "COMPLETED", "ARCHIVED"}
 
 
 class TradeTrainingService:
@@ -23,6 +30,555 @@ class TradeTrainingService:
 
     def list_stocks(self, q: str | None, limit: int) -> dict[str, Any]:
         return {"items": self.repo.list_training_stocks(q=q, limit=limit), "limit": limit}
+
+    @staticmethod
+    def _clean_account_mas(values: list[int] | None) -> list[int]:
+        cleaned = sorted({int(value) for value in values or [] if int(value) > 0})
+        return cleaned or [5, 10, 20, 60, 120]
+
+    @staticmethod
+    def _account_payload(payload: TradeTrainingAccountCreate | TradeTrainingAccountUpdate) -> dict[str, Any]:
+        raw = payload.model_dump(exclude_unset=True)
+        if "name" in raw and raw["name"] is not None:
+            raw["name"] = str(raw["name"]).strip()
+            if not raw["name"]:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="계좌명을 입력해 주세요.")
+        if "status" in raw and raw["status"] is not None:
+            raw["status"] = str(raw["status"]).upper()
+            if raw["status"] not in TRAINING_ACCOUNT_STATUSES:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="지원하지 않는 계좌 상태입니다.")
+        if "moving_average_periods_default" in raw:
+            raw["moving_average_periods_default"] = TradeTrainingService._clean_account_mas(
+                raw.get("moving_average_periods_default")
+            )
+        return raw
+
+    def list_training_accounts(self, status_filter: str | None = None) -> dict[str, Any]:
+        normalized_status = status_filter.upper() if status_filter else None
+        if normalized_status and normalized_status not in TRAINING_ACCOUNT_STATUSES:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="지원하지 않는 계좌 상태입니다.")
+        return {"items": self.repo.list_training_accounts(status_filter=normalized_status)}
+
+    def create_training_account(self, payload: TradeTrainingAccountCreate) -> dict[str, Any]:
+        return self.repo.create_training_account(self._account_payload(payload))
+
+    def get_training_account(self, account_id: int) -> dict[str, Any]:
+        account = self.repo.get_training_account(account_id)
+        if not account:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="훈련계좌를 찾을 수 없습니다.")
+        return account
+
+    def update_training_account(self, account_id: int, payload: TradeTrainingAccountUpdate) -> dict[str, Any]:
+        self.get_training_account(account_id)
+        values = self._account_payload(payload)
+        if not values:
+            return self.get_training_account(account_id)
+        return self.repo.update_training_account(account_id, values)
+
+    @staticmethod
+    def _profit_loss_stats(closed_trades: list[dict[str, Any]]) -> dict[str, Any]:
+        wins = [item for item in closed_trades if float(item.get("net_pnl") or 0) > 0]
+        losses = [item for item in closed_trades if float(item.get("net_pnl") or 0) < 0]
+        flats = [item for item in closed_trades if float(item.get("net_pnl") or 0) == 0]
+        average_profit = sum(float(item["net_pnl"]) for item in wins) / len(wins) if wins else None
+        average_loss = sum(float(item["net_pnl"]) for item in losses) / len(losses) if losses else None
+        average_loss_abs = abs(average_loss) if average_loss is not None else None
+        if not closed_trades:
+            status_value = "NO_CLOSED_TRADES"
+        elif not wins:
+            status_value = "NO_WIN_TRADES"
+        elif not losses:
+            status_value = "NO_LOSS_TRADES"
+        else:
+            status_value = "AVAILABLE"
+        return {
+            "winning_trade_count": len(wins),
+            "losing_trade_count": len(losses),
+            "flat_trade_count": len(flats),
+            "average_profit": None if average_profit is None else round(average_profit, 4),
+            "average_loss": None if average_loss is None else round(average_loss, 4),
+            "profit_loss_ratio": None if not average_profit or not average_loss_abs else round(average_profit / average_loss_abs, 4),
+            "profit_loss_ratio_status": status_value,
+            "winning_ratio": None if not closed_trades else round(len(wins) / len(closed_trades) * 100, 4),
+        }
+
+    def get_training_account_summary(self, account_id: int) -> dict[str, Any]:
+        account = self.get_training_account(account_id)
+        initial_capital = float(account.get("initial_capital") or 0)
+        closed_trades = self.list_training_account_closed_trades(account_id)["items"]
+        sessions = self.repo.list_account_sessions(account_id)
+        active_session_count = sum(1 for item in sessions if str(item.get("status") or "") == RUNNING_STATUS)
+        realized_pnl = round(sum(float(item.get("net_pnl") or 0) for item in closed_trades), 4)
+        realized_equity = round(initial_capital + realized_pnl, 4)
+        cash_balance = round(float(account.get("cash_balance") or realized_equity), 4)
+        open_position_cost = 0.0
+        open_position_market_value = 0.0
+        open_position_count = 0
+        for session in sessions:
+            if str(session.get("status") or "") != RUNNING_STATUS:
+                continue
+            position_qty = int(session.get("position_qty") or 0)
+            if position_qty <= 0:
+                continue
+            open_position_count += 1
+            avg_price = float(session.get("avg_price") or 0)
+            open_position_cost += avg_price * position_qty
+            try:
+                current_candle = self._current_price_row(session)
+            except HTTPException:
+                current_candle = None
+            current_price = float(current_candle.get("close_price") or 0) if current_candle else avg_price
+            open_position_market_value += current_price * position_qty
+        open_position_cost = round(open_position_cost, 4)
+        open_position_market_value = round(open_position_market_value, 4)
+        unrealized_pnl = round(open_position_market_value - open_position_cost, 4)
+        current_training_equity = round(cash_balance + open_position_market_value, 4)
+        stats = self._profit_loss_stats(closed_trades)
+        return {
+            "account_id": int(account["id"]),
+            "initial_capital": initial_capital,
+            "cash_balance": cash_balance,
+            "training_equity": current_training_equity,
+            "current_training_equity": current_training_equity,
+            "open_position_cost": open_position_cost,
+            "open_position_market_value": open_position_market_value,
+            "realized_pnl": realized_pnl,
+            "unrealized_pnl": unrealized_pnl,
+            "cumulative_realized_return_pct": self._safe_rate(realized_pnl, initial_capital),
+            "current_equity_return_pct": self._safe_rate(current_training_equity - initial_capital, initial_capital),
+            "active_session_count": active_session_count,
+            "open_position_count": open_position_count,
+            "closed_trade_count": len(closed_trades),
+            **stats,
+        }
+
+    def list_training_account_sessions(self, account_id: int, status_filter: str | None = None) -> dict[str, Any]:
+        self.get_training_account(account_id)
+        normalized_status = status_filter
+        if status_filter and status_filter.upper() == "ACTIVE":
+            normalized_status = RUNNING_STATUS
+        rows = self.repo.list_account_sessions(account_id, status_filter=normalized_status)
+        items = []
+        for row in rows:
+            options = self._parse_options(row)
+            current_candle: dict[str, Any] | None = None
+            try:
+                current_candle = self._current_price_row(row)
+            except HTTPException:
+                current_candle = None
+            account_values = self._calc_account(row, current_candle)
+            position_qty = int(row.get("position_qty") or 0)
+            raw_status = str(row.get("status") or "")
+            if raw_status == RUNNING_STATUS:
+                status_state = "OPEN" if position_qty > 0 else ("WATCHING" if int(row.get("trade_count") or 0) > 0 else "READY")
+            elif raw_status == FINISHED_STATUS:
+                status_state = "COMPLETED"
+            elif raw_status == ABORTED_STATUS:
+                status_state = "PAUSED"
+            else:
+                status_state = "PAUSED"
+            stock = self.repo.get_stock_by_code(str(row.get("stock_code") or "")) if row.get("stock_code") else None
+            items.append(
+                {
+                    "id": int(row["id"]),
+                    "session_id": int(row["id"]),
+                    "training_account_id": int(row.get("training_account_id") or account_id),
+                    "stock_id": int(options.get("stock_id") or 0) or (int(stock["stock_id"]) if stock and stock.get("stock_id") else None),
+                    "market": stock.get("market") if stock else None,
+                    "stock_code": str(row.get("stock_code") or ""),
+                    "stock_name": row.get("stock_name"),
+                    "status": raw_status,
+                    "status_state": status_state,
+                    "status_display": status_state,
+                    "start_date": str(row.get("start_date") or ""),
+                    "end_date": str(row.get("end_date") or ""),
+                    "chart_start_date": str(row.get("start_date") or ""),
+                    "chart_end_date": str(row.get("end_date") or ""),
+                    "current_date": row.get("current_date"),
+                    "chart_current_date": row.get("current_date"),
+                    "current_index": int(row.get("current_index") or 0),
+                    "current_step": int(row.get("current_index") or 0) + 1,
+                    "display_days": int(options.get("display_days") or 80),
+                    "moving_averages": self._clean_mas(list(options.get("moving_averages") or [5, 20, 60])),
+                    "position_qty": position_qty,
+                    "position_quantity": position_qty,
+                    "avg_price": round(float(row.get("avg_price") or 0), 4),
+                    "average_entry_price": round(float(row.get("avg_price") or 0), 4),
+                    "current_price": account_values["current_price"],
+                    "market_value": account_values["evaluation_amount"],
+                    "position_cost": round(position_qty * float(row.get("avg_price") or 0), 4),
+                    "unrealized_pnl": account_values["unrealized_profit"],
+                    "unrealized_return_pct": account_values["unrealized_return_rate"],
+                    "realized_profit": round(float(row.get("realized_profit") or 0), 4),
+                    "trade_count": int(row.get("trade_count") or 0),
+                    "buy_count": int(row.get("buy_count") or 0),
+                    "sell_count": int(row.get("sell_count") or 0),
+                    "created_at": row.get("created_at"),
+                    "updated_at": row.get("updated_at"),
+                    "last_trained_at": row.get("updated_at") or row.get("created_at"),
+                }
+            )
+        return {"items": items}
+
+    def _closed_trades_for_session(self, account_id: int, session: dict[str, Any]) -> list[dict[str, Any]]:
+        options = self._parse_options(session)
+        trades = self.repo.list_trades(int(session["id"]))
+        closed: list[dict[str, Any]] = []
+        open_lots: list[dict[str, Any]] = []
+        cycle_buy_amount = 0.0
+        cycle_sell_amount = 0.0
+        cycle_fee = 0.0
+        cycle_qty = 0
+        cycle_open_date: str | None = None
+        cycle_open_index = 0
+        position_qty = 0
+
+        for trade in trades:
+            side = str(trade.get("side") or "").upper()
+            qty = int(trade.get("quantity") or 0)
+            price = float(trade.get("price") or 0)
+            amount = float(trade.get("amount") or price * qty)
+            fee = float(trade.get("fee") or 0)
+            trade_date = str(trade.get("trade_date") or "")
+
+            if side == "BUY":
+                if position_qty == 0:
+                    cycle_buy_amount = 0
+                    cycle_sell_amount = 0
+                    cycle_fee = 0
+                    cycle_qty = 0
+                    cycle_open_date = trade_date
+                    cycle_open_index = len(closed)
+                    open_lots = []
+                open_lots.append({**trade, "remaining_quantity": qty})
+                position_qty += qty
+                cycle_qty += qty
+                cycle_buy_amount += amount
+                cycle_fee += fee
+                continue
+
+            if side != "SELL" or position_qty <= 0:
+                continue
+
+            remaining_sell_qty = qty
+            sell_cost_basis = 0.0
+            sell_buy_fee = 0.0
+            while remaining_sell_qty > 0 and open_lots:
+                lot = open_lots[0]
+                lot_qty = int(lot.get("quantity") or 0)
+                matched_qty = min(int(lot.get("remaining_quantity") or 0), remaining_sell_qty)
+                lot_price = float(lot.get("price") or 0)
+                lot_fee = float(lot.get("fee") or 0)
+                sell_cost_basis += lot_price * matched_qty
+                sell_buy_fee += lot_fee * (matched_qty / max(1, lot_qty))
+                lot["remaining_quantity"] = int(lot["remaining_quantity"]) - matched_qty
+                remaining_sell_qty -= matched_qty
+                if int(lot["remaining_quantity"]) <= 0:
+                    open_lots.pop(0)
+
+            position_qty = max(0, position_qty - qty)
+            cycle_sell_amount += amount
+            cycle_fee += fee
+            if position_qty == 0 and cycle_open_date:
+                total_fee = cycle_fee
+                net_pnl = round(cycle_sell_amount - cycle_buy_amount - total_fee, 4)
+                result_type = "WIN" if net_pnl > 0 else "LOSS" if net_pnl < 0 else "FLAT"
+                holding_bars = max(0, len(closed) - cycle_open_index)
+                try:
+                    holding_bars = max(0, (self._to_date(trade_date) - self._to_date(cycle_open_date)).days)
+                except ValueError:
+                    pass
+                closed.append(
+                    {
+                        "id": f"{session['id']}-{len(closed) + 1}",
+                        "closed_trade_id": f"{session['id']}-{len(closed) + 1}",
+                        "trade_sequence": 0,
+                        "training_account_id": account_id,
+                        "training_session_id": int(session["id"]),
+                        "simulation_session_id": int(session["id"]),
+                        "stock_id": int(options.get("stock_id") or 0) or None,
+                        "stock_code": str(session.get("stock_code") or ""),
+                        "stock_name": session.get("stock_name"),
+                        "opened_chart_date": cycle_open_date,
+                        "closed_chart_date": trade_date,
+                        "chart_entry_date": cycle_open_date,
+                        "chart_exit_date": trade_date,
+                        "completed_at": trade.get("created_at"),
+                        "gross_buy_amount": round(cycle_buy_amount, 4),
+                        "gross_sell_amount": round(cycle_sell_amount, 4),
+                        "gross_pnl": round(cycle_sell_amount - cycle_buy_amount, 4),
+                        "commission_amount": round(total_fee, 4),
+                        "tax_amount": 0,
+                        "net_pnl": net_pnl,
+                        "return_pct": self._safe_rate(net_pnl, cycle_buy_amount + sell_buy_fee),
+                        "holding_bars": holding_bars,
+                        "result_type": result_type,
+                        "quantity": cycle_qty,
+                        "actual_quantity": cycle_qty,
+                        "avg_buy_price": round(cycle_buy_amount / max(1, cycle_qty), 4),
+                        "avg_sell_price": round(cycle_sell_amount / max(1, cycle_qty), 4),
+                        "average_entry_price": round(cycle_buy_amount / max(1, cycle_qty), 4),
+                        "average_exit_price": round(cycle_sell_amount / max(1, cycle_qty), 4),
+                        "planned_risk_pct": None,
+                        "planned_risk_amount": None,
+                        "realized_r": None,
+                        "atr_value": None,
+                        "atr_pct": None,
+                        "recommended_quantity": None,
+                    }
+                )
+                cycle_open_date = None
+                cycle_qty = 0
+                cycle_buy_amount = 0
+                cycle_sell_amount = 0
+                cycle_fee = 0
+        return closed
+
+    def list_training_account_closed_trades(self, account_id: int) -> dict[str, Any]:
+        self.get_training_account(account_id)
+        items: list[dict[str, Any]] = []
+        for session in self.repo.list_account_sessions(account_id):
+            items.extend(self._closed_trades_for_session(account_id, session))
+        items.sort(key=lambda item: (str(item.get("completed_at") or ""), int(item.get("training_session_id") or 0), str(item.get("id") or "")))
+        for idx, item in enumerate(items, start=1):
+            item["trade_sequence"] = idx
+        return {"items": items}
+
+    def get_training_account_performance(self, account_id: int) -> dict[str, Any]:
+        account = self.get_training_account(account_id)
+        initial_capital = float(account.get("initial_capital") or 0)
+        equity = initial_capital
+        items = []
+        closed_trades = self.list_training_account_closed_trades(account_id)["items"]
+        for trade in closed_trades:
+            equity_before = equity
+            equity = round(equity + float(trade.get("net_pnl") or 0), 4)
+            cumulative_return_pct = self._safe_rate(equity - initial_capital, initial_capital)
+            items.append(
+                {
+                    "closed_trade_id": trade.get("closed_trade_id") or trade.get("id"),
+                    "trade_sequence": int(trade["trade_sequence"]),
+                    "simulation_session_id": trade.get("simulation_session_id") or trade.get("training_session_id"),
+                    "training_session_id": trade.get("training_session_id"),
+                    "training_account_id": account_id,
+                    "stock_id": trade.get("stock_id"),
+                    "stock_code": trade.get("stock_code"),
+                    "stock_name": trade.get("stock_name"),
+                    "chart_entry_date": trade.get("chart_entry_date") or trade.get("opened_chart_date"),
+                    "chart_exit_date": trade.get("chart_exit_date") or trade.get("closed_chart_date"),
+                    "completed_at": trade.get("completed_at"),
+                    "quantity": trade.get("quantity"),
+                    "average_entry_price": trade.get("average_entry_price") or trade.get("avg_buy_price"),
+                    "average_exit_price": trade.get("average_exit_price") or trade.get("avg_sell_price"),
+                    "gross_buy_amount": trade.get("gross_buy_amount"),
+                    "gross_sell_amount": trade.get("gross_sell_amount"),
+                    "gross_pnl": trade.get("gross_pnl"),
+                    "commission_amount": trade.get("commission_amount"),
+                    "tax_amount": trade.get("tax_amount"),
+                    "net_pnl": trade.get("net_pnl"),
+                    "return_pct": trade.get("return_pct"),
+                    "holding_bars": trade.get("holding_bars"),
+                    "equity_before": round(equity_before, 4),
+                    "equity_after": equity,
+                    "cumulative_return_pct": cumulative_return_pct,
+                    "planned_risk_pct": trade.get("planned_risk_pct"),
+                    "planned_risk_amount": trade.get("planned_risk_amount"),
+                    "realized_r": trade.get("realized_r"),
+                    "atr_value": trade.get("atr_value"),
+                    "atr_pct": trade.get("atr_pct"),
+                    "recommended_quantity": trade.get("recommended_quantity"),
+                    "actual_quantity": trade.get("actual_quantity") or trade.get("quantity"),
+                }
+            )
+        stats = self._profit_loss_stats(closed_trades)
+        return {
+            "account_id": int(account_id),
+            "initial_capital": initial_capital,
+            "current_realized_equity": equity,
+            "cumulative_return_pct": self._safe_rate(equity - initial_capital, initial_capital),
+            "closed_trade_count": len(closed_trades),
+            **stats,
+            "items": items,
+        }
+
+    def rebuild_training_account_ledger(self, account_id: int, apply_changes: bool = False) -> dict[str, Any]:
+        account = self.get_training_account(account_id)
+        initial_capital = float(account.get("initial_capital") or 0)
+        stored_cash_balance = round(float(account.get("cash_balance") or 0), 4)
+        stored_realized_equity = round(float(account.get("realized_equity") or initial_capital), 4)
+        sessions = self.repo.list_account_sessions(account_id)
+        session_map = {int(item["id"]): item for item in sessions}
+        trade_events = self.repo.list_account_trade_events(account_id)
+        ledger_before = self.repo.count_account_ledger_events(account_id)
+        closed_trades = self.list_training_account_closed_trades(account_id)["items"]
+
+        cash_balance = initial_capital
+        realized_pnl = 0.0
+        ledger_events: list[dict[str, Any]] = []
+        warnings: list[str] = []
+        session_states: dict[int, dict[str, Any]] = {
+            int(session["id"]): {
+                "qty": 0,
+                "avg": 0.0,
+                "cycle_buy": 0.0,
+                "cycle_sell": 0.0,
+                "cycle_fee": 0.0,
+                "realized_profit": 0.0,
+            }
+            for session in sessions
+        }
+
+        for trade in trade_events:
+            trade_id = int(trade.get("id") or 0)
+            session_id = int(trade.get("session_id") or 0)
+            state = session_states.setdefault(
+                session_id,
+                {"qty": 0, "avg": 0.0, "cycle_buy": 0.0, "cycle_sell": 0.0, "cycle_fee": 0.0, "realized_profit": 0.0},
+            )
+            side = str(trade.get("side") or "").upper()
+            qty = int(trade.get("quantity") or 0)
+            price = float(trade.get("price") or 0)
+            fee = float(trade.get("fee") or 0)
+            amount = float(trade.get("amount") or (price * qty))
+            if trade_id <= 0 or qty <= 0 or price <= 0 or side not in {"BUY", "SELL"}:
+                warnings.append(f"invalid trade skipped: trade_id={trade_id}, side={side}, qty={qty}, price={price}")
+                continue
+
+            cash_before = cash_balance
+            realized_delta = 0.0
+            if side == "BUY":
+                if int(state["qty"]) == 0:
+                    state["cycle_buy"] = 0.0
+                    state["cycle_sell"] = 0.0
+                    state["cycle_fee"] = 0.0
+                next_qty = int(state["qty"]) + qty
+                state["avg"] = ((int(state["qty"]) * float(state["avg"])) + amount) / max(1, next_qty)
+                state["qty"] = next_qty
+                state["cycle_buy"] = float(state["cycle_buy"]) + amount
+                state["cycle_fee"] = float(state["cycle_fee"]) + fee
+                cash_delta = -(amount + fee)
+                event_type = "BUY" if next_qty == qty else "ADDITIONAL_BUY"
+            else:
+                if qty > int(state["qty"]):
+                    warnings.append(f"sell quantity exceeded: session_id={session_id}, trade_id={trade_id}, position={state['qty']}, sell={qty}")
+                    continue
+                next_qty = int(state["qty"]) - qty
+                state["qty"] = next_qty
+                state["cycle_sell"] = float(state["cycle_sell"]) + amount
+                state["cycle_fee"] = float(state["cycle_fee"]) + fee
+                cash_delta = amount - fee
+                event_type = "FULL_SELL" if next_qty == 0 else "PARTIAL_SELL"
+                if next_qty == 0:
+                    realized_delta = round(float(state["cycle_sell"]) - float(state["cycle_buy"]) - float(state["cycle_fee"]), 4)
+                    realized_pnl += realized_delta
+                    state["realized_profit"] = float(state["realized_profit"]) + realized_delta
+                    state["avg"] = 0.0
+                    state["cycle_buy"] = 0.0
+                    state["cycle_sell"] = 0.0
+                    state["cycle_fee"] = 0.0
+
+            cash_balance = round(cash_balance + cash_delta, 4)
+            if cash_balance < -0.0001:
+                warnings.append(f"cash balance became negative: trade_id={trade_id}, cash={cash_balance}")
+            ledger_events.append(
+                {
+                    "training_account_id": account_id,
+                    "simulation_session_id": session_id,
+                    "simulation_trade_id": trade_id,
+                    "event_type": event_type,
+                    "event_key": f"simulation_trade:{trade_id}",
+                    "cash_delta": round(cash_delta, 4),
+                    "cash_before": round(cash_before, 4),
+                    "cash_after": cash_balance,
+                    "realized_pnl_delta": realized_delta,
+                    "realized_equity_after": round(initial_capital + realized_pnl, 4),
+                    "description": "rebuilt from simulation_trades",
+                    "metadata": {"side": side, "amount": round(amount, 4), "fee": round(fee, 4), "quantity": qty, "price": price},
+                    "created_at": trade.get("created_at") or None,
+                }
+            )
+
+        calculated_realized_pnl = round(sum(float(item.get("net_pnl") or 0) for item in closed_trades), 4)
+        calculated_realized_equity = round(initial_capital + calculated_realized_pnl, 4)
+        open_position_market_value = 0.0
+        open_position_cost = 0.0
+        open_position_count = 0
+        session_updates: list[dict[str, Any]] = []
+        for session_id, state in session_states.items():
+            qty = int(state["qty"])
+            avg = round(float(state["avg"]), 4) if qty > 0 else 0.0
+            if qty > 0:
+                open_position_count += 1
+                open_position_cost += avg * qty
+                session = session_map.get(session_id)
+                try:
+                    current_candle = self._current_price_row(session) if session else None
+                except HTTPException:
+                    current_candle = None
+                current_price = float(current_candle.get("close_price") or avg) if current_candle else avg
+                open_position_market_value += current_price * qty
+            session_updates.append(
+                {
+                    "session_id": session_id,
+                    "cash": round(cash_balance, 4),
+                    "position_qty": qty,
+                    "avg_price": avg,
+                    "realized_profit": round(float(state["realized_profit"]), 4),
+                }
+            )
+        open_position_market_value = round(open_position_market_value, 4)
+        unrealized_pnl = round(open_position_market_value - open_position_cost, 4)
+        current_training_equity = round(cash_balance + open_position_market_value, 4)
+
+        cash_difference = round(cash_balance - stored_cash_balance, 4)
+        realized_equity_difference = round(calculated_realized_equity - stored_realized_equity, 4)
+        ledger_after = len(ledger_events)
+        is_consistent_before = abs(cash_difference) <= 0.0001 and abs(realized_equity_difference) <= 0.0001
+        cash_identity_difference = round((cash_balance + open_position_market_value) - current_training_equity, 4)
+        equity_identity_difference = round(current_training_equity - (cash_balance + open_position_market_value), 4)
+        performance_identity_difference = 0.0
+
+        if apply_changes and not warnings:
+            self.repo.replace_account_ledger_and_balances(
+                account_id,
+                ledger_events,
+                cash_balance=round(cash_balance, 4),
+                realized_equity=calculated_realized_equity,
+                session_updates=session_updates,
+            )
+        return {
+            "account_id": account_id,
+            "account_name": account.get("name"),
+            "initial_capital": initial_capital,
+            "session_count": len(sessions),
+            "trade_event_count": len(trade_events),
+            "closed_trade_count": len(closed_trades),
+            "open_position_count": open_position_count,
+            "stored_cash_balance": stored_cash_balance,
+            "calculated_cash_balance": round(cash_balance, 4),
+            "cash_difference": cash_difference,
+            "stored_realized_equity": stored_realized_equity,
+            "calculated_realized_equity": calculated_realized_equity,
+            "realized_equity_difference": realized_equity_difference,
+            "calculated_realized_pnl": calculated_realized_pnl,
+            "open_position_market_value": open_position_market_value,
+            "unrealized_pnl": unrealized_pnl,
+            "current_training_equity": current_training_equity,
+            "ledger_event_count_before": ledger_before,
+            "ledger_event_count_after": ledger_after,
+            "cash_identity_difference": cash_identity_difference,
+            "equity_identity_difference": equity_identity_difference,
+            "performance_identity_difference": performance_identity_difference,
+            "is_consistent_before": is_consistent_before,
+            "is_consistent_after": not warnings,
+            "applied": bool(apply_changes and not warnings),
+            "warnings": warnings,
+        }
+
+    def delete_training_account(self, account_id: int) -> dict[str, Any]:
+        self.get_training_account(account_id)
+        counts = self.repo.delete_training_account(account_id)
+        return {"deleted": True, "account_id": account_id, "message": "훈련계좌가 삭제되었습니다.", **counts}
 
     def get_training_calendar(self, month: str) -> dict[str, Any]:
         if not month or len(month) != 7:
@@ -462,17 +1018,27 @@ class TradeTrainingService:
             if method and int(method.get("is_active") or 0) == 1:
                 method_id = int(method["id"])
 
+        account_initial_cash = float(payload.initial_cash)
+        account_fee_rate = float(payload.fee_rate)
+        if payload.training_account_id:
+            training_account = self.get_training_account(int(payload.training_account_id))
+            if str(training_account.get("status") or "") != "ACTIVE":
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"code": "ACCOUNT_NOT_ACTIVE", "message": "활성 훈련계좌만 연결할 수 있습니다."})
+            account_initial_cash = float(training_account.get("cash_balance") or training_account.get("initial_capital") or payload.initial_cash)
+            account_fee_rate = float(training_account.get("commission_rate") or payload.fee_rate)
+
         created = self.repo.create_session(
             {
                 "stock_code": stock["stock_code"],
                 "stock_name": stock["stock_name"],
                 "method_id": method_id,
+                "training_account_id": payload.training_account_id,
                 "start_date": str(rows[0]["trade_date"]),
                 "end_date": str(rows[-1]["trade_date"]),
                 "current_date": str(rows[0]["trade_date"]),
                 "current_index": 0,
-                "initial_cash": float(payload.initial_cash),
-                "cash": float(payload.initial_cash),
+                "initial_cash": account_initial_cash,
+                "cash": account_initial_cash,
                 "position_qty": 0,
                 "avg_price": 0,
                 "realized_profit": 0,
@@ -480,9 +1046,10 @@ class TradeTrainingService:
                 "options": {
                     "stock_id": int(stock["stock_id"]),
                     "source": source,
-                    "fee_rate": float(payload.fee_rate),
+                    "fee_rate": account_fee_rate,
                     "display_days": int(payload.display_days),
                     "moving_averages": self._clean_mas(payload.moving_averages),
+                    "training_account_id": payload.training_account_id,
                 },
             }
         )
@@ -505,6 +1072,10 @@ class TradeTrainingService:
         return {
             "current_price": round(close, 4),
             "evaluation_amount": round(evaluation_amount, 4),
+            "cash_balance": round(cash, 4),
+            "open_position_cost": round(avg_price * qty, 4),
+            "open_position_market_value": round(evaluation_amount, 4),
+            "current_training_equity": round(total_asset, 4),
             "unrealized_profit": round(position_profit, 4),
             "unrealized_return_rate": position_return_rate,
             "position_profit": round(position_profit, 4),
@@ -615,22 +1186,60 @@ class TradeTrainingService:
         if low <= 0 or high <= 0 or price < low or price > high:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="주문가격이 현재 일봉 범위를 벗어났습니다.")
 
+    def _linked_account(self, session: dict[str, Any]) -> dict[str, Any] | None:
+        account_id = session.get("training_account_id")
+        if not account_id:
+            return None
+        account = self.get_training_account(int(account_id))
+        if str(account.get("status") or "") != "ACTIVE":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"code": "ACCOUNT_NOT_ACTIVE", "message": "활성 훈련계좌만 주문할 수 있습니다."})
+        return account
+
+    def _insufficient_cash(self, available_cash: float, required_cash: float, price: float, fee_rate: float) -> HTTPException:
+        per_share_required = price * (1 + fee_rate)
+        max_affordable_quantity = int(available_cash // per_share_required) if per_share_required > 0 else 0
+        return HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "INSUFFICIENT_CASH",
+                "message": "사용 가능 현금이 부족합니다.",
+                "available_cash": round(available_cash, 4),
+                "required_cash": round(required_cash, 4),
+                "shortage_amount": round(max(0, required_cash - available_cash), 4),
+                "max_affordable_quantity": max(0, max_affordable_quantity),
+            },
+        )
+
+    def _realized_equity_for_account(self, account_id: int) -> float:
+        account = self.get_training_account(account_id)
+        initial_capital = float(account.get("initial_capital") or 0)
+        closed_trades = self.list_training_account_closed_trades(account_id)["items"]
+        realized_pnl = sum(float(item.get("net_pnl") or 0) for item in closed_trades)
+        return round(initial_capital + realized_pnl, 4)
+
     def buy(self, session_id: int, payload: TrainingOrderRequest) -> dict[str, Any]:
         session = self._running_session(session_id)
         candle = self._current_price_row(session)
         self._validate_price_in_candle(payload.price, candle)
+        if self.repo.get_trade_by_client_order_id(session_id, payload.client_order_id):
+            return self.get_session_detail(session_id)
         options = self._parse_options(session)
         fee_rate = float(options.get("fee_rate") or 0)
         amount = float(payload.price) * int(payload.quantity)
         fee = amount * fee_rate
-        cash = float(session.get("cash") or 0)
+        linked_account = self._linked_account(session)
+        cash = float(linked_account.get("cash_balance") if linked_account else session.get("cash") or 0)
         if amount + fee > cash:
+            if linked_account:
+                raise self._insufficient_cash(cash, amount + fee, float(payload.price), fee_rate)
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="현금이 부족합니다.")
+        if linked_account:
+            self.repo.db.info["trade_training_atomic_order"] = True
         prev_qty = int(session.get("position_qty") or 0)
         prev_avg = float(session.get("avg_price") or 0)
         next_qty = prev_qty + int(payload.quantity)
         next_avg = ((prev_qty * prev_avg) + (int(payload.quantity) * float(payload.price))) / next_qty
-        self.repo.insert_trade(
+        trade = self.repo.insert_trade(
             {
                 "session_id": session_id,
                 "trade_date": str(candle["trade_date"]),
@@ -642,22 +1251,48 @@ class TradeTrainingService:
                 "realized_profit": 0,
                 "reason": payload.reason,
                 "method_review": payload.method_review,
+                "client_order_id": payload.client_order_id,
             }
         )
+        cash_after = round(cash - amount - fee, 4)
         self.repo.update_session(
             session_id,
             {
-                "cash": round(cash - amount - fee, 4),
+                "cash": cash_after,
                 "position_qty": next_qty,
                 "avg_price": round(next_avg, 4),
             },
         )
+        if linked_account:
+            account_id = int(linked_account["id"])
+            realized_equity_after = float(linked_account.get("realized_equity") or linked_account.get("initial_capital") or 0)
+            self.repo.update_training_account_balances(account_id, cash_balance=cash_after)
+            self.repo.insert_account_ledger(
+                {
+                    "training_account_id": account_id,
+                    "simulation_session_id": session_id,
+                    "simulation_trade_id": int(trade["id"]),
+                    "event_type": "BUY" if prev_qty == 0 else "ADDITIONAL_BUY",
+                    "event_key": f"simulation_trade:{trade['id']}",
+                    "cash_delta": round(-(amount + fee), 4),
+                    "cash_before": round(cash, 4),
+                    "cash_after": cash_after,
+                    "realized_pnl_delta": 0,
+                    "realized_equity_after": realized_equity_after,
+                    "description": "account-linked buy order",
+                    "metadata": {"amount": round(amount, 4), "fee": round(fee, 4), "quantity": int(payload.quantity), "price": float(payload.price)},
+                }
+            )
+            self.repo.db.commit()
+            self.repo.db.info.pop("trade_training_atomic_order", None)
         return self.get_session_detail(session_id)
 
     def sell(self, session_id: int, payload: TrainingOrderRequest) -> dict[str, Any]:
         session = self._running_session(session_id)
         candle = self._current_price_row(session)
         self._validate_price_in_candle(payload.price, candle)
+        if self.repo.get_trade_by_client_order_id(session_id, payload.client_order_id):
+            return self.get_session_detail(session_id)
         position_qty = int(session.get("position_qty") or 0)
         if payload.quantity > position_qty:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="보유수량이 부족합니다.")
@@ -665,10 +1300,13 @@ class TradeTrainingService:
         fee_rate = float(options.get("fee_rate") or 0)
         amount = float(payload.price) * int(payload.quantity)
         fee = amount * fee_rate
+        linked_account = self._linked_account(session)
+        if linked_account:
+            self.repo.db.info["trade_training_atomic_order"] = True
         avg_price = float(session.get("avg_price") or 0)
         realized_profit = (float(payload.price) - avg_price) * int(payload.quantity) - fee
         next_qty = position_qty - int(payload.quantity)
-        self.repo.insert_trade(
+        trade = self.repo.insert_trade(
             {
                 "session_id": session_id,
                 "trade_date": str(candle["trade_date"]),
@@ -680,17 +1318,44 @@ class TradeTrainingService:
                 "realized_profit": round(realized_profit, 4),
                 "reason": payload.reason,
                 "method_review": payload.method_review,
+                "client_order_id": payload.client_order_id,
             }
         )
+        session_cash_before = float(session.get("cash") or 0)
+        account_cash_before = float(linked_account.get("cash_balance") if linked_account else session_cash_before)
+        cash_return = round(amount - fee, 4)
+        cash_after = round(account_cash_before + cash_return, 4)
         self.repo.update_session(
             session_id,
             {
-                "cash": round(float(session.get("cash") or 0) + amount - fee, 4),
+                "cash": cash_after if linked_account else round(session_cash_before + cash_return, 4),
                 "position_qty": next_qty,
                 "avg_price": 0 if next_qty == 0 else avg_price,
                 "realized_profit": round(float(session.get("realized_profit") or 0) + realized_profit, 4),
             },
         )
+        if linked_account:
+            account_id = int(linked_account["id"])
+            realized_equity_after = self._realized_equity_for_account(account_id) if next_qty == 0 else float(linked_account.get("realized_equity") or linked_account.get("initial_capital") or 0)
+            self.repo.update_training_account_balances(account_id, cash_balance=cash_after, realized_equity=realized_equity_after)
+            self.repo.insert_account_ledger(
+                {
+                    "training_account_id": account_id,
+                    "simulation_session_id": session_id,
+                    "simulation_trade_id": int(trade["id"]),
+                    "event_type": "FULL_SELL" if next_qty == 0 else "PARTIAL_SELL",
+                    "event_key": f"simulation_trade:{trade['id']}",
+                    "cash_delta": cash_return,
+                    "cash_before": round(account_cash_before, 4),
+                    "cash_after": cash_after,
+                    "realized_pnl_delta": round(realized_profit, 4) if next_qty == 0 else 0,
+                    "realized_equity_after": realized_equity_after,
+                    "description": "account-linked sell order",
+                    "metadata": {"amount": round(amount, 4), "fee": round(fee, 4), "quantity": int(payload.quantity), "price": float(payload.price)},
+                }
+            )
+            self.repo.db.commit()
+            self.repo.db.info.pop("trade_training_atomic_order", None)
         return self.get_session_detail(session_id)
 
     def finish(self, session_id: int) -> dict[str, Any]:

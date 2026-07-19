@@ -7,12 +7,51 @@ import type {
   SimulationReview,
   SimulationReviewSaveRequest,
   TrainingCalendarResponse,
+  TradeTrainingAccount,
+  TradeTrainingAccountDeleteResponse,
+  TradeTrainingAccountPerformance,
+  TradeTrainingAccountListResponse,
+  TradeTrainingAccountSaveRequest,
+  TradeTrainingAccountSessionListResponse,
+  TradeTrainingAccountSummary,
+  TradeTrainingClosedTradeListResponse,
   TrainingSessionCreate,
   TrainingSessionDetail,
   TrainingStockListResponse,
 } from "@/types/tradeTraining";
 
 export const tradeTrainingApiRepository = {
+  listAccounts: (params?: { status?: string }) => {
+    const search = new URLSearchParams();
+    if (params?.status) search.set("status", params.status);
+    const query = search.toString();
+    return apiRequest<TradeTrainingAccountListResponse>(`/trade-training/accounts${query ? `?${query}` : ""}`);
+  },
+  createAccount: (payload: TradeTrainingAccountSaveRequest) =>
+    apiRequest<TradeTrainingAccount>("/trade-training/accounts", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  getAccount: (accountId: number) => apiRequest<TradeTrainingAccount>(`/trade-training/accounts/${accountId}`),
+  updateAccount: (accountId: number, payload: Partial<TradeTrainingAccountSaveRequest>) =>
+    apiRequest<TradeTrainingAccount>(`/trade-training/accounts/${accountId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  getAccountSummary: (accountId: number) =>
+    apiRequest<TradeTrainingAccountSummary>(`/trade-training/accounts/${accountId}/summary`),
+  listAccountSessions: (accountId: number, params?: { status?: string }) => {
+    const search = new URLSearchParams();
+    if (params?.status) search.set("status", params.status);
+    const query = search.toString();
+    return apiRequest<TradeTrainingAccountSessionListResponse>(`/trade-training/accounts/${accountId}/sessions${query ? `?${query}` : ""}`);
+  },
+  listAccountClosedTrades: (accountId: number) =>
+    apiRequest<TradeTrainingClosedTradeListResponse>(`/trade-training/accounts/${accountId}/closed-trades`),
+  getAccountPerformance: (accountId: number) =>
+    apiRequest<TradeTrainingAccountPerformance>(`/trade-training/accounts/${accountId}/performance`),
+  deleteAccount: (accountId: number) =>
+    apiRequest<TradeTrainingAccountDeleteResponse>(`/trade-training/accounts/${accountId}`, { method: "DELETE" }),
   getCalendar: (month: string) =>
     apiRequest<TrainingCalendarResponse>(`/trade-training/calendar?month=${encodeURIComponent(month)}`),
   listStocks: (params?: { q?: string; limit?: number }) => {

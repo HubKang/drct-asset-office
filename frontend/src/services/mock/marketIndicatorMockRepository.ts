@@ -1,4 +1,4 @@
-import type { EcosDiscoverCandidatesRequest, EcosDiscoverCandidatesResponse, EcosDiscoverMappingCandidatesRequest, EcosDiscoverMappingCandidatesResponse, EcosMappingCandidateTestRequest, EcosItemListResponse, EcosTableListResponse, EcosTableSearchResponse, ExternalProviderStatusListResponse, MarketIndicatorCollectRequest, MarketIndicatorCollectResponse, MarketIndicatorListResponse, MarketIndicatorProviderMapping, MarketIndicatorProviderMappingListResponse, MarketIndicatorProviderMappingTestRequest, MarketIndicatorProviderMappingTestResponse, MarketIndicatorProviderMappingUpsertRequest, MarketIndicatorValueResponse } from "@/types/marketIndicator";
+import type { EcosDiscoverCandidatesRequest, EcosDiscoverCandidatesResponse, EcosDiscoverMappingCandidatesRequest, EcosDiscoverMappingCandidatesResponse, EcosMappingCandidateTestRequest, EcosItemListResponse, EcosTableListResponse, EcosTableSearchResponse, ExternalProviderStatusListResponse, MarketIndicatorCollectRequest, MarketIndicatorCollectResponse, MarketIndicatorListResponse, MarketIndicatorProviderMapping, MarketIndicatorProviderMappingListResponse, MarketIndicatorProviderMappingTestRequest, MarketIndicatorProviderMappingTestResponse, MarketIndicatorProviderMappingUpsertRequest, MarketIndicatorReadinessListResponse, MarketIndicatorValueResponse } from "@/types/marketIndicator";
 
 const providerStatuses: ExternalProviderStatusListResponse = {
   items: [
@@ -23,6 +23,9 @@ export const marketIndicatorMockRepository = {
   },
   async providerMappings(): Promise<MarketIndicatorProviderMappingListResponse> {
     return { items: [] };
+  },
+  async readiness(): Promise<MarketIndicatorReadinessListResponse> {
+    return { items: [], summary_counts: {} };
   },
   async providerStatuses(): Promise<ExternalProviderStatusListResponse> {
     return providerStatuses;

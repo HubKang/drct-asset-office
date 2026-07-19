@@ -1,6 +1,6 @@
 import { Fragment, FormEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { BarChart3, PauseCircle, Play, Search, Settings, ShoppingCart, StepForward, X } from "lucide-react";
+import { BarChart3, BriefcaseBusiness, Maximize2, Minimize2, Info, PauseCircle, Play, Plus, Search, Settings, ShoppingCart, StepForward, X } from "lucide-react";
 import EmptyState from "@/components/common/EmptyState";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
@@ -12,12 +12,21 @@ import type {
   TrainingCandle,
   TrainingEquityCurvePoint,
   TrainingGptPackage,
+  TrainingLaunchMode,
   TrainingMethodReview,
   TrainingOrderRequest,
   TrainingResult,
   TrainingSessionDetail,
   TrainingStockItem,
   TrainingTrade,
+  TradeTrainingAccount,
+  TradeTrainingAccountPerformance,
+  TradeTrainingAccountSaveRequest,
+  TradeTrainingAccountSession,
+  TradeTrainingAccountStatus,
+  TradeTrainingAccountSummary,
+  TradeTrainingClosedTrade,
+  TradeTrainingPerformancePoint,
 } from "@/types/tradeTraining";
 
 type OrderMode = "BUY" | "SELL";
@@ -298,6 +307,67 @@ function profitClass(value: number | null | undefined): string {
   if (amount > 0) return "training-positive";
   if (amount < 0) return "training-negative";
   return "";
+}
+
+function compactDate(value: string | null | undefined): string {
+  if (!value) return "-";
+  const datePart = String(value).slice(0, 10);
+  return datePart.length === 10 ? `${datePart.slice(2, 4)}.${datePart.slice(5, 7)}.${datePart.slice(8, 10)}` : datePart;
+}
+
+function compactDateTime(value: string | null | undefined): string {
+  if (!value) return "-";
+  const text = String(value);
+  const date = compactDate(text);
+  const time = text.length >= 16 ? ` ${text.slice(11, 16)}` : "";
+  return `${date}${time}`;
+}
+
+function performanceTradeKey(item: TradeTrainingPerformancePoint | undefined | null): string {
+  if (!item) return "";
+  return item.closed_trade_id || `${item.simulation_session_id || item.training_session_id || "session"}-${item.trade_sequence}`;
+}
+
+function comparePerformanceItems(a: TradeTrainingPerformancePoint, b: TradeTrainingPerformancePoint): number {
+  const dateCompare = String(a.completed_at || a.chart_exit_date || "").localeCompare(String(b.completed_at || b.chart_exit_date || ""));
+  if (dateCompare !== 0) return dateCompare;
+  return performanceTradeKey(a).localeCompare(performanceTradeKey(b));
+}
+
+function accountProfitTooltip(item: TradeTrainingPerformancePoint): string {
+  return [
+    `#${item.trade_sequence} ${item.stock_name || item.stock_code}`,
+    `차트 매수일: ${item.chart_entry_date || "-"}`,
+    `차트 매도일: ${item.chart_exit_date || "-"}`,
+    `훈련 완료일: ${item.completed_at || "-"}`,
+    `자산: ${fmtWon(item.equity_before ?? 0)} -> ${fmtWon(item.equity_after)}`,
+    `순손익: ${fmtSignedWon(item.net_pnl)}`,
+    `누적 수익률: ${fmtPercent(item.cumulative_return_pct ?? 0)}`,
+  ].join("\n");
+}
+
+function profitLossRatioMessage(summary: TradeTrainingAccountSummary | null): { title: string; body: string } {
+  const status = summary?.profit_loss_ratio_status || "NO_CLOSED_TRADES";
+  if (status === "AVAILABLE") return { title: fmtNumber(summary?.profit_loss_ratio ?? 0, 2), body: "평균 수익 / 평균 손실" };
+  if (status === "NO_LOSS_TRADES") return { title: "산출 불가", body: "손실 거래가 아직 없습니다." };
+  if (status === "NO_WIN_TRADES") return { title: "산출 불가", body: "수익 거래가 아직 없습니다." };
+  return { title: "산출 전", body: "완료 거래가 아직 없습니다." };
+}
+
+function profitLossRatioMessageV2(summary: TradeTrainingAccountSummary | null): { title: string; body: string } {
+  const status = summary?.profit_loss_ratio_status || "NO_CLOSED_TRADES";
+  const avgProfit = summary?.average_profit === null || summary?.average_profit === undefined ? null : fmtSignedWon(summary.average_profit);
+  const avgLoss = summary?.average_loss === null || summary?.average_loss === undefined ? null : fmtSignedWon(summary.average_loss);
+  if (status === "AVAILABLE") {
+    return { title: fmtNumber(summary?.profit_loss_ratio ?? 0, 2), body: `평균 수익 ${avgProfit ?? "-"} · 평균 손실 ${avgLoss ?? "-"}` };
+  }
+  if (status === "NO_LOSS_TRADES") {
+    return { title: "산출 대기", body: `손실 거래가 아직 없습니다. · 평균 수익 ${avgProfit ?? "-"}` };
+  }
+  if (status === "NO_WIN_TRADES") {
+    return { title: "산출 대기", body: `수익 거래가 아직 없습니다. · 평균 손실 ${avgLoss ?? "-"}` };
+  }
+  return { title: "산출 전", body: "완료 거래가 필요합니다." };
 }
 
 function buildTradeLogRows(trades: TrainingTrade[]): TradeLogRow[] {
@@ -1191,7 +1261,1568 @@ function TrainingMethodPrinciples({
   );
 }
 
+type AccountStatusFilter = "ALL" | "ACTIVE" | "COMPLETED";
+type AccountDetailTab = "chart" | "active" | "closed";
+type AccountFormMode = "create" | "edit";
+
+const ACCOUNT_STATUS_LABELS: Record<string, string> = {
+  ACTIVE: "진행 중",
+  PAUSED: "일시정지",
+  COMPLETED: "종료",
+  ARCHIVED: "보관",
+};
+
+const accountDefaultForm: TradeTrainingAccountSaveRequest = {
+  name: "",
+  description: "",
+  initial_capital: 50_000_000,
+  commission_rate: 0.001,
+  risk_per_trade_pct: 1,
+  max_open_risk_pct: 3,
+  max_position_count: 5,
+  display_days_default: 80,
+  moving_average_periods_default: [5, 10, 20, 60, 120],
+};
+
+function parseNumericText(value: string): number {
+  return Number(value.replace(/,/g, "").trim());
+}
+
+function formatNumericText(value: number | string | null | undefined): string {
+  const numeric = typeof value === "number" ? value : parseNumericText(String(value || "0"));
+  if (!Number.isFinite(numeric)) return "";
+  return Math.round(numeric).toLocaleString("ko-KR");
+}
+
+function accountToForm(account: TradeTrainingAccount): TradeTrainingAccountSaveRequest {
+  return {
+    name: account.name,
+    description: account.description || "",
+    status: account.status,
+    initial_capital: account.initial_capital,
+    cash_balance: account.cash_balance,
+    realized_equity: account.realized_equity,
+    commission_rate: account.commission_rate,
+    risk_per_trade_pct: account.risk_per_trade_pct,
+    max_open_risk_pct: account.max_open_risk_pct,
+    max_position_count: account.max_position_count,
+    display_days_default: account.display_days_default,
+    moving_average_periods_default: account.moving_average_periods_default,
+  };
+}
+
+function AccountStatusBadge({ status }: { status: string }) {
+  return <span className={`account-training-status account-training-status-${status.toLowerCase()}`}>{ACCOUNT_STATUS_LABELS[status] || status}</span>;
+}
+
+function AccountInfoPopover({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  useEffect(() => {
+    if (!open) return;
+    const close = () => onToggle();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onToggle]);
+
+  return (
+    <span className="account-training-info-wrap">
+      <button type="button" className="training-icon-button account-training-info-button" onClick={onToggle} aria-label="계좌관리매매 훈련 설명">
+        <Info size={16} />
+      </button>
+      {open ? (
+        <div className="account-training-popover" role="dialog">
+          <p>서로 다른 종목과 차트 기간의 매매훈련을 하나의 훈련계좌에 연결합니다.</p>
+          <p>각 종목훈련은 독립적인 차트 날짜를 사용하며, 완료된 거래의 손익은 훈련계좌에 누적됩니다.</p>
+          <p>누적 거래를 기준으로 Winning Ratio, Profit/Loss Ratio와 훈련자산 곡선을 계산합니다.</p>
+        </div>
+      ) : null}
+    </span>
+  );
+}
+
+function TrainingAccountForm({
+  mode,
+  initialValue,
+  saving,
+  onCancel,
+  onSave,
+  onDelete,
+}: {
+  mode: AccountFormMode;
+  initialValue?: TradeTrainingAccount | null;
+  saving: boolean;
+  onCancel: () => void;
+  onSave: (payload: TradeTrainingAccountSaveRequest) => Promise<void>;
+  onDelete?: () => void;
+}) {
+  const [form, setForm] = useState<TradeTrainingAccountSaveRequest>(() => (initialValue ? accountToForm(initialValue) : accountDefaultForm));
+  const [capitalText, setCapitalText] = useState(formatNumericText(initialValue?.initial_capital ?? accountDefaultForm.initial_capital));
+  const [riskPerTradeText, setRiskPerTradeText] = useState(String(initialValue?.risk_per_trade_pct ?? accountDefaultForm.risk_per_trade_pct));
+  const [maxOpenRiskText, setMaxOpenRiskText] = useState(String(initialValue?.max_open_risk_pct ?? accountDefaultForm.max_open_risk_pct));
+  const [maText, setMaText] = useState((initialValue?.moving_average_periods_default || accountDefaultForm.moving_average_periods_default).join(","));
+  const [warning, setWarning] = useState("");
+
+  useEffect(() => {
+    setForm(initialValue ? accountToForm(initialValue) : accountDefaultForm);
+    setCapitalText(formatNumericText(initialValue?.initial_capital ?? accountDefaultForm.initial_capital));
+    setRiskPerTradeText(String(initialValue?.risk_per_trade_pct ?? accountDefaultForm.risk_per_trade_pct));
+    setMaxOpenRiskText(String(initialValue?.max_open_risk_pct ?? accountDefaultForm.max_open_risk_pct));
+    setMaText((initialValue?.moving_average_periods_default || accountDefaultForm.moving_average_periods_default).join(","));
+  }, [initialValue?.id, mode]);
+
+  const update = (field: keyof TradeTrainingAccountSaveRequest, value: string | number) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    const name = form.name.trim();
+    const mas = normalizeMas(maText);
+    const initialCapital = parseNumericText(capitalText);
+    const riskPerTradePct = Number(riskPerTradeText);
+    const maxOpenRiskPct = Number(maxOpenRiskText);
+    const nextWarnings = [];
+    if (!name) nextWarnings.push("계좌명을 입력해 주세요.");
+    if (!Number.isFinite(initialCapital) || initialCapital <= 0) nextWarnings.push("초기자산은 0보다 큰 숫자로 입력해 주세요.");
+    if (!Number.isFinite(riskPerTradePct) || riskPerTradePct <= 0) nextWarnings.push("거래당 위험률은 0보다 큰 숫자로 입력해 주세요.");
+    if (!Number.isFinite(maxOpenRiskPct) || maxOpenRiskPct <= 0) nextWarnings.push("전체 위험 한도는 0보다 큰 숫자로 입력해 주세요.");
+    if (Number.isFinite(riskPerTradePct) && riskPerTradePct > 2) nextWarnings.push("거래당 위험률이 2%를 초과합니다.");
+    if (Number.isFinite(maxOpenRiskPct) && Number.isFinite(riskPerTradePct) && maxOpenRiskPct < riskPerTradePct) nextWarnings.push("전체 위험 한도는 거래당 위험률 이상을 권장합니다.");
+    if (!mas.length) nextWarnings.push("이동평균선 기본값을 1개 이상 입력해 주세요.");
+    setWarning(nextWarnings.join(" "));
+    if (!name || !mas.length || !Number.isFinite(initialCapital) || initialCapital <= 0 || !Number.isFinite(riskPerTradePct) || riskPerTradePct <= 0 || !Number.isFinite(maxOpenRiskPct) || maxOpenRiskPct <= 0) return;
+    await onSave({
+      ...form,
+      name,
+      description: form.description?.trim() || null,
+      initial_capital: initialCapital,
+      commission_rate: Number(form.commission_rate),
+      risk_per_trade_pct: riskPerTradePct,
+      max_open_risk_pct: maxOpenRiskPct,
+      max_position_count: Number(form.max_position_count),
+      display_days_default: Number(form.display_days_default),
+      moving_average_periods_default: mas,
+    });
+  };
+
+  return (
+    <form className="account-training-form" onSubmit={submit} noValidate>
+      <div className="account-training-detail-head">
+        <div>
+          <h4>{mode === "create" ? "새 훈련계좌" : "계좌 설정"}</h4>
+          <span>계좌 기본정보와 종목훈련 기본값을 관리합니다.</span>
+        </div>
+        {initialValue ? <AccountStatusBadge status={initialValue.status} /> : null}
+      </div>
+      <section className="account-training-form-section">
+        <h5>기본 정보</h5>
+        <div className="account-training-form-grid account-training-form-grid-basic">
+          <label className="wide"><span>계좌명</span><input className="input-control" maxLength={100} value={form.name} onChange={(event) => update("name", event.target.value)} /></label>
+          <label><span>초기자산</span><input className="input-control" inputMode="numeric" value={capitalText} onChange={(event) => setCapitalText(event.target.value.replace(/[^\d,]/g, ""))} onBlur={() => setCapitalText(formatNumericText(capitalText))} /></label>
+          <label><span>수수료율(%)</span><input className="input-control account-training-number-input" type="number" min={0} step="any" value={form.commission_rate * 100} onChange={(event) => update("commission_rate", (Number(event.target.value) || 0) / 100)} /></label>
+          <label className="wide"><span>계좌 설명</span><textarea className="input-control" rows={3} value={form.description || ""} onChange={(event) => update("description", event.target.value)} /></label>
+        </div>
+      </section>
+      <section className="account-training-form-section">
+        <h5>리스크 기본값</h5>
+        <div className="account-training-form-grid account-training-form-grid-risk">
+          <label><span>거래당 위험률(%)</span><input className="input-control" type="text" inputMode="decimal" value={riskPerTradeText} onChange={(event) => setRiskPerTradeText(event.target.value)} /></label>
+          <label><span>전체 위험 한도(%)</span><input className="input-control" type="text" inputMode="decimal" value={maxOpenRiskText} onChange={(event) => setMaxOpenRiskText(event.target.value)} /></label>
+          <label><span>최대 보유 포지션</span><input className="input-control account-training-number-input" type="number" min={1} step={1} value={form.max_position_count} onChange={(event) => update("max_position_count", Number(event.target.value) || 1)} /></label>
+        </div>
+      </section>
+      <section className="account-training-form-section">
+        <h5>차트 기본값</h5>
+        <div className="account-training-form-grid account-training-form-grid-chart">
+          <label><span>표시 일수 기본값</span><input className="input-control account-training-number-input" type="number" min={1} max={400} step={1} value={form.display_days_default} onChange={(event) => update("display_days_default", Number(event.target.value) || 80)} /></label>
+          <label><span>이동평균선 기본값</span><input className="input-control" value={maText} onChange={(event) => setMaText(event.target.value)} /></label>
+        </div>
+      </section>
+      {warning ? <p className="account-training-warning">{warning}</p> : null}
+      <div className="account-training-form-footer">
+        <div>
+          {mode === "edit" && onDelete ? <button type="button" className="btn btn-danger" disabled={saving} onClick={onDelete}>계좌 삭제</button> : null}
+        </div>
+        <div className="training-modal-actions">
+          <button type="button" className="btn btn-secondary" disabled={saving} onClick={onCancel}>취소</button>
+          <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? "저장 중..." : mode === "create" ? "계좌 만들기" : "계좌 저장"}</button>
+        </div>
+      </div>
+    </form>
+  );
+}
+
+function AccountPerformanceTabs({
+  tab,
+  onTabChange,
+  onNewTraining,
+  sessions,
+  closedTrades,
+  performance,
+  onOpenResult,
+}: {
+  tab: AccountDetailTab;
+  onTabChange: (tab: AccountDetailTab) => void;
+  onNewTraining: () => void;
+  sessions: TradeTrainingAccountSession[];
+  closedTrades: TradeTrainingClosedTrade[];
+  performance: TradeTrainingAccountPerformance | null;
+  onOpenResult: (sessionId: number) => void;
+}) {
+  return (
+    <div className="account-training-tabs">
+      <div className="training-order-tabs">
+        <button type="button" className={tab === "chart" ? "active" : ""} onClick={() => onTabChange("chart")}>손익차트</button>
+        <button type="button" className={tab === "active" ? "active" : ""} onClick={() => onTabChange("active")}>진행 중 매매</button>
+        <button type="button" className={tab === "closed" ? "active" : ""} onClick={() => onTabChange("closed")}>완료 거래</button>
+      </div>
+      <div className="account-training-tab-panel">
+        {tab === "chart" ? (
+          <AccountProfitChart performance={performance} onNewTraining={onNewTraining} />
+        ) : null}
+        {tab === "active" ? <AccountActiveSessions sessions={sessions} /> : null}
+        {tab === "closed" ? <AccountClosedTradesTable closedTrades={closedTrades} onOpenResult={onOpenResult} /> : null}
+      </div>
+    </div>
+  );
+}
+
+function AccountProfitChart({ performance, onNewTraining }: { performance: TradeTrainingAccountPerformance | null; onNewTraining: () => void }) {
+  const items = performance?.items || [];
+  if (!items.length) {
+    return (
+      <div className="account-training-empty-panel">
+        <strong>완료된 거래가 없습니다.</strong>
+        <span>신규매매를 시작하고 전량매도로 거래를 완료하면 거래별 손익과 누적 훈련자산 곡선이 표시됩니다.</span>
+        <button type="button" className="btn btn-primary" onClick={onNewTraining}>신규매매 시작</button>
+      </div>
+    );
+  }
+  const width = Math.max(620, items.length * 76 + 120);
+  const height = 260;
+  const pad = { top: 28, right: 48, bottom: 46, left: 70 };
+  const pnlMax = Math.max(1, ...items.map((item) => Math.abs(Number(item.net_pnl || 0))));
+  const equities = [performance?.initial_capital || 0, ...items.map((item) => Number(item.equity_after || 0))];
+  const equityMin = Math.min(...equities);
+  const equityMax = Math.max(...equities);
+  const equitySpan = Math.max(1, equityMax - equityMin);
+  const chartHeight = height - pad.top - pad.bottom;
+  const slot = (width - pad.left - pad.right) / Math.max(1, items.length);
+  const zeroY = pad.top + chartHeight / 2;
+  const yPnl = (value: number) => zeroY - (value / pnlMax) * (chartHeight / 2 - 14);
+  const yEquity = (value: number) => pad.top + ((equityMax - value) / equitySpan) * chartHeight;
+  const points = items.map((item, index) => `${pad.left + slot * index + slot / 2},${yEquity(Number(item.equity_after || 0))}`).join(" ");
+  return (
+    <div className="account-training-chart-shell">
+      <div className="account-training-chart-head">
+        <strong>거래별 손익과 누적 훈련자산</strong>
+        <span>전체 종목 · 전체</span>
+      </div>
+      <svg className="account-training-profit-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="계좌 손익차트">
+        <line x1={pad.left} y1={zeroY} x2={width - pad.right} y2={zeroY} stroke="#cbd5e1" strokeDasharray="4 4" />
+        {items.map((item, index) => {
+          const x = pad.left + slot * index + slot / 2;
+          const value = Number(item.net_pnl || 0);
+          const y = yPnl(value);
+          const barTop = Math.min(y, zeroY);
+          const barHeight = Math.max(2, Math.abs(zeroY - y));
+          const fill = value > 0 ? "#ef4444" : value < 0 ? "#2563eb" : "#94a3b8";
+          return (
+            <g key={item.trade_sequence}>
+              <rect x={x - 16} y={barTop} width={32} height={barHeight} rx={4} fill={fill}>
+                <title>{`거래 #${item.trade_sequence} ${item.stock_name || item.stock_code} ${fmtSignedWon(item.net_pnl)} / 거래 후 자산 ${fmtWon(item.equity_after)}`}</title>
+              </rect>
+              <text x={x} y={height - 18} textAnchor="middle" fontSize="11" fill="#64748b">#{item.trade_sequence}</text>
+            </g>
+          );
+        })}
+        <polyline points={points} fill="none" stroke="#111827" strokeWidth="2.4" />
+        {items.map((item, index) => {
+          const x = pad.left + slot * index + slot / 2;
+          const y = yEquity(Number(item.equity_after || 0));
+          return <circle key={`point-${item.trade_sequence}`} cx={x} cy={y} r={4} fill="#111827" />;
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function AccountActiveSessions({ sessions }: { sessions: TradeTrainingAccountSession[] }) {
+  if (!sessions.length) return <div className="account-training-empty-panel"><strong>진행 중인 종목매매가 없습니다.</strong></div>;
+  return (
+    <div className="table-shell">
+      <table className="data-table compact-table account-training-table">
+        <thead><tr><th>종목</th><th>상태</th><th>현재 차트일</th><th className="numeric-cell">보유수량</th><th className="numeric-cell">실현손익</th><th>마지막 수정</th></tr></thead>
+        <tbody>
+          {sessions.map((session) => (
+            <tr key={session.id}>
+              <td>{session.stock_name || session.stock_code}</td>
+              <td>{session.position_qty > 0 ? "현재 보유 중" : "차트 탐색 중"}</td>
+              <td>{session.current_date || "-"}</td>
+              <td className="numeric-cell">{fmtNumber(session.position_qty)}</td>
+              <td className={`numeric-cell ${profitClass(session.realized_profit)}`}>{fmtSignedWon(session.realized_profit)}</td>
+              <td>{session.updated_at || "-"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function AccountClosedTradesTable({ closedTrades, onOpenResult }: { closedTrades: TradeTrainingClosedTrade[]; onOpenResult: (sessionId: number) => void }) {
+  if (!closedTrades.length) return <div className="account-training-empty-panel"><strong>완료된 거래가 없습니다.</strong></div>;
+  return (
+    <div className="table-shell">
+      <table className="data-table compact-table account-training-table">
+        <thead><tr><th>순번</th><th>종목</th><th>매수일</th><th>매도일</th><th className="numeric-cell">보유 봉</th><th className="numeric-cell">매수가</th><th className="numeric-cell">매도가</th><th className="numeric-cell">수량</th><th className="numeric-cell">순손익</th><th className="numeric-cell">수익률</th><th>완료 시각</th></tr></thead>
+        <tbody>
+          {closedTrades.map((trade) => (
+            <tr key={trade.id} className="account-training-clickable-row" onClick={() => onOpenResult(trade.training_session_id)}>
+              <td>#{trade.trade_sequence}</td>
+              <td>{trade.stock_name || trade.stock_code}</td>
+              <td>{trade.opened_chart_date}</td>
+              <td>{trade.closed_chart_date}</td>
+              <td className="numeric-cell">{fmtNumber(trade.holding_bars)}</td>
+              <td className="numeric-cell">{fmtWon(trade.avg_buy_price)}</td>
+              <td className="numeric-cell">{fmtWon(trade.avg_sell_price)}</td>
+              <td className="numeric-cell">{fmtNumber(trade.quantity)}</td>
+              <td className={`numeric-cell ${profitClass(trade.net_pnl)}`}>{fmtSignedWon(trade.net_pnl)}</td>
+              <td className={`numeric-cell ${profitClass(trade.return_pct)}`}>{fmtPercent(trade.return_pct)}</td>
+              <td>{trade.completed_at || "-"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function AccountPerformanceTabsV2({
+  tab,
+  onTabChange,
+  onNewTraining,
+  summary,
+  sessions,
+  closedTrades,
+  performance,
+  onOpenResult,
+  onResumeSession,
+}: {
+  tab: AccountDetailTab;
+  onTabChange: (tab: AccountDetailTab) => void;
+  onNewTraining: () => void;
+  summary: TradeTrainingAccountSummary | null;
+  sessions: TradeTrainingAccountSession[];
+  closedTrades: TradeTrainingClosedTrade[];
+  performance: TradeTrainingAccountPerformance | null;
+  onOpenResult: (sessionId: number) => void;
+  onResumeSession: (sessionId: number) => void;
+}) {
+  const plrReason = profitLossRatioMessageV2(summary);
+  const tabs: Array<{ id: AccountDetailTab; label: string; count: number }> = [
+    { id: "chart", label: "손익차트", count: closedTrades.length },
+    { id: "active", label: "진행 중 매매", count: sessions.length },
+    { id: "closed", label: "완료 거래", count: closedTrades.length },
+  ];
+  return (
+    <div className="account-training-tabs">
+      <div className="account-training-tab-list" role="tablist" aria-label="계좌관리매매 훈련 상세">
+        {tabs.map((item) => (
+          <button key={item.id} type="button" role="tab" aria-selected={tab === item.id} className={tab === item.id ? "active" : ""} onClick={() => onTabChange(item.id)}>
+            <span>{item.label}</span>
+            <em>{fmtNumber(item.count)}</em>
+          </button>
+        ))}
+      </div>
+      <div className="account-plr-status">
+        <strong>Profit/Loss Ratio {plrReason.title}</strong>
+        <span className="account-plr-status-clean">{plrReason.body} · 수익 {fmtNumber(summary?.winning_trade_count ?? 0)}건 · 손실 {fmtNumber(summary?.losing_trade_count ?? 0)}건 · 보합 {fmtNumber(summary?.flat_trade_count ?? 0)}건</span>
+        <span>{plrReason.body} · 수익 {fmtNumber(summary?.winning_trade_count ?? 0)}건 · 손실 {fmtNumber(summary?.losing_trade_count ?? 0)}건 · 보합 {fmtNumber(summary?.flat_trade_count ?? 0)}건</span>
+      </div>
+      <div className="account-training-tab-panel account-training-tab-panel-v2" role="tabpanel">
+        {tab === "chart" ? <AccountProfitChartV2 performance={performance} onNewTraining={onNewTraining} onOpenResult={onOpenResult} /> : null}
+        {tab === "active" ? <AccountActiveSessionsV2 sessions={sessions} onResumeSession={onResumeSession} /> : null}
+        {tab === "closed" ? <AccountClosedTradesTableV2 closedTrades={closedTrades} onOpenResult={onOpenResult} /> : null}
+      </div>
+    </div>
+  );
+}
+
+type AccountProfitRangeMode = "20" | "50" | "all";
+
+function AccountProfitChartV2({ performance, onNewTraining, onOpenResult }: { performance: TradeTrainingAccountPerformance | null; onNewTraining: () => void; onOpenResult: (sessionId: number) => void }) {
+  const [rangeMode, setRangeMode] = useState<AccountProfitRangeMode>("20");
+  const [xAxisMode, setXAxisMode] = useState<"completed" | "sequence">("completed");
+  const [assetMode, setAssetMode] = useState<"return" | "equity">("equity");
+  const [showRisk, setShowRisk] = useState(false);
+  const [selectedTradeId, setSelectedTradeId] = useState<string | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const items = useMemo(() => [...(performance?.items || [])].sort(comparePerformanceItems), [performance?.items]);
+  const visibleItems = useMemo(() => rangeMode === "all" ? items : items.slice(-Number(rangeMode)), [items, rangeMode]);
+  const selectedTrade = visibleItems.find((item) => performanceTradeKey(item) === selectedTradeId) || visibleItems[visibleItems.length - 1] || null;
+
+  useEffect(() => {
+    if (!visibleItems.length) {
+      setSelectedTradeId(null);
+      return;
+    }
+    if (selectedTradeId && !visibleItems.some((item) => performanceTradeKey(item) === selectedTradeId)) {
+      setSelectedTradeId(performanceTradeKey(visibleItems[visibleItems.length - 1]));
+    }
+  }, [selectedTradeId, visibleItems]);
+
+  useEffect(() => {
+    if (!fullscreen) return undefined;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFullscreen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [fullscreen]);
+
+  if (!items.length) {
+    return (
+      <div className="account-training-empty-panel">
+        <strong>완료 거래가 없습니다.</strong>
+        <span>계좌에 연결된 종목훈련에서 전량 매도까지 완료하면 거래별 손익과 누적 자산 흐름이 표시됩니다.</span>
+        <button type="button" className="btn btn-primary" onClick={onNewTraining}>신규매매 시작</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="account-training-chart-shell account-training-chart-shell-v2">
+      <div className="account-training-chart-head">
+        <div>
+          <strong>거래별 손익과 누적 자산</strong>
+          <span>완료일 오름차순 · 전량 매도 기준</span>
+        </div>
+        <button type="button" className="training-icon-button" onClick={() => setFullscreen(true)} aria-label="차트 크게 보기"><Maximize2 size={16} /></button>
+      </div>
+      <AccountProfitToolbar rangeMode={rangeMode} setRangeMode={setRangeMode} xAxisMode={xAxisMode} setXAxisMode={setXAxisMode} assetMode={assetMode} setAssetMode={setAssetMode} showRisk={showRisk} setShowRisk={setShowRisk} />
+      <AccountProfitPlotFixed items={visibleItems} rangeMode={rangeMode} accountInitialCapital={performance?.initial_capital ?? null} xAxisMode={xAxisMode} assetMode={assetMode} selectedTradeId={selectedTradeId} onSelectTrade={setSelectedTradeId} />
+      <SelectedTradeDetailCardCompact trade={selectedTrade} onOpenReport={onOpenResult} />
+      {fullscreen ? (
+        <div className="account-profit-fullscreen-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setFullscreen(false); }}>
+          <div className="account-profit-fullscreen" role="dialog" aria-modal="true" aria-label="손익차트 크게 보기" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="account-profit-fullscreen-head">
+              <strong>손익차트</strong>
+              <button type="button" className="training-icon-button" onClick={() => setFullscreen(false)} aria-label="차트 닫기"><Minimize2 size={16} /></button>
+            </div>
+            <AccountProfitFullscreenStats performance={performance} visibleCount={visibleItems.length} />
+            <div className="account-profit-fullscreen-body">
+              <AccountProfitToolbar rangeMode={rangeMode} setRangeMode={setRangeMode} xAxisMode={xAxisMode} setXAxisMode={setXAxisMode} assetMode={assetMode} setAssetMode={setAssetMode} showRisk={showRisk} setShowRisk={setShowRisk} />
+              <section className="account-profit-fullscreen-chart-section">
+                <AccountProfitPlotFixed items={visibleItems} rangeMode={rangeMode} accountInitialCapital={performance?.initial_capital ?? null} xAxisMode={xAxisMode} assetMode={assetMode} selectedTradeId={selectedTradeId} onSelectTrade={setSelectedTradeId} fullscreen />
+              </section>
+              <section className="account-profit-fullscreen-detail-section">
+                <SelectedTradeDetailCardCompact trade={selectedTrade} onOpenReport={onOpenResult} />
+              </section>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function AccountProfitToolbar({
+  rangeMode,
+  setRangeMode,
+  xAxisMode,
+  setXAxisMode,
+  assetMode,
+  setAssetMode,
+  showRisk,
+  setShowRisk,
+}: {
+  rangeMode: AccountProfitRangeMode;
+  setRangeMode: (value: AccountProfitRangeMode) => void;
+  xAxisMode: "completed" | "sequence";
+  setXAxisMode: (value: "completed" | "sequence") => void;
+  assetMode: "return" | "equity";
+  setAssetMode: (value: "return" | "equity") => void;
+  showRisk: boolean;
+  setShowRisk: (value: boolean) => void;
+}) {
+  return (
+    <div className="account-profit-toolbar">
+      <div className="segmented-control" aria-label="표시 거래 수">
+        {(["20", "50", "all"] as const).map((value) => (
+          <button key={value} type="button" className={rangeMode === value ? "active" : ""} onClick={() => setRangeMode(value)}>{value === "all" ? "전체" : `최근 ${value}`}</button>
+        ))}
+      </div>
+      <div className="segmented-control" aria-label="X축">
+        <button type="button" className={xAxisMode === "completed" ? "active" : ""} onClick={() => setXAxisMode("completed")}>훈련 완료일</button>
+        <button type="button" className={xAxisMode === "sequence" ? "active" : ""} onClick={() => setXAxisMode("sequence")}>거래 순번</button>
+      </div>
+      <div className="segmented-control" aria-label="누적 자산 표시">
+        <button type="button" className={assetMode === "return" ? "active" : ""} onClick={() => setAssetMode("return")}>수익률</button>
+        <button type="button" className={assetMode === "equity" ? "active" : ""} onClick={() => setAssetMode("equity")}>자산금액</button>
+      </div>
+      <label className="account-profit-risk-toggle"><input type="checkbox" checked={showRisk} onChange={(event) => setShowRisk(event.target.checked)} /><span>리스크</span></label>
+    </div>
+  );
+}
+
+function AccountProfitFullscreenStats({ performance, visibleCount }: { performance: TradeTrainingAccountPerformance | null; visibleCount: number }) {
+  const initialCapital = performance?.initial_capital ?? 0;
+  const currentEquity = performance?.current_realized_equity ?? performance?.items?.[performance.items.length - 1]?.equity_after ?? initialCapital;
+  const realizedPnl = currentEquity - initialCapital;
+  return (
+    <div className="account-profit-fullscreen-stats">
+      <span>초기자산 <strong>{fmtWon(initialCapital)}</strong></span>
+      <span>현재 누적자산 <strong>{fmtWon(currentEquity)}</strong></span>
+      <span>누적 실현손익 <strong className={profitClass(realizedPnl)}>{fmtSignedWon(realizedPnl)}</strong></span>
+      <span>누적 수익률 <strong className={profitClass(performance?.cumulative_return_pct)}>{fmtPercent(performance?.cumulative_return_pct ?? 0)}</strong></span>
+      <span>완료 거래 <strong>{fmtNumber(visibleCount)}건</strong></span>
+    </div>
+  );
+}
+
+function buildAmountTicks(minValue: number, maxValue: number, baseUnit: number, units: number[], maxTickCount = 8) {
+  const finiteMin = Number.isFinite(minValue) ? minValue : 0;
+  const finiteMax = Number.isFinite(maxValue) ? maxValue : 0;
+  let unit = baseUnit;
+  for (const candidate of units) {
+    const domainMin = Math.min(0, Math.floor(finiteMin / candidate) * candidate);
+    const domainMax = Math.max(0, Math.ceil(finiteMax / candidate) * candidate);
+    const tickCount = Math.round((domainMax - domainMin) / candidate) + 1;
+    unit = candidate;
+    if (tickCount <= maxTickCount) break;
+  }
+  const domainMin = Math.min(0, Math.floor(finiteMin / unit) * unit);
+  const domainMax = Math.max(0, Math.ceil(finiteMax / unit) * unit);
+  const ticks: number[] = [];
+  for (let value = domainMax; value >= domainMin; value -= unit) ticks.push(value);
+  if (!ticks.includes(0)) ticks.push(0);
+  return {
+    min: domainMin,
+    max: domainMax,
+    unit,
+    ticks: Array.from(new Set(ticks)).sort((a, b) => b - a),
+  };
+}
+
+function buildEquityTicks(equityValues: number[], initialCapital: number) {
+  const finiteValues = equityValues.filter((value) => Number.isFinite(value));
+  const baseUnit = initialCapital < 10_000_000 ? 1_000_000 : initialCapital < 50_000_000 ? 5_000_000 : 5_000_000;
+  const units = [baseUnit, 10_000_000, 20_000_000, 50_000_000, 100_000_000].filter((value, index, arr) => value >= baseUnit && arr.indexOf(value) === index);
+  const minValue = Math.min(initialCapital, ...finiteValues);
+  const maxValue = Math.max(initialCapital, ...finiteValues);
+  let unit = baseUnit;
+  for (const candidate of units) {
+    const tickCount = Math.round((Math.ceil(maxValue / candidate) * candidate - Math.floor(minValue / candidate) * candidate) / candidate) + 1;
+    unit = candidate;
+    if (tickCount <= 8) break;
+  }
+  const domainMin = Math.floor(minValue / unit) * unit;
+  const domainMax = Math.ceil(maxValue / unit) * unit;
+  const ticks: number[] = [];
+  for (let value = domainMax; value >= domainMin; value -= unit) ticks.push(value);
+  return ticks;
+}
+
+function accountProfitDensity(rangeMode: AccountProfitRangeMode, itemCount: number, fullscreen: boolean) {
+  if (rangeMode === "all") {
+    return {
+      slotWidth: 0,
+      barWidth: Math.max(1, Math.min(fullscreen ? 10 : 8, 560 / Math.max(1, itemCount) * 0.55)),
+      showAllPoints: itemCount <= 20,
+      useHorizontalScroll: false,
+    };
+  }
+  if (rangeMode === "50") {
+    return { slotWidth: fullscreen ? 48 : 42, barWidth: fullscreen ? 12 : 9, showAllPoints: itemCount <= 50, useHorizontalScroll: true };
+  }
+  return { slotWidth: fullscreen ? 68 : 64, barWidth: fullscreen ? 18 : 16, showAllPoints: true, useHorizontalScroll: true };
+}
+
+function xAxisLabelInterval(itemCount: number, rangeMode: AccountProfitRangeMode, plotWidth: number) {
+  if (itemCount <= 1) return 1;
+  if (rangeMode === "20") return itemCount <= 20 ? 1 : 2;
+  if (rangeMode === "50") return 5;
+  const desiredLabelCount = Math.max(6, Math.floor(plotWidth / 110));
+  return Math.max(1, Math.ceil(itemCount / desiredLabelCount));
+}
+
+function AccountProfitPlotFixed({
+  items,
+  rangeMode,
+  accountInitialCapital,
+  xAxisMode,
+  assetMode,
+  selectedTradeId,
+  onSelectTrade,
+  fullscreen = false,
+}: {
+  items: TradeTrainingPerformancePoint[];
+  rangeMode: AccountProfitRangeMode;
+  accountInitialCapital: number | null;
+  xAxisMode: "completed" | "sequence";
+  assetMode: "return" | "equity";
+  selectedTradeId: string | null;
+  onSelectTrade: (value: string | null) => void;
+  fullscreen?: boolean;
+}) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const chartKey = `${items.map(performanceTradeKey).join(",")}:${xAxisMode}:${assetMode}:${fullscreen}`;
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        element.scrollLeft = rangeMode === "all" ? 0 : element.scrollWidth - element.clientWidth;
+      });
+    });
+  }, [chartKey, rangeMode]);
+
+  const density = accountProfitDensity(rangeMode, items.length, fullscreen);
+  const width = rangeMode === "all" ? (fullscreen ? 1570 : 1030) : Math.max(fullscreen ? 1570 : 1030, items.length * density.slotWidth + 224);
+  const height = fullscreen ? 680 : 340;
+  const pad = { top: 38, right: 128, bottom: fullscreen ? 112 : 64, left: 96 };
+  const chartHeight = height - pad.top - pad.bottom;
+  const slot = (width - pad.left - pad.right) / Math.max(1, items.length);
+
+  const firstItem = items[0];
+  const initialCapital = Number(accountInitialCapital ?? firstItem?.equity_before ?? (firstItem ? Number(firstItem.equity_after || 0) - Number(firstItem.net_pnl || 0) : 0));
+  const visibleStartEquity = Number(firstItem?.equity_before ?? initialCapital);
+  const assetDelta = (item: TradeTrainingPerformancePoint) => Number(item.equity_after || 0) - visibleStartEquity;
+  const pnlValues = items.map((item) => Number(item.net_pnl || 0));
+  const equityValues = [visibleStartEquity, ...items.map((item) => Number(item.equity_after || 0))].filter((value) => Number.isFinite(value));
+  const equityTicks = buildEquityTicks(equityValues, initialCapital);
+  const assetDeltaValues = items.map(assetDelta);
+  const equityTickDeltas = equityTicks.map((value) => value - visibleStartEquity);
+  const rawPnlMin = Math.min(0, ...pnlValues, ...assetDeltaValues, ...equityTickDeltas);
+  const rawPnlMax = Math.max(0, ...pnlValues, ...assetDeltaValues, ...equityTickDeltas);
+  const pnlAxis = buildAmountTicks(rawPnlMin, rawPnlMax, 1_000_000, [1_000_000, 2_000_000, 5_000_000, 10_000_000, 20_000_000, 50_000_000]);
+  const pnlMin = pnlAxis.min;
+  const pnlMax = pnlAxis.max;
+  const pnlSpan = Math.max(1, pnlMax - pnlMin);
+  const yPnl = (value: number) => pad.top + ((pnlMax - value) / pnlSpan) * chartHeight;
+  const zeroY = yPnl(0);
+
+  const yAsset = (item: TradeTrainingPerformancePoint) => yPnl(assetDelta(item));
+  const dateCounts = new Map<string, number>();
+  const labelInterval = xAxisLabelInterval(items.length, rangeMode, width - pad.left - pad.right);
+  const selectedIndex = selectedTradeId ? items.findIndex((item) => performanceTradeKey(item) === selectedTradeId) : -1;
+  const points = items.map((item, index) => {
+    return `${pad.left + slot * index + slot / 2},${yAsset(item)}`;
+  }).join(" ");
+  const shouldShowPoint = (index: number) => density.showAllPoints || index === 0 || index === items.length - 1 || index === selectedIndex;
+  const shouldShowLabel = (index: number) => index === 0 || index === items.length - 1 || index === selectedIndex || index % labelInterval === 0;
+
+  return (
+    <div className={`account-profit-plot-scroll ${fullscreen ? "fullscreen-plot" : ""} ${rangeMode === "all" ? "all-mode" : ""}`} ref={scrollRef}>
+      <svg className="account-training-profit-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="계좌 손익차트">
+        <text x={pad.left} y={16} fontSize="11" fontWeight="800" fill="#475569">거래별 순손익</text>
+        <text x={width - pad.right} y={16} textAnchor="end" fontSize="11" fontWeight="800" fill="#475569">{assetMode === "return" ? "누적 수익률" : "계좌 누적 금액"}</text>
+        {pnlAxis.ticks.map((tick, tickIndex) => {
+          const tickY = yPnl(tick);
+          return (
+            <g key={`pnl-tick-${tickIndex}`}>
+              <line x1={pad.left} y1={tickY} x2={width - pad.right} y2={tickY} stroke={tick === 0 ? "#94a3b8" : "#e2e8f0"} strokeDasharray={tick === 0 ? "5 5" : undefined} />
+              <text x={pad.left - 10} y={tickY + 4} textAnchor="end" fontSize="11" fill="#64748b">{tick === 0 ? "0" : fmtSignedWon(tick)}</text>
+            </g>
+          );
+        })}
+        <line x1={pad.left} y1={zeroY} x2={width - pad.right} y2={zeroY} stroke="#94a3b8" strokeDasharray="5 5" />
+        {equityTicks.map((value, tickIndex) => {
+          const delta = value - visibleStartEquity;
+          if (delta < pnlMin || delta > pnlMax) return null;
+          const tickY = yPnl(delta);
+          return (
+            <g key={`asset-tick-${tickIndex}`}>
+              <line x1={width - pad.right - 8} y1={tickY} x2={width - pad.right} y2={tickY} stroke="#cbd5e1" />
+              <text x={width - pad.right + 10} y={tickY + 4} fontSize="11" fill="#64748b">{assetMode === "return" ? fmtPercent(initialCapital ? ((value - initialCapital) / initialCapital) * 100 : 0) : fmtWon(value)}</text>
+            </g>
+          );
+        })}
+        {items.map((item, index) => {
+          const x = pad.left + slot * index + slot / 2;
+          const value = Number(item.net_pnl || 0);
+          const y = yPnl(value);
+          const barTop = Math.min(y, zeroY);
+          const barHeight = Math.max(3, Math.abs(zeroY - y));
+          const key = performanceTradeKey(item);
+          const fill = value > 0 ? "#dc2626" : value < 0 ? "#2563eb" : "#94a3b8";
+          const dateLabel = compactDate(item.completed_at || item.chart_exit_date);
+          const dateOrder = (dateCounts.get(dateLabel) || 0) + 1;
+          dateCounts.set(dateLabel, dateOrder);
+          const showDate = xAxisMode === "completed";
+          const barWidth = density.barWidth;
+          const xAxisFontSize = fullscreen ? "10" : "9";
+          return (
+            <g key={key} className={selectedTradeId === key ? "selected" : ""}>
+              <rect x={x - Math.max(slot * 0.45, barWidth / 2)} y={pad.top} width={Math.max(slot * 0.9, barWidth)} height={chartHeight} fill="transparent" onClick={() => onSelectTrade(key)}>
+                <title>{accountProfitTooltip(item)}</title>
+              </rect>
+              <rect className="account-profit-bar" x={x - barWidth / 2} y={barTop} width={barWidth} height={barHeight} rx={4} fill={fill} onClick={() => onSelectTrade(key)}>
+                <title>{accountProfitTooltip(item)}</title>
+              </rect>
+              {shouldShowLabel(index) ? <text x={x} y={height - (fullscreen ? 70 : 36)} textAnchor="middle" fontSize={xAxisFontSize} fill="#64748b">{showDate ? dateLabel : `#${item.trade_sequence}`}</text> : null}
+              {showDate && shouldShowLabel(index) ? <text x={x} y={height - (fullscreen ? 50 : 20)} textAnchor="middle" fontSize={xAxisFontSize} fill="#94a3b8">#{dateOrder}</text> : null}
+            </g>
+          );
+        })}
+        <polyline points={points} fill="none" stroke="#111827" strokeWidth="2.4" />
+        {items.map((item, index) => {
+          if (!shouldShowPoint(index)) return null;
+          const key = performanceTradeKey(item);
+          const x = pad.left + slot * index + slot / 2;
+          return (
+            <circle key={`point-${key}`} cx={x} cy={yAsset(item)} r={selectedTradeId === key ? 5 : 4} fill="#111827" onClick={() => onSelectTrade(key)}>
+              <title>{accountProfitTooltip(item)}</title>
+            </circle>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function AccountProfitPlot({
+  items,
+  xAxisMode,
+  assetMode,
+  selectedTradeId,
+  onSelectTrade,
+  fullscreen = false,
+}: {
+  items: TradeTrainingPerformancePoint[];
+  xAxisMode: "completed" | "sequence";
+  assetMode: "return" | "equity";
+  selectedTradeId: string | null;
+  onSelectTrade: (value: string | null) => void;
+  fullscreen?: boolean;
+}) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const chartKey = `${items.map(performanceTradeKey).join(",")}:${xAxisMode}:${assetMode}:${fullscreen}`;
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (element) element.scrollLeft = element.scrollWidth;
+  }, [chartKey]);
+  const slotWidth = items.length > 50 ? 56 : items.length > 20 ? 66 : 82;
+  const width = Math.max(fullscreen ? 980 : 680, items.length * slotWidth + 170);
+  const height = fullscreen ? 430 : 300;
+  const pad = { top: 34, right: 112, bottom: 62, left: 88 };
+  const chartHeight = height - pad.top - pad.bottom;
+  const slot = (width - pad.left - pad.right) / Math.max(1, items.length);
+  const pnlMax = Math.max(1, ...items.map((item) => Math.abs(Number(item.net_pnl || 0))));
+  const zeroY = pad.top + chartHeight / 2;
+  const yPnl = (value: number) => zeroY - (value / pnlMax) * (chartHeight / 2 - 16);
+  const assetValues = items.map((item) => assetMode === "return" ? Number(item.cumulative_return_pct ?? 0) : Number(item.equity_after || 0));
+  const rawAssetMin = Math.min(...assetValues);
+  const rawAssetMax = Math.max(...assetValues);
+  const rawAssetSpan = Math.max(1, rawAssetMax - rawAssetMin);
+  const assetPadding = assetMode === "return" ? Math.max(0.5, rawAssetSpan * 0.08) : Math.max(1000, rawAssetSpan * 0.08);
+  const assetMin = rawAssetMin - assetPadding;
+  const assetMax = rawAssetMax + assetPadding;
+  const assetSpan = Math.max(1, assetMax - assetMin);
+  const yAsset = (value: number) => pad.top + ((assetMax - value) / assetSpan) * chartHeight;
+  const assetTicks = [assetMax, rawAssetMin + rawAssetSpan / 2, assetMin];
+  const dateCounts = new Map<string, number>();
+  const points = items.map((item, index) => {
+    const value = assetMode === "return" ? Number(item.cumulative_return_pct ?? 0) : Number(item.equity_after || 0);
+    return `${pad.left + slot * index + slot / 2},${yAsset(value)}`;
+  }).join(" ");
+  return (
+    <div className="account-profit-plot-scroll" ref={scrollRef}>
+      <svg className="account-training-profit-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="계좌 손익차트">
+        <text x={pad.left} y={14} fontSize="11" fontWeight="800" fill="#475569">거래별 순손익</text>
+        <text x={width - pad.right} y={14} textAnchor="end" fontSize="11" fontWeight="800" fill="#475569">{assetMode === "return" ? "누적 수익률" : "계좌 누적 금액"}</text>
+        <line x1={pad.left} y1={zeroY} x2={width - pad.right} y2={zeroY} stroke="#94a3b8" strokeDasharray="5 5" />
+        <text x={pad.left - 10} y={zeroY + 4} textAnchor="end" fontSize="11" fill="#64748b">0</text>
+        <text x={pad.left - 10} y={pad.top + 4} textAnchor="end" fontSize="11" fill="#64748b">{fmtSignedWon(pnlMax)}</text>
+        <text x={pad.left - 10} y={height - pad.bottom} textAnchor="end" fontSize="11" fill="#64748b">{fmtSignedWon(-pnlMax)}</text>
+        {assetTicks.map((tick, tickIndex) => {
+          const tickY = yAsset(tick);
+          return (
+            <g key={`asset-tick-${tickIndex}`}>
+              <line x1={pad.left} y1={tickY} x2={width - pad.right} y2={tickY} stroke="#e2e8f0" />
+              <text x={width - pad.right + 10} y={tickY + 4} fontSize="11" fill="#64748b">{assetMode === "return" ? fmtPercent(tick) : fmtWon(tick)}</text>
+            </g>
+          );
+        })}
+        {items.map((item, index) => {
+          const x = pad.left + slot * index + slot / 2;
+          const value = Number(item.net_pnl || 0);
+          const y = yPnl(value);
+          const barTop = Math.min(y, zeroY);
+          const barHeight = Math.max(3, Math.abs(zeroY - y));
+          const key = performanceTradeKey(item);
+          const fill = value > 0 ? "#dc2626" : value < 0 ? "#2563eb" : "#94a3b8";
+          const dateLabel = compactDate(item.completed_at || item.chart_exit_date);
+          const dateOrder = (dateCounts.get(dateLabel) || 0) + 1;
+          dateCounts.set(dateLabel, dateOrder);
+          const showDate = xAxisMode === "completed";
+          const barWidth = items.length > 50 ? 18 : items.length > 20 ? 26 : 36;
+          return (
+            <g key={key} className={selectedTradeId === key ? "selected" : ""}>
+              <rect x={x - barWidth / 2} y={barTop} width={barWidth} height={barHeight} rx={4} fill={fill} onClick={() => onSelectTrade(key)}><title>{accountProfitTooltip(item)}</title></rect>
+              <text x={x} y={height - 36} textAnchor="middle" fontSize="10" fill="#64748b">{showDate ? dateLabel : `#${item.trade_sequence}`}</text>
+              {showDate ? <text x={x} y={height - 20} textAnchor="middle" fontSize="10" fill="#94a3b8">#{dateOrder}</text> : null}
+            </g>
+          );
+        })}
+        <polyline points={points} fill="none" stroke="#111827" strokeWidth="2.4" />
+        {items.map((item, index) => {
+          const key = performanceTradeKey(item);
+          const x = pad.left + slot * index + slot / 2;
+          const value = assetMode === "return" ? Number(item.cumulative_return_pct ?? 0) : Number(item.equity_after || 0);
+          return <circle key={`point-${key}`} cx={x} cy={yAsset(value)} r={selectedTradeId === key ? 5 : 4} fill="#111827" onClick={() => onSelectTrade(key)}><title>{accountProfitTooltip(item)}</title></circle>;
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function fmtRiskPct(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "미기록";
+  return fmtPercent(value);
+}
+
+function fmtRiskWon(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "미기록";
+  return fmtWon(value);
+}
+
+function fmtRMultiple(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "미기록";
+  const sign = Number(value) > 0 ? "+" : "";
+  return `${sign}${Number(value).toFixed(2)}R`;
+}
+
+function tradeResultLabel(value: number | null | undefined): string {
+  const n = Number(value || 0);
+  if (n > 0) return "수익 거래";
+  if (n < 0) return "손실 거래";
+  return "보합 거래";
+}
+
+function tradeResultClass(value: number | null | undefined): string {
+  const n = Number(value || 0);
+  if (n > 0) return "win";
+  if (n < 0) return "loss";
+  return "flat";
+}
+
+function accountContributionPct(trade: TradeTrainingPerformancePoint): number | null {
+  const before = Number(trade.equity_before || 0);
+  if (!before) return null;
+  return (Number(trade.net_pnl || 0) / before) * 100;
+}
+
+function tradeGrossAmountText(trade: TradeTrainingPerformancePoint): string {
+  const source = trade as TradeTrainingPerformancePoint & { gross_buy_amount?: number | null; gross_sell_amount?: number | null };
+  const calculatedBuy = trade.average_entry_price !== null && trade.average_entry_price !== undefined && trade.quantity
+    ? Number(trade.average_entry_price) * Number(trade.quantity)
+    : null;
+  const calculatedSell = trade.average_exit_price !== null && trade.average_exit_price !== undefined && trade.quantity
+    ? Number(trade.average_exit_price) * Number(trade.quantity)
+    : null;
+  const buyAmount = source.gross_buy_amount ?? calculatedBuy;
+  const sellAmount = source.gross_sell_amount ?? calculatedSell;
+  if (buyAmount !== null && buyAmount !== undefined && sellAmount !== null && sellAmount !== undefined) {
+    return `${fmtWon(buyAmount)} → ${fmtWon(sellAmount)}`;
+  }
+  if (buyAmount !== null && buyAmount !== undefined) return fmtWon(buyAmount);
+  if (sellAmount !== null && sellAmount !== undefined) return fmtWon(sellAmount);
+  return "-";
+}
+
+function SelectedTradeDetailCardCompact({
+  trade,
+  onOpenReport,
+}: {
+  trade: TradeTrainingPerformancePoint | null;
+  onOpenReport: (sessionId: number) => void;
+}) {
+  if (!trade) return null;
+
+  const sessionId = trade.simulation_session_id ?? trade.training_session_id;
+  const contribution = accountContributionPct(trade);
+  const resultClass = tradeResultClass(trade.net_pnl);
+
+  return (
+    <article className={`account-selected-trade-card account-selected-trade-card-compact ${resultClass}`}>
+      <header className="account-selected-trade-header">
+        <div className="account-selected-trade-title">
+          <strong>#{trade.trade_sequence} {trade.stock_name || trade.stock_code}</strong>
+          <span>{trade.stock_code}</span>
+        </div>
+        <div className="account-selected-trade-meta">
+          <em className={`account-trade-result-badge ${resultClass}`}>{tradeResultLabel(trade.net_pnl)}</em>
+          <span>훈련 완료 {compactDateTime(trade.completed_at)}</span>
+        </div>
+      </header>
+
+      <div className="account-selected-trade-grid">
+        <section className="account-selected-trade-section">
+          <h5>거래 정보</h5>
+          <dl className="trade-detail-list">
+            <div><dt>매수일</dt><dd>{compactDate(trade.chart_entry_date)}</dd></div>
+            <div><dt>매도일</dt><dd>{compactDate(trade.chart_exit_date)}</dd></div>
+            <div><dt>보유기간</dt><dd>{trade.holding_bars === null || trade.holding_bars === undefined ? "-" : `${fmtNumber(trade.holding_bars)}봉`}</dd></div>
+            <div><dt>매매금액</dt><dd>{tradeGrossAmountText(trade)}</dd></div>
+          </dl>
+        </section>
+
+        <section className="account-selected-trade-section trade-performance-section">
+          <h5>거래 성과</h5>
+          <div className="trade-performance-pnl-block">
+            <span className="trade-performance-metric-label">순손익</span>
+            <strong className={`trade-performance-pnl ${profitClass(trade.net_pnl)}`}>{fmtSignedWon(trade.net_pnl)}</strong>
+          </div>
+          <dl className="trade-detail-list trade-detail-list-secondary">
+            <div><dt>수익률</dt><dd className={profitClass(trade.return_pct)}>{fmtPercent(trade.return_pct)}</dd></div>
+            <div><dt>수수료</dt><dd>{fmtWon(trade.commission_amount)}</dd></div>
+          </dl>
+        </section>
+
+        <section className="account-selected-trade-section account-selected-trade-equity-section">
+          <h5>계좌자산 변화</h5>
+          <div className="trade-equity-flow">
+            <div className="trade-equity-point">
+              <span className="trade-equity-label">거래 전 자산</span>
+              <strong className="trade-equity-value">{fmtWon(trade.equity_before)}</strong>
+            </div>
+            <div className="trade-equity-change">
+              <span className="trade-equity-arrow">→</span>
+              <strong className={profitClass(trade.net_pnl)}>{fmtSignedWon(trade.net_pnl)}</strong>
+            </div>
+            <div className="trade-equity-point trade-equity-point--after">
+              <span className="trade-equity-label">거래 후 자산</span>
+              <strong className="trade-equity-value">{fmtWon(trade.equity_after)}</strong>
+            </div>
+          </div>
+          <p className="trade-equity-contribution">
+            <span>계좌 기여도</span>
+            <strong className={profitClass(contribution)}>{contribution === null ? "-" : fmtPercent(contribution)}</strong>
+          </p>
+        </section>
+      </div>
+
+      <footer className="account-selected-trade-footer">
+        {sessionId ? (
+          <button
+            type="button"
+            className="btn btn-secondary account-selected-trade-report-button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenReport(sessionId);
+            }}
+          >
+            결과 리포트 보기
+          </button>
+        ) : null}
+      </footer>
+    </article>
+  );
+}
+
+function SelectedTradeDetailCardV2({
+  trade,
+  showRisk,
+  onOpenReport,
+}: {
+  trade: TradeTrainingPerformancePoint | null;
+  showRisk: boolean;
+  onOpenReport: (sessionId: number) => void;
+}) {
+  if (!trade) return null;
+
+  const sessionId = trade.simulation_session_id ?? trade.training_session_id;
+  const contribution = accountContributionPct(trade);
+  const resultClass = tradeResultClass(trade.net_pnl);
+  const riskRecorded = trade.planned_risk_pct !== null || trade.planned_risk_amount !== null || trade.realized_r !== null;
+
+  return (
+    <article className={`account-selected-trade-card ${resultClass}`}>
+      <header className="account-selected-trade-header">
+        <div className="account-selected-trade-title">
+          <strong>#{trade.trade_sequence} {trade.stock_name || trade.stock_code}</strong>
+          <span>{trade.stock_code}</span>
+        </div>
+        <div className="account-selected-trade-meta">
+          <em className={`account-trade-result-badge ${resultClass}`}>{tradeResultLabel(trade.net_pnl)}</em>
+          {trade.realized_r !== null && trade.realized_r !== undefined ? <strong className={profitClass(trade.realized_r)}>{fmtRMultiple(trade.realized_r)}</strong> : null}
+          <span>훈련 완료 {compactDateTime(trade.completed_at)}</span>
+        </div>
+      </header>
+
+      <div className="account-selected-trade-grid">
+        <section className="account-selected-trade-section">
+          <h5>거래 정보</h5>
+          <dl className="trade-detail-list">
+            <div><dt>매수일</dt><dd>{compactDate(trade.chart_entry_date)}</dd></div>
+            <div><dt>매도일</dt><dd>{compactDate(trade.chart_exit_date)}</dd></div>
+            <div><dt>보유기간</dt><dd>{trade.holding_bars === null || trade.holding_bars === undefined ? "-" : `${fmtNumber(trade.holding_bars)}봉`}</dd></div>
+            <div><dt>수량</dt><dd>{trade.quantity === null || trade.quantity === undefined ? "-" : `${fmtNumber(trade.quantity)}주`}</dd></div>
+            <div><dt>평균매수가</dt><dd>{fmtWon(trade.average_entry_price)}</dd></div>
+            <div><dt>평균매도가</dt><dd>{fmtWon(trade.average_exit_price)}</dd></div>
+          </dl>
+        </section>
+
+        <section className="account-selected-trade-section trade-performance-section">
+          <h5>거래 성과</h5>
+          <div className="trade-performance-primary">
+            <div className="trade-performance-metric">
+              <span className="trade-performance-metric-label">순손익</span>
+              <strong className={`trade-performance-pnl ${profitClass(trade.net_pnl)}`}>{fmtSignedWon(trade.net_pnl)}</strong>
+            </div>
+            <div className="trade-performance-metric">
+              <span className="trade-performance-metric-label">거래 수익률</span>
+              <strong className={`trade-performance-rate ${profitClass(trade.return_pct)}`}>{fmtPercent(trade.return_pct)}</strong>
+            </div>
+          </div>
+          <dl className="trade-detail-list trade-detail-list-secondary">
+            <div><dt>수수료</dt><dd>{fmtWon(trade.commission_amount)}</dd></div>
+            <div><dt>누적수익률</dt><dd className={profitClass(trade.cumulative_return_pct)}>{fmtPercent(trade.cumulative_return_pct ?? 0)}</dd></div>
+            {showRisk ? <div><dt>계획위험</dt><dd>{fmtRiskPct(trade.planned_risk_pct)}</dd></div> : null}
+            {showRisk ? <div><dt>위험금액</dt><dd>{fmtRiskWon(trade.planned_risk_amount)}</dd></div> : null}
+            {showRisk ? <div><dt>실현 R</dt><dd>{fmtRMultiple(trade.realized_r)}</dd></div> : null}
+          </dl>
+        </section>
+
+        <section className="account-selected-trade-section account-selected-trade-equity-section">
+          <h5>계좌자산 변화</h5>
+          <div className="trade-equity-flow">
+            <div className="trade-equity-point">
+              <span className="trade-equity-label">거래 전 자산</span>
+              <strong className="trade-equity-value">{fmtWon(trade.equity_before)}</strong>
+            </div>
+            <div className="trade-equity-change">
+              <span className="trade-equity-arrow">→</span>
+              <strong className={profitClass(trade.net_pnl)}>{fmtSignedWon(trade.net_pnl)}</strong>
+            </div>
+            <div className="trade-equity-point trade-equity-point--after">
+              <span className="trade-equity-label">거래 후 자산</span>
+              <strong className="trade-equity-value">{fmtWon(trade.equity_after)}</strong>
+            </div>
+          </div>
+          <p className="trade-equity-contribution">
+            <span>계좌 기여도</span>
+            <strong className={profitClass(contribution)}>{contribution === null ? "-" : fmtPercent(contribution)}</strong>
+          </p>
+        </section>
+      </div>
+
+      <footer className="account-selected-trade-footer">
+        <span className="account-selected-trade-note">매수 기준 미기록 · 매도 기준 미기록 · 리스크 정보 {riskRecorded ? "기록" : "미기록"}</span>
+        {sessionId ? (
+          <button
+            type="button"
+            className="btn btn-secondary account-selected-trade-report-button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenReport(sessionId);
+            }}
+          >
+            결과 리포트 보기
+          </button>
+        ) : null}
+      </footer>
+    </article>
+  );
+}
+
+function SelectedTradeDetailCard({
+  trade,
+  showRisk,
+  onOpenReport,
+}: {
+  trade: TradeTrainingPerformancePoint | null;
+  showRisk: boolean;
+  onOpenReport: (sessionId: number) => void;
+}) {
+  if (!trade) return null;
+  const sessionId = trade.simulation_session_id ?? trade.training_session_id;
+  const contribution = accountContributionPct(trade);
+  const resultClass = tradeResultClass(trade.net_pnl);
+  const riskRecorded = trade.planned_risk_pct !== null || trade.planned_risk_amount !== null || trade.realized_r !== null;
+  return (
+    <article className={`account-selected-trade-card ${resultClass}`}>
+      <header className="account-selected-trade-header">
+        <div>
+          <strong>#{trade.trade_sequence} {trade.stock_name || trade.stock_code}</strong>
+          <span>{trade.stock_code}</span>
+        </div>
+        <div className="account-selected-trade-meta">
+          <em className={`account-trade-result-badge ${resultClass}`}>{tradeResultLabel(trade.net_pnl)}</em>
+          {trade.realized_r !== null && trade.realized_r !== undefined ? <strong className={profitClass(trade.realized_r)}>{fmtRMultiple(trade.realized_r)}</strong> : null}
+          <span>훈련 완료 {compactDateTime(trade.completed_at)}</span>
+        </div>
+      </header>
+
+      <div className="account-selected-trade-grid">
+        <section className="account-selected-trade-section">
+          <h5>거래 정보</h5>
+          <dl>
+            <div><dt>차트 매수일</dt><dd>{compactDate(trade.chart_entry_date)}</dd></div>
+            <div><dt>차트 매도일</dt><dd>{compactDate(trade.chart_exit_date)}</dd></div>
+            <div><dt>보유기간</dt><dd>{trade.holding_bars === null || trade.holding_bars === undefined ? "-" : `${fmtNumber(trade.holding_bars)}일`}</dd></div>
+            <div><dt>수량</dt><dd>{trade.quantity === null || trade.quantity === undefined ? "-" : `${fmtNumber(trade.quantity)}주`}</dd></div>
+            <div><dt>평균매수가</dt><dd>{fmtWon(trade.average_entry_price)}</dd></div>
+            <div><dt>평균매도가</dt><dd>{fmtWon(trade.average_exit_price)}</dd></div>
+          </dl>
+        </section>
+
+        <section className="account-selected-trade-section">
+          <h5>거래 성과</h5>
+          <dl>
+            <div><dt>순손익</dt><dd className={profitClass(trade.net_pnl)}>{fmtSignedWon(trade.net_pnl)}</dd></div>
+            <div><dt>거래 수익률</dt><dd className={profitClass(trade.return_pct)}>{fmtPercent(trade.return_pct)}</dd></div>
+            <div><dt>수수료</dt><dd>{fmtWon(trade.commission_amount)}</dd></div>
+            <div><dt>누적 수익률</dt><dd className={profitClass(trade.cumulative_return_pct)}>{fmtPercent(trade.cumulative_return_pct ?? 0)}</dd></div>
+            {showRisk ? <div><dt>계획 위험</dt><dd>{fmtRiskPct(trade.planned_risk_pct)}</dd></div> : null}
+            {showRisk ? <div><dt>계획 위험금액</dt><dd>{fmtRiskWon(trade.planned_risk_amount)}</dd></div> : null}
+            {showRisk ? <div><dt>실현 R</dt><dd>{fmtRMultiple(trade.realized_r)}</dd></div> : null}
+          </dl>
+        </section>
+
+        <section className="account-selected-trade-section account-selected-trade-equity-flow">
+          <h5>계좌자산 변화</h5>
+          <div className="equity-flow-box">
+            <span>거래 전 자산<strong>{fmtWon(trade.equity_before)}</strong></span>
+            <b className={profitClass(trade.net_pnl)}>{fmtSignedWon(trade.net_pnl)}</b>
+            <span>거래 후 자산<strong>{fmtWon(trade.equity_after)}</strong></span>
+          </div>
+          <p>계좌 기여도 <strong className={profitClass(contribution)}>{contribution === null ? "-" : fmtPercent(contribution)}</strong></p>
+        </section>
+      </div>
+
+      <footer className="account-selected-trade-footer">
+        <span>매수 기준 미기록 · 매도 기준 미기록 · 리스크 정보 {riskRecorded ? "기록" : "미기록"}</span>
+        {sessionId ? <button type="button" className="btn btn-secondary" onClick={() => onOpenReport(sessionId)}>결과 리포트 보기</button> : null}
+      </footer>
+    </article>
+  );
+}
+
+function AccountProfitSelection({ trade, showRisk, onOpenResult }: { trade: TradeTrainingPerformancePoint | null; showRisk: boolean; onOpenResult: (sessionId: number) => void }) {
+  if (!trade) return null;
+  const sessionId = trade.simulation_session_id ?? trade.training_session_id;
+  return (
+    <div className="account-profit-selection">
+      <strong>#{trade.trade_sequence} {trade.stock_name || trade.stock_code}</strong>
+      <span>차트 {trade.chart_entry_date || "-"} → {trade.chart_exit_date || "-"} · 훈련 완료 {trade.completed_at || "-"}</span>
+      <span className={profitClass(trade.net_pnl)}>순손익 {fmtSignedWon(trade.net_pnl)} · 거래 수익률 {fmtPercent(trade.return_pct)} · 누적 {fmtPercent(trade.cumulative_return_pct ?? 0)}</span>
+      <span>자산 {fmtWon(trade.equity_before ?? 0)} → {fmtWon(trade.equity_after)}</span>
+      {showRisk ? <span>리스크 {trade.planned_risk_pct === null || trade.planned_risk_pct === undefined ? "미기록" : fmtPercent(trade.planned_risk_pct)} · R {trade.realized_r === null || trade.realized_r === undefined ? "미기록" : fmtNumber(trade.realized_r, 2)}</span> : null}
+      {sessionId ? <button type="button" className="btn btn-secondary" onClick={() => onOpenResult(sessionId)}>결과 리포트</button> : null}
+    </div>
+  );
+}
+
+function AccountActiveSessionsV2({ sessions, onResumeSession }: { sessions: TradeTrainingAccountSession[]; onResumeSession: (sessionId: number) => void }) {
+  if (!sessions.length) return <div className="account-training-empty-panel"><strong>진행 중인 종목매매가 없습니다.</strong></div>;
+  return (
+    <div className="account-session-card-grid">
+      {sessions.map((session) => {
+        const sessionId = session.session_id ?? session.id;
+        return (
+          <article key={session.id} className="account-session-card">
+            <div className="account-session-card-head">
+              <div><strong>{session.stock_name || session.stock_code}</strong><span>{session.market || "-"} · {session.stock_code}</span></div>
+              <em>{session.status_display || session.status_state || session.status}</em>
+            </div>
+            <div className="account-session-summary">
+              <span>현재 차트일 <strong>{session.chart_current_date || session.current_date || "-"}</strong></span>
+              <span>진행 단계 <strong>{fmtNumber(session.current_step ?? session.current_index + 1)}</strong></span>
+              <span>보유수량 <strong>{fmtNumber(session.position_quantity ?? session.position_qty)}</strong></span>
+              <span>평균단가 <strong>{fmtWon(session.average_entry_price ?? session.avg_price)}</strong></span>
+              <span>평가금액 <strong>{fmtWon(session.market_value ?? 0)}</strong></span>
+              <span>미실현손익 <strong className={profitClass(session.unrealized_pnl)}>{fmtSignedWon(session.unrealized_pnl ?? 0)}</strong></span>
+            </div>
+            <div className="account-session-card-foot">
+              <span>표시 {fmtNumber(session.display_days ?? 80)}일 · MA {(session.moving_averages || []).join(", ") || "-"}</span>
+              <button type="button" className="btn btn-primary" onClick={() => onResumeSession(sessionId)}>매매 계속하기</button>
+            </div>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+function AccountClosedTradesTableV2({ closedTrades, onOpenResult }: { closedTrades: TradeTrainingClosedTrade[]; onOpenResult: (sessionId: number) => void }) {
+  if (!closedTrades.length) return <div className="account-training-empty-panel"><strong>완료 거래가 없습니다.</strong></div>;
+  return (
+    <div className="table-shell account-closed-table-shell">
+      <table className="data-table compact-table account-training-closed-table">
+        <thead><tr><th>#</th><th>종목</th><th>차트 매도일</th><th>훈련 완료</th><th className="numeric-cell">순손익</th><th className="numeric-cell">수익률</th><th>결과</th></tr></thead>
+        <tbody>
+          {closedTrades.map((trade) => (
+            <tr key={trade.id} className="account-training-clickable-row" onClick={() => onOpenResult(trade.training_session_id)}>
+              <td>#{trade.trade_sequence}</td>
+              <td>{trade.stock_name || trade.stock_code}</td>
+              <td>{trade.chart_exit_date || trade.closed_chart_date}</td>
+              <td>{trade.completed_at || "-"}</td>
+              <td className={`numeric-cell ${profitClass(trade.net_pnl)}`}>{fmtSignedWon(trade.net_pnl)}</td>
+              <td className={`numeric-cell ${profitClass(trade.return_pct)}`}>{fmtPercent(trade.return_pct)}</td>
+              <td><button type="button" className="btn btn-secondary" onClick={(event) => { event.stopPropagation(); onOpenResult(trade.training_session_id); }}>결과</button></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function TrainingAccountDetail({
+  account,
+  summary,
+  sessions,
+  closedTrades,
+  performance,
+  tab,
+  onTabChange,
+  onEdit,
+  onNewTraining,
+  onOpenResult,
+  onResumeSession,
+}: {
+  account: TradeTrainingAccount;
+  summary: TradeTrainingAccountSummary | null;
+  sessions: TradeTrainingAccountSession[];
+  closedTrades: TradeTrainingClosedTrade[];
+  performance: TradeTrainingAccountPerformance | null;
+  tab: AccountDetailTab;
+  onTabChange: (tab: AccountDetailTab) => void;
+  onEdit: () => void;
+  onNewTraining: () => void;
+  onOpenResult: (sessionId: number) => void;
+  onResumeSession: (sessionId: number) => void;
+}) {
+  const activeSessionCount = summary?.active_session_count ?? 0;
+  const canStart = account.status === "ACTIVE";
+  const returnRate = account.initial_capital > 0 ? ((Number(summary?.training_equity ?? account.realized_equity) - account.initial_capital) / account.initial_capital) * 100 : 0;
+  return (
+    <div className="account-training-detail">
+      <div className="account-training-detail-head">
+        <div>
+          <h4>{account.name}</h4>
+          <span>초기자산 {fmtWon(account.initial_capital)} · 마지막 수정 {account.updated_at || "-"}</span>
+        </div>
+        <AccountStatusBadge status={account.status} />
+      </div>
+      <div className="account-training-actions">
+        <button type="button" className="btn btn-secondary" disabled={activeSessionCount <= 0} title="진행 중인 종목매매가 없습니다.">매매 계속하기</button>
+        <button type="button" className="btn btn-primary" disabled={!canStart} onClick={onNewTraining}>신규매매</button>
+        <button type="button" className="btn btn-secondary" onClick={onEdit}>계좌 설정</button>
+      </div>
+      <div className="account-training-metrics">
+        <div><span>현재 훈련자산</span><strong>{fmtWon(summary?.training_equity ?? account.realized_equity)}</strong><small>사용 가능 현금 {fmtWon(summary?.cash_balance ?? account.cash_balance)}</small></div>
+        <div><span>누적 실현손익</span><strong className={profitClass(summary?.realized_pnl)}>{fmtSignedWon(summary?.realized_pnl ?? 0)}</strong><small>누적 수익률 {fmtPercent(returnRate)}</small></div>
+        <div><span>Winning Ratio</span><strong>{summary?.winning_ratio === null || summary?.winning_ratio === undefined ? "산출 전" : fmtPercent(summary.winning_ratio)}</strong><small>수익 종료 거래 기준</small></div>
+        <div><span>Profit/Loss Ratio</span><strong>{summary?.profit_loss_ratio === null || summary?.profit_loss_ratio === undefined ? "산출 전" : fmtNumber(summary.profit_loss_ratio, 2)}</strong><small>평균 수익 ÷ 평균 손실</small></div>
+      </div>
+      <div className="account-training-substats">
+        <span>진행 중 매매 {fmtNumber(summary?.active_session_count ?? 0)}개</span>
+        <span>완료 거래 {fmtNumber(summary?.closed_trade_count ?? 0)}건</span>
+      </div>
+      <AccountPerformanceTabsV2
+        tab={tab}
+        onTabChange={onTabChange}
+        onNewTraining={onNewTraining}
+        summary={summary}
+        sessions={sessions}
+        closedTrades={closedTrades}
+        performance={performance}
+        onOpenResult={onOpenResult}
+        onResumeSession={onResumeSession}
+      />
+    </div>
+  );
+}
+
+function AccountTrainingWorkspace({
+  onClose,
+  onOpenStockTraining,
+  onOpenResult,
+  onResumeSession,
+}: {
+  onClose: () => void;
+  onOpenStockTraining: (account: TradeTrainingAccount) => void;
+  onOpenResult: (sessionId: number) => void;
+  onResumeSession: (sessionId: number) => void;
+}) {
+  const [accounts, setAccounts] = useState<TradeTrainingAccount[]>([]);
+  const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null);
+  const [summary, setSummary] = useState<TradeTrainingAccountSummary | null>(null);
+  const [sessions, setSessions] = useState<TradeTrainingAccountSession[]>([]);
+  const [closedTrades, setClosedTrades] = useState<TradeTrainingClosedTrade[]>([]);
+  const [performance, setPerformance] = useState<TradeTrainingAccountPerformance | null>(null);
+  const [statusFilter, setStatusFilter] = useState<AccountStatusFilter>("ACTIVE");
+  const [detailTab, setDetailTab] = useState<AccountDetailTab>("chart");
+  const [formMode, setFormMode] = useState<AccountFormMode | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<TradeTrainingAccount | null>(null);
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [loadingAccounts, setLoadingAccounts] = useState(false);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const selectedAccount = accounts.find((account) => account.id === selectedAccountId) || null;
+
+  const loadAccounts = async (preferredId?: number | null) => {
+    setLoadingAccounts(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await repositories.tradeTraining.listAccounts({
+        status: statusFilter === "ALL" ? undefined : statusFilter,
+      });
+      setAccounts(response.items);
+      const nextId = preferredId && response.items.some((item) => item.id === preferredId) ? preferredId : response.items[0]?.id ?? null;
+      setSelectedAccountId(nextId);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "훈련계좌 목록을 불러오지 못했습니다.");
+      setAccounts([]);
+      setSelectedAccountId(null);
+    } finally {
+      setLoadingAccounts(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadAccounts(selectedAccountId);
+  }, [statusFilter]);
+
+  useEffect(() => {
+    if (!selectedAccountId) {
+      setSummary(null);
+      setSessions([]);
+      setClosedTrades([]);
+      setPerformance(null);
+      return;
+    }
+    const loadDetail = async () => {
+      setLoadingDetail(true);
+      setError("");
+      setNotice("");
+      try {
+        const [accountDetail, accountSummary, accountSessions, accountClosedTrades, accountPerformance] = await Promise.all([
+          repositories.tradeTraining.getAccount(selectedAccountId),
+          repositories.tradeTraining.getAccountSummary(selectedAccountId),
+          repositories.tradeTraining.listAccountSessions(selectedAccountId, { status: "ACTIVE" }),
+          repositories.tradeTraining.listAccountClosedTrades(selectedAccountId),
+          repositories.tradeTraining.getAccountPerformance(selectedAccountId),
+        ]);
+        setAccounts((prev) =>
+          prev.map((item) =>
+            item.id === accountDetail.id
+              ? { ...accountDetail, cash_balance: accountSummary.cash_balance, realized_equity: accountSummary.training_equity }
+              : item,
+          ),
+        );
+        setSummary(accountSummary);
+        setSessions(accountSessions.items);
+        setClosedTrades(accountClosedTrades.items);
+        setPerformance(accountPerformance);
+        setDetailTab("chart");
+      } catch (nextError) {
+        setError(nextError instanceof Error ? nextError.message : "훈련계좌 상세를 불러오지 못했습니다.");
+      } finally {
+        setLoadingDetail(false);
+      }
+    };
+    void loadDetail();
+  }, [selectedAccountId]);
+
+  const saveAccount = async (payload: TradeTrainingAccountSaveRequest) => {
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const saved =
+        formMode === "edit" && selectedAccount
+          ? await repositories.tradeTraining.updateAccount(selectedAccount.id, payload)
+          : await repositories.tradeTraining.createAccount(payload);
+      setFormMode(null);
+      await loadAccounts(saved.id);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "훈련계좌를 저장하지 못했습니다.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteAccount = async () => {
+    if (!deleteTarget) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await repositories.tradeTraining.deleteAccount(deleteTarget.id);
+      setDeleteTarget(null);
+      setFormMode(null);
+      setSummary(null);
+      setSessions([]);
+      setClosedTrades([]);
+      setPerformance(null);
+      await loadAccounts(null);
+      setNotice(response.message);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "훈련계좌를 삭제하지 못했습니다.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const startLinkedTraining = (account: TradeTrainingAccount) => {
+    onOpenStockTraining(account);
+  };
+
+  return (
+    <div className="account-training-workspace">
+      <div className="training-modal-head account-training-modal-head">
+        <div>
+          <h3>계좌관리매매 훈련 <AccountInfoPopover open={infoOpen} onToggle={() => setInfoOpen((prev) => !prev)} /></h3>
+          <p className="training-result-subtitle">훈련계좌를 만들고 여러 종목매매 결과를 누적 관리합니다.</p>
+        </div>
+        <button type="button" className="training-icon-button" onClick={onClose} aria-label="닫기"><X size={18} /></button>
+      </div>
+      {error ? <div className="inline-result inline-error">{error}</div> : null}
+      {!error && notice ? <div className="inline-result">{notice}</div> : null}
+      {loadingAccounts ? <div className="account-training-loading">훈련계좌를 불러오는 중입니다.</div> : null}
+      {!loadingAccounts && accounts.length === 0 && !formMode && statusFilter === "ALL" ? (
+        <div className="account-training-empty-state">
+          <strong>아직 만든 훈련계좌가 없습니다.</strong>
+          <span>훈련계좌를 만들면 여러 종목의 매매 결과를 하나로 모아 손익과 자산 변화를 관리할 수 있습니다.</span>
+          <button type="button" className="btn btn-primary" onClick={() => setFormMode("create")}><Plus size={16} /> 첫 훈련계좌 만들기</button>
+        </div>
+      ) : (
+        <div className="account-training-body">
+          <aside className="account-training-sidebar">
+            <div className="account-training-sidebar-head">
+              <strong>훈련계좌</strong>
+              <button type="button" className="btn btn-secondary" onClick={() => setFormMode("create")}><Plus size={16} /> 계좌 만들기</button>
+            </div>
+            <div className="account-training-filter">
+              {(["ALL", "ACTIVE", "COMPLETED"] as AccountStatusFilter[]).map((filter) => (
+                <button key={filter} type="button" className={statusFilter === filter ? "active" : ""} onClick={() => setStatusFilter(filter)}>
+                  {filter === "ALL" ? "전체" : filter === "ACTIVE" ? "진행 중" : "종료"}
+                </button>
+              ))}
+            </div>
+            <div className="account-training-list">
+              {accounts.map((account) => {
+                const accountReturn = account.initial_capital > 0 ? ((account.realized_equity - account.initial_capital) / account.initial_capital) * 100 : 0;
+                const isSelected = selectedAccountId === account.id;
+                const cardSummary = isSelected ? summary : null;
+                const cardEquity = cardSummary?.training_equity ?? account.realized_equity;
+                const cardReturn = account.initial_capital > 0 ? ((cardEquity - account.initial_capital) / account.initial_capital) * 100 : accountReturn;
+                return (
+                  <button key={account.id} type="button" className={`account-training-list-item ${isSelected ? "selected" : ""}`} onClick={() => { setSelectedAccountId(account.id); setFormMode(null); }}>
+                    <span><strong>{account.name}</strong><AccountStatusBadge status={account.status} /></span>
+                    <small>초기자산 {fmtWon(account.initial_capital)}</small>
+                    <small>현재 훈련자산 {fmtWon(cardEquity)}</small>
+                    <small className={profitClass(cardReturn)}>누적 수익률 {fmtPercent(cardReturn)}</small>
+                    <em>진행 중 매매 {fmtNumber(cardSummary?.active_session_count ?? 0)}개 · 완료 거래 {fmtNumber(cardSummary?.closed_trade_count ?? 0)}건</em>
+                  </button>
+                );
+              })}
+              {!accounts.length ? <div className="account-training-empty-panel"><strong>{statusFilter === "ACTIVE" ? "진행 중인 훈련계좌가 없습니다." : "표시할 훈련계좌가 없습니다."}</strong></div> : null}
+            </div>
+          </aside>
+          <section className="account-training-content">
+            {formMode ? (
+              <TrainingAccountForm
+                mode={formMode}
+                initialValue={formMode === "edit" ? selectedAccount : null}
+                saving={saving}
+                onCancel={() => setFormMode(null)}
+                onSave={saveAccount}
+                onDelete={formMode === "edit" && selectedAccount ? () => setDeleteTarget(selectedAccount) : undefined}
+              />
+            ) : selectedAccount ? (
+              loadingDetail ? <div className="account-training-loading">상세 정보를 불러오는 중입니다.</div> : (
+                <TrainingAccountDetail
+                  account={selectedAccount}
+                  summary={summary}
+                  sessions={sessions}
+                  closedTrades={closedTrades}
+                  performance={performance}
+                  tab={detailTab}
+                  onTabChange={setDetailTab}
+                  onEdit={() => setFormMode("edit")}
+                  onNewTraining={() => startLinkedTraining(selectedAccount)}
+                  onOpenResult={onOpenResult}
+                  onResumeSession={onResumeSession}
+                />
+              )
+            ) : (
+              <div className="account-training-empty-panel"><strong>선택한 훈련계좌가 없습니다.</strong></div>
+            )}
+          </section>
+        </div>
+      )}
+      {!formMode ? (
+        <div className="training-modal-actions account-training-footer">
+          <button type="button" className="btn btn-secondary" onClick={onClose}>닫기</button>
+        </div>
+      ) : null}
+      {deleteTarget ? (
+        <div className="account-training-confirm-backdrop" role="presentation">
+          <div className="account-training-confirm" role="dialog" aria-modal="true" aria-label="훈련계좌 삭제 확인">
+            <h4>훈련계좌를 삭제하시겠습니까?</h4>
+            <p><strong>계좌명: {deleteTarget.name}</strong></p>
+            <p>이 계좌와 연결된 진행 중 매매, 완료 거래, 매수·매도 이력 및 손익 데이터가 모두 삭제됩니다. 삭제한 데이터는 복구할 수 없습니다.</p>
+            <p>연결된 종목훈련 {fmtNumber(sessions.length)}건 · 완료 거래 {fmtNumber(closedTrades.length)}건</p>
+            <div className="training-modal-actions">
+              <button type="button" className="btn btn-secondary" disabled={saving} onClick={() => setDeleteTarget(null)}>취소</button>
+              <button type="button" className="btn btn-danger" disabled={saving} onClick={() => void deleteAccount()}>{saving ? "삭제 중..." : "계좌 삭제"}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function AccountTrainingModal({
+  onClose,
+  onOpenStockTraining,
+  onOpenResult,
+  onResumeSession,
+}: {
+  onClose: () => void;
+  onOpenStockTraining: (account: TradeTrainingAccount) => void;
+  onOpenResult: (sessionId: number) => void;
+  onResumeSession: (sessionId: number) => void;
+}) {
+  const handleBackdropClose = (event: MouseEvent<HTMLDivElement>) => {
+    if (event.target === event.currentTarget) onClose();
+  };
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className="training-modal-backdrop account-training-backdrop" role="presentation" onMouseDown={handleBackdropClose}>
+      <div className="training-modal account-training-modal" role="dialog" aria-modal="true" aria-label="계좌관리매매 훈련" onMouseDown={(event) => event.stopPropagation()}>
+        <AccountTrainingWorkspace onClose={onClose} onOpenStockTraining={onOpenStockTraining} onOpenResult={onOpenResult} onResumeSession={onResumeSession} />
+      </div>
+    </div>
+  );
+}
+
 function SettingsModal({
+  mode = "standalone",
+  trainingAccountId = null,
+  trainingAccountName = null,
+  availableCash = null,
+  accountCommissionRate = null,
   q,
   setQ,
   stocks,
@@ -1218,6 +2849,11 @@ function SettingsModal({
   onStart,
   onClose,
 }: {
+  mode?: TrainingLaunchMode;
+  trainingAccountId?: number | null;
+  trainingAccountName?: string | null;
+  availableCash?: number | null;
+  accountCommissionRate?: number | null;
   q: string;
   setQ: (value: string) => void;
   stocks: TrainingStockItem[];
@@ -1267,13 +2903,19 @@ function SettingsModal({
       <form className="training-modal training-settings-modal" onSubmit={submit}>
         <div className="training-modal-head">
           <div>
-            <h3>매매훈련 설정</h3>
+            <h3>종목매매 훈련</h3>
             <p className="training-result-subtitle">가격 데이터가 있는 종목과 훈련 조건을 선택합니다.</p>
           </div>
           <button type="button" className="training-icon-button" onClick={onClose} aria-label="닫기">
             <X size={18} />
           </button>
         </div>
+        {mode === "account-linked" && trainingAccountId ? (
+          <div className="training-modal-market">
+            <strong>연결 훈련계좌: {trainingAccountName || `#${trainingAccountId}`}</strong>
+            <span>사용 가능 현금 {fmtWon(availableCash)} · 계좌 수수료율 {accountCommissionRate === null ? "-" : `${(accountCommissionRate * 100).toFixed(3)}%`}</span>
+          </div>
+        ) : null}
 
         <div className="training-stock-search training-settings-top-row">
           <input
@@ -1337,7 +2979,9 @@ function SettingsModal({
         ) : null}
 
         <div className="training-option-grid training-settings-option-grid">
-          <label><span>초기자금</span><input className="input-control" type="number" min={1} value={initialCash} onChange={(event) => setInitialCash(Number(event.target.value) || 0)} /></label>
+          {mode === "standalone" ? (
+            <label><span>초기자금</span><input className="input-control" type="number" min={1} value={initialCash} onChange={(event) => setInitialCash(Number(event.target.value) || 0)} /></label>
+          ) : null}
           <label><span>수수료율(%)</span><input className="input-control" type="number" min={0} step={0.01} value={feeRatePct} onChange={(event) => setFeeRatePct(Number(event.target.value) || 0)} /></label>
           <label><span>표시 일수</span><input className="input-control" type="number" min={1} max={400} value={displayDays} onChange={(event) => setDisplayDays(Number(event.target.value) || 80)} /></label>
           <label><span>이동평균선</span><input className="input-control" value={movingAverageText} onChange={(event) => setMovingAverageText(event.target.value)} /></label>
@@ -1349,7 +2993,7 @@ function SettingsModal({
         <div className="training-modal-actions">
           <button type="button" className="btn btn-secondary" onClick={onClose}>닫기</button>
           <button type="submit" className="btn btn-primary" disabled={!selectedStock || loading}>
-            {loading ? "시작 중..." : "훈련 시작"}
+            {loading ? "시작 중..." : mode === "account-linked" ? "계좌에 연결하여 훈련 시작" : "종목매매 시작"}
           </button>
         </div>
       </form>
@@ -1720,27 +3364,32 @@ function OrderModal({
     add_buy_plan_type: "none",
   }));
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const feeRate = Number(detail.session.options?.fee_rate || 0);
+  const linkedAccountId = Number(detail.session.training_account_id || 0);
+  const availableCash = Number(detail.account.cash_balance ?? detail.session.cash ?? 0);
   const amount = price * quantity;
   const fee = amount * feeRate;
+  const expectedReturnCash = Math.max(0, amount - fee);
   const expectedProfit = mode === "SELL" ? (price - detail.session.avg_price) * quantity - fee : null;
   const expectedProfitRate = mode === "SELL" && detail.session.avg_price > 0 ? ((price - detail.session.avg_price) / detail.session.avg_price) * 100 : null;
   const totalCost = amount + fee;
-  const remainingCash = detail.session.cash - totalCost;
+  const remainingCash = availableCash - totalCost;
+  const shortageAmount = Math.max(0, totalCost - availableCash);
   const maxAffordableQuantity =
     mode === "BUY"
-      ? Math.floor(detail.session.cash / Math.max(1, price * (1 + feeRate)))
+      ? Math.floor(availableCash / Math.max(1, price * (1 + feeRate)))
       : detail.session.position_qty;
   const invalidOrder =
     quantity < 1 ||
     price < 1 ||
-    (mode === "BUY" && totalCost > detail.session.cash) ||
+    (mode === "BUY" && totalCost > availableCash) ||
     (mode === "SELL" && quantity > detail.session.position_qty);
 
   const calculateQuantity = (nextPercent: number, nextPrice = price) => {
     if (mode === "BUY") {
       const targetAmount = detail.session.initial_cash * (nextPercent / 100);
-      const cashLimitedAmount = Math.min(targetAmount, detail.session.cash);
+      const cashLimitedAmount = Math.min(targetAmount, availableCash);
       return Math.max(0, Math.floor(cashLimitedAmount / Math.max(1, nextPrice * (1 + feeRate))));
     }
     return Math.max(0, Math.floor(detail.session.position_qty * (nextPercent / 100)));
@@ -1748,7 +3397,7 @@ function OrderModal({
 
   useEffect(() => {
     setQuantity(calculateQuantity(percent, price));
-  }, [percent, price, mode, feeRate]);
+  }, [percent, price, mode, feeRate, availableCash]);
 
   const onQuantityChange = (nextQuantity: number) => {
     const safeQuantity = Math.max(0, Math.min(nextQuantity || 0, maxAffordableQuantity));
@@ -1764,10 +3413,14 @@ function OrderModal({
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (invalidOrder || submitting || submittingRef.current) return;
+    const clientOrderId = `training-${detail.session.id}-${mode.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    submittingRef.current = true;
     setSubmitting(true);
     try {
-      await onSubmit({ price, quantity, reason: reason.trim() || null, method_review: hasMethodReview(methodReview) ? methodReview : null });
+      await onSubmit({ price, quantity, reason: reason.trim() || null, method_review: hasMethodReview(methodReview) ? methodReview : null, client_order_id: clientOrderId });
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
@@ -1815,6 +3468,15 @@ function OrderModal({
           <strong>{detail.session.current_date}</strong>
           <span>시가 {fmtWon(candle?.open)} · 고가 {fmtWon(candle?.high)} · 저가 {fmtWon(candle?.low)} · 종가 {fmtWon(candle?.close)}</span>
         </div>
+
+        {linkedAccountId ? (
+          <div className="training-order-account-panel">
+            <div><span>사용 가능 현금</span><strong>{fmtWon(availableCash)}</strong></div>
+            <div><span>{mode === "BUY" ? "주문 필요금액" : "예상 반환현금"}</span><strong>{mode === "BUY" ? fmtWon(totalCost) : fmtWon(expectedReturnCash)}</strong></div>
+            <div><span>{mode === "BUY" ? "주문 후 예상현금" : "매도 후 예상현금"}</span><strong className={profitClass(mode === "BUY" ? remainingCash : availableCash + expectedReturnCash)}>{fmtWon(mode === "BUY" ? remainingCash : availableCash + expectedReturnCash)}</strong></div>
+            <div><span>{mode === "BUY" ? "최대 매수 가능수량" : "매도 후 잔여수량"}</span><strong>{fmtNumber(mode === "BUY" ? maxAffordableQuantity : Math.max(0, detail.session.position_qty - quantity))}주</strong></div>
+          </div>
+        ) : null}
 
         <div className="training-order-tabs" role="tablist" aria-label="주문 입력 구분">
           <button type="button" className={activeOrderTab === "order" ? "active" : ""} onClick={() => setActiveOrderTab("order")}>주문 입력</button>
@@ -1865,8 +3527,10 @@ function OrderModal({
               {mode === "SELL" ? <div><span>예상 실현수익률</span><strong className={profitClass(expectedProfitRate)}>{fmtPercent(expectedProfitRate)}</strong></div> : null}
             </div>
 
-            {mode === "BUY" && totalCost > detail.session.cash ? (
-              <div className="inline-result inline-error">수수료를 포함한 총 필요금액이 현재 현금을 초과합니다.</div>
+            {mode === "BUY" && totalCost > availableCash ? (
+              <div className="inline-result inline-error">
+                사용 가능 현금이 부족합니다. 부족금액 {fmtWon(shortageAmount)} · 최대 매수 가능수량 {fmtNumber(maxAffordableQuantity)}주
+              </div>
             ) : null}
             {mode === "SELL" && quantity > detail.session.position_qty ? (
               <div className="inline-result inline-error">매도 수량이 현재 보유수량을 초과합니다.</div>
@@ -2254,6 +3918,9 @@ function TradeTrainingPage() {
   const [detail, setDetail] = useState<TrainingSessionDetail | null>(null);
   const [result, setResult] = useState<TrainingResult | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsMode, setSettingsMode] = useState<TrainingLaunchMode>("standalone");
+  const [linkedTrainingAccount, setLinkedTrainingAccount] = useState<TradeTrainingAccount | null>(null);
+  const [accountTrainingOpen, setAccountTrainingOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [resultLoading, setResultLoading] = useState(false);
   const [message, setMessage] = useState("");
@@ -2337,6 +4004,7 @@ function TradeTrainingPage() {
         start_date: startDate || null,
         end_date: endDate || null,
         moving_averages: normalizeMas(movingAverageText),
+        training_account_id: linkedTrainingAccount?.id ?? null,
       });
       setDetail(response);
       setShowAvgPriceLine(false);
@@ -2349,6 +4017,8 @@ function TradeTrainingPage() {
       setMarketIndexError(null);
       setMarketIndexLoadingCode(null);
       setSettingsOpen(false);
+      setSettingsMode("standalone");
+      setLinkedTrainingAccount(null);
       setMessage("훈련 세션을 시작했습니다.");
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "훈련 세션을 시작하지 못했습니다.");
@@ -2486,6 +4156,56 @@ function TradeTrainingPage() {
     }
   };
 
+  const openStandaloneSettings = () => {
+    setSettingsMode("standalone");
+    setLinkedTrainingAccount(null);
+    void loadTradeMethods();
+    setSettingsOpen(true);
+  };
+
+  const openAccountLinkedSettings = (account: TradeTrainingAccount) => {
+    setLinkedTrainingAccount(account);
+    setSettingsMode("account-linked");
+    setInitialCash(Number(account.cash_balance || account.realized_equity || account.initial_capital || 50_000_000));
+    setFeeRatePct(Number(account.commission_rate || 0) * 100);
+    setDisplayDays(account.display_days_default || 80);
+    setMovingAverageText((account.moving_average_periods_default || [5, 10, 20, 60, 120]).join(","));
+    void loadTradeMethods();
+    setSettingsOpen(true);
+  };
+
+  const resumeAccountSession = async (sessionId: number) => {
+    setLoading(true);
+    setError("");
+    setMessage("");
+    setResult(null);
+    try {
+      const response = await repositories.tradeTraining.getSession(sessionId);
+      const options = response.session.options || {};
+      setDetail(response);
+      setDisplayDays(Number(options.display_days || displayDays || 80));
+      setMovingAverageText(Array.isArray(options.moving_averages) ? options.moving_averages.join(",") : movingAverageText);
+      setShowAvgPriceLine(false);
+      setScrollTargetDate(null);
+      setHighlightedTradeDate(null);
+      setHighlightedTradeId(null);
+      setShowMethodPrinciples(false);
+      setSelectedMarketIndex(null);
+      setMarketIndexPriceMap({});
+      setMarketIndexError(null);
+      setMarketIndexLoadingCode(null);
+      setSettingsOpen(false);
+      setAccountTrainingOpen(false);
+      setSettingsMode("standalone");
+      setLinkedTrainingAccount(null);
+      setMessage("기존 계좌관리매매 세션을 이어서 불러왔습니다.");
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "기존 훈련 세션을 불러오지 못했습니다.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const currentTrainingDate = detail?.session.current_date || detail?.current_candle?.trade_date || "";
   const sharedVisibleDates = useMemo(() => detail?.candles.map((candle) => candle.trade_date) ?? [], [detail?.candles]);
   const visibleMarketIndexPrices = useMemo(() => {
@@ -2507,16 +4227,14 @@ function TradeTrainingPage() {
         title="매매훈련"
         description="과거 일봉을 하루씩 넘기며 매수·매도 판단을 훈련합니다."
         action={
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={() => {
-              void loadTradeMethods();
-              setSettingsOpen(true);
-            }}
-          >
-            <Settings size={16} /> 훈련 설정
-          </button>
+          <div className="training-header-actions">
+            <button type="button" className="btn btn-primary" onClick={() => setAccountTrainingOpen(true)}>
+              <BriefcaseBusiness size={16} /> 계좌관리매매 훈련
+            </button>
+            <button type="button" className="btn btn-secondary" onClick={openStandaloneSettings}>
+              <Settings size={16} /> 종목매매 훈련
+            </button>
+          </div>
         }
       />
 
@@ -2651,6 +4369,11 @@ function TradeTrainingPage() {
 
       {settingsOpen ? (
         <SettingsModal
+          mode={settingsMode}
+          trainingAccountId={linkedTrainingAccount?.id ?? null}
+          trainingAccountName={linkedTrainingAccount?.name ?? null}
+          availableCash={linkedTrainingAccount?.cash_balance ?? null}
+          accountCommissionRate={linkedTrainingAccount?.commission_rate ?? null}
           q={q}
           setQ={setQ}
           stocks={stocks}
@@ -2675,7 +4398,22 @@ function TradeTrainingPage() {
           loading={loading}
           onSearch={() => loadStocks()}
           onStart={startSession}
-          onClose={() => setSettingsOpen(false)}
+          onClose={() => {
+            setSettingsOpen(false);
+            setSettingsMode("standalone");
+            setLinkedTrainingAccount(null);
+          }}
+        />
+      ) : null}
+      {accountTrainingOpen ? (
+        <AccountTrainingModal
+          onClose={() => setAccountTrainingOpen(false)}
+          onOpenStockTraining={(account) => {
+            setAccountTrainingOpen(false);
+            openAccountLinkedSettings(account);
+          }}
+          onOpenResult={(sessionId) => void openResultReport(sessionId)}
+          onResumeSession={(sessionId) => void resumeAccountSession(sessionId)}
         />
       ) : null}
       {detail?.trade_method && showMethodPrinciples ? (

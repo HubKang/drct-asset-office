@@ -62,6 +62,36 @@ export interface MarketIndicatorValueResponse {
   items: MarketIndicatorValue[];
 }
 
+export interface MarketIndicatorReadiness {
+  indicator_code: string;
+  indicator_name?: string | null;
+  provider?: string | null;
+  provider_symbol?: string | null;
+  data_frequency?: string | null;
+  unit_label?: string | null;
+  collection_status?: string | null;
+  readiness: string;
+  readiness_reason?: string | null;
+  data_count: number;
+  first_value_date?: string | null;
+  latest_value_date?: string | null;
+  latest_value?: number | null;
+  latest_collected_at?: string | null;
+  recommended_minimum_count: number;
+  insufficient_count: number;
+  mapping_ready: boolean;
+  data_ready: boolean;
+  chart_ready: boolean;
+  compare_ready: boolean;
+  signal_ready: boolean;
+  supported_transforms: string[];
+}
+
+export interface MarketIndicatorReadinessListResponse {
+  items: MarketIndicatorReadiness[];
+  summary_counts: Record<string, number>;
+}
+
 export interface MarketIndicatorProviderMapping {
   id?: number | null;
   indicator_code: string;

@@ -20,6 +20,8 @@ from backend.app.schemas.market_indicator_schema import (
     MarketIndicatorListResponse,
     MarketIndicatorProviderMapping,
     MarketIndicatorProviderMappingListResponse,
+    MarketIndicatorReadiness,
+    MarketIndicatorReadinessListResponse,
     MarketIndicatorProviderMappingTestRequest,
     MarketIndicatorProviderMappingTestResponse,
     MarketIndicatorProviderMappingUpsertRequest,
@@ -48,6 +50,19 @@ def list_market_indicator_provider_mappings(db: Session = Depends(get_db)) -> Ma
 @router.get("/market-indicators-data/providers/status", response_model=ExternalProviderStatusListResponse)
 def list_external_provider_statuses() -> ExternalProviderStatusListResponse:
     return {"items": ExternalProviderStatusService().list_statuses()}
+
+
+@router.get("/market-indicators-data/readiness", response_model=MarketIndicatorReadinessListResponse)
+def list_market_indicator_readiness(
+    indicator_codes: list[str] | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> MarketIndicatorReadinessListResponse:
+    return MarketIndicatorService(db).list_readiness(indicator_codes=indicator_codes)
+
+
+@router.get("/market-indicators-data/{indicator_code}/readiness", response_model=MarketIndicatorReadiness)
+def get_market_indicator_readiness(indicator_code: str, db: Session = Depends(get_db)) -> MarketIndicatorReadiness:
+    return MarketIndicatorService(db).get_readiness(indicator_code)
 
 
 

@@ -21,8 +21,10 @@ from backend.app.api.routes_images import router as images_router
 from backend.app.api.routes_market_metrics import router as market_metrics_router
 from backend.app.api.routes_kms import router as kms_router
 from backend.app.api.routes_market_calendar import router as market_calendar_router
+from backend.app.api.routes_market_data import router as market_data_router
 from backend.app.api.routes_market_indexes import router as market_indexes_router
 from backend.app.api.routes_market_indicators import router as market_indicators_router
+from backend.app.api.routes_market_signals import router as market_signals_router
 from backend.app.api.routes_market_theme_candidates import router as market_theme_candidates_router
 from backend.app.api.routes_market_themes import router as market_themes_router
 from backend.app.api.routes_market_trends import router as market_trends_router
@@ -42,12 +44,14 @@ from backend.app.api.routes_trade_journals import router as trade_journals_route
 from backend.app.api.routes_trade_reviews import router as trade_reviews_router
 from backend.app.api.routes_watchlist import router as watchlist_router
 from backend.app.api.routes_watchlist_evaluation import router as watchlist_evaluation_router
-from backend.app.core.database import ensure_runtime_schema
+from backend.app.core.database import ensure_market_data_collection_schema, ensure_market_signal_schema, ensure_runtime_schema
 from backend.app.core.config import PROJECT_ROOT
 from backend.app.core.logging import setup_logging
 
 setup_logging()
 ensure_runtime_schema()
+ensure_market_data_collection_schema()
+ensure_market_signal_schema()
 
 app = FastAPI(title="DrCT Asset API")
 app.add_middleware(
@@ -70,8 +74,10 @@ app.include_router(stock_investor_flows_router)
 app.include_router(stock_tracking_router)
 app.include_router(market_metrics_router)
 app.include_router(market_calendar_router)
+app.include_router(market_data_router)
 app.include_router(market_indexes_router)
 app.include_router(market_indicators_router)
+app.include_router(market_signals_router)
 app.include_router(market_themes_router)
 app.include_router(market_theme_candidates_router)
 app.include_router(market_trends_router)

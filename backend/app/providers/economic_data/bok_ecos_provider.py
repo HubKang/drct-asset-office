@@ -198,25 +198,12 @@ class BokEcosProvider:
     def collect_values(self, indicator_code: str, mapping: dict[str, Any], *, start_date: str, end_date: str) -> list[dict[str, Any]]:
         params = self._mapping_params(mapping)
         cycle = params.get("cycle") or "D"
-        result = self.statistic_search(
-            stat_code=params.get("stat_code") or mapping.get("api_id") or "",
-            cycle=cycle,
-            start_date=start_date,
-            end_date=end_date,
-            item_code1=params.get("item_code1") or mapping.get("provider_symbol"),
-            item_code2=params.get("item_code2"),
-            item_code3=params.get("item_code3"),
-            item_code4=params.get("item_code4"),
-            start_index=int(params.get("start_index") or 1),
-            end_index=int(params.get("end_index") or 1000),
-        )
-        if result.get("status") != "SUCCESS":
-            raise RuntimeError(str(result.get("message") or "ECOS collection failed"))
+        rows = self._collect_search_rows(params, mapping, cycle=cycle, start_date=start_date, end_date=end_date)
         values: list[dict[str, Any]] = []
         previous_value: float | None = None
         monthly_values: dict[str, float] = {}
         normalized_cycle = str(cycle).upper()
-        for row in sorted(result.get("rows") or [], key=lambda item: str(item.get("TIME") or "")):
+        for row in sorted(rows, key=lambda item: str(item.get("TIME") or "")):
             raw_time = str(row.get("TIME") or "")
             value = self._to_float(row.get("DATA_VALUE"))
             value_date = self._value_date(raw_time, cycle)
@@ -244,13 +231,42 @@ class BokEcosProvider:
                     "source_unit": row.get("UNIT_NAME") or params.get("source_unit"),
                     "is_preliminary": 0,
                     "release_date": None,
-                    "raw_payload_json": json.dumps(self._sanitize_row(row), ensure_ascii=False),
+                    "raw_payload_json": None,
                 }
             )
             if normalized_cycle == "M" and len(period_key) == 6:
                 monthly_values[period_key] = value
             previous_value = value
         return values
+
+    def _collect_search_rows(self, params: dict[str, Any], mapping: dict[str, Any], *, cycle: str, start_date: str, end_date: str) -> list[dict[str, Any]]:
+        page_size = min(max(int(params.get("page_size") or 1000), 100), 1000)
+        start_index = int(params.get("start_index") or 1)
+        rows: list[dict[str, Any]] = []
+        total_count: int | None = None
+        while total_count is None or start_index <= total_count:
+            end_index = start_index + page_size - 1
+            result = self.statistic_search(
+                stat_code=params.get("stat_code") or mapping.get("api_id") or "",
+                cycle=cycle,
+                start_date=start_date,
+                end_date=end_date,
+                item_code1=params.get("item_code1") or mapping.get("provider_symbol"),
+                item_code2=params.get("item_code2"),
+                item_code3=params.get("item_code3"),
+                item_code4=params.get("item_code4"),
+                start_index=start_index,
+                end_index=end_index,
+            )
+            if result.get("status") != "SUCCESS":
+                raise RuntimeError(str(result.get("message") or "ECOS collection failed"))
+            page_rows = [row for row in result.get("rows") or [] if isinstance(row, dict)]
+            rows.extend(page_rows)
+            total_count = int(result.get("list_total_count") or len(rows) or 0)
+            if not page_rows or len(rows) >= total_count:
+                break
+            start_index = end_index + 1
+        return rows
     def _request(self, path_parts: list[str]) -> dict[str, Any]:
         url = "/".join([self.base_url] + [quote(part, safe="") for part in path_parts])
         request = Request(url, headers={"Accept": "application/json", "User-Agent": "drct-asset-office/1.0"})

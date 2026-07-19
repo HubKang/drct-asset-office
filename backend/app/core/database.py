@@ -240,6 +240,34 @@ def ensure_runtime_schema() -> None:
         conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_app_images_domain_created ON app_images(domain, created_at)"
         )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS trade_training_accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT,
+                status TEXT NOT NULL DEFAULT 'ACTIVE',
+                initial_capital REAL NOT NULL,
+                cash_balance REAL NOT NULL,
+                realized_equity REAL NOT NULL,
+                commission_rate REAL NOT NULL DEFAULT 0.001,
+                risk_per_trade_pct REAL NOT NULL DEFAULT 1.0,
+                max_open_risk_pct REAL NOT NULL DEFAULT 3.0,
+                max_position_count INTEGER NOT NULL DEFAULT 5,
+                display_days_default INTEGER NOT NULL DEFAULT 80,
+                moving_average_periods_default TEXT NOT NULL DEFAULT '[5,10,20,60,120]',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                completed_at TEXT
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_trade_training_accounts_status ON trade_training_accounts(status)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_trade_training_accounts_updated ON trade_training_accounts(updated_at)"
+        )
         rows = conn.exec_driver_sql("PRAGMA table_info(watchlist)").fetchall()
         if not rows:
             return
@@ -2305,6 +2333,8 @@ def ensure_runtime_schema() -> None:
         }
         if "method_id" not in simulation_session_columns:
             conn.exec_driver_sql("ALTER TABLE simulation_sessions ADD COLUMN method_id INTEGER")
+        if "training_account_id" not in simulation_session_columns:
+            conn.exec_driver_sql("ALTER TABLE simulation_sessions ADD COLUMN training_account_id INTEGER")
         conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_simulation_sessions_stock_code ON simulation_sessions(stock_code)"
         )
@@ -2317,6 +2347,28 @@ def ensure_runtime_schema() -> None:
         conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_simulation_sessions_created_at ON simulation_sessions(created_at)"
         )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_simulation_sessions_training_account ON simulation_sessions(training_account_id)"
+        )
+        session_account_rows = conn.exec_driver_sql(
+            """
+            SELECT id, options_json
+            FROM simulation_sessions
+            WHERE training_account_id IS NULL
+              AND options_json IS NOT NULL
+            """
+        ).mappings().fetchall()
+        for row in session_account_rows:
+            try:
+                options = json.loads(str(row["options_json"] or "{}"))
+            except json.JSONDecodeError:
+                continue
+            account_id = options.get("training_account_id")
+            if account_id:
+                conn.exec_driver_sql(
+                    "UPDATE simulation_sessions SET training_account_id = ? WHERE id = ?",
+                    (int(account_id), int(row["id"])),
+                )
         conn.exec_driver_sql(
             """
             CREATE TABLE IF NOT EXISTS simulation_trades (
@@ -3123,5 +3175,822 @@ def ensure_runtime_schema() -> None:
                 VALUES (NULL, ?, NULL, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """,
                 (category_name, sort_order * 10),
+            )
+
+
+def _runtime_table_columns(conn, table_name: str) -> set[str]:
+    return {str(row[1]) for row in conn.exec_driver_sql(f"PRAGMA table_info({table_name})").fetchall()}
+
+
+def _runtime_add_column_if_missing(conn, table_name: str, column_name: str, column_sql: str) -> None:
+    if column_name not in _runtime_table_columns(conn, table_name):
+        conn.exec_driver_sql(f"ALTER TABLE {table_name} ADD COLUMN {column_sql}")
+
+
+def ensure_market_data_collection_schema() -> None:
+    if not DATABASE_URL.startswith("sqlite"):
+        return
+
+    with engine.begin() as conn:
+        _runtime_add_column_if_missing(conn, "market_index_daily_prices", "collected_at", "collected_at TEXT")
+        _runtime_add_column_if_missing(conn, "market_index_daily_prices", "revised_at", "revised_at TEXT")
+        _runtime_add_column_if_missing(conn, "market_indicator_values", "collected_at", "collected_at TEXT")
+        _runtime_add_column_if_missing(conn, "market_indicator_values", "revised_at", "revised_at TEXT")
+
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_data_collection_policies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_type TEXT NOT NULL,
+                item_code TEXT NOT NULL,
+                frequency TEXT NOT NULL DEFAULT 'DAILY',
+                initial_lookback_value INTEGER NOT NULL DEFAULT 2,
+                initial_lookback_unit TEXT NOT NULL DEFAULT 'YEARS',
+                overlap_value INTEGER NOT NULL DEFAULT 10,
+                overlap_unit TEXT NOT NULL DEFAULT 'DAYS',
+                minimum_refresh_interval_hours INTEGER NOT NULL DEFAULT 0,
+                max_retry_count INTEGER NOT NULL DEFAULT 1,
+                timeout_seconds INTEGER NOT NULL DEFAULT 30,
+                is_auto_collect INTEGER NOT NULL DEFAULT 1,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                last_attempt_at TEXT,
+                last_success_at TEXT,
+                last_status TEXT,
+                last_error_type TEXT,
+                last_error_message TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(item_type, item_code)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_data_collection_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_type TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'PENDING',
+                started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                finished_at TEXT,
+                target_count INTEGER NOT NULL DEFAULT 0,
+                success_count INTEGER NOT NULL DEFAULT 0,
+                inserted_count INTEGER NOT NULL DEFAULT 0,
+                updated_count INTEGER NOT NULL DEFAULT 0,
+                unchanged_count INTEGER NOT NULL DEFAULT 0,
+                skipped_count INTEGER NOT NULL DEFAULT 0,
+                failed_count INTEGER NOT NULL DEFAULT 0,
+                elapsed_ms INTEGER NOT NULL DEFAULT 0,
+                triggered_by TEXT,
+                error_summary TEXT
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_data_collection_run_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id INTEGER NOT NULL,
+                item_type TEXT NOT NULL,
+                item_code TEXT NOT NULL,
+                provider_code TEXT,
+                status TEXT NOT NULL,
+                requested_from TEXT,
+                requested_to TEXT,
+                received_count INTEGER NOT NULL DEFAULT 0,
+                inserted_count INTEGER NOT NULL DEFAULT 0,
+                updated_count INTEGER NOT NULL DEFAULT 0,
+                unchanged_count INTEGER NOT NULL DEFAULT 0,
+                http_status INTEGER,
+                provider_error_code TEXT,
+                error_type TEXT,
+                error_message TEXT,
+                retry_count INTEGER NOT NULL DEFAULT 0,
+                elapsed_ms INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (run_id) REFERENCES market_data_collection_runs(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_indicator_derivations (
+                indicator_code TEXT PRIMARY KEY,
+                formula_type TEXT NOT NULL,
+                source_codes_json TEXT NOT NULL,
+                parameters_json TEXT NOT NULL DEFAULT '{}',
+                output_frequency TEXT NOT NULL DEFAULT 'DAILY',
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (indicator_code) REFERENCES market_indicators(indicator_code) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_market_data_collection_runs_started ON market_data_collection_runs(started_at)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_market_data_collection_run_items_run ON market_data_collection_run_items(run_id)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_market_data_collection_run_items_code ON market_data_collection_run_items(item_type, item_code)")
+        conn.exec_driver_sql("UPDATE market_indicator_values SET raw_payload_json = NULL WHERE raw_payload_json IS NOT NULL")
+        conn.exec_driver_sql(
+            """
+            INSERT OR IGNORE INTO market_data_collection_policies
+            (item_type, item_code, frequency, initial_lookback_value, initial_lookback_unit, overlap_value, overlap_unit,
+             minimum_refresh_interval_hours, max_retry_count, timeout_seconds, is_auto_collect, is_active)
+            SELECT 'INDEX', index_code, 'DAILY', 2, 'YEARS', 10, 'DAYS', 0, 1, 60, 1, is_active
+            FROM market_indexes
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            INSERT OR IGNORE INTO market_data_collection_policies
+            (item_type, item_code, frequency, initial_lookback_value, initial_lookback_unit, overlap_value, overlap_unit,
+             minimum_refresh_interval_hours, max_retry_count, timeout_seconds, is_auto_collect, is_active)
+            SELECT 'INDICATOR', indicator_code, data_frequency, 5, 'YEARS',
+                   CASE UPPER(data_frequency) WHEN 'MONTHLY' THEN 6 WHEN 'QUARTERLY' THEN 4 WHEN 'WEEKLY' THEN 6 ELSE 10 END,
+                   CASE UPPER(data_frequency) WHEN 'MONTHLY' THEN 'MONTHS' WHEN 'QUARTERLY' THEN 'QUARTERS' WHEN 'WEEKLY' THEN 'WEEKS' ELSE 'DAYS' END,
+                   0, 1, 30, 1, is_active
+            FROM market_indicators
+            """
+        )
+
+        fred_rows = (
+            ("US_VIX", "VIX", "GLOBAL_RISK", "VOLATILITY", "DAILY", "LINE", "INDEX", "지수", "VIX risk-off and volatility signal", 90, 1, "VIXCLS"),
+            ("US_REAL_10Y", "미국 10년 실질금리", "GLOBAL_RATE", "REAL_RATE", "DAILY", "LINE", "PCT", "%", "US 10Y real yield discount-rate pressure", 91, 2, "DFII10"),
+            ("US_BREAKEVEN_10Y", "미국 10년 기대인플레이션", "INFLATION", "BREAKEVEN", "DAILY", "LINE", "PCT", "%", "US 10Y breakeven inflation expectation", 92, 3, "T10YIE"),
+            ("US_NFCI", "Chicago Fed 금융여건지수", "CREDIT_LIQUIDITY", "FINANCIAL_CONDITIONS", "WEEKLY", "LINE", "INDEX", "지수", "Chicago Fed National Financial Conditions Index", 93, 4, "NFCI"),
+            ("US_BROAD_DOLLAR", "미국 광의 달러지수", "FX", "DOLLAR", "DAILY", "LINE", "INDEX", "지수", "Trade weighted broad US dollar index", 94, 5, "DTWEXBGS"),
+            ("WTI", "WTI 원유", "ENERGY", "OIL", "DAILY", "LINE", "USD", "달러", "WTI crude oil spot price", 95, 6, "DCOILWTICO"),
+            ("US_CPI", "미국 CPI", "INFLATION", "US_CPI", "MONTHLY", "BAR_LINE", "INDEX", "지수", "US CPI index", 96, 7, "CPIAUCSL"),
+            ("US_CORE_PCE", "미국 근원 PCE 물가지수", "INFLATION", "US_CORE_PCE", "MONTHLY", "BAR_LINE", "INDEX", "지수", "US core PCE price index", 97, 8, "PCEPILFE"),
+            ("US_INITIAL_CLAIMS", "미국 신규 실업수당 청구", "EMPLOYMENT_CONSUMPTION", "CLAIMS", "WEEKLY", "LINE", "COUNT", "건", "Initial unemployment insurance claims", 98, 9, "ICSA"),
+        )
+        for row in fred_rows:
+            conn.exec_driver_sql(
+                """
+                INSERT INTO market_indicators
+                (indicator_code, indicator_name, category, subcategory, data_frequency, chart_type, unit, unit_label,
+                 value_label, base_line_value, display_order, priority_rank, description, interpretation_note,
+                 higher_value_meaning, lower_value_meaning, is_active, collection_status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, '발표값', NULL, ?, ?, ?, NULL, NULL, NULL, 1, 'WAITING', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(indicator_code) DO UPDATE SET
+                    indicator_name = excluded.indicator_name,
+                    category = excluded.category,
+                    subcategory = excluded.subcategory,
+                    data_frequency = excluded.data_frequency,
+                    chart_type = excluded.chart_type,
+                    unit = excluded.unit,
+                    unit_label = excluded.unit_label,
+                    display_order = excluded.display_order,
+                    priority_rank = excluded.priority_rank,
+                    description = excluded.description,
+                    is_active = 1,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (*row[:8], row[9], row[10], row[8]),
+            )
+            request_params_json = json.dumps(
+                {"series_id": row[11], "frequency": row[4][0].lower(), "value_field": "value", "date_field": "date", "scale": 1, "source_unit": row[6]},
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            conn.exec_driver_sql(
+                """
+                INSERT INTO market_indicator_provider_mappings
+                (indicator_code, provider, api_type, api_id, endpoint_url, provider_symbol, request_params_json,
+                 is_enabled, is_verified, last_test_status, last_test_message, created_at, updated_at)
+                VALUES (?, 'FRED', 'SERIES_OBSERVATIONS', 'FRED_SERIES_OBSERVATIONS', '/fred/series/observations',
+                        ?, ?, 1, 1, 'SUCCESS', 'FRED mapping seeded; collect endpoint validates data on run.', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(indicator_code, provider) DO UPDATE SET
+                    api_type = excluded.api_type,
+                    api_id = excluded.api_id,
+                    endpoint_url = excluded.endpoint_url,
+                    provider_symbol = excluded.provider_symbol,
+                    request_params_json = excluded.request_params_json,
+                    is_enabled = 1,
+                    is_verified = 1,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (row[0], row[11], request_params_json),
+            )
+            conn.exec_driver_sql(
+                """
+                INSERT OR IGNORE INTO market_data_collection_policies
+                (item_type, item_code, frequency, initial_lookback_value, initial_lookback_unit, overlap_value, overlap_unit,
+                 minimum_refresh_interval_hours, max_retry_count, timeout_seconds, is_auto_collect, is_active)
+                VALUES ('INDICATOR', ?, ?, 5, 'YEARS',
+                        CASE ? WHEN 'MONTHLY' THEN 6 WHEN 'WEEKLY' THEN 6 ELSE 10 END,
+                        CASE ? WHEN 'MONTHLY' THEN 'MONTHS' WHEN 'WEEKLY' THEN 'WEEKS' ELSE 'DAYS' END,
+                        0, 1, 30, 1, 1)
+                """,
+                (row[0], row[4], row[4], row[4]),
+            )
+
+
+def ensure_market_signal_schema() -> None:
+    if not DATABASE_URL.startswith("sqlite"):
+        return
+
+    with engine.begin() as conn:
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_signal_definitions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                signal_code TEXT NOT NULL UNIQUE,
+                signal_name TEXT NOT NULL,
+                description TEXT,
+                category TEXT,
+                signal_type TEXT NOT NULL DEFAULT 'COMPOSITE',
+                horizon TEXT NOT NULL DEFAULT 'MEDIUM',
+                status TEXT NOT NULL DEFAULT 'DRAFT',
+                interpretation_direction TEXT NOT NULL DEFAULT 'MIXED',
+                phenomenon_template TEXT,
+                process_template TEXT,
+                result_template TEXT,
+                persistence_periods INTEGER NOT NULL DEFAULT 1,
+                cooldown_periods INTEGER NOT NULL DEFAULT 0,
+                minimum_data_quality REAL NOT NULL DEFAULT 60,
+                current_version INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_signal_conditions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                signal_definition_id INTEGER NOT NULL,
+                condition_group TEXT NOT NULL DEFAULT 'A',
+                condition_role TEXT NOT NULL DEFAULT 'REQUIRED',
+                item_type TEXT NOT NULL DEFAULT 'INDICATOR',
+                item_code TEXT NOT NULL,
+                transform_type TEXT NOT NULL DEFAULT 'RAW_VALUE',
+                window_size INTEGER NOT NULL DEFAULT 20,
+                comparison_operator TEXT NOT NULL DEFAULT '>',
+                threshold_type TEXT NOT NULL DEFAULT 'ABSOLUTE',
+                threshold_value REAL,
+                threshold_secondary REAL,
+                weight REAL NOT NULL DEFAULT 10,
+                is_required INTEGER NOT NULL DEFAULT 0,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (signal_definition_id) REFERENCES market_signal_definitions(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_signal_evaluations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                signal_definition_id INTEGER NOT NULL,
+                evaluated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                observation_date TEXT NOT NULL,
+                state TEXT NOT NULL,
+                score REAL NOT NULL DEFAULT 0,
+                previous_score REAL,
+                data_quality_score REAL NOT NULL DEFAULT 0,
+                required_pass_count INTEGER NOT NULL DEFAULT 0,
+                required_total_count INTEGER NOT NULL DEFAULT 0,
+                confirm_pass_count INTEGER NOT NULL DEFAULT 0,
+                opposing_pass_count INTEGER NOT NULL DEFAULT 0,
+                phenomenon_text TEXT,
+                process_text TEXT,
+                result_text TEXT,
+                evidence_json TEXT NOT NULL DEFAULT '[]',
+                opposing_evidence_json TEXT NOT NULL DEFAULT '[]',
+                missing_data_json TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(signal_definition_id, observation_date),
+                FOREIGN KEY (signal_definition_id) REFERENCES market_signal_definitions(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_signal_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                signal_definition_id INTEGER NOT NULL,
+                event_date TEXT NOT NULL,
+                previous_state TEXT,
+                new_state TEXT NOT NULL,
+                previous_score REAL,
+                new_score REAL NOT NULL DEFAULT 0,
+                event_type TEXT NOT NULL,
+                summary TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(signal_definition_id, event_date, event_type),
+                FOREIGN KEY (signal_definition_id) REFERENCES market_signal_definitions(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_signal_versions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                signal_definition_id INTEGER NOT NULL,
+                version_no INTEGER NOT NULL,
+                snapshot_json TEXT NOT NULL,
+                change_reason TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(signal_definition_id, version_no),
+                FOREIGN KEY (signal_definition_id) REFERENCES market_signal_definitions(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_market_signal_definitions_status ON market_signal_definitions(status)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_market_signal_conditions_definition ON market_signal_conditions(signal_definition_id)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_market_signal_evaluations_signal_date ON market_signal_evaluations(signal_definition_id, observation_date)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_market_signal_events_date ON market_signal_events(event_date)")
+
+        signal_columns = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(market_signal_definitions)").fetchall()}
+        definition_additions = {
+            "display_signal_level": "TEXT",
+            "phenomenon_code": "TEXT",
+            "relation_type": "TEXT",
+            "confirmation_window": "INTEGER NOT NULL DEFAULT 5",
+            "minimum_confirm_count": "INTEGER NOT NULL DEFAULT 1",
+            "maximum_confirm_delay": "INTEGER NOT NULL DEFAULT 5",
+            "order_required": "INTEGER NOT NULL DEFAULT 0",
+            "minimum_confirm_persistence": "INTEGER NOT NULL DEFAULT 1",
+            "evidence_group_code": "TEXT",
+            "evidence_group_max_score": "REAL",
+            "duplicate_weight_cap": "REAL",
+            "validation_status": "TEXT NOT NULL DEFAULT 'UNVALIDATED'",
+            "validation_period_years": "INTEGER",
+            "validation_completed_at": "TEXT",
+            "validation_summary_json": "TEXT NOT NULL DEFAULT '{}'",
+            "activation_ready": "INTEGER NOT NULL DEFAULT 0",
+            "activated_at": "TEXT",
+            "activation_reason": "TEXT",
+            "deactivated_at": "TEXT",
+            "deactivation_reason": "TEXT",
+        }
+        for column_name, column_type in definition_additions.items():
+            if column_name not in signal_columns:
+                conn.exec_driver_sql(f"ALTER TABLE market_signal_definitions ADD COLUMN {column_name} {column_type}")
+
+        condition_columns = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(market_signal_conditions)").fetchall()}
+        condition_additions = {
+            "relation_type": "TEXT",
+            "confirmation_window": "INTEGER",
+            "evidence_group_code": "TEXT",
+            "evidence_group_max_score": "REAL",
+            "duplicate_weight_cap": "REAL",
+        }
+        for column_name, column_type in condition_additions.items():
+            if column_name not in condition_columns:
+                conn.exec_driver_sql(f"ALTER TABLE market_signal_conditions ADD COLUMN {column_name} {column_type}")
+
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_signal_trend_models (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                signal_definition_id INTEGER,
+                item_type TEXT NOT NULL DEFAULT 'INDICATOR',
+                item_code TEXT NOT NULL,
+                model_type TEXT NOT NULL DEFAULT 'REGRESSION_CHANNEL',
+                short_window INTEGER NOT NULL DEFAULT 20,
+                medium_window INTEGER NOT NULL DEFAULT 60,
+                trend_window INTEGER NOT NULL DEFAULT 120,
+                minimum_trend_duration INTEGER NOT NULL DEFAULT 20,
+                channel_multiplier REAL NOT NULL DEFAULT 2.0,
+                minimum_break_distance REAL NOT NULL DEFAULT 0.15,
+                minimum_break_persistence INTEGER NOT NULL DEFAULT 2,
+                reversal_persistence INTEGER NOT NULL DEFAULT 3,
+                false_break_window INTEGER NOT NULL DEFAULT 5,
+                minimum_trend_strength REAL NOT NULL DEFAULT 1.0,
+                minimum_r_squared REAL NOT NULL DEFAULT 0.18,
+                volatility_window INTEGER NOT NULL DEFAULT 20,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(signal_definition_id, item_type, item_code),
+                FOREIGN KEY (signal_definition_id) REFERENCES market_signal_definitions(id) ON DELETE CASCADE
+            )
+            """
+        )
+        trend_columns = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(market_signal_trend_models)").fetchall()}
+        if "model_profile_code" not in trend_columns:
+            conn.exec_driver_sql("ALTER TABLE market_signal_trend_models ADD COLUMN model_profile_code TEXT NOT NULL DEFAULT 'MARKET_PRICE_TREND'")
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_signal_evidence_sources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_code TEXT NOT NULL UNIQUE,
+                source_name TEXT NOT NULL,
+                source_type TEXT NOT NULL DEFAULT 'INDICATOR',
+                item_type TEXT,
+                item_code TEXT,
+                provider TEXT,
+                evidence_group_code TEXT,
+                reliability_score REAL NOT NULL DEFAULT 1.0,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_signal_model_profiles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                profile_code TEXT NOT NULL UNIQUE,
+                profile_name TEXT NOT NULL,
+                description TEXT,
+                applicable_categories_json TEXT NOT NULL DEFAULT '[]',
+                applicable_frequencies_json TEXT NOT NULL DEFAULT '[]',
+                default_configuration_json TEXT NOT NULL DEFAULT '{}',
+                supported_transforms_json TEXT NOT NULL DEFAULT '[]',
+                status TEXT NOT NULL DEFAULT 'ACTIVE',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_signal_episodes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                phenomenon_definition_id INTEGER NOT NULL,
+                phenomenon_code TEXT NOT NULL,
+                trigger_date TEXT,
+                first_confirm_date TEXT,
+                release_date TEXT,
+                state TEXT NOT NULL DEFAULT 'CANDIDATE',
+                peak_score REAL,
+                latest_score REAL,
+                data_quality_score REAL,
+                applied_rule_version INTEGER NOT NULL DEFAULT 1,
+                timeline_json TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(phenomenon_definition_id, trigger_date, applied_rule_version),
+                FOREIGN KEY (phenomenon_definition_id) REFERENCES market_signal_definitions(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_signal_episode_outcomes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                episode_id INTEGER NOT NULL,
+                outcome_date TEXT,
+                outcome_type TEXT NOT NULL,
+                outcome_value REAL,
+                outcome_note TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (episode_id) REFERENCES market_signal_episodes(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_signal_user_reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                signal_definition_id INTEGER,
+                episode_id INTEGER,
+                review_target_type TEXT NOT NULL DEFAULT 'PHENOMENON',
+                review_target_id INTEGER,
+                reviewer TEXT,
+                review_status TEXT NOT NULL DEFAULT 'PENDING',
+                usefulness_score REAL,
+                accuracy_score REAL,
+                review_note TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (signal_definition_id) REFERENCES market_signal_definitions(id) ON DELETE SET NULL,
+                FOREIGN KEY (episode_id) REFERENCES market_signal_episodes(id) ON DELETE SET NULL
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_signal_rule_experiments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                signal_definition_id INTEGER,
+                experiment_code TEXT NOT NULL UNIQUE,
+                experiment_name TEXT NOT NULL,
+                experiment_type TEXT NOT NULL DEFAULT 'CHALLENGER',
+                status TEXT NOT NULL DEFAULT 'DRAFT',
+                hypothesis TEXT,
+                proposed_rule_json TEXT NOT NULL DEFAULT '{}',
+                validation_summary_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (signal_definition_id) REFERENCES market_signal_definitions(id) ON DELETE SET NULL
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_signal_rule_templates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                template_code TEXT NOT NULL UNIQUE,
+                template_name TEXT NOT NULL,
+                signal_level TEXT NOT NULL DEFAULT 'SINGLE_INDICATOR',
+                category TEXT,
+                description TEXT,
+                difficulty TEXT NOT NULL DEFAULT 'BASIC',
+                configuration_json TEXT NOT NULL DEFAULT '{}',
+                required_indicator_codes_json TEXT NOT NULL DEFAULT '[]',
+                recommended_horizon TEXT NOT NULL DEFAULT 'MEDIUM',
+                evidence_summary TEXT,
+                status TEXT NOT NULL DEFAULT 'DRAFT',
+                usage_count INTEGER NOT NULL DEFAULT 0,
+                copied_count INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_market_signal_trend_models_item ON market_signal_trend_models(item_type, item_code)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_market_signal_trend_models_profile ON market_signal_trend_models(model_profile_code)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_market_signal_episodes_code_state ON market_signal_episodes(phenomenon_code, state)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_market_signal_rule_templates_level ON market_signal_rule_templates(signal_level, status)")
+
+        profile_rows = (
+            ("MARKET_PRICE_TREND", "시장가격 추세형", "주가지수와 업종지수의 회귀 채널 추세 모델", '["MARKET_INDEX","GLOBAL_INDEX"]', '["DAILY"]', {"short_window": 20, "medium_window": 60, "trend_window": 120, "channel_multiplier": 1.8, "minimum_break_persistence": 3, "false_break_window": 5, "reversal_persistence": 5}, ["TREND_STATE", "TREND_STRENGTH", "CHANNEL_POSITION", "BREAK_CONFIRMED_UP", "BREAK_CONFIRMED_DOWN", "FALSE_BREAK_UP", "FALSE_BREAK_DOWN"]),
+            ("FX_TREND", "환율 추세형", "환율과 달러지수의 변동성 조정 추세 모델", '["FX"]', '["DAILY"]', {"short_window": 20, "medium_window": 60, "trend_window": 120, "channel_multiplier": 2.0, "minimum_break_persistence": 2, "false_break_window": 5}, ["TREND_STATE", "NORMALIZED_SLOPE", "CHANNEL_POSITION", "TREND_BREAK_UP", "TREND_BREAK_DOWN"]),
+            ("YIELD_TREND", "금리 추세형", "국내외 시장금리 추세와 반전 모델", '["RATE","GLOBAL_RATE"]', '["DAILY"]', {"short_window": 20, "medium_window": 60, "trend_window": 120, "channel_multiplier": 1.7, "minimum_break_persistence": 2}, ["TREND_STATE", "REGRESSION_SLOPE", "TREND_STRENGTH", "REVERSAL_CONFIRMED_UP", "REVERSAL_CONFIRMED_DOWN"]),
+            ("POLICY_RATE_REGIME", "정책금리 국면형", "정책금리 변경 방향과 동결 기간 중심 모델", '["RATE","GLOBAL_RATE"]', '["MONTHLY","DAILY"]', {"short_window": 6, "medium_window": 12, "trend_window": 36, "channel_multiplier": 1.0, "minimum_break_persistence": 1}, ["CHANGE", "TREND_STATE", "TREND_DURATION"]),
+            ("MACRO_MOM_YOY_TREND", "물가 추세형", "월간 물가 지표의 MoM/YoY 추세 모델", '["INFLATION","ECONOMY"]', '["MONTHLY"]', {"short_window": 6, "medium_window": 12, "trend_window": 36, "channel_multiplier": 1.5, "minimum_break_persistence": 2}, ["MOM", "YOY", "TREND_STATE", "TREND_STRENGTH"]),
+            ("SENTIMENT_TREND", "심리 추세형", "소비자·기업 심리 지표의 6/12개월 추세 모델", '["ECONOMY","CREDIT_LIQUIDITY","EMPLOYMENT_CONSUMPTION"]', '["MONTHLY","WEEKLY"]', {"short_window": 6, "medium_window": 12, "trend_window": 36, "channel_multiplier": 1.6}, ["TREND_STATE", "NORMALIZED_SLOPE", "TREND_DURATION"]),
+            ("RELATIVE_STRENGTH", "상대강도형", "시장 대비 상대강도 추세와 이탈 모델", '["DERIVED"]', '["DAILY"]', {"short_window": 20, "medium_window": 60, "trend_window": 120, "channel_multiplier": 1.8}, ["RELATIVE_STRENGTH", "TREND_STATE", "CHANNEL_POSITION", "BREAK_CONFIRMED_UP", "BREAK_CONFIRMED_DOWN"]),
+            ("VOLATILITY_REGIME", "변동성 국면형", "변동성 체제와 고변동성 전환 모델", '["GLOBAL_RISK","DERIVED"]', '["DAILY"]', {"short_window": 20, "medium_window": 60, "trend_window": 120, "channel_multiplier": 2.2}, ["Z_SCORE", "PERCENTILE", "TREND_STATE", "TREND_BREAK_UP"]),
+            ("SPREAD_REGIME", "스프레드 국면형", "금리차와 실질금리 스프레드의 방향·역전 모델", '["DERIVED"]', '["DAILY","MONTHLY"]', {"short_window": 20, "medium_window": 60, "trend_window": 120, "channel_multiplier": 1.7}, ["SPREAD", "TREND_STATE", "CHANNEL_POSITION", "REVERSAL_CONFIRMED_UP", "REVERSAL_CONFIRMED_DOWN"]),
+            ("COMMODITY_TREND", "원자재 추세형", "금·유가 등 원자재 가격 추세와 반전 모델", '["ENERGY","COMMODITY"]', '["DAILY"]', {"short_window": 20, "medium_window": 60, "trend_window": 120, "channel_multiplier": 2.0}, ["TREND_STATE", "TREND_STRENGTH", "CHANNEL_POSITION", "FALSE_BREAK_UP", "FALSE_BREAK_DOWN"]),
+        )
+        for profile in profile_rows:
+            conn.exec_driver_sql(
+                """
+                INSERT INTO market_signal_model_profiles
+                (profile_code, profile_name, description, applicable_categories_json, applicable_frequencies_json,
+                 default_configuration_json, supported_transforms_json, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE')
+                ON CONFLICT(profile_code) DO UPDATE SET
+                    profile_name = excluded.profile_name,
+                    description = excluded.description,
+                    applicable_categories_json = excluded.applicable_categories_json,
+                    applicable_frequencies_json = excluded.applicable_frequencies_json,
+                    default_configuration_json = excluded.default_configuration_json,
+                    supported_transforms_json = excluded.supported_transforms_json,
+                    status = 'ACTIVE',
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    profile[0],
+                    profile[1],
+                    profile[2],
+                    profile[3],
+                    profile[4],
+                    json.dumps(profile[5], ensure_ascii=False, sort_keys=True),
+                    json.dumps(profile[6], ensure_ascii=False, sort_keys=True),
+                ),
+            )
+
+        template_rows = (
+            ("US_REAL_RATE_TURN_UP", "미국 실질금리 상승 전환", "SINGLE_INDICATOR", "금리·성장주", "미국 10년 실질금리가 상승 추세로 전환되는지 봅니다.", "BASIC", '["US_REAL_10Y"]', "MEDIUM", "실질금리 상승은 성장주 할인율 부담을 키울 수 있습니다."),
+            ("US_10Y_UP_BREAK", "미국 장기금리 상승 추세 확인", "SINGLE_INDICATOR", "금리·성장주", "미국 10년 금리가 상승 추세와 채널 이탈을 보이는지 봅니다.", "BASIC", '["US_10Y"]', "MEDIUM", "장기금리 상승 추세는 위험자산 밸류에이션 부담으로 연결될 수 있습니다."),
+            ("NASDAQ_RELATIVE_WEAKENING", "NASDAQ 상대강도 약화", "SINGLE_INDICATOR", "금리·성장주", "NASDAQ/S&P500 상대강도 하락 전환을 봅니다.", "BASIC", '["NASDAQ_SP500_RELATIVE"]', "MEDIUM", "성장주 상대강도 약화 여부를 확인합니다."),
+            ("SOX_RELATIVE_TURN_DOWN", "SOX 상대강도 하락 전환", "SINGLE_INDICATOR", "반도체", "SOX/S&P500 상대강도 하락 전환을 봅니다.", "BASIC", '["SOX_SP500_RELATIVE"]', "MEDIUM", "반도체 선호 약화 여부를 확인합니다."),
+            ("VIX_TURN_UP", "VIX 상승 추세 전환", "SINGLE_INDICATOR", "위험신호", "VIX가 안정 구간에서 상승 전환하는지 봅니다.", "BASIC", '["US_VIX"]', "SHORT", "변동성 확대 초기 신호로 사용합니다."),
+            ("NFCI_TIGHTENING_TURN", "금융여건 긴축 전환", "SINGLE_INDICATOR", "위험신호", "Chicago Fed 금융여건지수의 긴축 전환을 봅니다.", "BASIC", '["US_NFCI"]', "SHORT", "금융여건 악화가 위험회피와 연결되는지 확인합니다."),
+            ("BROAD_DOLLAR_RISK_PRESSURE", "달러 강세와 위험자산 부담", "COMPOSITE_INDICATOR", "달러·환율", "달러 강세와 위험자산 약화가 동시에 나타나는지 봅니다.", "INTERMEDIATE", '["US_BROAD_DOLLAR","NASDAQ_SP500_RELATIVE","US_VIX"]', "SHORT", "달러 강세와 주식 상대강도 약화의 동시성을 확인합니다."),
+            ("WTI_TURN_UP", "WTI 상승 추세 전환", "SINGLE_INDICATOR", "물가", "WTI가 상승 추세로 전환되는지 봅니다.", "BASIC", '["WTI"]', "MEDIUM", "에너지 가격이 물가 기대를 자극하는지 확인합니다."),
+            ("BREAKEVEN_TURN_UP", "기대인플레이션 상승 전환", "SINGLE_INDICATOR", "물가", "미국 10년 기대인플레이션 상승 전환을 봅니다.", "BASIC", '["US_BREAKEVEN_10Y"]', "MEDIUM", "물가 기대의 재상승 여부를 확인합니다."),
+            ("CPI_DISINFLATION_SLOWING", "CPI 둔화 추세 약화", "SINGLE_INDICATOR", "물가", "CPI 둔화 속도가 느려지는지 봅니다.", "INTERMEDIATE", '["US_CPI"]', "MEDIUM", "디스인플레이션 둔화 여부를 확인합니다."),
+            ("INITIAL_CLAIMS_4W_UP", "신규 실업수당 4주 평균 상승", "SINGLE_INDICATOR", "고용·경기", "신규 실업수당 청구의 상승 전환을 봅니다.", "BASIC", '["US_INITIAL_CLAIMS"]', "SHORT", "고용 안정에서 둔화로 넘어가는 초기 신호입니다."),
+            ("US_RATE_GROWTH_PRESSURE", "미국 실질금리와 성장주 부담", "COMPOSITE_INDICATOR", "금리·성장주", "실질금리 상승과 성장주 상대강도 약화를 함께 봅니다.", "INTERMEDIATE", '["US_REAL_10Y","US_10Y","NASDAQ_SP500_RELATIVE"]', "MEDIUM", "금리 상승 후 성장주 상대강도 약화가 확인되는지 봅니다."),
+            ("GLOBAL_RISK_OFF_TURN", "글로벌 위험회피 전환", "COMPOSITE_INDICATOR", "위험신호", "VIX, 금융여건, 달러, 상대강도를 함께 봅니다.", "INTERMEDIATE", '["US_VIX","US_NFCI","US_BROAD_DOLLAR","NASDAQ_SP500_RELATIVE"]', "SHORT", "위험선호에서 위험회피로 넘어가는 복합 신호입니다."),
+            ("REFLATION_WARNING", "리플레이션 전환 후보", "COMPOSITE_INDICATOR", "물가", "WTI, 기대인플레이션, CPI/PCE를 함께 봅니다.", "INTERMEDIATE", '["WTI","US_BREAKEVEN_10Y","US_CPI","US_CORE_PCE"]', "MEDIUM", "물가 재상승 압력이 확인되는지 봅니다."),
+            ("US_EMPLOYMENT_WEAKENING", "미국 고용 둔화 후보", "COMPOSITE_INDICATOR", "고용·경기", "실업수당 청구, 금리차, 주가지수를 함께 봅니다.", "INTERMEDIATE", '["US_INITIAL_CLAIMS","US_10Y_2Y_SPREAD","US_SP500"]', "SHORT", "고용 둔화 후보를 객관적 현상으로 연결합니다."),
+            ("KOREA_SEMICONDUCTOR_CONTEXT", "미국 SOX와 국내 반도체 환경", "COMPOSITE_INDICATOR", "한국시장", "SOX 상대강도와 국내 반도체 환경을 함께 봅니다.", "ADVANCED", '["SOX_SP500_RELATIVE","KOSPI","KOSDAQ"]', "MEDIUM", "미국 반도체 신호가 국내 시장에 주는 배경 조건입니다."),
+            ("KR_STOCK_RISK_OFF_TURN", "국내 주식시장 위험회피 전환", "COMPOSITE_INDICATOR", "한국시장", "KOSPI, KOSDAQ, 환율, 변동성을 함께 보며 국내 위험회피 전환을 봅니다.", "INTERMEDIATE", '["KOSPI","KOSDAQ","USD_KRW","USD_KRW_VOLATILITY"]', "SHORT", "국내 주가지수 약화와 환율·변동성 압력이 겹치는지 확인합니다."),
+            ("USD_KRW_UP_PRESSURE", "원/달러 상승 압력", "COMPOSITE_INDICATOR", "환율", "원/달러, 달러지수, 국내 금리 환경을 함께 보며 환율 상승 압력을 봅니다.", "INTERMEDIATE", '["USD_KRW","US_BROAD_DOLLAR","KTB_10Y"]', "SHORT", "달러 강세와 국내 장기금리 환경이 원화 약세 압력으로 이어지는지 확인합니다."),
+            ("KR_LONG_RATE_PRESSURE", "국내 장기금리 상승 압력", "COMPOSITE_INDICATOR", "국내금리", "국고채 10년, 3년, 기준금리와 장단기 스프레드를 함께 봅니다.", "INTERMEDIATE", '["KTB_10Y","KTB_3Y","BASE_RATE","KR_10Y_3Y_SPREAD"]', "MEDIUM", "국내 장기금리 상승 압력과 커브 변화를 객관적으로 확인합니다."),
+            ("KR_SENTIMENT_WEAKENING", "국내 심리 약화", "COMPOSITE_INDICATOR", "물가·경기", "소비자심리지수와 제조업 업황BSI 약화를 함께 봅니다.", "BASIC", '["CSI","BSI_MANUFACTURING"]', "MEDIUM", "심리지표가 동반 약화되는지 확인합니다."),
+            ("KR_SEMICONDUCTOR_CONTEXT_WEAKENING", "국내 반도체 맥락 약화", "COMPOSITE_INDICATOR", "한국시장", "미국 SOX 상대강도와 국내 대표지수를 함께 보며 반도체 환경 약화를 봅니다.", "ADVANCED", '["SOX_SP500_RELATIVE","KOSPI","KOSDAQ","KRX100"]', "MEDIUM", "미국 반도체 약세가 국내 시장 맥락 약화와 같이 나타나는지 봅니다."),
+            ("KR_REAL_TIGHTENING_ENVIRONMENT", "국내 실질 긴축 환경", "COMPOSITE_INDICATOR", "국내금리", "실질정책금리, 기준금리, 물가를 함께 보며 국내 실질 긴축 환경을 봅니다.", "INTERMEDIATE", '["KR_REAL_POLICY_RATE","BASE_RATE","CPI"]', "MEDIUM", "물가 대비 정책금리 부담이 커지는지 확인합니다."),
+        )
+        for template in template_rows:
+            configuration = {
+                "signal_level": template[2],
+                "suggested_roles": {
+                    "trigger": json.loads(template[6])[:1],
+                    "confirm": json.loads(template[6])[1:],
+                    "opposing": [],
+                    "invalidation": [],
+                },
+                "default_transform": "TREND_STATE",
+                "confirmation_window": 10,
+                "persistence_periods": 2,
+            }
+            conn.exec_driver_sql(
+                """
+                INSERT INTO market_signal_rule_templates
+                (template_code, template_name, signal_level, category, description, difficulty, configuration_json,
+                 required_indicator_codes_json, recommended_horizon, evidence_summary, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT')
+                ON CONFLICT(template_code) DO UPDATE SET
+                    template_name = excluded.template_name,
+                    signal_level = excluded.signal_level,
+                    category = excluded.category,
+                    description = excluded.description,
+                    difficulty = excluded.difficulty,
+                    configuration_json = excluded.configuration_json,
+                    required_indicator_codes_json = excluded.required_indicator_codes_json,
+                    recommended_horizon = excluded.recommended_horizon,
+                    evidence_summary = excluded.evidence_summary,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (*template[:6], json.dumps(configuration, ensure_ascii=False, sort_keys=True), template[6], template[7], template[8]),
+            )
+
+        seed_signals = (
+            (
+                "US_REAL_RATE_GROWTH_PRESSURE",
+                "미국 실질금리 상승과 성장주 부담",
+                "미국 실질금리와 장기금리 상승 전환이 성장주 상대강도를 약화시키는지 관찰합니다.",
+                "US_RATE_GROWTH",
+                "MEDIUM",
+                "MIXED",
+                "미국 실질금리 상승 전환과 성장주 상대강도 둔화 가능성",
+                "실질금리 상승은 미래 이익 할인율을 높이고 고평가 성장주의 밸류에이션 부담을 키울 수 있습니다.",
+                "성장주 변동성 확대와 실적 가시성에 따른 종목 차별화 가능성",
+            ),
+            (
+                "RISK_ON_TO_RISK_OFF_TURN",
+                "위험선호에서 위험회피로의 전환",
+                "VIX, 금융여건, 달러, 주식 상대강도를 함께 보며 위험회피 전환을 감지합니다.",
+                "GLOBAL_RISK",
+                "SHORT",
+                "NEGATIVE",
+                "변동성과 금융여건이 위험회피 쪽으로 기울 가능성",
+                "변동성 상승과 금융여건 긴축은 위험자산 노출 축소와 성장주 중심 부담으로 이어질 수 있습니다.",
+                "위험자산 변동성 확대와 방어적 포지셔닝 필요성 증가",
+            ),
+            (
+                "DISINFLATION_TO_REFLATION_TURN",
+                "물가 둔화에서 재상승으로의 전환",
+                "WTI와 기대인플레이션, CPI/PCE 둔화를 함께 확인해 물가 재상승 전환을 관찰합니다.",
+                "INFLATION_REFLATION",
+                "MEDIUM",
+                "MIXED",
+                "에너지와 기대물가가 물가 재상승 압력을 만들 가능성",
+                "원유와 기대인플레이션 상승은 금리 인하 기대를 약화시키고 장기금리 상승 압력을 높일 수 있습니다.",
+                "금리 민감 자산 부담과 인플레이션 수혜 업종 선별 가능성",
+            ),
+            (
+                "US_EMPLOYMENT_STABLE_TO_WEAKENING",
+                "미국 고용 안정에서 둔화로의 전환",
+                "신규 실업수당 청구와 경기 민감 지표를 통해 고용 둔화 전환을 관찰합니다.",
+                "US_EMPLOYMENT",
+                "SHORT",
+                "NEGATIVE",
+                "신규 실업수당 청구가 증가하며 고용 안정성이 약해지는지 확인",
+                "고용 수요 둔화는 소비와 기업 매출 기대를 낮추며 통화완화 기대를 동시에 키울 수 있습니다.",
+                "경기 둔화 우려와 금리 인하 기대가 같이 커지는 혼재 국면 가능성",
+            ),
+        )
+        for signal in seed_signals:
+            conn.exec_driver_sql(
+                """
+                INSERT INTO market_signal_definitions
+                (signal_code, signal_name, description, category, signal_type, horizon, status, interpretation_direction,
+                 phenomenon_template, process_template, result_template, persistence_periods, cooldown_periods, minimum_data_quality)
+                VALUES (?, ?, ?, ?, 'COMPOSITE', ?, 'DRAFT', ?, ?, ?, ?, 2, 1, 50)
+                ON CONFLICT(signal_code) DO NOTHING
+                """,
+                signal,
+            )
+
+        condition_seed = {
+            "US_REAL_RATE_GROWTH_PRESSURE": [
+                ("REQUIRED", "INDICATOR", "US_REAL_10Y", "TURN_UP", 20, ">", "ABSOLUTE", 0, None, 25, 1),
+                ("REQUIRED", "INDICATOR", "US_10Y", "SLOPE", 20, ">", "ABSOLUTE", 0, None, 25, 1),
+                ("CONFIRM", "INDICATOR", "US_BROAD_DOLLAR", "SLOPE", 20, ">", "ABSOLUTE", 0, None, 15, 0),
+                ("CONFIRM", "INDICATOR", "NASDAQ_SP500_RELATIVE", "SLOPE", 20, "<", "ABSOLUTE", 0, None, 15, 0),
+                ("OPPOSING", "INDICATOR", "US_VIX", "SLOPE", 10, "<=", "ABSOLUTE", 0, None, 10, 0),
+            ],
+            "RISK_ON_TO_RISK_OFF_TURN": [
+                ("REQUIRED", "INDICATOR", "US_VIX", "TURN_UP", 10, ">", "ABSOLUTE", 0, None, 30, 1),
+                ("REQUIRED", "INDICATOR", "US_NFCI", "SLOPE", 8, ">", "ABSOLUTE", 0, None, 20, 1),
+                ("CONFIRM", "INDICATOR", "US_BROAD_DOLLAR", "SLOPE", 20, ">", "ABSOLUTE", 0, None, 15, 0),
+                ("CONFIRM", "INDICATOR", "NASDAQ_SP500_RELATIVE", "SLOPE", 20, "<", "ABSOLUTE", 0, None, 15, 0),
+                ("OPPOSING", "INDICATOR", "US_VIX", "CHANGE_RATE", 5, "<", "ABSOLUTE", 0, None, 10, 0),
+            ],
+            "DISINFLATION_TO_REFLATION_TURN": [
+                ("REQUIRED", "INDICATOR", "WTI", "TURN_UP", 20, ">", "ABSOLUTE", 0, None, 25, 1),
+                ("REQUIRED", "INDICATOR", "US_BREAKEVEN_10Y", "SLOPE", 20, ">", "ABSOLUTE", 0, None, 25, 1),
+                ("CONFIRM", "INDICATOR", "US_CPI", "YOY", 12, ">", "ABSOLUTE", 0, None, 15, 0),
+                ("CONFIRM", "INDICATOR", "US_CORE_PCE", "YOY", 12, ">", "ABSOLUTE", 0, None, 15, 0),
+                ("OPPOSING", "INDICATOR", "US_REAL_10Y", "SLOPE", 20, "<", "ABSOLUTE", 0, None, 10, 0),
+            ],
+            "US_EMPLOYMENT_STABLE_TO_WEAKENING": [
+                ("REQUIRED", "INDICATOR", "US_INITIAL_CLAIMS", "TURN_UP", 8, ">", "ABSOLUTE", 0, None, 35, 1),
+                ("REQUIRED", "INDICATOR", "US_INITIAL_CLAIMS", "CONSECUTIVE_UP", 4, ">=", "ABSOLUTE", 2, None, 20, 1),
+                ("CONFIRM", "INDICATOR", "US_10Y_2Y_SPREAD", "SLOPE", 20, "<", "ABSOLUTE", 0, None, 15, 0),
+                ("CONFIRM", "INDICATOR", "US_SP500", "SLOPE", 20, "<", "ABSOLUTE", 0, None, 15, 0),
+                ("OPPOSING", "INDICATOR", "US_NASDAQ", "SLOPE", 20, ">", "ABSOLUTE", 0, None, 10, 0),
+            ],
+        }
+        for signal_code, rows in condition_seed.items():
+            signal_id = conn.exec_driver_sql("SELECT id FROM market_signal_definitions WHERE signal_code = ?", (signal_code,)).scalar()
+            if not signal_id:
+                continue
+            existing_count = conn.exec_driver_sql("SELECT COUNT(*) FROM market_signal_conditions WHERE signal_definition_id = ?", (signal_id,)).scalar() or 0
+            if existing_count:
+                continue
+            for order, row in enumerate(rows, start=1):
+                conn.exec_driver_sql(
+                    """
+                    INSERT INTO market_signal_conditions
+                    (signal_definition_id, condition_group, condition_role, item_type, item_code, transform_type,
+                     window_size, comparison_operator, threshold_type, threshold_value, threshold_secondary, weight, is_required, sort_order)
+                    VALUES (?, 'A', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (signal_id, *row, order),
+                )
+            snapshot = conn.exec_driver_sql("SELECT * FROM market_signal_definitions WHERE id = ?", (signal_id,)).mappings().first()
+            if snapshot:
+                conn.exec_driver_sql(
+                    """
+                    INSERT OR IGNORE INTO market_signal_versions
+                    (signal_definition_id, version_no, snapshot_json, change_reason)
+                    VALUES (?, 1, ?, 'Initial MVP draft seed')
+                    """,
+                    (signal_id, json.dumps(dict(snapshot), ensure_ascii=False, sort_keys=True)),
+                )
+
+        derived_rows = (
+            ("US_10Y_2Y_SPREAD", "미국 10년-2년 금리차", "DERIVED", "SPREAD", "DAILY", "LINE", "PP", "%p", "US_10Y_MINUS_US_2Y", '["US_10Y","US_2Y"]', 120),
+            ("KR_10Y_3Y_SPREAD", "한국 10년-3년 금리차", "DERIVED", "SPREAD", "DAILY", "LINE", "PP", "%p", "KR_10Y_MINUS_KR_3Y", '["KTB_10Y","KTB_3Y"]', 121),
+            ("KR_REAL_POLICY_RATE", "한국 실질 기준금리", "DERIVED", "REAL_RATE", "MONTHLY", "LINE", "PP", "%p", "BASE_RATE_MINUS_CPI_YOY", '["BASE_RATE","CPI"]', 122),
+            ("US_REAL_POLICY_RATE", "미국 실질 정책금리", "DERIVED", "REAL_RATE", "MONTHLY", "LINE", "PP", "%p", "FED_FUNDS_MINUS_CORE_PCE_YOY", '["US_FED_FUNDS","US_CORE_PCE"]', 123),
+            ("USD_KRW_VOLATILITY", "달러/원 20일 변동성", "DERIVED", "VOLATILITY", "DAILY", "LINE", "PCT", "%", "ROLLING_RETURN_STD_20D", '["USD_KRW"]', 124),
+            ("NASDAQ_SP500_RELATIVE", "NASDAQ/S&P500 상대강도", "DERIVED", "RELATIVE_STRENGTH", "DAILY", "LINE", "INDEX", "지수", "RATIO_X100", '["US_NASDAQ","US_SP500"]', 125),
+            ("SOX_SP500_RELATIVE", "SOX/S&P500 상대강도", "DERIVED", "RELATIVE_STRENGTH", "DAILY", "LINE", "INDEX", "지수", "RATIO_X100", '["US_SOX","US_SP500"]', 126),
+        )
+        for row in derived_rows:
+            conn.exec_driver_sql(
+                """
+                INSERT INTO market_indicators
+                (indicator_code, indicator_name, category, subcategory, data_frequency, chart_type, unit, unit_label,
+                 value_label, base_line_value, display_order, priority_rank, description, interpretation_note,
+                 higher_value_meaning, lower_value_meaning, is_active, collection_status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, '계산값', NULL, ?, 1, 'DrCT 내부 파생 지표', NULL, NULL, NULL, 1, 'WAITING', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(indicator_code) DO UPDATE SET
+                    indicator_name = excluded.indicator_name,
+                    category = excluded.category,
+                    subcategory = excluded.subcategory,
+                    data_frequency = excluded.data_frequency,
+                    chart_type = excluded.chart_type,
+                    unit = excluded.unit,
+                    unit_label = excluded.unit_label,
+                    display_order = excluded.display_order,
+                    is_active = 1,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (*row[:8], row[10]),
+            )
+            conn.exec_driver_sql(
+                """
+                INSERT INTO market_indicator_provider_mappings
+                (indicator_code, provider, api_type, api_id, endpoint_url, provider_symbol, request_params_json,
+                 is_enabled, is_verified, last_test_status, last_test_message, created_at, updated_at)
+                VALUES (?, 'DERIVED', 'DERIVED_FORMULA', ?, NULL, ?, '{}', 1, 1, 'SUCCESS', 'Derived formula is active.', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(indicator_code, provider) DO UPDATE SET
+                    api_type = excluded.api_type,
+                    api_id = excluded.api_id,
+                    provider_symbol = excluded.provider_symbol,
+                    is_enabled = 1,
+                    is_verified = 1,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (row[0], row[8], row[8]),
+            )
+            conn.exec_driver_sql(
+                """
+                INSERT INTO market_indicator_derivations
+                (indicator_code, formula_type, source_codes_json, parameters_json, output_frequency, is_active, created_at, updated_at)
+                VALUES (?, ?, ?, '{}', ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(indicator_code) DO UPDATE SET
+                    formula_type = excluded.formula_type,
+                    source_codes_json = excluded.source_codes_json,
+                    output_frequency = excluded.output_frequency,
+                    is_active = 1,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (row[0], row[8], row[9], row[4]),
+            )
+            conn.exec_driver_sql(
+                """
+                INSERT OR IGNORE INTO market_data_collection_policies
+                (item_type, item_code, frequency, initial_lookback_value, initial_lookback_unit, overlap_value, overlap_unit,
+                 minimum_refresh_interval_hours, max_retry_count, timeout_seconds, is_auto_collect, is_active)
+                VALUES ('INDICATOR', ?, ?, 5, 'YEARS',
+                        CASE ? WHEN 'MONTHLY' THEN 6 ELSE 10 END,
+                        CASE ? WHEN 'MONTHLY' THEN 'MONTHS' ELSE 'DAYS' END,
+                        0, 1, 5, 1, 1)
+                """,
+                (row[0], row[4], row[4], row[4]),
             )
 

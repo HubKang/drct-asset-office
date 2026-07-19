@@ -76,6 +76,8 @@ class FredProvider:
             raise RuntimeError(str(result.get("message") or "FRED collection failed"))
         values: list[dict[str, Any]] = []
         previous_value: float | None = None
+        monthly_values: list[float] = []
+        is_monthly_price_index = str(indicator_code or "").upper() in {"US_CPI", "US_CORE_PCE"}
         for row in sorted(result.get("rows") or [], key=lambda item: str(item.get("date") or "")):
             value_date = str(row.get("date") or "")[:10]
             value = self._to_float(row.get("value"))
@@ -84,24 +86,29 @@ class FredProvider:
             value *= scale
             change_value = None if previous_value is None else value - previous_value
             change_pct = None if previous_value in (None, 0) else (value - previous_value) / previous_value * 100
+            mom_pct = change_pct if is_monthly_price_index else None
+            yoy_base = monthly_values[-12] if is_monthly_price_index and len(monthly_values) >= 12 else None
+            yoy_pct = None if yoy_base in (None, 0) else (value - yoy_base) / yoy_base * 100
             values.append(
                 {
                     "indicator_code": indicator_code,
                     "value_date": value_date,
-                    "period_label": None,
+                    "period_label": value_date[:7] if is_monthly_price_index else None,
                     "value": value,
                     "change_value": change_value,
                     "change_pct": change_pct,
-                    "mom_pct": None,
-                    "yoy_pct": None,
+                    "mom_pct": mom_pct,
+                    "yoy_pct": yoy_pct,
                     "source_provider": self.provider,
                     "source_unit": source_unit,
                     "is_preliminary": 0,
                     "release_date": None,
-                    "raw_payload_json": json.dumps(self._sanitize_row(row), ensure_ascii=False, sort_keys=True),
+                    "raw_payload_json": None,
                 }
             )
             previous_value = value
+            if is_monthly_price_index:
+                monthly_values.append(value)
         return values
 
     def _mapping_params(self, mapping: dict[str, Any]) -> dict[str, Any]:

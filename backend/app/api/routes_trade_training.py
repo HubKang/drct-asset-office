@@ -5,6 +5,17 @@ from sqlalchemy.orm import Session
 
 from backend.app.core.database import get_db
 from backend.app.schemas.trade_training_schema import (
+    TradeTrainingAccountCreate,
+    TradeTrainingAccountDeleteResponse,
+    TradeTrainingAccountListResponse,
+    TradeTrainingAccountPerformanceResponse,
+    TradeTrainingAccountRebuildRequest,
+    TradeTrainingAccountRebuildResponse,
+    TradeTrainingAccountResponse,
+    TradeTrainingAccountSessionListResponse,
+    TradeTrainingAccountSummaryResponse,
+    TradeTrainingAccountUpdate,
+    TradeTrainingClosedTradeListResponse,
     TrainingFinishResponse,
     TrainingGptPackageResponse,
     TrainingOrderRequest,
@@ -19,6 +30,67 @@ from backend.app.schemas.trade_training_schema import (
 from backend.app.services.trade_training_service import TradeTrainingService
 
 router = APIRouter(tags=["trade-training"])
+
+
+@router.get("/trade-training/accounts", response_model=TradeTrainingAccountListResponse)
+def list_trade_training_accounts(
+    status: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> dict:
+    return TradeTrainingService(db).list_training_accounts(status_filter=status)
+
+
+@router.post("/trade-training/accounts", response_model=TradeTrainingAccountResponse)
+def create_trade_training_account(payload: TradeTrainingAccountCreate, db: Session = Depends(get_db)) -> dict:
+    return TradeTrainingService(db).create_training_account(payload)
+
+
+@router.get("/trade-training/accounts/{account_id}", response_model=TradeTrainingAccountResponse)
+def get_trade_training_account(account_id: int, db: Session = Depends(get_db)) -> dict:
+    return TradeTrainingService(db).get_training_account(account_id)
+
+
+@router.patch("/trade-training/accounts/{account_id}", response_model=TradeTrainingAccountResponse)
+def update_trade_training_account(
+    account_id: int,
+    payload: TradeTrainingAccountUpdate,
+    db: Session = Depends(get_db),
+) -> dict:
+    return TradeTrainingService(db).update_training_account(account_id, payload)
+
+
+@router.get("/trade-training/accounts/{account_id}/summary", response_model=TradeTrainingAccountSummaryResponse)
+def get_trade_training_account_summary(account_id: int, db: Session = Depends(get_db)) -> dict:
+    return TradeTrainingService(db).get_training_account_summary(account_id)
+
+
+@router.get("/trade-training/accounts/{account_id}/sessions", response_model=TradeTrainingAccountSessionListResponse)
+def list_trade_training_account_sessions(
+    account_id: int,
+    status: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> dict:
+    return TradeTrainingService(db).list_training_account_sessions(account_id, status_filter=status)
+
+
+@router.get("/trade-training/accounts/{account_id}/closed-trades", response_model=TradeTrainingClosedTradeListResponse)
+def list_trade_training_account_closed_trades(account_id: int, db: Session = Depends(get_db)) -> dict:
+    return TradeTrainingService(db).list_training_account_closed_trades(account_id)
+
+
+@router.get("/trade-training/accounts/{account_id}/performance", response_model=TradeTrainingAccountPerformanceResponse)
+def get_trade_training_account_performance(account_id: int, db: Session = Depends(get_db)) -> dict:
+    return TradeTrainingService(db).get_training_account_performance(account_id)
+
+
+@router.delete("/trade-training/accounts/{account_id}", response_model=TradeTrainingAccountDeleteResponse)
+def delete_trade_training_account(account_id: int, db: Session = Depends(get_db)) -> dict:
+    return TradeTrainingService(db).delete_training_account(account_id)
+
+
+@router.post("/trade-training/accounts/{account_id}/rebuild", response_model=TradeTrainingAccountRebuildResponse)
+def rebuild_trade_training_account(account_id: int, payload: TradeTrainingAccountRebuildRequest, db: Session = Depends(get_db)) -> dict:
+    return TradeTrainingService(db).rebuild_training_account_ledger(account_id, apply_changes=payload.apply_changes)
 
 
 @router.get("/trade-training/calendar", response_model=TrainingCalendarResponse)

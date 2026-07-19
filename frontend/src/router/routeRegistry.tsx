@@ -21,6 +21,7 @@ import TradeTrainingCalendarPage from "@/pages/TradeTrainingCalendarPage";
 import TradeTrainingPage from "@/pages/TradeTrainingPage";
 import MarketCalendarPage from "@/pages/MarketCalendarPage";
 import MarketIndexesPage from "@/pages/MarketIndexesPage";
+import MarketSignalsPage from "@/pages/MarketSignalsPage";
 import MarketThemesPage from "@/pages/MarketThemesPage";
 import MarketTrendsPage from "@/pages/MarketTrendsPage";
 import NewsPage from "@/pages/NewsPage";
@@ -67,6 +68,9 @@ export const routeRegistry: RouteItem[] = [
   { routeKey: "market-trends", path: "/market-trends", title: "시장 수급 테마(종목)", description: "수급 이벤트 감지/테마·종목 흐름 집계", component: <MarketTrendsPage /> },
   { routeKey: "market-indicators", path: "/market-indicators", title: "시장 지표 관리", description: "코스피, 코스닥, 업종지수, 금 현물 등 주요 시장지표를 수집하고 시장 흐름을 비교합니다.", component: <MarketIndexesPage /> },
   { routeKey: "market-indexes", path: "/market-indexes", title: "시장 지표 관리", description: "코스피, 코스닥, 업종지수, 금 현물 등 주요 시장지표를 수집하고 시장 흐름을 비교합니다.", component: <MarketIndexesPage /> },
+  { routeKey: "market-indicator-signals", path: "/market-indexes/signals", title: "지표 신호 관리", description: "시장 지표의 변화 방향과 전환점 신호를 관리합니다.", component: <MarketSignalsPage /> },
+  { routeKey: "market-economic-flows", path: "/market-indexes/economic-flows", title: "경제 흐름 관리", description: "경제 흐름 룰 관리는 후속 단계에서 구현합니다.", component: <ComingSoonPage title="경제 흐름 관리" /> },
+  { routeKey: "market-scenario-diagnosis", path: "/market-indexes/scenario-diagnosis", title: "경제 시나리오 진단", description: "경제 시나리오 진단은 후속 단계에서 구현합니다.", component: <ComingSoonPage title="경제 시나리오 진단" /> },
   { routeKey: "economic-briefing", path: "/economic-briefing", title: "경제 브리핑", description: "경제 영상 메타데이터/요약 관리", component: <EconomicBriefingPage /> },
   { routeKey: "telegram-briefing", path: "/telegram-briefing", title: "텔레그램 브리핑", description: "텔레그램 채널 수집/요약 관리", component: <TelegramBriefingPage /> },
   { routeKey: "kms-home", path: "/kms", title: "KMS 홈", description: "투자 지식 대시보드", component: <KmsHomePage /> },

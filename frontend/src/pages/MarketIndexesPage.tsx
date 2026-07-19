@@ -3,8 +3,10 @@ import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import { repositories } from "@/services";
 import { buildMarketEnvironmentInsights, getMarketEnvironmentToneLabel, summarizeMarketEnvironmentInsights } from "@/utils/marketEnvironmentRules";
+import { MARKET_INDICATOR_GROUPS, getMarketIndicatorGroupCodeByLabel, matchesMarketIndicatorGroup } from "@/utils/marketIndicatorGroups";
 import type { MarketIndexCompareResponse, MarketIndexDailyPriceItem, MarketIndexItem, MarketIndexProviderCode, MarketIndexProviderMapping } from "@/types/marketIndex";
-import type { ExternalProviderStatus, ExternalProviderStatusListResponse, MarketIndicator, MarketIndicatorValue } from "@/types/marketIndicator";
+import type { ExternalProviderStatus, ExternalProviderStatusListResponse, MarketIndicator, MarketIndicatorReadiness, MarketIndicatorValue } from "@/types/marketIndicator";
+import type { MarketDataCollectionRun } from "@/types/marketData";
 
 const DAILY_PERIOD_OPTIONS = [
   { label: "1M", days: 31 },
@@ -26,7 +28,7 @@ const PERIOD_OPTIONS = [...DAILY_PERIOD_OPTIONS, ...MONTHLY_PERIOD_OPTIONS] as c
 const DAILY_PERIOD_LABELS: ReadonlySet<PeriodLabel> = new Set(DAILY_PERIOD_OPTIONS.map((item) => item.label));
 const MONTHLY_PERIOD_LABELS: ReadonlySet<PeriodLabel> = new Set(MONTHLY_PERIOD_OPTIONS.map((item) => item.label));
 
-const CATEGORY_OPTIONS = ["전체", "주식시장", "업종", "금현물", "금리/환율", "물가/경기", "미국시장", "보류/제외"] as const;
+const CATEGORY_OPTIONS = [...MARKET_INDICATOR_GROUPS.map((group) => group.label), "보류/제외"] as const;
 
 const MARKET_INDEX_CHART_HEIGHT = 520;
 const MARKET_INDEX_PRICE_AREA_HEIGHT = 350;
@@ -51,6 +53,8 @@ const ADMIN_DRAWER_TABS = [
   { key: "deferred", label: "보류/제외" },
   { key: "provider", label: "대체 provider" },
   { key: "external", label: "\uC678\uBD80 API \uC0C1\uD0DC" },
+  { key: "readiness", label: "수집 준비도" },
+  { key: "history", label: "수집 이력" },
 ] as const;
 
 type AdminDrawerTab = (typeof ADMIN_DRAWER_TABS)[number]["key"];
@@ -67,6 +71,7 @@ type SelectorMetricItem = {
   code: string;
   name: string;
   category: string;
+  provider?: string | null;
   status: string;
   latestValue?: number | null;
   latestDate?: string | null;
@@ -98,7 +103,7 @@ const TEXT = {
   compareDescription: "선택 지표를 첫 거래일 100 기준으로 정규화해 비교합니다.",
   allPeriod: "전체",
   notCollected: "미수집",
-  emptyCompare: "비교할 시장 지표 데이터가 없습니다.\n코스피와 코스닥 데이터를 먼저 수집해 주세요.",
+  emptyCompare: "비교할 지표를 선택해 주세요.",
   industryGuide: "업종지수는 한국 시장의 공식 업종 흐름을 확인하기 위한 참고 지표입니다. DrCT 테마와 1:1로 일치하지 않을 수 있으므로, 테마 수급과 함께 비교해 해석합니다.",
 };
 
@@ -118,6 +123,11 @@ const DEFAULT_INDEX_NAMES: Record<string, string> = {
   WTI: "WTI",
 };
 
+Object.assign(TEXT, {
+  collectSelected: "선택 지표 갱신",
+  collectAll: "전체 증분 갱신",
+});
+
 const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   KIWOOM_REST: "\uD0A4\uC6C0 REST API",
   KRX_OPEN_API: "KRX Open API",
@@ -135,15 +145,19 @@ const getProviderDisplayName = (item: Pick<ExternalProviderStatus, "provider" | 
 };
 
 const STATUS_LABELS: Record<string, string> = {
-  NOT_COLLECTED: "미수집",
+  NOT_COLLECTED: "수집 필요",
   COLLECTING: "수집중",
   LATEST: "최신",
   PARTIAL: "일부누락",
   ERROR: "오류",
   WAITING: "수집대기",
+  WAITING_RELEASE: "발표 대기",
+  DATA_INSUFFICIENT: "데이터 부족",
+  MAPPING_READY: "수집 필요",
+  UNSUPPORTED: "지원 제외",
   SUCCESS: "최신",
   FAILED: "오류",
-  READY: "미수집",
+  READY: "수집 필요",
   NO_OFFICIAL_INDEX: "공식지수 없음",
   CUSTOM_INDEX_REQUIRED: "자체지수 필요",
   EXCLUDED: "제외",
@@ -164,7 +178,10 @@ const RATE_INDICATOR_CODES = ["BASE_RATE", "CALL_RATE", "KTB_3Y", "KTB_10Y"] as 
 const RATE_FX_INDICATOR_CODES = [...FX_INDICATOR_CODES, ...RATE_INDICATOR_CODES] as const;
 const INFLATION_ECONOMY_INDICATOR_CODES = ["CPI", "PPI", "CSI", "BSI_MANUFACTURING"] as const;
 const US_MARKET_INDICATOR_CODES = ["US_NASDAQ", "US_SP500", "US_DOW", "US_SOX", "US_10Y", "US_2Y", "US_FED_FUNDS"] as const;
-const GENERAL_INDICATOR_CODES = [...RATE_FX_INDICATOR_CODES, ...INFLATION_ECONOMY_INDICATOR_CODES, ...US_MARKET_INDICATOR_CODES] as const;
+const NEW_FRED_INDICATOR_CODES = ["US_VIX", "US_REAL_10Y", "US_BREAKEVEN_10Y", "US_NFCI", "US_BROAD_DOLLAR", "WTI", "US_CPI", "US_CORE_PCE", "US_INITIAL_CLAIMS"] as const;
+const US_MARKET_DISPLAY_INDICATOR_CODES = [...US_MARKET_INDICATOR_CODES, ...NEW_FRED_INDICATOR_CODES.filter((code) => code !== "WTI")] as const;
+const DERIVED_INDICATOR_CODES = ["US_10Y_2Y_SPREAD", "KR_10Y_3Y_SPREAD", "KR_REAL_POLICY_RATE", "US_REAL_POLICY_RATE", "USD_KRW_VOLATILITY", "NASDAQ_SP500_RELATIVE", "SOX_SP500_RELATIVE"] as const;
+const GENERAL_INDICATOR_CODES = [...RATE_FX_INDICATOR_CODES, ...INFLATION_ECONOMY_INDICATOR_CODES, ...US_MARKET_INDICATOR_CODES, ...NEW_FRED_INDICATOR_CODES, ...DERIVED_INDICATOR_CODES] as const;
 
 const GENERAL_INDICATOR_NAMES: Record<string, string> = {
   USD_KRW: "\uB2EC\uB7EC/\uC6D0 \uD658\uC728",
@@ -188,6 +205,24 @@ const GENERAL_INDICATOR_NAMES: Record<string, string> = {
 };
 
 const makeMetricKey = (source: MetricSource, code: string): MetricKey => source + ":" + code;
+Object.assign(GENERAL_INDICATOR_NAMES, {
+  US_VIX: "VIX",
+  US_REAL_10Y: "미국 10년 실질금리",
+  US_BREAKEVEN_10Y: "미국 10년 기대인플레이션",
+  US_NFCI: "Chicago Fed 금융여건지수",
+  US_BROAD_DOLLAR: "미국 광의 달러지수",
+  WTI: "WTI 원유",
+  US_CPI: "미국 CPI",
+  US_CORE_PCE: "미국 근원 PCE",
+  US_INITIAL_CLAIMS: "미국 신규 실업수당 청구",
+  US_10Y_2Y_SPREAD: "미국 10년-2년 금리차",
+  KR_10Y_3Y_SPREAD: "한국 10년-3년 금리차",
+  KR_REAL_POLICY_RATE: "한국 실질 기준금리",
+  US_REAL_POLICY_RATE: "미국 실질 정책금리",
+  USD_KRW_VOLATILITY: "달러/원 20일 변동성",
+  NASDAQ_SP500_RELATIVE: "NASDAQ/S&P500 상대강도",
+  SOX_SP500_RELATIVE: "SOX/S&P500 상대강도",
+});
 const parseMetricKey = (key: MetricKey): { source: MetricSource; code: string } => {
   const [source, ...rest] = key.split(":");
   const code = rest.join(":") || key;
@@ -253,7 +288,19 @@ const COMPARE_GROUPS: CompareGroupConfig[] = [
     key: "US_MARKET",
     label: "미국시장",
     indexCodes: [],
-    indicatorCodes: US_MARKET_INDICATOR_CODES,
+    indicatorCodes: US_MARKET_DISPLAY_INDICATOR_CODES,
+  },
+  {
+    key: "ENERGY_COMMODITY",
+    label: "에너지/원자재",
+    indexCodes: [],
+    indicatorCodes: ["WTI"],
+  },
+  {
+    key: "DERIVED",
+    label: "파생",
+    indexCodes: [],
+    indicatorCodes: DERIVED_INDICATOR_CODES,
   },
   {
     key: "SAFE_ASSET",
@@ -319,6 +366,13 @@ const getStatusValue = (raw?: string | null, hasPrice = false) => {
 const getStatusLabel = (raw?: string | null, hasPrice = false) => STATUS_LABELS[getStatusValue(raw, hasPrice)] ?? TEXT.notCollected;
 const getStatusClass = (status: string) => status.toLowerCase().replace(/_/g, "-");
 const isDeferredStatus = (status: string) => ["NO_OFFICIAL_INDEX", "CUSTOM_INDEX_REQUIRED", "EXCLUDED"].includes(status);
+const getIndicatorProvider = (item: Pick<MarketIndicator, "category" | "indicator_code">) => {
+  const code = item.indicator_code.toUpperCase();
+  const category = String(item.category || "").toUpperCase();
+  if (DERIVED_INDICATOR_CODES.includes(code as (typeof DERIVED_INDICATOR_CODES)[number]) || category === "DERIVED") return "DERIVED";
+  if (NEW_FRED_INDICATOR_CODES.includes(code as (typeof NEW_FRED_INDICATOR_CODES)[number]) || US_MARKET_INDICATOR_CODES.includes(code as (typeof US_MARKET_INDICATOR_CODES)[number]) || category.startsWith("GLOBAL")) return "FRED";
+  return "BOK_ECOS";
+};
 
 const formatNumber = (value?: number | null, fraction = 0) => {
   if (value === null || value === undefined || Number.isNaN(value)) return "-";
@@ -589,7 +643,7 @@ function MarketIndicatorLineChart({ rows, indicator, indicatorName, unitLabel }:
   );
 }
 
-function CompareChart({ compare }: { compare: MarketIndexCompareResponse | null }) {
+function CompareChart({ compare, selectedCount }: { compare: MarketIndexCompareResponse | null; selectedCount: number }) {
   const width = 1440;
   const height = 408;
   const chartX = 58;
@@ -616,13 +670,14 @@ function CompareChart({ compare }: { compare: MarketIndexCompareResponse | null 
   if (!series.some((item) => item.points.length)) {
     return (
       <div className="market-index-chart-empty">
-        {TEXT.emptyCompare.split("\n").map((line) => <span key={line}>{line}</span>)}
+        <span>{selectedCount === 0 ? TEXT.emptyCompare : "선택한 지표에 표시할 데이터가 없습니다."}</span>
       </div>
     );
   }
 
   return (
     <>
+      {selectedCount === 1 ? <div className="market-indicator-compare-note">선택한 1개 지표를 첫 거래일 100 기준으로 정규화해 표시합니다.</div> : null}
       <div className="market-index-compare-legend">
         {series.filter((item) => item.points.length).map((item, idx) => (
           <span key={item.index_code}>
@@ -708,6 +763,46 @@ function MappingStatusPanel({ mappings }: { mappings: MarketIndexProviderMapping
   );
 }
 
+function ReadinessPanel({ items }: { items: MarketIndicatorReadiness[] }) {
+  const summary = items.reduce<Record<string, number>>((acc, item) => {
+    acc[item.readiness] = (acc[item.readiness] ?? 0) + 1;
+    return acc;
+  }, {});
+  return (
+    <SectionCard className="market-index-mapping-card">
+      <div className="market-index-section-head">
+        <div>
+          <h3>지표 수집 준비도</h3>
+          <p>마스터, 매핑, 데이터, 차트, 비교, 신호 사용 가능 여부를 실제 DB 기준으로 계산합니다.</p>
+        </div>
+      </div>
+      <div className="market-indicator-provider-status-list">
+        {Object.entries(summary).map(([key, count]) => <span key={key} className={`status-badge status-${key.toLowerCase()}`}>{key} {count}</span>)}
+      </div>
+      <div className="market-index-mapping-table-wrap">
+        <table className="data-table compact-table">
+          <thead><tr><th>지표</th><th>provider</th><th>빈도</th><th>건수</th><th>권장</th><th>기간</th><th>준비도</th><th>신호</th><th>사유</th></tr></thead>
+          <tbody>
+            {items.length ? items.map((item) => (
+              <tr key={item.indicator_code}>
+                <td><strong>{item.indicator_name || item.indicator_code}</strong><br /><span className="mono-cell">{item.indicator_code}</span></td>
+                <td>{item.provider || "-"}<br /><span className="mono-cell">{item.provider_symbol || "-"}</span></td>
+                <td>{item.data_frequency || "-"}</td>
+                <td>{item.data_count}</td>
+                <td>{item.recommended_minimum_count}{item.insufficient_count ? ` / 부족 ${item.insufficient_count}` : ""}</td>
+                <td>{item.first_value_date || "-"} ~ {item.latest_value_date || "-"}</td>
+                <td><span className={`status-badge status-${item.readiness.toLowerCase()}`}>{item.readiness}</span></td>
+                <td>{item.signal_ready ? "가능" : "부족"}</td>
+                <td>{item.readiness_reason || "-"}</td>
+              </tr>
+            )) : <tr><td colSpan={9}>readiness 정보가 없습니다.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </SectionCard>
+  );
+}
+
 function ProviderCodePanel({
   codes,
   marketType,
@@ -777,10 +872,14 @@ function MarketIndexesPage() {
   const [generalIndicators, setGeneralIndicators] = useState<MarketIndicator[]>([]);
   const [selectedCode, setSelectedCode] = useState("KOSPI");
   const [selectedMetricKey, setSelectedMetricKey] = useState<MetricKey>(makeMetricKey("MARKET_INDEX", "KOSPI"));
+  const [selectedRefreshKeys, setSelectedRefreshKeys] = useState<MetricKey[]>([]);
   const [selectedCompareCodes, setSelectedCompareCodes] = useState<string[]>([makeMetricKey("MARKET_INDEX", "KOSPI"), makeMetricKey("MARKET_INDEX", "KOSDAQ")]);
   const [openCompareGroups, setOpenCompareGroups] = useState<CompareGroupKey[]>(["DOMESTIC"]);
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("주식시장");
   const [searchText, setSearchText] = useState("");
+  const [providerFilter, setProviderFilter] = useState("ALL");
+  const [frequencyFilter, setFrequencyFilter] = useState("ALL");
+  const [collectionStatusFilter, setCollectionStatusFilter] = useState("ALL");
   const [period, setPeriod] = useState<PeriodLabel>("6M");
   const [dailyRows, setDailyRows] = useState<MarketIndexDailyPriceItem[]>([]);
   const [indicatorRows, setIndicatorRows] = useState<MarketIndicatorValue[]>([]);
@@ -797,6 +896,8 @@ function MarketIndexesPage() {
   const [adminDrawerTab, setAdminDrawerTab] = useState<AdminDrawerTab>("mapping");
   const [showDeferredIndicators, setShowDeferredIndicators] = useState(false);
   const [externalProviderStatuses, setExternalProviderStatuses] = useState<ExternalProviderStatus[]>([]);
+  const [collectionRuns, setCollectionRuns] = useState<MarketDataCollectionRun[]>([]);
+  const [readinessItems, setReadinessItems] = useState<MarketIndicatorReadiness[]>([]);
   const [isEnvironmentExpanded, setIsEnvironmentExpanded] = useState(false);
 
   const range = useMemo(() => getRange(period), [period]);
@@ -841,18 +942,15 @@ function MarketIndexesPage() {
         const statusValue = getStatusValue(item.collection_status, Boolean(item.latest_price_date));
         const deferred = isDeferredStatus(statusValue);
         const category = item.category || "";
+        const groupCode = getMarketIndicatorGroupCodeByLabel(categoryFilter);
         const categoryMatched =
           categoryFilter === "전체"
             ? !deferred
-            : categoryFilter === "주식시장"
-              ? ["국내대표지수", "국내보조지수"].includes(category)
-              : categoryFilter === "업종"
-                ? category === "업종지수"
-                : categoryFilter === "금현물"
-                  ? category === "금현물"
-                  : categoryFilter === "금리/환율" || categoryFilter === "물가/경기" || categoryFilter === "미국시장"
-                    ? false
-                    : deferred;
+            : categoryFilter === "보류/제외"
+              ? deferred
+              : groupCode
+                ? !deferred && matchesMarketIndicatorGroup({ source: "MARKET_INDEX", index_code: item.index_code, category: item.category, market: item.market, provider: item.provider }, groupCode)
+                : false;
         const keywordMatched =
           !normalizedQuery ||
           item.index_code.toLowerCase().includes(normalizedQuery) ||
@@ -870,27 +968,32 @@ function MarketIndexesPage() {
       code: item.index_code,
       name: getIndexName(item),
       category: item.category || "-",
+      provider: item.provider || "KIWOOM_REST",
       status: getStatusValue(item.collection_status, Boolean(item.latest_price_date)),
       latestValue: item.latest_close_price,
       latestDate: item.latest_price_date,
+      dataFrequency: "DAILY",
       return5: item.recent_5d_return_pct ?? item.recent_5d_return,
       return20: item.recent_20d_return_pct ?? item.recent_20d_return,
     }));
+    const groupCode = getMarketIndicatorGroupCodeByLabel(categoryFilter);
     const visibleGeneralIndicators = categoryFilter === "전체"
       ? activeGeneralIndicators
-      : categoryFilter === "금리/환율"
-        ? activeGeneralIndicators.filter((item) => RATE_FX_INDICATOR_CODES.includes(item.indicator_code as (typeof RATE_FX_INDICATOR_CODES)[number]))
-        : categoryFilter === "물가/경기"
-          ? activeGeneralIndicators.filter((item) => INFLATION_ECONOMY_INDICATOR_CODES.includes(item.indicator_code as (typeof INFLATION_ECONOMY_INDICATOR_CODES)[number]))
-          : categoryFilter === "미국시장"
-            ? activeGeneralIndicators.filter((item) => US_MARKET_INDICATOR_CODES.includes(item.indicator_code as (typeof US_MARKET_INDICATOR_CODES)[number]))
-            : [];
+      : groupCode
+        ? activeGeneralIndicators.filter((item) => matchesMarketIndicatorGroup({
+          source: "MARKET_INDICATOR",
+          indicator_code: item.indicator_code,
+          category: item.category,
+          provider: getIndicatorProvider(item),
+        }, groupCode))
+        : [];
     const generalItems = visibleGeneralIndicators.map((item) => ({
       key: makeMetricKey("MARKET_INDICATOR", item.indicator_code),
       source: "MARKET_INDICATOR" as const,
       code: item.indicator_code,
       name: getIndicatorName(item),
       category: item.category === "RATE" ? "\uAE08\uB9AC" : item.category === "FX" ? "\uD658\uC728" : item.category === "INFLATION" ? "물가" : item.category === "ECONOMY" ? "경기" : item.category,
+      provider: getIndicatorProvider(item),
       status: getStatusValue(item.collection_status, Boolean(item.latest_value_date)),
       latestValue: item.latest_value,
       latestDate: item.latest_value_date,
@@ -903,11 +1006,22 @@ function MarketIndexesPage() {
       momPct: item.latest_mom_pct,
       yoyPct: item.latest_yoy_pct,
     }));
-    return [...indexItems, ...generalItems].filter((item) => {
-      if (!normalizedQuery) return true;
-      return item.code.toLowerCase().includes(normalizedQuery) || item.name.toLowerCase().includes(normalizedQuery) || item.category.toLowerCase().includes(normalizedQuery);
+    const dedupedItems: SelectorMetricItem[] = [];
+    const usedItemKeys = new Set<string>();
+    [...indexItems, ...generalItems].forEach((item) => {
+      const itemKey = `${item.source}:${item.code}`;
+      if (usedItemKeys.has(itemKey)) return;
+      usedItemKeys.add(itemKey);
+      dedupedItems.push(item);
     });
-  }, [activeGeneralIndicators, categoryFilter, filteredIndexes, normalizedQuery]);
+    return dedupedItems.filter((item) => {
+      const keywordOk = !normalizedQuery || item.code.toLowerCase().includes(normalizedQuery) || item.name.toLowerCase().includes(normalizedQuery) || item.category.toLowerCase().includes(normalizedQuery);
+      const providerOk = providerFilter === "ALL" || String(item.provider || "").toUpperCase() === providerFilter;
+      const frequencyOk = frequencyFilter === "ALL" || String(item.dataFrequency || (item.source === "MARKET_INDEX" ? "DAILY" : "")).toUpperCase() === frequencyFilter;
+      const statusOk = collectionStatusFilter === "ALL" || item.status === collectionStatusFilter;
+      return keywordOk && providerOk && frequencyOk && statusOk;
+    });
+  }, [activeGeneralIndicators, categoryFilter, collectionStatusFilter, filteredIndexes, frequencyFilter, normalizedQuery, providerFilter]);
 
   const marketEnvironmentInsights = useMemo(() => buildMarketEnvironmentInsights({ marketIndexes: indexes, marketIndicators: activeGeneralIndicators, marketIndicatorValues: environmentIndicatorValues }), [activeGeneralIndicators, environmentIndicatorValues, indexes]);
   const compactMarketEnvironmentInsights = useMemo(() => summarizeMarketEnvironmentInsights(marketEnvironmentInsights, 4), [marketEnvironmentInsights]);
@@ -957,6 +1071,10 @@ function MarketIndexesPage() {
       repositories.marketIndexes.listProviderMappings?.().then((response) => setProviderMappings(response.items)).catch(() => setProviderMappings([]));
       repositories.marketIndexes.listProviderCodes?.({ market_type: providerCodeMarketType === "ALL" ? undefined : providerCodeMarketType }).then((response) => setProviderCodes(response.items)).catch(() => setProviderCodes([]));
       repositories.marketIndicators.providerStatuses?.().then((response: ExternalProviderStatusListResponse) => setExternalProviderStatuses(response.items)).catch(() => setExternalProviderStatuses([]));
+      repositories.marketIndicators.readiness?.(GENERAL_INDICATOR_CODES as unknown as string[]).then((response) => setReadinessItems(response.items)).catch(() => setReadinessItems([]));
+      if (showAdminTools) {
+        repositories.marketData.listRuns({ limit: 20 }).then((response) => setCollectionRuns(response.items)).catch(() => setCollectionRuns([]));
+      }
 
       const environmentValueCodes = ["US_NASDAQ", "US_SP500", "US_DOW", "US_SOX", "US_10Y", "US_2Y", "US_FED_FUNDS"];
       Promise.all(environmentValueCodes.map(async (code) => {
@@ -989,7 +1107,7 @@ function MarketIndexesPage() {
         setDailyRows(daily.items);
       }
 
-      const selectedMetrics = (selectedCompareCodes.length ? selectedCompareCodes : [makeMetricKey("MARKET_INDEX", "KOSPI"), makeMetricKey("MARKET_INDEX", "KOSDAQ")]).map(parseMetricKey);
+      const selectedMetrics = selectedCompareCodes.map(parseMetricKey);
       const indexCompareCodes = selectedMetrics.filter((item) => item.source === "MARKET_INDEX").map((item) => item.code);
       const indicatorCompareCodes = selectedMetrics.filter((item) => item.source === "MARKET_INDICATOR").map((item) => item.code);
       const compareSeries: MarketIndexCompareResponse["series"] = [];
@@ -1100,6 +1218,45 @@ function MarketIndexesPage() {
       const customCount = result.custom_index_required_count ?? result.results.filter((item) => String(item.status).toUpperCase() === "CUSTOM_INDEX_REQUIRED").length;
       const scopeLabel = codes?.length === 1 ? "선택 지표" : "전체 지표";
       setNotice(`${scopeLabel} 갱신 완료: 성공 ${result.success_count}개, 대기 ${waitingCount}개, 자체지수 필요/제외 ${excludedCount}개(${customCount}개), 오류 ${result.failed_count}개`);
+      await loadAll();
+    } catch (error) {
+      setNoticeType("error");
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+
+  const handleMarketDataCollect = async (keys?: MetricKey[]) => {
+    setLoading(true);
+    try {
+      const items = keys?.map(parseMetricKey).map((item) => ({
+        item_type: item.source === "MARKET_INDEX" ? "INDEX" as const : "INDICATOR" as const,
+        item_code: item.code,
+      }));
+      const result = await repositories.marketData.collect({
+        mode: items?.length ? "SELECTED" : "INCREMENTAL_ALL",
+        items: items?.length ? items : undefined,
+        triggered_by: "MARKET_INDEX_PAGE",
+      });
+      setNoticeType(result.failed_count > 0 || result.skipped_count > 0 ? "error" : "success");
+      setNotice(`수집 완료: 대상 ${result.target_count} · 성공 ${result.success_count} · 신규 ${result.inserted_count} · 수정 ${result.updated_count} · 동일 ${result.unchanged_count} · 건너뜀 ${result.skipped_count} · 오류 ${result.failed_count} · ${(result.elapsed_ms / 1000).toFixed(1)}초`);
+      setCollectionRuns((prev) => [{
+        id: result.run_id,
+        run_type: result.run_type,
+        status: result.status,
+        started_at: "",
+        finished_at: "",
+        target_count: result.target_count,
+        success_count: result.success_count,
+        inserted_count: result.inserted_count,
+        updated_count: result.updated_count,
+        unchanged_count: result.unchanged_count,
+        skipped_count: result.skipped_count,
+        failed_count: result.failed_count,
+        elapsed_ms: result.elapsed_ms,
+      }, ...prev].slice(0, 20));
       await loadAll();
     } catch (error) {
       setNoticeType("error");
@@ -1249,23 +1406,7 @@ function MarketIndexesPage() {
   };
 
   const handleCollectSelected = () => {
-    const selected = parseMetricKey(selectedMetricKey);
-    if (selected.source === "MARKET_INDICATOR") {
-      setLoading(true);
-      repositories.marketIndicators.collect({ indicator_codes: [selected.code] })
-        .then((result) => {
-          setNoticeType(result.failed_count > 0 ? "error" : "success");
-          setNotice(result.message);
-          return loadAll();
-        })
-        .catch((error) => {
-          setNoticeType("error");
-          setNotice(error instanceof Error ? error.message : String(error));
-        })
-        .finally(() => setLoading(false));
-      return;
-    }
-    handleCollect([selected.code]);
+    handleMarketDataCollect(selectedRefreshKeys.length ? selectedRefreshKeys : [selectedMetricKey]);
   };
 
   return (
@@ -1276,7 +1417,7 @@ function MarketIndexesPage() {
         action={
           <div className="market-index-header-actions">
             <button className="btn btn-secondary" type="button" disabled={loading || !selectedCode} onClick={handleCollectSelected}>{TEXT.collectSelected}</button>
-            <button className="btn btn-primary" type="button" disabled={loading} onClick={() => handleCollect()}>{TEXT.collectAll}</button>
+            <button className="btn btn-primary" type="button" disabled={loading} onClick={() => handleMarketDataCollect()}>{TEXT.collectAll}</button>
             <button className={`btn btn-secondary ${showAdminTools ? "active" : ""}`} type="button" onClick={() => setShowAdminTools((prev) => !prev)}>관리 도구</button>
           </div>
         }
@@ -1350,6 +1491,29 @@ function MarketIndexesPage() {
           onChange={(event) => setSearchText(event.target.value)}
           placeholder="지표명 또는 코드 검색"
         />
+        <select className="input-control market-index-filter-select" value={providerFilter} onChange={(event) => setProviderFilter(event.target.value)}>
+          <option value="ALL">Provider 전체</option>
+          <option value="KIWOOM_REST">KIWOOM</option>
+          <option value="BOK_ECOS">ECOS</option>
+          <option value="FRED">FRED</option>
+          <option value="KOSIS">KOSIS</option>
+          <option value="DERIVED">DERIVED</option>
+        </select>
+        <select className="input-control market-index-filter-select" value={frequencyFilter} onChange={(event) => setFrequencyFilter(event.target.value)}>
+          <option value="ALL">주기 전체</option>
+          <option value="DAILY">일별</option>
+          <option value="WEEKLY">주별</option>
+          <option value="MONTHLY">월별</option>
+          <option value="QUARTERLY">분기별</option>
+        </select>
+        <select className="input-control market-index-filter-select" value={collectionStatusFilter} onChange={(event) => setCollectionStatusFilter(event.target.value)}>
+          <option value="ALL">상태 전체</option>
+          <option value="LATEST">최신</option>
+          <option value="NOT_COLLECTED">신규</option>
+          <option value="WAITING">발표 대기</option>
+          <option value="ERROR">오류</option>
+          <option value="CUSTOM_INDEX_REQUIRED">자체지수 필요</option>
+        </select>
       </section>
       <p className="market-index-collect-hint">{TEXT.collectHint}</p>
       {showAdminTools ? (
@@ -1433,6 +1597,39 @@ function MarketIndexesPage() {
                   </div>
                 </section>
               ) : null}
+              {adminDrawerTab === "readiness" ? (
+                <section className="market-indicator-admin-drawer-section">
+                  <h3>수집 준비도</h3>
+                  <ReadinessPanel items={readinessItems} />
+                </section>
+              ) : null}
+              {adminDrawerTab === "history" ? (
+                <section className="market-indicator-admin-drawer-section">
+                  <h3>수집 이력</h3>
+                  <div className="market-index-mapping-table-wrap">
+                    <table className="data-table compact-table">
+                      <thead>
+                        <tr><th>ID</th><th>유형</th><th>상태</th><th>대상</th><th>신규</th><th>수정</th><th>동일</th><th>오류</th><th>시간</th></tr>
+                      </thead>
+                      <tbody>
+                        {collectionRuns.length ? collectionRuns.map((run) => (
+                          <tr key={run.id}>
+                            <td>{run.id}</td>
+                            <td>{run.run_type}</td>
+                            <td><span className={`status-badge status-${String(run.status || "").toLowerCase()}`}>{run.status}</span></td>
+                            <td>{run.target_count}</td>
+                            <td>{run.inserted_count}</td>
+                            <td>{run.updated_count}</td>
+                            <td>{run.unchanged_count}</td>
+                            <td>{run.failed_count}</td>
+                            <td>{(run.elapsed_ms / 1000).toFixed(1)}s</td>
+                          </tr>
+                        )) : <tr><td colSpan={9}>수집 이력이 없습니다.</td></tr>}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              ) : null}
             </div>
           </aside>
         </div>
@@ -1449,19 +1646,29 @@ function MarketIndexesPage() {
             {selectorItems.length ? selectorItems.map((item) => {
               const metric5 = item.source === "MARKET_INDEX" ? item.return5 : (item.dataFrequency === "MONTHLY" ? item.momPct : item.changeValue);
               const metric20 = item.source === "MARKET_INDEX" ? item.return20 : (item.dataFrequency === "MONTHLY" ? item.yoyPct : item.changePct);
+              const statusLabel = getStatusLabel(item.status, Boolean(item.latestDate));
               return (
                 <button
                   key={item.key}
                   className={"market-indicator-compact-card " + (item.key === selectedMetricKey ? "active" : "")}
                   type="button"
+                  title={`${item.name} (${item.code}) / ${statusLabel} / ${item.provider || "-"}`}
                   onClick={() => handleSelectMetric(item)}
                 >
+                  <input
+                    type="checkbox"
+                    className="market-indicator-refresh-check"
+                    checked={selectedRefreshKeys.includes(item.key)}
+                    onClick={(event) => event.stopPropagation()}
+                    onChange={() => setSelectedRefreshKeys((prev) => (prev.includes(item.key) ? prev.filter((key) => key !== item.key) : [...prev, item.key]))}
+                    aria-label={`${item.name} 수집 선택`}
+                  />
                   <div className="market-indicator-compact-head">
                     <div className="market-indicator-compact-main">
-                      <strong className="market-indicator-compact-name">{item.name}</strong>
+                      <strong className="market-indicator-compact-name" title={item.name}>{item.name}</strong>
                       <span className="market-indicator-compact-code" title={item.code}>{item.code}</span>
                     </div>
-                    <span className={"status-badge market-indicator-compact-status status-" + getStatusClass(item.status)}>{item.source === "MARKET_INDICATOR" ? item.category : getStatusLabel(item.status, Boolean(item.latestDate))}</span>
+                    <span className={"status-badge market-indicator-compact-status status-" + getStatusClass(item.status)} title={statusLabel}>{statusLabel}</span>
                   </div>
                   <div className="market-indicator-compact-metrics">
                     <span className={"market-indicator-compact-chip " + getIndicatorChangeChipClass(metric5)}>{item.source === "MARKET_INDEX" ? TEXT.oneDay5 + " " + formatPercent(metric5) : item.dataFrequency === "MONTHLY" ? "MoM " + formatPercent(metric5) : formatNumber(metric5, 3)}</span>
@@ -1556,7 +1763,7 @@ function MarketIndexesPage() {
             <div className="market-index-compare-empty-panel">비교할 지표 그룹을 선택해 주세요.</div>
           )}
         </div>
-        <CompareChart compare={compare} />
+        <CompareChart compare={compare} selectedCount={selectedCompareCodes.length} />
       </SectionCard>
     </div>
   );

@@ -15,6 +15,7 @@ import type {
   MarketIndicatorListResponse,
   MarketIndicatorProviderMapping,
   MarketIndicatorProviderMappingListResponse,
+  MarketIndicatorReadinessListResponse,
   MarketIndicatorProviderMappingTestRequest,
   MarketIndicatorProviderMappingTestResponse,
   MarketIndicatorProviderMappingUpsertRequest,
@@ -38,6 +39,12 @@ export const marketIndicatorApiRepository = {
     return apiRequest<MarketIndicatorValueResponse>(`/market-indicators-data/${encodeURIComponent(indicatorCode)}/values${query ? `?${query}` : ""}`);
   },
   providerMappings: () => apiRequest<MarketIndicatorProviderMappingListResponse>("/market-indicators-data/provider-mappings"),
+  readiness: (indicatorCodes?: string[]) => {
+    const search = new URLSearchParams();
+    indicatorCodes?.forEach((code) => search.append("indicator_codes", code));
+    const query = search.toString();
+    return apiRequest<MarketIndicatorReadinessListResponse>(`/market-indicators-data/readiness${query ? `?${query}` : ""}`);
+  },
   providerStatuses: () => apiRequest<ExternalProviderStatusListResponse>("/market-indicators-data/providers/status"),
   ecosTableList: (params?: { parent_stat_code?: string; start_index?: number; end_index?: number }) => {
     const search = new URLSearchParams();

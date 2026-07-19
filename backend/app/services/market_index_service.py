@@ -315,7 +315,8 @@ class MarketIndexService:
                     rows = self._overview_fallback_row(code, start_dt, end_dt)
                 saved = self._upsert_daily_rows(code, rows, source_provider="KIWOOM_REST")
                 if saved:
-                    self._recalculate_moving_averages(code)
+                    changed_dates = [str(row.get("price_date")) for row in rows if row.get("price_date")]
+                    self._recalculate_moving_averages(code, changed_dates=changed_dates)
                 latest_date = self._latest_price_date(code)
                 final_status = STATUS_LATEST if latest_date else STATUS_NOT_COLLECTED
                 self._update_collect_status(code, final_status, latest_date, None)
@@ -959,6 +960,17 @@ class MarketIndexService:
         for row in rows:
             if not row.get("price_date") or row.get("close_price") is None:
                 continue
+            existing = self.db.execute(
+                text(
+                    """
+                    SELECT open_price, high_price, low_price, close_price, volume, trading_value, change_rate
+                    FROM market_index_daily_prices
+                    WHERE index_code = :index_code AND price_date = :price_date
+                    """
+                ),
+                {"index_code": index_code, "price_date": row.get("price_date")},
+            ).mappings().first()
+            changed = not existing or any(existing.get(key) != row.get(key) for key in ("open_price", "high_price", "low_price", "close_price", "volume", "trading_value", "change_rate"))
             params.append(
                 {
                     "index_code": index_code,
@@ -971,6 +983,7 @@ class MarketIndexService:
                     "trading_value": row.get("trading_value"),
                     "change_rate": row.get("change_rate"),
                     "source_provider": source_provider,
+                    "revised_at": datetime.now().isoformat(timespec="seconds") if existing and changed else None,
                 }
             )
         if not params:
@@ -980,9 +993,9 @@ class MarketIndexService:
             """
             INSERT INTO market_index_daily_prices
             (index_code, price_date, open_price, high_price, low_price, close_price, volume, trading_value,
-             change_rate, source_provider, created_at, updated_at)
+             change_rate, source_provider, collected_at, revised_at, created_at, updated_at)
             VALUES (:index_code, :price_date, :open_price, :high_price, :low_price, :close_price, :volume,
-                    :trading_value, :change_rate, :source_provider, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    :trading_value, :change_rate, :source_provider, CURRENT_TIMESTAMP, :revised_at, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ON CONFLICT(index_code, price_date) DO UPDATE SET
                 open_price = excluded.open_price,
                 high_price = excluded.high_price,
@@ -992,7 +1005,19 @@ class MarketIndexService:
                 trading_value = excluded.trading_value,
                 change_rate = excluded.change_rate,
                 source_provider = excluded.source_provider,
-                updated_at = CURRENT_TIMESTAMP
+                collected_at = CURRENT_TIMESTAMP,
+                revised_at = COALESCE(excluded.revised_at, market_index_daily_prices.revised_at),
+                updated_at = CASE
+                    WHEN market_index_daily_prices.open_price IS NOT excluded.open_price
+                      OR market_index_daily_prices.high_price IS NOT excluded.high_price
+                      OR market_index_daily_prices.low_price IS NOT excluded.low_price
+                      OR market_index_daily_prices.close_price IS NOT excluded.close_price
+                      OR market_index_daily_prices.volume IS NOT excluded.volume
+                      OR market_index_daily_prices.trading_value IS NOT excluded.trading_value
+                      OR market_index_daily_prices.change_rate IS NOT excluded.change_rate
+                    THEN CURRENT_TIMESTAMP
+                    ELSE market_index_daily_prices.updated_at
+                END
             """
         )
         self.db.execute(sql, params)
@@ -1005,10 +1030,17 @@ class MarketIndexService:
         )
         return len(params)
 
-    def _recalculate_moving_averages(self, index_code: str) -> None:
+    def _recalculate_moving_averages(self, index_code: str, *, changed_dates: list[str] | None = None) -> None:
         rows = self._daily_rows(index_code, None, None)
+        update_from_idx = 0
+        if changed_dates:
+            changed_set = {value for value in changed_dates if value}
+            first_idx = next((idx for idx, row in enumerate(rows) if row.get("price_date") in changed_set), 0)
+            update_from_idx = max(0, first_idx - 120)
         closes = [row.get("close_price") for row in rows]
         for idx, row in enumerate(rows):
+            if idx < update_from_idx:
+                continue
             self.db.execute(
                 text(
                     """
