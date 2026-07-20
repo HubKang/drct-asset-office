@@ -1,6 +1,6 @@
 import { Fragment, FormEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { BarChart3, BriefcaseBusiness, Maximize2, Minimize2, Info, PauseCircle, Play, Plus, Search, Settings, ShoppingCart, StepForward, X } from "lucide-react";
+import { BarChart3, BriefcaseBusiness, ChevronDown, ChevronUp, Maximize2, Minimize2, Info, PauseCircle, Play, Plus, Search, Settings, ShoppingCart, StepForward, X } from "lucide-react";
 import EmptyState from "@/components/common/EmptyState";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
@@ -20,6 +20,7 @@ import type {
   TradeTrainingRiskScenarioDetail,
   TradeTrainingRiskScenarioDraftRequest,
   TrainingResult,
+  TrainingTradePair,
   TrainingSessionDetail,
   TrainingStockItem,
   TrainingTrade,
@@ -80,6 +81,14 @@ type TradeLogRow = {
   currentInvestedAmount: number;
 };
 type ReasonQualityGrade = "충분" | "보통" | "부족" | "미작성";
+type ResultTradeSelection = { buyDate: string; sellDate: string } | null;
+type OpenResultReport = (sessionId: number, selection?: ResultTradeSelection) => void;
+
+function performanceResultSelection(trade: TradeTrainingPerformancePoint): ResultTradeSelection {
+  const buyDate = trade.chart_entry_date || "";
+  const sellDate = trade.chart_exit_date || "";
+  return buyDate && sellDate ? { buyDate, sellDate } : null;
+}
 
 const DEFAULT_MA_TEXT = "5,10,20,60,120";
 const STOCKS_PAGE_SIZE = 6;
@@ -478,8 +487,19 @@ function CandleChart({
   const chartLayout: TrainingChartLayout = { pad, slot, chartWidth, width, visibleDays };
 
   const priced = candles.filter((candle) => candle.high !== null && candle.low !== null);
-  const minPrice = priced.length ? Math.min(...priced.map((candle) => Number(candle.low))) : 0;
-  const maxPrice = priced.length ? Math.max(...priced.map((candle) => Number(candle.high))) : 1;
+  const visibleRiskPlanLines = (riskPlanLines || []).filter((step) =>
+    !step.is_removed &&
+    String(step.status || "PLANNED").toUpperCase() !== "CANCELLED" &&
+    Number(step.trigger_price || 0) > 0
+  );
+  const riskPlanPrices = visibleRiskPlanLines.map((step) => Number(step.trigger_price));
+  const chartLowPrices = [...priced.map((candle) => Number(candle.low)), ...riskPlanPrices];
+  const chartHighPrices = [...priced.map((candle) => Number(candle.high)), ...riskPlanPrices];
+  const rawMinPrice = chartLowPrices.length ? Math.min(...chartLowPrices) : 0;
+  const rawMaxPrice = chartHighPrices.length ? Math.max(...chartHighPrices) : 1;
+  const riskRangePadding = visibleRiskPlanLines.length ? Math.max(1, (rawMaxPrice - rawMinPrice) * 0.05) : 0;
+  const minPrice = Math.max(0, rawMinPrice - riskRangePadding);
+  const maxPrice = rawMaxPrice + riskRangePadding;
   const span = Math.max(1, maxPrice - minPrice);
   const maxVolume = Math.max(1, ...candles.map((candle) => Number(candle.volume || 0)));
   const bodyWidth = Math.max(4, Math.min(13, slot * 0.58));
@@ -807,7 +827,7 @@ function CandleChart({
           />
         ) : null}
 
-        {(riskPlanLines || []).filter((step) => Number(step.trigger_price || 0) >= minPrice && Number(step.trigger_price || 0) <= maxPrice).map((step) => {
+        {visibleRiskPlanLines.map((step) => {
           const planType = String(step.plan_type || "").toUpperCase();
           const fullStop = ["FULL_STOP", "STOP_LOSS", "STOP"].includes(planType);
           const partialStop = planType === "PARTIAL_STOP";
@@ -1092,31 +1112,108 @@ function MarketIndexReplayChart({
   );
 }
 
-function EquityCurveChart({ points }: { points: TrainingEquityCurvePoint[] }) {
+function resultTradeKey(pair: TrainingTradePair, index: number): string {
+  return `${pair.buy_date}-${pair.sell_date}-${pair.trade_sequence ?? index + 1}`;
+}
+
+function shortResultDate(value: string): string {
+  const date = String(value || "").slice(0, 10);
+  return date.length === 10 ? `${date.slice(2, 4)}.${date.slice(5, 7)}.${date.slice(8, 10)}` : date;
+}
+
+function EquityCurveChart({
+  points,
+  trades,
+  selectedIndex,
+  onSelect,
+}: {
+  points: TrainingEquityCurvePoint[];
+  trades: TrainingTradePair[];
+  selectedIndex: number;
+  onSelect: (index: number) => void;
+}) {
   const width = 760;
-  const height = 180;
-  const pad = { top: 16, right: 22, bottom: 28, left: 56 };
+  const height = 220;
+  const pad = { top: 22, right: 18, bottom: 44, left: 72 };
   if (points.length === 0) return <div className="training-chart-empty training-equity-empty">자산 스냅샷이 아직 없습니다.</div>;
   const values = points.map((point) => Number(point.total_asset || 0));
   const min = Math.min(...values);
   const max = Math.max(...values);
-  const span = Math.max(1, max - min);
+  const rawSpan = Math.max(1, max - min);
+  const axisPadding = rawSpan * 0.06;
+  const axisMin = min - axisPadding;
+  const axisMax = max + axisPadding;
+  const span = Math.max(1, axisMax - axisMin);
   const innerWidth = width - pad.left - pad.right;
   const innerHeight = height - pad.top - pad.bottom;
   const xAt = (idx: number) => pad.left + (idx / Math.max(1, points.length - 1)) * innerWidth;
-  const yAt = (value: number) => pad.top + ((max - value) / span) * innerHeight;
+  const yAt = (value: number) => pad.top + ((axisMax - value) / span) * innerHeight;
   const polyline = points.map((point, idx) => `${xAt(idx)},${yAt(Number(point.total_asset || 0))}`).join(" ");
+  const pointIndexForDate = (date: string) => {
+    const exact = points.findIndex((point) => point.trade_date === date);
+    if (exact >= 0) return exact;
+    const next = points.findIndex((point) => point.trade_date >= date);
+    return next >= 0 ? next : points.length - 1;
+  };
+  const tradeBands = trades.map((trade, index) => ({
+    trade,
+    index,
+    startIndex: pointIndexForDate(trade.buy_date),
+    endIndex: pointIndexForDate(trade.sell_date),
+  }));
+  const tickIndexes = new Set<number>([0, points.length - 1]);
+  tradeBands.forEach((band) => {
+    if (tradeBands.length <= 4 || band.index === selectedIndex) {
+      tickIndexes.add(band.startIndex);
+      tickIndexes.add(band.endIndex);
+    }
+  });
+  const selectedBand = tradeBands[selectedIndex];
+  if (selectedBand) {
+    tickIndexes.add(selectedBand.startIndex);
+    tickIndexes.add(selectedBand.endIndex);
+  }
+  const targetTickCount = 10;
+  const tickStep = Math.max(1, Math.ceil(points.length / targetTickCount));
+  for (let index = tickStep; index < points.length - 1 && tickIndexes.size < targetTickCount; index += tickStep) {
+    const x = xAt(index);
+    const hasNearbyTick = Array.from(tickIndexes).some((tickIndex) => Math.abs(xAt(tickIndex) - x) < 42);
+    if (!hasNearbyTick) tickIndexes.add(index);
+  }
+  const dateTicks = Array.from(tickIndexes).sort((a, b) => a - b);
   return (
     <div className="training-equity-chart-shell">
       <svg viewBox={`0 0 ${width} ${height}`} className="training-equity-chart" role="img" aria-label="자산 흐름">
         <rect x={0} y={0} width={width} height={height} rx={8} fill="#ffffff" />
         {[0, 0.5, 1].map((rate) => {
           const y = pad.top + innerHeight * rate;
-          const value = max - span * rate;
+          const value = axisMax - span * rate;
           return (
             <g key={rate}>
               <line x1={pad.left} x2={width - pad.right} y1={y} y2={y} stroke="#e2e8f0" />
-              <text x={6} y={y + 4} fontSize="11" fill="#64748b">{fmtNumber(value)}</text>
+              <text className="training-equity-axis-value" x={pad.left - 8} y={y + 4} textAnchor="end">{fmtNumber(value)}</text>
+            </g>
+          );
+        })}
+        {tradeBands.map(({ trade, index, startIndex, endIndex }) => {
+          const startX = xAt(startIndex);
+          const endX = xAt(endIndex);
+          const selected = index === selectedIndex;
+          const positive = Number(trade.profit_amount || 0) > 0;
+          const negative = Number(trade.profit_amount || 0) < 0;
+          const fill = positive ? "#ef4444" : negative ? "#2563eb" : "#64748b";
+          const bandWidth = Math.max(5, endX - startX);
+          const sequence = trade.trade_sequence ?? index + 1;
+          return (
+            <g key={`equity-band-${resultTradeKey(trade, index)}`} className={`training-equity-trade-band ${selected ? "selected" : ""}`} onClick={() => onSelect(index)}>
+              <rect x={startX} y={pad.top} width={bandWidth} height={innerHeight} fill={fill} opacity={selected ? 0.18 : 0.075} />
+              {selected ? <rect x={startX} y={pad.top} width={bandWidth} height={innerHeight} fill="none" stroke={fill} strokeWidth={1.5} /> : null}
+              <text x={startX + 5} y={pad.top + 13 + (index % 2) * 13} fill={fill} className="training-equity-band-label">
+                #{sequence}{selected ? " 선택" : ""} · {fmtPercent(trade.profit_rate)}
+              </text>
+              {bandWidth >= 34 ? <text x={startX + 4} y={pad.top + innerHeight - 7} fill={fill} className="training-equity-boundary-label">B</text> : null}
+              {bandWidth >= 34 ? <text x={endX - 4} y={pad.top + innerHeight - 7} textAnchor="end" fill={fill} className="training-equity-boundary-label">S</text> : null}
+              <title>{`#${sequence} ${trade.buy_date} ~ ${trade.sell_date}\n보유 ${trade.holding_days}일\n매매금액 ${fmtWon(trade.gross_buy_amount ?? trade.buy_price * trade.quantity)}\n손익 ${fmtSignedWon(trade.profit_amount)}\n수익률 ${fmtPercent(trade.profit_rate)}\n거래 후 자산 ${fmtWon(trade.equity_after)}`}</title>
             </g>
           );
         })}
@@ -1124,8 +1221,21 @@ function EquityCurveChart({ points }: { points: TrainingEquityCurvePoint[] }) {
         {points.map((point, idx) => (
           <circle key={`${point.trade_date}-${idx}`} cx={xAt(idx)} cy={yAt(Number(point.total_asset || 0))} r={2.4} fill="#111827" />
         ))}
-        <text x={pad.left} y={height - 8} fontSize="11" fill="#64748b">{points[0]?.trade_date}</text>
-        <text x={width - pad.right - 82} y={height - 8} fontSize="11" fill="#64748b">{points[points.length - 1]?.trade_date}</text>
+        {dateTicks.map((index, tickPosition) => {
+          const previousIndex = dateTicks[tickPosition - 1];
+          const crowded = previousIndex !== undefined && xAt(index) - xAt(previousIndex) < 52;
+          return (
+            <text
+              key={`equity-date-${index}`}
+              x={xAt(index)}
+              y={height - (crowded ? 5 : 17)}
+              textAnchor={tickPosition === 0 ? "start" : tickPosition === dateTicks.length - 1 ? "end" : "middle"}
+              className="training-equity-axis-date"
+            >
+              {shortResultDate(points[index]?.trade_date || "")}
+            </text>
+          );
+        })}
       </svg>
     </div>
   );
@@ -1488,7 +1598,7 @@ function AccountPerformanceTabs({
   sessions: TradeTrainingAccountSession[];
   closedTrades: TradeTrainingClosedTrade[];
   performance: TradeTrainingAccountPerformance | null;
-  onOpenResult: (sessionId: number) => void;
+  onOpenResult: OpenResultReport;
 }) {
   return (
     <div className="account-training-tabs">
@@ -1591,7 +1701,7 @@ function AccountActiveSessions({ sessions }: { sessions: TradeTrainingAccountSes
   );
 }
 
-function AccountClosedTradesTable({ closedTrades, onOpenResult }: { closedTrades: TradeTrainingClosedTrade[]; onOpenResult: (sessionId: number) => void }) {
+function AccountClosedTradesTable({ closedTrades, onOpenResult }: { closedTrades: TradeTrainingClosedTrade[]; onOpenResult: OpenResultReport }) {
   if (!closedTrades.length) return <div className="account-training-empty-panel"><strong>완료된 거래가 없습니다.</strong></div>;
   return (
     <div className="table-shell">
@@ -1599,7 +1709,7 @@ function AccountClosedTradesTable({ closedTrades, onOpenResult }: { closedTrades
         <thead><tr><th>순번</th><th>종목</th><th>매수일</th><th>매도일</th><th className="numeric-cell">보유 봉</th><th className="numeric-cell">매수가</th><th className="numeric-cell">매도가</th><th className="numeric-cell">수량</th><th className="numeric-cell">순손익</th><th className="numeric-cell">수익률</th><th>완료 시각</th></tr></thead>
         <tbody>
           {closedTrades.map((trade) => (
-            <tr key={trade.id} className="account-training-clickable-row" onClick={() => onOpenResult(trade.training_session_id)}>
+            <tr key={trade.id} className="account-training-clickable-row" onClick={() => onOpenResult(trade.training_session_id, { buyDate: trade.chart_entry_date || trade.opened_chart_date, sellDate: trade.chart_exit_date || trade.closed_chart_date })}>
               <td>#{trade.trade_sequence}</td>
               <td>{trade.stock_name || trade.stock_code}</td>
               <td>{trade.opened_chart_date}</td>
@@ -1637,7 +1747,7 @@ function AccountPerformanceTabsV2({
   sessions: TradeTrainingAccountSession[];
   closedTrades: TradeTrainingClosedTrade[];
   performance: TradeTrainingAccountPerformance | null;
-  onOpenResult: (sessionId: number) => void;
+  onOpenResult: OpenResultReport;
   onResumeSession: (sessionId: number) => void;
 }) {
   const plrReason = profitLossRatioMessageV2(summary);
@@ -1672,7 +1782,7 @@ function AccountPerformanceTabsV2({
 
 type AccountProfitRangeMode = "20" | "50" | "all";
 
-function AccountProfitChartV2({ performance, onNewTraining, onOpenResult }: { performance: TradeTrainingAccountPerformance | null; onNewTraining: () => void; onOpenResult: (sessionId: number) => void }) {
+function AccountProfitChartV2({ performance, onNewTraining, onOpenResult }: { performance: TradeTrainingAccountPerformance | null; onNewTraining: () => void; onOpenResult: OpenResultReport }) {
   const [rangeMode, setRangeMode] = useState<AccountProfitRangeMode>("20");
   const [xAxisMode, setXAxisMode] = useState<"completed" | "sequence">("completed");
   const [assetMode, setAssetMode] = useState<"return" | "equity">("equity");
@@ -2158,7 +2268,7 @@ function SelectedTradeDetailCardCompact({
   onOpenReport,
 }: {
   trade: TradeTrainingPerformancePoint | null;
-  onOpenReport: (sessionId: number) => void;
+  onOpenReport: OpenResultReport;
 }) {
   if (!trade) return null;
 
@@ -2232,7 +2342,7 @@ function SelectedTradeDetailCardCompact({
             className="btn btn-secondary account-selected-trade-report-button"
             onClick={(event) => {
               event.stopPropagation();
-              onOpenReport(sessionId);
+              onOpenReport(sessionId, performanceResultSelection(trade));
             }}
           >
             결과 리포트 보기
@@ -2250,7 +2360,7 @@ function SelectedTradeDetailCardV2({
 }: {
   trade: TradeTrainingPerformancePoint | null;
   showRisk: boolean;
-  onOpenReport: (sessionId: number) => void;
+  onOpenReport: OpenResultReport;
 }) {
   if (!trade) return null;
 
@@ -2338,7 +2448,7 @@ function SelectedTradeDetailCardV2({
             className="btn btn-secondary account-selected-trade-report-button"
             onClick={(event) => {
               event.stopPropagation();
-              onOpenReport(sessionId);
+              onOpenReport(sessionId, performanceResultSelection(trade));
             }}
           >
             결과 리포트 보기
@@ -2356,7 +2466,7 @@ function SelectedTradeDetailCard({
 }: {
   trade: TradeTrainingPerformancePoint | null;
   showRisk: boolean;
-  onOpenReport: (sessionId: number) => void;
+  onOpenReport: OpenResultReport;
 }) {
   if (!trade) return null;
   const sessionId = trade.simulation_session_id ?? trade.training_session_id;
@@ -2416,13 +2526,13 @@ function SelectedTradeDetailCard({
 
       <footer className="account-selected-trade-footer">
         <span>매수 기준 미기록 · 매도 기준 미기록 · 리스크 정보 {riskRecorded ? "기록" : "미기록"}</span>
-        {sessionId ? <button type="button" className="btn btn-secondary" onClick={() => onOpenReport(sessionId)}>결과 리포트 보기</button> : null}
+        {sessionId ? <button type="button" className="btn btn-secondary" onClick={() => onOpenReport(sessionId, performanceResultSelection(trade))}>결과 리포트 보기</button> : null}
       </footer>
     </article>
   );
 }
 
-function AccountProfitSelection({ trade, showRisk, onOpenResult }: { trade: TradeTrainingPerformancePoint | null; showRisk: boolean; onOpenResult: (sessionId: number) => void }) {
+function AccountProfitSelection({ trade, showRisk, onOpenResult }: { trade: TradeTrainingPerformancePoint | null; showRisk: boolean; onOpenResult: OpenResultReport }) {
   if (!trade) return null;
   const sessionId = trade.simulation_session_id ?? trade.training_session_id;
   return (
@@ -2432,7 +2542,7 @@ function AccountProfitSelection({ trade, showRisk, onOpenResult }: { trade: Trad
       <span className={profitClass(trade.net_pnl)}>순손익 {fmtSignedWon(trade.net_pnl)} · 거래 수익률 {fmtPercent(trade.return_pct)} · 누적 {fmtPercent(trade.cumulative_return_pct ?? 0)}</span>
       <span>자산 {fmtWon(trade.equity_before ?? 0)} → {fmtWon(trade.equity_after)}</span>
       {showRisk ? <span>리스크 {trade.planned_risk_pct === null || trade.planned_risk_pct === undefined ? "미기록" : fmtPercent(trade.planned_risk_pct)} · R {trade.realized_r === null || trade.realized_r === undefined ? "미기록" : fmtNumber(trade.realized_r, 2)}</span> : null}
-      {sessionId ? <button type="button" className="btn btn-secondary" onClick={() => onOpenResult(sessionId)}>결과 리포트</button> : null}
+      {sessionId ? <button type="button" className="btn btn-secondary" onClick={() => onOpenResult(sessionId, performanceResultSelection(trade))}>결과 리포트</button> : null}
     </div>
   );
 }
@@ -2468,7 +2578,7 @@ function AccountActiveSessionsV2({ sessions, onResumeSession }: { sessions: Trad
   );
 }
 
-function AccountClosedTradesTableV2({ closedTrades, onOpenResult }: { closedTrades: TradeTrainingClosedTrade[]; onOpenResult: (sessionId: number) => void }) {
+function AccountClosedTradesTableV2({ closedTrades, onOpenResult }: { closedTrades: TradeTrainingClosedTrade[]; onOpenResult: OpenResultReport }) {
   if (!closedTrades.length) return <div className="account-training-empty-panel"><strong>완료 거래가 없습니다.</strong></div>;
   return (
     <div className="table-shell account-closed-table-shell">
@@ -2476,14 +2586,14 @@ function AccountClosedTradesTableV2({ closedTrades, onOpenResult }: { closedTrad
         <thead><tr><th>#</th><th>종목</th><th>차트 매도일</th><th>훈련 완료</th><th className="numeric-cell">순손익</th><th className="numeric-cell">수익률</th><th>결과</th></tr></thead>
         <tbody>
           {closedTrades.map((trade) => (
-            <tr key={trade.id} className="account-training-clickable-row" onClick={() => onOpenResult(trade.training_session_id)}>
+            <tr key={trade.id} className="account-training-clickable-row" onClick={() => onOpenResult(trade.training_session_id, { buyDate: trade.chart_entry_date || trade.opened_chart_date, sellDate: trade.chart_exit_date || trade.closed_chart_date })}>
               <td>#{trade.trade_sequence}</td>
               <td>{trade.stock_name || trade.stock_code}</td>
               <td>{trade.chart_exit_date || trade.closed_chart_date}</td>
               <td>{trade.completed_at || "-"}</td>
               <td className={`numeric-cell ${profitClass(trade.net_pnl)}`}>{fmtSignedWon(trade.net_pnl)}</td>
               <td className={`numeric-cell ${profitClass(trade.return_pct)}`}>{fmtPercent(trade.return_pct)}</td>
-              <td><button type="button" className="btn btn-secondary" onClick={(event) => { event.stopPropagation(); onOpenResult(trade.training_session_id); }}>결과</button></td>
+              <td><button type="button" className="btn btn-secondary" onClick={(event) => { event.stopPropagation(); onOpenResult(trade.training_session_id, { buyDate: trade.chart_entry_date || trade.opened_chart_date, sellDate: trade.chart_exit_date || trade.closed_chart_date }); }}>결과</button></td>
             </tr>
           ))}
         </tbody>
@@ -2514,7 +2624,7 @@ function TrainingAccountDetail({
   onTabChange: (tab: AccountDetailTab) => void;
   onEdit: () => void;
   onNewTraining: () => void;
-  onOpenResult: (sessionId: number) => void;
+  onOpenResult: OpenResultReport;
   onResumeSession: (sessionId: number) => void;
 }) {
   const canStart = account.status === "ACTIVE";
@@ -2565,7 +2675,7 @@ function AccountTrainingWorkspace({
 }: {
   onClose: () => void;
   onOpenStockTraining: (account: TradeTrainingAccount) => void;
-  onOpenResult: (sessionId: number) => void;
+  onOpenResult: OpenResultReport;
   onResumeSession: (sessionId: number) => void;
 }) {
   const [accounts, setAccounts] = useState<TradeTrainingAccount[]>([]);
@@ -2810,7 +2920,7 @@ function AccountTrainingModal({
 }: {
   onClose: () => void;
   onOpenStockTraining: (account: TradeTrainingAccount) => void;
-  onOpenResult: (sessionId: number) => void;
+  onOpenResult: OpenResultReport;
   onResumeSession: (sessionId: number) => void;
 }) {
   const handleBackdropClose = (event: MouseEvent<HTMLDivElement>) => {
@@ -3017,13 +3127,72 @@ function SettingsModal({
   );
 }
 
-function ResultModal({ result, onClose }: { result: TrainingResult; onClose: () => void }) {
+type TradeReviewChip = { label: string; value: string };
+
+function TradeReviewCard({ title, items }: { title: string; items: TradeReviewChip[] }) {
+  return (
+    <section className="training-trade-review-card">
+      <h5>{title}</h5>
+      <div className="training-trade-review-chip-grid">
+        {items.map((item) => (
+          <div key={item.label} className="training-trade-review-chip" title={`${item.label}: ${item.value}`}>
+            <span>{item.label}</span>
+            <strong>{item.value}</strong>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function TradeReviewCards({ pair }: { pair: TrainingTradePair }) {
+  const buyReview = pair.buy_method_review || null;
+  const sellReview = pair.sell_method_review || null;
+  const buyItems: TradeReviewChip[] = [
+    { label: "선택 카드", value: buyReview?.selected_template || "미작성" },
+    { label: "매수 유형", value: tagLabels(BUY_REVIEW_TAGS, buyReview?.entry_type_tags) },
+    { label: "기법 기준", value: optionLabel(BUY_METHOD_FIT_OPTIONS, buyReview?.method_fit) },
+    { label: "실패 기준", value: writtenFlag(buyReview?.failure_criteria) },
+    { label: "손절 기준", value: writtenFlag(buyReview?.stop_loss_rule) },
+    { label: "목표/청산 기준", value: writtenFlag(buyReview?.target_exit_rule) },
+    { label: "추가매수 기준", value: optionLabel(ADD_BUY_PLAN_OPTIONS, buyReview?.add_buy_plan_type) },
+    { label: "복기 상태", value: hasMethodReview(buyReview) ? "작성됨" : "미작성" },
+  ];
+  const sellItems: TradeReviewChip[] = [
+    { label: "선택 카드", value: sellReview?.selected_template || "미작성" },
+    { label: "매도 유형", value: tagLabels(SELL_REVIEW_TAGS, sellReview?.exit_type_tags) },
+    { label: "기법 기준 매도", value: optionLabel(SELL_METHOD_FIT_OPTIONS, sellReview?.method_exit_fit) },
+    { label: "최초 계획 일치", value: optionLabel(PLAN_ALIGNMENT_OPTIONS, sellReview?.plan_alignment) },
+    { label: "매도조건 근거", value: writtenFlag(sellReview?.matched_exit_rules) },
+    { label: "손절·익절 구분", value: tagLabels(SELL_REVIEW_TAGS, sellReview?.exit_type_tags) },
+    { label: "계획 외 매도 사유", value: sellReview?.exit_reason_detail?.trim() || "기록 없음" },
+    { label: "복기 상태", value: hasMethodReview(sellReview) ? "작성됨" : "미작성" },
+  ];
+  return (
+    <div className="training-trade-review-cards">
+      <TradeReviewCard title="매수 기준 복기" items={buyItems} />
+      <TradeReviewCard title="매도 기준 복기" items={sellItems} />
+    </div>
+  );
+}
+
+function ResultModal({ result, initialSelection, onClose }: { result: TrainingResult; initialSelection?: ResultTradeSelection; onClose: () => void }) {
   const [review, setReview] = useState<SimulationReview | null>(null);
   const [gptPackage, setGptPackage] = useState<TrainingGptPackage | null>(null);
   const [reviewLoading, setReviewLoading] = useState(false);
   const [packageLoading, setPackageLoading] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
   const [reviewError, setReviewError] = useState("");
+  const initialTradeIndex = initialSelection
+    ? result.trade_pairs.findIndex((pair) => pair.buy_date === initialSelection.buyDate && pair.sell_date === initialSelection.sellDate)
+    : -1;
+  const [selectedTradeIndex, setSelectedTradeIndex] = useState(() => initialTradeIndex >= 0 ? initialTradeIndex : 0);
+  const selectedTradeRowRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!initialSelection || !selectedTradeRowRef.current) return;
+    selectedTradeRowRef.current.scrollIntoView({ block: "center" });
+  }, [initialSelection]);
 
   useEffect(() => {
     const loadReview = async () => {
@@ -3188,79 +3357,56 @@ function ResultModal({ result, onClose }: { result: TrainingResult; onClose: () 
 
         <section className="training-result-section">
           <h4>자산 흐름</h4>
-          <EquityCurveChart points={result.equity_curve} />
+          <EquityCurveChart points={result.equity_curve} trades={result.trade_pairs} selectedIndex={selectedTradeIndex} onSelect={setSelectedTradeIndex} />
         </section>
 
         <section className="training-result-section">
           <h4>거래별 결과</h4>
           {result.trade_pairs.length === 0 ? <EmptyState message="아직 청산된 거래쌍이 없습니다." /> : (
-            <div className="table-shell">
-              <table className="data-table compact-table training-result-table">
-                <thead>
-                  <tr>
-                    <th>매수일</th>
-                    <th>매도일</th>
-                    <th className="numeric-cell">보유일</th>
-                    <th className="numeric-cell">매수가</th>
-                    <th className="numeric-cell">매도가</th>
-                    <th className="numeric-cell">수량</th>
-                    <th className="numeric-cell">손익</th>
-                    <th className="numeric-cell">수익률</th>
-                    <th>매수 사유</th>
-                    <th>매수 품질</th>
-                    <th>매도 사유</th>
-                    <th>매도 품질</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.trade_pairs.map((pair, idx) => {
-                    const buyReview = pair.buy_method_review || null;
-                    const sellReview = pair.sell_method_review || null;
-                    return (
-                      <Fragment key={`${pair.buy_date}-${pair.sell_date}-${idx}`}>
-                        <tr>
-                          <td>{pair.buy_date}</td>
-                          <td>{pair.sell_date}</td>
-                          <td className="numeric-cell">{fmtNumber(pair.holding_days)}</td>
-                          <td className="numeric-cell">{fmtWon(pair.buy_price)}</td>
-                          <td className="numeric-cell">{fmtWon(pair.sell_price)}</td>
-                          <td className="numeric-cell">{fmtNumber(pair.quantity)}</td>
-                          <td className={`numeric-cell ${profitClass(pair.profit_amount)}`}>{fmtSignedWon(pair.profit_amount)}</td>
-                          <td className={`numeric-cell ${profitClass(pair.profit_rate)}`}>{fmtPercent(pair.profit_rate)}</td>
-                          <td>{pair.buy_reason || "-"}</td>
-                          <td><ReasonQualityBadge grade={pair.buy_reason_quality} guide={pair.buy_reason_quality_guide} /></td>
-                          <td>{pair.sell_reason || "-"}</td>
-                          <td><ReasonQualityBadge grade={pair.sell_reason_quality} guide={pair.sell_reason_quality_guide} /></td>
-                        </tr>
-                        <tr className="training-method-review-result-row">
-                          <td colSpan={12}>
-                            <div className="training-method-review-result">
-                              <div>
-                                <strong>매수 기준 복기</strong>
-                                <span>선택 카드: {buyReview?.selected_template || "미작성"}</span>
-                                <span>매수 유형: {tagLabels(BUY_REVIEW_TAGS, buyReview?.entry_type_tags)}</span>
-                                <span>기법 기준: {optionLabel(BUY_METHOD_FIT_OPTIONS, buyReview?.method_fit)}</span>
-                                <span>실패 기준: {writtenFlag(buyReview?.failure_criteria)}</span>
-                                <span>손절 기준: {writtenFlag(buyReview?.stop_loss_rule)}</span>
-                                <span>목표/청산 기준: {writtenFlag(buyReview?.target_exit_rule)}</span>
-                                <span>추가매수 기준: {optionLabel(ADD_BUY_PLAN_OPTIONS, buyReview?.add_buy_plan_type)}</span>
-                              </div>
-                              <div>
-                                <strong>매도 기준 복기</strong>
-                                <span>선택 카드: {sellReview?.selected_template || "미작성"}</span>
-                                <span>매도 유형: {tagLabels(SELL_REVIEW_TAGS, sellReview?.exit_type_tags)}</span>
-                                <span>기법 기준 매도: {optionLabel(SELL_METHOD_FIT_OPTIONS, sellReview?.method_exit_fit)}</span>
-                                <span>최초 계획 일치: {optionLabel(PLAN_ALIGNMENT_OPTIONS, sellReview?.plan_alignment)}</span>
-                                <span>매도조건 근거: {writtenFlag(sellReview?.matched_exit_rules)}</span>
-                              </div>
-                            </div>
-                          </td>
-                        </tr>
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
+            <div className="training-result-trades" role="table" aria-label="거래별 결과">
+              <div className="training-result-trade-grid training-result-trade-header" role="row">
+                <span>매수일</span>
+                <span>매도일</span>
+                <span className="numeric-cell">보유일</span>
+                <span className="numeric-cell">매수가</span>
+                <span className="numeric-cell">매도가</span>
+                <span className="numeric-cell">수량</span>
+                <span className="numeric-cell">손익</span>
+                <span className="numeric-cell">수익률</span>
+                <span className="numeric-cell training-result-info-label" title="해당 거래의 총 매수 체결금액입니다.">매매금액 <Info size={12} /></span>
+                <span className="numeric-cell training-result-info-label" title="해당 거래가 완료된 직후의 훈련계좌 자산입니다.">계좌금액 <Info size={12} /></span>
+              </div>
+              {result.trade_pairs.map((pair, idx) => {
+                const selected = idx === selectedTradeIndex;
+                const sequence = pair.trade_sequence ?? idx + 1;
+                const tradeAmount = pair.gross_buy_amount ?? pair.buy_price * pair.quantity;
+                return (
+                  <div
+                    key={resultTradeKey(pair, idx)}
+                    ref={selected ? selectedTradeRowRef : undefined}
+                    className={`training-result-trade-item ${selected ? "selected" : ""}`}
+                  >
+                    <button
+                      type="button"
+                      className="training-result-trade-grid training-result-trade-row"
+                      aria-expanded={selected}
+                      onClick={() => setSelectedTradeIndex(idx)}
+                    >
+                      <span className="training-result-trade-date"><em>#{sequence}</em>{pair.buy_date}{selected ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</span>
+                      <span>{pair.sell_date}</span>
+                      <span className="numeric-cell">{fmtNumber(pair.holding_days)}</span>
+                      <span className="numeric-cell">{fmtWon(pair.buy_price)}</span>
+                      <span className="numeric-cell">{fmtWon(pair.sell_price)}</span>
+                      <span className="numeric-cell">{fmtNumber(pair.quantity)}</span>
+                      <span className={`numeric-cell ${profitClass(pair.profit_amount)}`}>{fmtSignedWon(pair.profit_amount)}</span>
+                      <span className={`numeric-cell ${profitClass(pair.profit_rate)}`}>{fmtPercent(pair.profit_rate)}</span>
+                      <span className="numeric-cell">{fmtWon(tradeAmount)}</span>
+                      <span className="numeric-cell">{pair.equity_after === null || pair.equity_after === undefined ? "-" : fmtWon(pair.equity_after)}</span>
+                    </button>
+                    {selected ? <div className="training-result-trade-review"><TradeReviewCards pair={pair} /></div> : null}
+                  </div>
+                );
+              })}
             </div>
           )}
         </section>
@@ -3475,17 +3621,19 @@ type RiskPricePickerChartProps = {
 };
 
 function RiskPricePickerChart({ candles, mode, buyLines, sellLines, activePickMode, hoverPrice, onHoverPrice, onPickPrice, onRemoveLine }: RiskPricePickerChartProps) {
-  const visible = candles.slice(-80);
+  const visible = candles.slice(-100);
+  const maKeys = ["ma5", "ma10", "ma20", "ma60", "ma120"];
   const width = 720;
   const height = 250;
-  const pad = { top: 14, right: 126, bottom: 24, left: 48 };
+  const pad = { top: 14, right: 92, bottom: 24, left: 16 };
   const prices = visible.flatMap((candle) => [candle.high, candle.low, candle.close]).filter((value): value is number => Number(value || 0) > 0);
+  const maPrices = visible.flatMap((candle) => maKeys.map((key) => candle.moving_averages?.[key])).filter((value): value is number => Number(value || 0) > 0);
   const targetLines = sellLines.filter((line) => line.kind === "TAKE_PROFIT").sort((a, b) => a.price - b.price);
   const stopLines = sellLines.filter((line) => isStopLineKind(line.kind)).sort((a, b) => a.price - b.price);
   const lines = [...buyLines, ...targetLines, ...stopLines];
   const planPrices = lines.map((line) => line.price);
-  const minPrice = Math.min(...prices, ...planPrices, hoverPrice || Infinity);
-  const maxPrice = Math.max(...prices, ...planPrices, hoverPrice || 0);
+  const minPrice = Math.min(...prices, ...maPrices, ...planPrices, hoverPrice || Infinity);
+  const maxPrice = Math.max(...prices, ...maPrices, ...planPrices, hoverPrice || 0);
   const span = Math.max(1, maxPrice - minPrice);
   const chartW = width - pad.left - pad.right;
   const chartH = height - pad.top - pad.bottom;
@@ -3536,6 +3684,17 @@ function RiskPricePickerChart({ candles, mode, buyLines, sellLines, activePickMo
         <strong>{modeTitle}</strong>
         <span>{modeHelp}</span>
       </div>
+      <div className="training-risk-ma-legend" aria-label="이동평균선 범례">
+        {maKeys.map((key) => {
+          const style = maStyle(key);
+          return (
+            <span key={key}>
+              <i style={{ backgroundColor: style.color }} />
+              {key.toUpperCase()}
+            </span>
+          );
+        })}
+      </div>
       <svg
         className={`training-risk-chart-svg ${activePickMode ? "picking" : ""}`}
         viewBox={`0 0 ${width} ${height}`}
@@ -3555,6 +3714,19 @@ function RiskPricePickerChart({ candles, mode, buyLines, sellLines, activePickMo
               <text x={width - pad.right + 8} y={y + 4} fontSize="10" fill="#64748b">{fmtWon(price)}</text>
             </g>
           );
+        })}
+        {maKeys.map((key) => {
+          const style = maStyle(key);
+          const points = visible
+            .map((candle, index) => {
+              const value = candle.moving_averages?.[key];
+              if (value === null || value === undefined || !Number.isFinite(Number(value))) return null;
+              const x = pad.left + index * slot + slot / 2;
+              return `${x},${yPrice(Number(value))}`;
+            })
+            .filter(Boolean)
+            .join(" ");
+          return points ? <polyline key={key} points={points} fill="none" stroke={style.color} strokeWidth={style.width} pointerEvents="none" /> : null;
         })}
         {visible.map((candle, index) => {
           const open = Number(candle.open || candle.close || 0);
@@ -3767,7 +3939,7 @@ function RiskScenarioPanel({ mode, detail, riskDetail, onRiskDetailChange, onSel
           <button type="button" className={activePickMode === "ENTRY" ? "active-entry" : ""} onClick={() => setActivePickMode((current) => current === "ENTRY" ? null : "ENTRY")}>분할매수 가격 지정</button>
           <button type="button" className={activePickMode === "TAKE_PROFIT" ? "active-target" : ""} onClick={() => setActivePickMode((current) => current === "TAKE_PROFIT" ? null : "TAKE_PROFIT")}>분할매도(익절) 가격 지정</button>
           <button type="button" className={activePickMode === "STOP_LOSS" ? "active-stop" : ""} onClick={() => setActivePickMode((current) => current === "STOP_LOSS" ? null : "STOP_LOSS")}>분할매도(손절) 가격 지정</button>
-          {activePickMode ? <button type="button" className="complete-action" disabled={saving} onClick={() => void save()}>{saving ? "저장 중..." : "지정 완료"}</button> : null}
+          <button type="button" className="complete-action" disabled={saving} onClick={() => void save()}>{saving ? "저장 중..." : "지정 완료"}</button>
         </div>
 
         <RiskPricePickerChart
@@ -4639,6 +4811,7 @@ function TradeTrainingPage() {
   const [endDate, setEndDate] = useState("");
   const [detail, setDetail] = useState<TrainingSessionDetail | null>(null);
   const [result, setResult] = useState<TrainingResult | null>(null);
+  const [resultInitialSelection, setResultInitialSelection] = useState<ResultTradeSelection>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsMode, setSettingsMode] = useState<TrainingLaunchMode>("standalone");
   const [linkedTrainingAccount, setLinkedTrainingAccount] = useState<TradeTrainingAccount | null>(null);
@@ -4751,13 +4924,14 @@ function TradeTrainingPage() {
     }
   };
 
-  const openResultReport = async (sessionId?: number) => {
+  const openResultReport = async (sessionId?: number, selection?: ResultTradeSelection) => {
     const targetSessionId = sessionId ?? detail?.session.id;
     if (!targetSessionId) return;
     setResultLoading(true);
     setError("");
     try {
       const response = await repositories.tradeTraining.getResult(targetSessionId);
+      setResultInitialSelection(selection ?? null);
       setResult(response);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "결과 리포트를 불러오지 못했습니다.");
@@ -5152,7 +5326,7 @@ function TradeTrainingPage() {
             setAccountTrainingOpen(false);
             openAccountLinkedSettings(account);
           }}
-          onOpenResult={(sessionId) => void openResultReport(sessionId)}
+          onOpenResult={(sessionId, selection) => void openResultReport(sessionId, selection)}
           onResumeSession={(sessionId) => void resumeAccountSession(sessionId)}
         />
       ) : null}
@@ -5173,7 +5347,16 @@ function TradeTrainingPage() {
           onRiskScenarioChange={(next) => setDetail((current) => current ? { ...current, risk_scenario: next } : current)}
         />
       ) : null}
-      {result ? <ResultModal result={result} onClose={() => setResult(null)} /> : null}
+      {result ? (
+        <ResultModal
+          result={result}
+          initialSelection={resultInitialSelection}
+          onClose={() => {
+            setResult(null);
+            setResultInitialSelection(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

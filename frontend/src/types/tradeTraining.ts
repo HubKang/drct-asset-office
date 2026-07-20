@@ -215,6 +215,7 @@ export type RiskPlanStepRequest = RiskPlanStepBase;
 export type TradeTrainingRiskPlanStep = RiskPlanStepBase & {
   id: number;
   risk_scenario_id: number;
+  is_removed?: boolean;
   executed_trade_id?: number | null;
   executed_at?: string | null;
   actual_price?: number | null;
@@ -485,6 +486,7 @@ export type TrainingFinishResponse = {
 };
 
 export type TrainingTradePair = {
+  trade_sequence?: number | null;
   buy_date: string;
   sell_date: string;
   buy_price: number;
@@ -493,6 +495,9 @@ export type TrainingTradePair = {
   holding_days: number;
   profit_amount: number;
   profit_rate: number;
+  gross_buy_amount?: number | null;
+  equity_before?: number | null;
+  equity_after?: number | null;
   buy_reason: string | null;
   sell_reason: string | null;
   buy_reason_quality?: string | null;

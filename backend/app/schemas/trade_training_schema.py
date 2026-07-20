@@ -316,6 +316,7 @@ class RiskPlanStepRequest(RiskPlanStepBase):
 class TradeTrainingRiskPlanStep(RiskPlanStepBase):
     id: int
     risk_scenario_id: int
+    is_removed: bool = False
     executed_trade_id: int | None = None
     executed_at: str | None = None
     actual_price: float | None = None
@@ -540,6 +541,7 @@ class TrainingFinishResponse(BaseModel):
 
 
 class TrainingTradePairResponse(BaseModel):
+    trade_sequence: int | None = None
     buy_date: str
     sell_date: str
     buy_price: float
@@ -548,6 +550,9 @@ class TrainingTradePairResponse(BaseModel):
     holding_days: int
     profit_amount: float
     profit_rate: float
+    gross_buy_amount: float | None = None
+    equity_before: float | None = None
+    equity_after: float | None = None
     buy_reason: str | None = None
     sell_reason: str | None = None
     buy_reason_quality: str | None = None

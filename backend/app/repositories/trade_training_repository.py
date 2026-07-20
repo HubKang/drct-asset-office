@@ -139,6 +139,7 @@ class TradeTrainingRepository:
                     planned_amount REAL,
                     memo TEXT,
                     executed_trade_id INTEGER,
+                    is_removed INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
@@ -148,7 +149,7 @@ class TradeTrainingRepository:
         self.db.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_trade_training_risk_plan_steps_order ON trade_training_risk_plan_steps(risk_scenario_id, plan_group, step_no)"))
         self.db.execute(text("CREATE INDEX IF NOT EXISTS idx_trade_training_risk_plan_steps_scenario ON trade_training_risk_plan_steps(risk_scenario_id)"))
         plan_step_columns = {str(row["name"]) for row in self.db.execute(text("PRAGMA table_info(trade_training_risk_plan_steps)")).mappings().all()}
-        for column_name, column_type in (("executed_at", "TEXT"), ("actual_price", "REAL"), ("actual_quantity", "INTEGER")):
+        for column_name, column_type in (("executed_at", "TEXT"), ("actual_price", "REAL"), ("actual_quantity", "INTEGER"), ("is_removed", "INTEGER NOT NULL DEFAULT 0")):
             if column_name not in plan_step_columns:
                 self.db.execute(text(f"ALTER TABLE trade_training_risk_plan_steps ADD COLUMN {column_name} {column_type}"))
         self.db.execute(
@@ -653,6 +654,43 @@ class TradeTrainingRepository:
         ).mappings().all()
         return [dict(row) for row in rows]
 
+    def list_prices_before(
+        self,
+        stock_id: int,
+        source: str | None,
+        before_date: str,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        clauses = ["stock_id = :stock_id", "trade_date < :before_date"]
+        params: dict[str, Any] = {
+            "stock_id": stock_id,
+            "before_date": before_date,
+            "limit": max(0, int(limit)),
+        }
+        if source is not None:
+            clauses.append("COALESCE(source, '') = :source")
+            params["source"] = source
+        rows = self.db.execute(
+            text(
+                f"""
+                SELECT
+                    trade_date,
+                    open_price,
+                    high_price,
+                    low_price,
+                    close_price,
+                    volume,
+                    trading_value
+                FROM stock_daily_prices
+                WHERE {" AND ".join(clauses)}
+                ORDER BY trade_date DESC, id DESC
+                LIMIT :limit
+                """
+            ),
+            params,
+        ).mappings().all()
+        return [dict(row) for row in reversed(rows)]
+
     def create_session(self, payload: dict[str, Any]) -> dict[str, Any]:
         self.ensure_training_account_table()
         now = now_kst()
@@ -1088,8 +1126,11 @@ class TradeTrainingRepository:
             self.db.execute(text("DELETE FROM trade_training_risk_plan_steps WHERE risk_scenario_id = :scenario_id"), {"scenario_id": scenario_id})
         else:
             for key, row in existing_by_key.items():
-                if key not in incoming_keys and str(row.get("status") or "").upper() == "PLANNED":
-                    self.update_risk_plan_step(int(row["id"]), {"status": "CANCELLED"})
+                if key not in incoming_keys:
+                    values: dict[str, Any] = {"is_removed": 1}
+                    if str(row.get("status") or "").upper() == "PLANNED":
+                        values["status"] = "CANCELLED"
+                    self.update_risk_plan_step(int(row["id"]), values)
         for step in steps:
             key = (str(step.get("plan_group") or "").upper(), int(step.get("step_no") or 0))
             existing = existing_by_key.get(key)
@@ -1108,6 +1149,7 @@ class TradeTrainingRepository:
                     {
                         **step,
                         **preserved,
+                        "is_removed": 0,
                         "executed_at": preserved.get("executed_at"),
                         "actual_price": preserved.get("actual_price"),
                         "actual_quantity": preserved.get("actual_quantity"),

@@ -1161,7 +1161,15 @@ class TradeTrainingService:
         options = self._parse_options(session)
         moving_averages = self._clean_mas(list(options.get("moving_averages") or [5, 20, 60]))
         visible_prices = prices[: current_index + 1]
-        decorated = self._decorate_candles(visible_prices, moving_averages)
+        warmup_count = max(moving_averages, default=1) - 1
+        warmup_prices = self.repo.list_prices_before(
+            stock_id=int(options.get("stock_id") or 0),
+            source=str(options.get("source") or ""),
+            before_date=str(session["start_date"]),
+            limit=warmup_count,
+        ) if warmup_count > 0 else []
+        decorated_with_history = self._decorate_candles([*warmup_prices, *visible_prices], moving_averages)
+        decorated = decorated_with_history[len(warmup_prices):]
         return {
             "session": self._response_session(session),
             "trade_method": self.repo.get_trade_method(int(session["method_id"])) if session.get("method_id") else None,
@@ -1478,7 +1486,7 @@ class TradeTrainingService:
         steps = [
             step
             for step in self.repo.list_risk_plan_steps(int(scenario["id"]))
-            if str(step.get("status") or "PLANNED").upper() != "CANCELLED"
+            if str(step.get("status") or "PLANNED").upper() != "CANCELLED" and not bool(step.get("is_removed"))
         ]
         buy_steps = [step for step in steps if str(step.get("plan_group") or "").upper() == "BUY"]
         sell_steps = self._normalize_sell_stop_types([step for step in steps if str(step.get("plan_group") or "").upper() == "SELL"])
@@ -1545,7 +1553,7 @@ class TradeTrainingService:
         }
         existing = self.repo.get_draft_risk_scenario(session_id)
         if existing:
-            current_steps = [step for step in self.repo.list_risk_plan_steps(int(existing["id"])) if str(step.get("status") or "PLANNED").upper() != "CANCELLED"]
+            current_steps = [step for step in self.repo.list_risk_plan_steps(int(existing["id"])) if str(step.get("status") or "PLANNED").upper() != "CANCELLED" and not bool(step.get("is_removed"))]
             current_buy = [step for step in current_steps if str(step.get("plan_group") or "").upper() == "BUY"]
             current_sell = [step for step in current_steps if str(step.get("plan_group") or "").upper() == "SELL"]
             if self._risk_configuration_signature({**existing, **values}, buy_steps, sell_steps) == self._risk_configuration_signature(existing, current_buy, current_sell):
@@ -1587,7 +1595,7 @@ class TradeTrainingService:
             "estimated_risk_usage_pct": preview["estimated_risk_usage_pct"],
             "memo": payload.memo,
         }
-        current_steps = [step for step in self.repo.list_risk_plan_steps(scenario_id) if str(step.get("status") or "PLANNED").upper() != "CANCELLED"]
+        current_steps = [step for step in self.repo.list_risk_plan_steps(scenario_id) if str(step.get("status") or "PLANNED").upper() != "CANCELLED" and not bool(step.get("is_removed"))]
         current_buy = [step for step in current_steps if str(step.get("plan_group") or "").upper() == "BUY"]
         current_sell = [step for step in current_steps if str(step.get("plan_group") or "").upper() == "SELL"]
         if self._risk_configuration_signature({**scenario, **values}, buy_steps, sell_steps) == self._risk_configuration_signature(scenario, current_buy, current_sell):
@@ -1922,6 +1930,7 @@ class TradeTrainingService:
                         "holding_days": holding_days,
                         "profit_amount": round(profit_amount, 4),
                         "profit_rate": self._safe_rate(profit_amount, buy_amount + buy_fee_part),
+                        "gross_buy_amount": round(buy_amount, 4),
                         "buy_reason": lot.get("reason"),
                         "sell_reason": trade.get("reason"),
                         "buy_reason_quality": self._reason_quality(lot.get("reason"))["grade"],
@@ -1946,6 +1955,32 @@ class TradeTrainingService:
         account = self._calc_account(session, current_candle)
         trades = self.repo.list_trades(session_id)
         pairs = self._build_trade_pairs(trades)
+        performance_by_period: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        account_id = int(session.get("training_account_id") or 0)
+        if account_id:
+            account_performance = self.get_training_account_performance(account_id)
+            for item in account_performance.get("items") or []:
+                if int(item.get("simulation_session_id") or item.get("training_session_id") or 0) != session_id:
+                    continue
+                key = (str(item.get("chart_entry_date") or ""), str(item.get("chart_exit_date") or ""))
+                performance_by_period.setdefault(key, []).append(item)
+
+        fallback_equity = float(session.get("initial_cash") or 0)
+        for pair_index, pair in enumerate(pairs, start=1):
+            period_key = (str(pair.get("buy_date") or ""), str(pair.get("sell_date") or ""))
+            matched_items = performance_by_period.get(period_key) or []
+            performance_item = matched_items.pop(0) if matched_items else None
+            if performance_item:
+                pair["trade_sequence"] = int(performance_item.get("trade_sequence") or pair_index)
+                pair["gross_buy_amount"] = round(float(performance_item.get("gross_buy_amount") or pair.get("gross_buy_amount") or 0), 4)
+                pair["equity_before"] = round(float(performance_item.get("equity_before") or 0), 4)
+                pair["equity_after"] = round(float(performance_item.get("equity_after") or 0), 4)
+                fallback_equity = float(pair["equity_after"])
+            else:
+                pair["trade_sequence"] = pair_index
+                pair["equity_before"] = round(fallback_equity, 4)
+                fallback_equity = round(fallback_equity + float(pair.get("profit_amount") or 0), 4)
+                pair["equity_after"] = fallback_equity
         buy_trades = [trade for trade in trades if str(trade.get("side") or "").upper() == "BUY"]
         sell_trades = [trade for trade in trades if str(trade.get("side") or "").upper() == "SELL"]
         wins = [pair for pair in pairs if float(pair["profit_amount"]) > 0]

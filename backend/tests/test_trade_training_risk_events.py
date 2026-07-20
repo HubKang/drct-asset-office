@@ -136,6 +136,35 @@ def test_active_plan_update_preserves_executed_step_identity():
     assert step["actual_price"] == 10100
     assert step["actual_quantity"] == 3
 
+
+def test_active_plan_removal_hides_executed_step_without_losing_execution_history():
+    db, repo = build_repository()
+    seed_step_and_trade(db)
+    db.execute(text("""
+        INSERT INTO trade_training_risk_scenarios (
+            id, training_account_id, simulation_session_id, cycle_no, status, created_at, updated_at
+        ) VALUES (1, 1, 1, 1, 'ACTIVE', 'now', 'now')
+    """))
+    repo.execute_risk_plan_step(1, 1, 10100, 3)
+    db.commit()
+
+    repo.replace_risk_plan_steps(1, [])
+    db.commit()
+
+    step = repo.get_risk_plan_step(1)
+    assert step is not None
+    assert step["status"] == "EXECUTED"
+    assert step["is_removed"] == 1
+    assert step["executed_trade_id"] == 1
+    assert step["actual_price"] == 10100
+    assert step["actual_quantity"] == 3
+
+    service = TradeTrainingService(db)
+    service.calculate_risk_scenario_preview = lambda *args, **kwargs: {}
+    service._holding_risk_summary = lambda *args, **kwargs: None
+    detail = service._risk_scenario_detail(repo.get_risk_scenario(1))
+    assert detail["buy_steps"] == []
+
 def test_risk_scenario_update_clears_deleted_summary_prices():
     db, repo = build_repository()
     db.execute(text("""
