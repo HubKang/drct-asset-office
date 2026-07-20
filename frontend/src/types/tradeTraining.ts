@@ -26,6 +26,8 @@ export type TrainingSessionCreate = {
   end_date?: string | null;
   moving_averages: number[];
   training_account_id?: number | null;
+  training_account_name?: string | null;
+  is_account_linked?: boolean;
 };
 
 export type TrainingLaunchMode = "standalone" | "account-linked";
@@ -192,6 +194,147 @@ export type TradeTrainingClosedTradeListResponse = {
 
 export type ProfitLossRatioStatus = "NO_CLOSED_TRADES" | "NO_WIN_TRADES" | "NO_LOSS_TRADES" | "AVAILABLE" | string;
 
+export type RiskScenarioStatus = "DRAFT" | "ACTIVE" | "CLOSED" | "CANCELLED" | string;
+
+export type RiskPlanStepBase = {
+  plan_group: "BUY" | "SELL" | string;
+  plan_type: string;
+  step_no: number;
+  status?: string;
+  trigger_type?: string;
+  trigger_price?: number | null;
+  trigger_text?: string;
+  planned_ratio_pct?: number | null;
+  planned_quantity?: number | null;
+  planned_amount?: number | null;
+  memo?: string | null;
+};
+
+export type RiskPlanStepRequest = RiskPlanStepBase;
+
+export type TradeTrainingRiskPlanStep = RiskPlanStepBase & {
+  id: number;
+  risk_scenario_id: number;
+  executed_trade_id?: number | null;
+  executed_at?: string | null;
+  actual_price?: number | null;
+  actual_quantity?: number | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type RiskScenarioPreview = {
+  risk_basis_equity?: number | null;
+  account_risk_pct?: number | null;
+  risk_budget_amount?: number | null;
+  estimated_planned_loss?: number | null;
+  estimated_risk_usage_pct?: number | null;
+  warnings: string[];
+};
+
+export type TradeTrainingRiskScenarioDraftRequest = {
+  buy_plan_mode: string;
+  sell_plan_mode: string;
+  profit_scenario_text: string;
+  stop_scenario_text: string;
+  stop_price?: number | null;
+  primary_target_price?: number | null;
+  memo?: string | null;
+  buy_steps: RiskPlanStepRequest[];
+  sell_steps: RiskPlanStepRequest[];
+  change_reason?: string | null;
+};
+
+export type TradeTrainingRiskScenario = {
+  id: number;
+  training_account_id: number;
+  simulation_session_id: number;
+  cycle_no: number;
+  status: RiskScenarioStatus;
+  buy_plan_mode: string;
+  sell_plan_mode: string;
+  risk_basis_equity?: number | null;
+  account_risk_pct?: number | null;
+  risk_budget_amount?: number | null;
+  profit_scenario_text: string;
+  stop_scenario_text: string;
+  stop_price?: number | null;
+  primary_target_price?: number | null;
+  estimated_planned_loss?: number | null;
+  estimated_risk_usage_pct?: number | null;
+  activated_at?: string | null;
+  closed_at?: string | null;
+  cancelled_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  closed_trade_id?: string | null;
+  final_trade_id?: number | null;
+  final_net_pnl?: number | null;
+  final_return_pct?: number | null;
+  memo?: string | null;
+};
+
+export type TradeTrainingRiskScenarioRevision = {
+  id: number;
+  risk_scenario_id: number;
+  revision_no: number;
+  revision_type: string;
+  snapshot_json: string;
+  snapshot: Record<string, unknown>;
+  change_reason?: string | null;
+  effective_from: string;
+  created_at: string;
+};
+
+export type TradeTrainingRiskScenarioDetail = {
+  scenario?: TradeTrainingRiskScenario | null;
+  buy_steps: TradeTrainingRiskPlanStep[];
+  sell_steps: TradeTrainingRiskPlanStep[];
+  latest_revision?: TradeTrainingRiskScenarioRevision | null;
+  preview?: RiskScenarioPreview | null;
+  requires_plan_before_buy: boolean;
+  holding_risk?: ActiveRiskSummary | null;
+  events?: Array<Record<string, unknown>>;
+};
+
+export type RiskOrderPreviewRequest = {
+  side: "BUY" | "SELL";
+  price: number;
+  quantity: number;
+  risk_plan_step_id?: number | null;
+};
+
+export type RiskOrderWarning = {
+  code: string;
+  severity: "INFO" | "CAUTION" | "WARNING" | string;
+  message: string;
+};
+
+export type RiskOrderPreview = {
+  scenario_id: number;
+  revision_id?: number | null;
+  selected_step?: TradeTrainingRiskPlanStep | null;
+  current_position: { quantity: number; average_price: number };
+  projected_position: { quantity: number; average_price: number };
+  stop_price?: number | null;
+  risk_budget_amount?: number | null;
+  current_estimated_risk?: number | null;
+  projected_estimated_risk?: number | null;
+  risk_usage_pct?: number | null;
+  severity: "INFO" | "CAUTION" | "WARNING" | "UNAVAILABLE" | string;
+  price_deviation_pct?: number | null;
+  warnings: RiskOrderWarning[];
+};
+
+export type ActiveRiskSummary = {
+  current_estimated_risk?: number | null;
+  risk_usage_pct?: number | null;
+  severity: "INFO" | "CAUTION" | "WARNING" | "UNAVAILABLE" | string;
+  stop_price?: number | null;
+};
+export type TradeTrainingRiskScenarioRevisionListResponse = {
+  items: TradeTrainingRiskScenarioRevision[];
+};
 export type TradeTrainingPerformancePoint = {
   closed_trade_id: string | null;
   trade_sequence: number;
@@ -250,6 +393,10 @@ export type TrainingOrderRequest = {
   reason?: string | null;
   method_review?: TrainingMethodReview | null;
   client_order_id?: string | null;
+  risk_plan_step_id?: number | null;
+  unplanned_reason?: string | null;
+  risk_warning_acknowledged?: boolean;
+  risk_warning_acknowledgement_note?: string | null;
 };
 
 export type TrainingSession = {
@@ -258,6 +405,8 @@ export type TrainingSession = {
   stock_name: string | null;
   method_id?: number | null;
   training_account_id?: number | null;
+  training_account_name?: string | null;
+  is_account_linked?: boolean;
   start_date: string;
   end_date: string;
   current_date: string | null;
@@ -313,6 +462,9 @@ export type TrainingTrade = {
   realized_profit: number;
   reason: string | null;
   method_review?: TrainingMethodReview | null;
+  risk_scenario_id?: number | null;
+  risk_scenario_revision_id?: number | null;
+  risk_plan_step_id?: number | null;
   created_at: string | null;
 };
 
@@ -323,6 +475,7 @@ export type TrainingSessionDetail = {
   current_candle: TrainingCandle | null;
   account: TrainingAccount;
   trades: TrainingTrade[];
+  risk_scenario?: TradeTrainingRiskScenarioDetail | null;
 };
 
 export type TrainingFinishResponse = {

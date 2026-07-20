@@ -80,6 +80,123 @@ class TradeTrainingRepository:
         if trade_columns and "client_order_id" not in trade_columns:
             self.db.execute(text("ALTER TABLE simulation_trades ADD COLUMN client_order_id TEXT"))
         self.db.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_simulation_trades_client_order ON simulation_trades(session_id, client_order_id) WHERE client_order_id IS NOT NULL"))
+        for column_name in ("risk_scenario_id", "risk_scenario_revision_id", "risk_plan_step_id"):
+            if trade_columns and column_name not in trade_columns:
+                self.db.execute(text(f"ALTER TABLE simulation_trades ADD COLUMN {column_name} INTEGER"))
+        self.db.execute(text("CREATE INDEX IF NOT EXISTS idx_simulation_trades_risk_scenario ON simulation_trades(risk_scenario_id)"))
+        self.db.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS trade_training_risk_scenarios (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    training_account_id INTEGER NOT NULL,
+                    simulation_session_id INTEGER NOT NULL,
+                    cycle_no INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    buy_plan_mode TEXT NOT NULL DEFAULT 'SINGLE',
+                    sell_plan_mode TEXT NOT NULL DEFAULT 'SPLIT',
+                    risk_basis_equity REAL,
+                    account_risk_pct REAL,
+                    risk_budget_amount REAL,
+                    profit_scenario_text TEXT NOT NULL DEFAULT '',
+                    stop_scenario_text TEXT NOT NULL DEFAULT '',
+                    stop_price REAL,
+                    primary_target_price REAL,
+                    estimated_planned_loss REAL,
+                    estimated_risk_usage_pct REAL,
+                    activated_at TEXT,
+                    closed_at TEXT,
+                    cancelled_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    closed_trade_id TEXT,
+                    final_trade_id INTEGER,
+                    final_net_pnl REAL,
+                    final_return_pct REAL,
+                    memo TEXT
+                )
+                """
+            )
+        )
+        self.db.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_trade_training_risk_scenarios_cycle ON trade_training_risk_scenarios(simulation_session_id, cycle_no)"))
+        self.db.execute(text("CREATE INDEX IF NOT EXISTS idx_trade_training_risk_scenarios_session ON trade_training_risk_scenarios(simulation_session_id, status)"))
+        self.db.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_trade_training_risk_scenarios_active ON trade_training_risk_scenarios(simulation_session_id) WHERE status = 'ACTIVE'"))
+        self.db.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS trade_training_risk_plan_steps (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    risk_scenario_id INTEGER NOT NULL,
+                    plan_group TEXT NOT NULL,
+                    plan_type TEXT NOT NULL,
+                    step_no INTEGER NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'PLANNED',
+                    trigger_type TEXT NOT NULL DEFAULT 'CUSTOM',
+                    trigger_price REAL,
+                    trigger_text TEXT NOT NULL DEFAULT '',
+                    planned_ratio_pct REAL,
+                    planned_quantity INTEGER,
+                    planned_amount REAL,
+                    memo TEXT,
+                    executed_trade_id INTEGER,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+        )
+        self.db.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_trade_training_risk_plan_steps_order ON trade_training_risk_plan_steps(risk_scenario_id, plan_group, step_no)"))
+        self.db.execute(text("CREATE INDEX IF NOT EXISTS idx_trade_training_risk_plan_steps_scenario ON trade_training_risk_plan_steps(risk_scenario_id)"))
+        plan_step_columns = {str(row["name"]) for row in self.db.execute(text("PRAGMA table_info(trade_training_risk_plan_steps)")).mappings().all()}
+        for column_name, column_type in (("executed_at", "TEXT"), ("actual_price", "REAL"), ("actual_quantity", "INTEGER")):
+            if column_name not in plan_step_columns:
+                self.db.execute(text(f"ALTER TABLE trade_training_risk_plan_steps ADD COLUMN {column_name} {column_type}"))
+        self.db.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS trade_training_risk_scenario_revisions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    risk_scenario_id INTEGER NOT NULL,
+                    revision_no INTEGER NOT NULL,
+                    revision_type TEXT NOT NULL,
+                    snapshot_json TEXT NOT NULL,
+                    change_reason TEXT,
+                    effective_from TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+        )
+        self.db.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_trade_training_risk_scenario_revisions_no ON trade_training_risk_scenario_revisions(risk_scenario_id, revision_no)"))
+        self.db.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS trade_training_risk_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    training_account_id INTEGER NOT NULL,
+                    simulation_session_id INTEGER NOT NULL,
+                    risk_scenario_id INTEGER NOT NULL,
+                    risk_scenario_revision_id INTEGER,
+                    risk_plan_step_id INTEGER,
+                    simulation_trade_id INTEGER NOT NULL,
+                    event_key TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    planned_value_json TEXT,
+                    actual_value_json TEXT,
+                    message TEXT NOT NULL DEFAULT '',
+                    acknowledged INTEGER NOT NULL DEFAULT 0,
+                    acknowledged_at TEXT,
+                    acknowledgement_note TEXT,
+                    chart_date TEXT,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+        )
+        self.db.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_trade_training_risk_events_key ON trade_training_risk_events(event_key)"))
+        self.db.execute(text("CREATE INDEX IF NOT EXISTS idx_trade_training_risk_events_session ON trade_training_risk_events(simulation_session_id, created_at)"))
+        self.db.execute(text("CREATE INDEX IF NOT EXISTS idx_trade_training_risk_events_scenario ON trade_training_risk_events(risk_scenario_id, event_type)"))
         rows = self.db.execute(
             text(
                 """
@@ -657,11 +774,13 @@ class TradeTrainingRepository:
                 """
                 INSERT INTO simulation_trades (
                     session_id, trade_date, side, price, quantity, fee, amount,
-                    realized_profit, reason, method_review_json, client_order_id, created_at
+                    realized_profit, reason, method_review_json, client_order_id,
+                    risk_scenario_id, risk_scenario_revision_id, risk_plan_step_id, created_at
                 )
                 VALUES (
                     :session_id, :trade_date, :side, :price, :quantity, :fee, :amount,
-                    :realized_profit, :reason, :method_review_json, :client_order_id, :created_at
+                    :realized_profit, :reason, :method_review_json, :client_order_id,
+                    :risk_scenario_id, :risk_scenario_revision_id, :risk_plan_step_id, :created_at
                 )
                 """
             ),
@@ -669,6 +788,9 @@ class TradeTrainingRepository:
                 **values,
                 "method_review_json": json.dumps(values.get("method_review") or {}, ensure_ascii=False) if values.get("method_review") else None,
                 "client_order_id": values.get("client_order_id"),
+                "risk_scenario_id": values.get("risk_scenario_id"),
+                "risk_scenario_revision_id": values.get("risk_scenario_revision_id"),
+                "risk_plan_step_id": values.get("risk_plan_step_id"),
                 "created_at": now_kst(),
             },
         )
@@ -820,6 +942,341 @@ class TradeTrainingRepository:
             )
         self.db.commit()
         return self.get_review(session_id) or {}
+
+    def _decode_risk_revision(self, row: dict[str, Any]) -> dict[str, Any]:
+        raw = row.get("snapshot_json")
+        try:
+            row["snapshot"] = json.loads(str(raw or "{}"))
+        except json.JSONDecodeError:
+            row["snapshot"] = {}
+        return row
+
+    def get_next_risk_scenario_cycle_no(self, session_id: int) -> int:
+        self.ensure_training_account_table()
+        value = self.db.execute(
+            text("SELECT COALESCE(MAX(cycle_no), 0) + 1 FROM trade_training_risk_scenarios WHERE simulation_session_id = :session_id"),
+            {"session_id": session_id},
+        ).scalar()
+        return int(value or 1)
+
+    def create_risk_scenario(self, values: dict[str, Any]) -> dict[str, Any]:
+        self.ensure_training_account_table()
+        now = now_kst()
+        cursor = self.db.execute(
+            text(
+                """
+                INSERT INTO trade_training_risk_scenarios (
+                    training_account_id, simulation_session_id, cycle_no, status, buy_plan_mode, sell_plan_mode,
+                    risk_basis_equity, account_risk_pct, risk_budget_amount, profit_scenario_text, stop_scenario_text,
+                    stop_price, primary_target_price, estimated_planned_loss, estimated_risk_usage_pct,
+                    memo, created_at, updated_at
+                ) VALUES (
+                    :training_account_id, :simulation_session_id, :cycle_no, :status, :buy_plan_mode, :sell_plan_mode,
+                    :risk_basis_equity, :account_risk_pct, :risk_budget_amount, :profit_scenario_text, :stop_scenario_text,
+                    :stop_price, :primary_target_price, :estimated_planned_loss, :estimated_risk_usage_pct,
+                    :memo, :created_at, :updated_at
+                )
+                """
+            ),
+            {**values, "created_at": now, "updated_at": now},
+        )
+        return self.get_risk_scenario(int(cursor.lastrowid)) or {}
+
+    def get_risk_scenario(self, scenario_id: int) -> dict[str, Any] | None:
+        self.ensure_training_account_table()
+        row = self.db.execute(text("SELECT * FROM trade_training_risk_scenarios WHERE id = :id"), {"id": scenario_id}).mappings().first()
+        return dict(row) if row else None
+
+    def get_current_risk_scenario(self, session_id: int) -> dict[str, Any] | None:
+        self.ensure_training_account_table()
+        row = self.db.execute(
+            text(
+                """
+                SELECT *
+                FROM trade_training_risk_scenarios
+                WHERE simulation_session_id = :session_id
+                  AND status IN ('DRAFT', 'ACTIVE')
+                ORDER BY CASE status WHEN 'ACTIVE' THEN 0 ELSE 1 END, cycle_no DESC, id DESC
+                LIMIT 1
+                """
+            ),
+            {"session_id": session_id},
+        ).mappings().first()
+        return dict(row) if row else None
+
+    def get_active_risk_scenario(self, session_id: int) -> dict[str, Any] | None:
+        self.ensure_training_account_table()
+        row = self.db.execute(
+            text("SELECT * FROM trade_training_risk_scenarios WHERE simulation_session_id = :session_id AND status = 'ACTIVE' ORDER BY id DESC LIMIT 1"),
+            {"session_id": session_id},
+        ).mappings().first()
+        return dict(row) if row else None
+
+    def get_draft_risk_scenario(self, session_id: int) -> dict[str, Any] | None:
+        self.ensure_training_account_table()
+        row = self.db.execute(
+            text("SELECT * FROM trade_training_risk_scenarios WHERE simulation_session_id = :session_id AND status = 'DRAFT' ORDER BY id DESC LIMIT 1"),
+            {"session_id": session_id},
+        ).mappings().first()
+        return dict(row) if row else None
+
+    def list_risk_scenarios_by_session(self, session_id: int) -> list[dict[str, Any]]:
+        self.ensure_training_account_table()
+        rows = self.db.execute(
+            text("SELECT * FROM trade_training_risk_scenarios WHERE simulation_session_id = :session_id ORDER BY cycle_no ASC, id ASC"),
+            {"session_id": session_id},
+        ).mappings().all()
+        return [dict(row) for row in rows]
+
+    def update_risk_scenario(self, scenario_id: int, values: dict[str, Any]) -> dict[str, Any]:
+        self.ensure_training_account_table()
+        cleaned = dict(values)
+        cleaned["updated_at"] = now_kst()
+        assignments = ", ".join(f"{key} = :{key}" for key in cleaned)
+        self.db.execute(text(f"UPDATE trade_training_risk_scenarios SET {assignments} WHERE id = :id"), {**cleaned, "id": scenario_id})
+        return self.get_risk_scenario(scenario_id) or {}
+
+    def cancel_risk_scenario(self, scenario_id: int) -> dict[str, Any]:
+        now = now_kst()
+        self.db.execute(
+            text("UPDATE trade_training_risk_scenarios SET status = 'CANCELLED', cancelled_at = :now, updated_at = :now WHERE id = :id AND status = 'DRAFT'"),
+            {"id": scenario_id, "now": now},
+        )
+        return self.get_risk_scenario(scenario_id) or {}
+
+    def activate_risk_scenario(self, scenario_id: int, values: dict[str, Any]) -> dict[str, Any]:
+        now = now_kst()
+        params = {**values, "id": scenario_id, "now": now}
+        self.db.execute(
+            text(
+                """
+                UPDATE trade_training_risk_scenarios
+                SET status = 'ACTIVE', risk_basis_equity = :risk_basis_equity, account_risk_pct = :account_risk_pct,
+                    risk_budget_amount = :risk_budget_amount, estimated_planned_loss = :estimated_planned_loss,
+                    estimated_risk_usage_pct = :estimated_risk_usage_pct, activated_at = :now, updated_at = :now
+                WHERE id = :id AND status = 'DRAFT'
+                """
+            ),
+            params,
+        )
+        return self.get_risk_scenario(scenario_id) or {}
+
+    def close_risk_scenario(self, scenario_id: int, values: dict[str, Any]) -> dict[str, Any]:
+        now = now_kst()
+        self.db.execute(
+            text(
+                """
+                UPDATE trade_training_risk_scenarios
+                SET status = 'CLOSED', closed_at = :now, closed_trade_id = :closed_trade_id, final_trade_id = :final_trade_id,
+                    final_net_pnl = :final_net_pnl, final_return_pct = :final_return_pct, updated_at = :now
+                WHERE id = :id AND status = 'ACTIVE'
+                """
+            ),
+            {**values, "id": scenario_id, "now": now},
+        )
+        return self.get_risk_scenario(scenario_id) or {}
+
+    def replace_risk_plan_steps(self, scenario_id: int, steps: list[dict[str, Any]]) -> None:
+        self.ensure_training_account_table()
+        now = now_kst()
+        scenario = self.get_risk_scenario(scenario_id) or {}
+        active = str(scenario.get("status") or "").upper() == "ACTIVE"
+        existing_rows = self.list_risk_plan_steps(scenario_id) if active else []
+        existing_by_key = {(str(row.get("plan_group") or "").upper(), int(row.get("step_no") or 0)): row for row in existing_rows}
+        incoming_keys = {(str(step.get("plan_group") or "").upper(), int(step.get("step_no") or 0)) for step in steps}
+        if not active:
+            self.db.execute(text("DELETE FROM trade_training_risk_plan_steps WHERE risk_scenario_id = :scenario_id"), {"scenario_id": scenario_id})
+        else:
+            for key, row in existing_by_key.items():
+                if key not in incoming_keys and str(row.get("status") or "").upper() == "PLANNED":
+                    self.update_risk_plan_step(int(row["id"]), {"status": "CANCELLED"})
+        for step in steps:
+            key = (str(step.get("plan_group") or "").upper(), int(step.get("step_no") or 0))
+            existing = existing_by_key.get(key)
+            if existing:
+                preserved = {}
+                if str(existing.get("status") or "").upper() == "EXECUTED":
+                    preserved = {
+                        "status": "EXECUTED",
+                        "executed_trade_id": existing.get("executed_trade_id"),
+                        "executed_at": existing.get("executed_at"),
+                        "actual_price": existing.get("actual_price"),
+                        "actual_quantity": existing.get("actual_quantity"),
+                    }
+                self.update_risk_plan_step(
+                    int(existing["id"]),
+                    {
+                        **step,
+                        **preserved,
+                        "executed_at": preserved.get("executed_at"),
+                        "actual_price": preserved.get("actual_price"),
+                        "actual_quantity": preserved.get("actual_quantity"),
+                    },
+                )
+                continue
+            params = {
+                **step,
+                "risk_scenario_id": scenario_id,
+                "executed_at": step.get("executed_at"),
+                "actual_price": step.get("actual_price"),
+                "actual_quantity": step.get("actual_quantity"),
+                "created_at": now,
+                "updated_at": now,
+            }
+            self.db.execute(
+                text(
+                    """
+                    INSERT INTO trade_training_risk_plan_steps (
+                        risk_scenario_id, plan_group, plan_type, step_no, status, trigger_type, trigger_price, trigger_text,
+                        planned_ratio_pct, planned_quantity, planned_amount, memo, executed_trade_id,
+                        executed_at, actual_price, actual_quantity, created_at, updated_at
+                    ) VALUES (
+                        :risk_scenario_id, :plan_group, :plan_type, :step_no, :status, :trigger_type, :trigger_price, :trigger_text,
+                        :planned_ratio_pct, :planned_quantity, :planned_amount, :memo, :executed_trade_id,
+                        :executed_at, :actual_price, :actual_quantity, :created_at, :updated_at
+                    )
+                    """
+                ),
+                params,
+            )
+    def list_risk_plan_steps(self, scenario_id: int) -> list[dict[str, Any]]:
+        self.ensure_training_account_table()
+        rows = self.db.execute(
+            text("SELECT * FROM trade_training_risk_plan_steps WHERE risk_scenario_id = :scenario_id ORDER BY plan_group ASC, step_no ASC, id ASC"),
+            {"scenario_id": scenario_id},
+        ).mappings().all()
+        return [dict(row) for row in rows]
+
+    def update_risk_plan_step(self, step_id: int, values: dict[str, Any]) -> dict[str, Any]:
+        self.ensure_training_account_table()
+        cleaned = {**values, "updated_at": now_kst()}
+        assignments = ", ".join(f"{key} = :{key}" for key in cleaned)
+        self.db.execute(text(f"UPDATE trade_training_risk_plan_steps SET {assignments} WHERE id = :id"), {**cleaned, "id": step_id})
+        row = self.db.execute(text("SELECT * FROM trade_training_risk_plan_steps WHERE id = :id"), {"id": step_id}).mappings().first()
+        return dict(row) if row else {}
+
+    def get_risk_plan_step(self, step_id: int) -> dict[str, Any] | None:
+        self.ensure_training_account_table()
+        row = self.db.execute(text("SELECT * FROM trade_training_risk_plan_steps WHERE id = :id"), {"id": step_id}).mappings().first()
+        return dict(row) if row else None
+
+    def execute_risk_plan_step(self, step_id: int, trade_id: int, actual_price: float, actual_quantity: int) -> dict[str, Any]:
+        self.ensure_training_account_table()
+        now = now_kst()
+        self.db.execute(
+            text(
+                """
+                UPDATE trade_training_risk_plan_steps
+                SET status = 'EXECUTED', executed_trade_id = :trade_id, executed_at = :executed_at,
+                    actual_price = :actual_price, actual_quantity = :actual_quantity, updated_at = :executed_at
+                WHERE id = :id AND status = 'PLANNED'
+                """
+            ),
+            {"id": step_id, "trade_id": trade_id, "executed_at": now, "actual_price": actual_price, "actual_quantity": actual_quantity},
+        )
+        return self.get_risk_plan_step(step_id) or {}
+
+    def insert_risk_event_no_commit(self, values: dict[str, Any]) -> dict[str, Any]:
+        self.ensure_training_account_table()
+        now = now_kst()
+        acknowledged = bool(values.get("acknowledged"))
+        cursor = self.db.execute(
+            text(
+                """
+                INSERT OR IGNORE INTO trade_training_risk_events (
+                    training_account_id, simulation_session_id, risk_scenario_id, risk_scenario_revision_id,
+                    risk_plan_step_id, simulation_trade_id, event_key, event_type, severity,
+                    planned_value_json, actual_value_json, message, acknowledged, acknowledged_at,
+                    acknowledgement_note, chart_date, created_at
+                ) VALUES (
+                    :training_account_id, :simulation_session_id, :risk_scenario_id, :risk_scenario_revision_id,
+                    :risk_plan_step_id, :simulation_trade_id, :event_key, :event_type, :severity,
+                    :planned_value_json, :actual_value_json, :message, :acknowledged, :acknowledged_at,
+                    :acknowledgement_note, :chart_date, :created_at
+                )
+                """
+            ),
+            {
+                **values,
+                "planned_value_json": json.dumps(values.get("planned_value") or {}, ensure_ascii=False),
+                "actual_value_json": json.dumps(values.get("actual_value") or {}, ensure_ascii=False),
+                "acknowledged": 1 if acknowledged else 0,
+                "acknowledged_at": now if acknowledged else None,
+                "created_at": now,
+            },
+        )
+        event_id = int(cursor.lastrowid or 0)
+        if event_id:
+            row = self.db.execute(text("SELECT * FROM trade_training_risk_events WHERE id = :id"), {"id": event_id}).mappings().first()
+        else:
+            row = self.db.execute(text("SELECT * FROM trade_training_risk_events WHERE event_key = :event_key"), {"event_key": values["event_key"]}).mappings().first()
+        return dict(row) if row else {}
+
+    def list_risk_events(self, session_id: int) -> list[dict[str, Any]]:
+        self.ensure_training_account_table()
+        rows = self.db.execute(
+            text("SELECT * FROM trade_training_risk_events WHERE simulation_session_id = :session_id ORDER BY id ASC"),
+            {"session_id": session_id},
+        ).mappings().all()
+        result = []
+        for row in rows:
+            item = dict(row)
+            for field in ("planned_value_json", "actual_value_json"):
+                try:
+                    item[field.removesuffix("_json")] = json.loads(str(item.get(field) or "{}"))
+                except json.JSONDecodeError:
+                    item[field.removesuffix("_json")] = {}
+            result.append(item)
+        return result
+    def create_risk_scenario_revision(self, scenario_id: int, revision_type: str, snapshot: dict[str, Any], change_reason: str | None = None) -> dict[str, Any]:
+        self.ensure_training_account_table()
+        revision_no = int(
+            self.db.execute(
+                text("SELECT COALESCE(MAX(revision_no), 0) + 1 FROM trade_training_risk_scenario_revisions WHERE risk_scenario_id = :scenario_id"),
+                {"scenario_id": scenario_id},
+            ).scalar()
+            or 1
+        )
+        now = now_kst()
+        cursor = self.db.execute(
+            text(
+                """
+                INSERT INTO trade_training_risk_scenario_revisions (risk_scenario_id, revision_no, revision_type, snapshot_json, change_reason, effective_from, created_at)
+                VALUES (:risk_scenario_id, :revision_no, :revision_type, :snapshot_json, :change_reason, :effective_from, :created_at)
+                """
+            ),
+            {
+                "risk_scenario_id": scenario_id,
+                "revision_no": revision_no,
+                "revision_type": revision_type,
+                "snapshot_json": json.dumps(snapshot, ensure_ascii=False),
+                "change_reason": change_reason,
+                "effective_from": now,
+                "created_at": now,
+            },
+        )
+        return self.get_risk_scenario_revision(int(cursor.lastrowid)) or {}
+
+    def get_risk_scenario_revision(self, revision_id: int) -> dict[str, Any] | None:
+        self.ensure_training_account_table()
+        row = self.db.execute(text("SELECT * FROM trade_training_risk_scenario_revisions WHERE id = :id"), {"id": revision_id}).mappings().first()
+        return self._decode_risk_revision(dict(row)) if row else None
+
+    def list_risk_scenario_revisions(self, scenario_id: int) -> list[dict[str, Any]]:
+        self.ensure_training_account_table()
+        rows = self.db.execute(
+            text("SELECT * FROM trade_training_risk_scenario_revisions WHERE risk_scenario_id = :scenario_id ORDER BY revision_no DESC"),
+            {"scenario_id": scenario_id},
+        ).mappings().all()
+        return [self._decode_risk_revision(dict(row)) for row in rows]
+
+    def get_latest_risk_scenario_revision(self, scenario_id: int) -> dict[str, Any] | None:
+        self.ensure_training_account_table()
+        row = self.db.execute(
+            text("SELECT * FROM trade_training_risk_scenario_revisions WHERE risk_scenario_id = :scenario_id ORDER BY revision_no DESC LIMIT 1"),
+            {"scenario_id": scenario_id},
+        ).mappings().first()
+        return self._decode_risk_revision(dict(row)) if row else None
 
     def list_calendar_sessions(self, month: str) -> list[dict[str, Any]]:
         month_start = f"{month}-01"

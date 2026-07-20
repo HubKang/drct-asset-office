@@ -9,12 +9,16 @@ import type { MarketIndexDailyPriceItem } from "@/types/marketIndex";
 import type { TradeMethod, TradeMethodSaveRequest } from "@/types/tradeJournal";
 import type {
   SimulationReview,
+  RiskOrderPreview,
   TrainingCandle,
   TrainingEquityCurvePoint,
   TrainingGptPackage,
   TrainingLaunchMode,
   TrainingMethodReview,
   TrainingOrderRequest,
+  TradeTrainingRiskPlanStep,
+  TradeTrainingRiskScenarioDetail,
+  TradeTrainingRiskScenarioDraftRequest,
   TrainingResult,
   TrainingSessionDetail,
   TrainingStockItem,
@@ -431,6 +435,7 @@ function CandleChart({
   candles,
   trades,
   avgPriceLine,
+  riskPlanLines,
   displayDays,
   scrollTargetDate,
   highlightedTradeDate,
@@ -443,6 +448,7 @@ function CandleChart({
   candles: TrainingCandle[];
   trades: TrainingTrade[];
   avgPriceLine?: number | null;
+  riskPlanLines?: TradeTrainingRiskPlanStep[];
   displayDays: number;
   scrollTargetDate?: string | null;
   highlightedTradeDate?: string | null;
@@ -801,6 +807,19 @@ function CandleChart({
           />
         ) : null}
 
+        {(riskPlanLines || []).filter((step) => Number(step.trigger_price || 0) >= minPrice && Number(step.trigger_price || 0) <= maxPrice).map((step) => {
+          const planType = String(step.plan_type || "").toUpperCase();
+          const fullStop = ["FULL_STOP", "STOP_LOSS", "STOP"].includes(planType);
+          const partialStop = planType === "PARTIAL_STOP";
+          const color = planType === "ENTRY" ? "#7c3aed" : fullStop ? "#1e3a8a" : partialStop ? "#2563eb" : "#dc2626";
+          const y = yPrice(Number(step.trigger_price));
+          return (
+            <g key={`risk-plan-${step.id}`} pointerEvents="none">
+              <line x1={pad.left} x2={width - pad.right} y1={y} y2={y} stroke={color} strokeWidth={fullStop ? 2.2 : 1.4} strokeDasharray="6 4" />
+              <text x={pad.left + 8} y={y - 5} fontSize="10" fontWeight="800" fill={color}>{riskStepOptionLabel(step)}</text>
+            </g>
+          );
+        })}
         {tradeMarkers.map((marker) => {
           const isActive = highlightedTradeDate === marker.tradeDate || marker.trades.some((trade) => trade.id === highlightedTradeId);
           const label = marker.side === "BUY" ? "B" : "S";
@@ -2498,7 +2517,6 @@ function TrainingAccountDetail({
   onOpenResult: (sessionId: number) => void;
   onResumeSession: (sessionId: number) => void;
 }) {
-  const activeSessionCount = summary?.active_session_count ?? 0;
   const canStart = account.status === "ACTIVE";
   const returnRate = account.initial_capital > 0 ? ((Number(summary?.training_equity ?? account.realized_equity) - account.initial_capital) / account.initial_capital) * 100 : 0;
   return (
@@ -2511,7 +2529,6 @@ function TrainingAccountDetail({
         <AccountStatusBadge status={account.status} />
       </div>
       <div className="account-training-actions">
-        <button type="button" className="btn btn-secondary" disabled={activeSessionCount <= 0} title="진행 중인 종목매매가 없습니다.">매매 계속하기</button>
         <button type="button" className="btn btn-primary" disabled={!canStart} onClick={onNewTraining}>신규매매</button>
         <button type="button" className="btn btn-secondary" onClick={onEdit}>계좌 설정</button>
       </div>
@@ -2774,7 +2791,7 @@ function AccountTrainingWorkspace({
             <p><strong>계좌명: {deleteTarget.name}</strong></p>
             <p>이 계좌와 연결된 진행 중 매매, 완료 거래, 매수·매도 이력 및 손익 데이터가 모두 삭제됩니다. 삭제한 데이터는 복구할 수 없습니다.</p>
             <p>연결된 종목훈련 {fmtNumber(sessions.length)}건 · 완료 거래 {fmtNumber(closedTrades.length)}건</p>
-            <div className="training-modal-actions">
+        <div className="training-modal-actions">
               <button type="button" className="btn btn-secondary" disabled={saving} onClick={() => setDeleteTarget(null)}>취소</button>
               <button type="button" className="btn btn-danger" disabled={saving} onClick={() => void deleteAccount()}>{saving ? "삭제 중..." : "계좌 삭제"}</button>
             </div>
@@ -2989,7 +3006,6 @@ function SettingsModal({
           <label><span>종료일</span><input className="input-control" type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label>
         </div>
         <p className="training-settings-help">선택한 종목의 수집 기간이 기본값으로 설정됩니다. 필요하면 직접 수정할 수 있습니다.</p>
-
         <div className="training-modal-actions">
           <button type="button" className="btn btn-secondary" onClick={onClose}>닫기</button>
           <button type="submit" className="btn btn-primary" disabled={!selectedStock || loading}>
@@ -3340,33 +3356,527 @@ function ResultModal({ result, onClose }: { result: TrainingResult; onClose: () 
   );
 }
 
+function sessionTrainingAccountId(detail: TrainingSessionDetail | null | undefined): number | null {
+  const direct = detail?.session.training_account_id;
+  if (direct !== null && direct !== undefined && Number(direct) > 0) return Number(direct);
+  const optionValue = detail?.session.options?.training_account_id;
+  if (optionValue !== null && optionValue !== undefined && Number(optionValue) > 0) return Number(optionValue);
+  return null;
+}
+
+function isAccountLinkedSession(detail: TrainingSessionDetail | null | undefined): boolean {
+  return Boolean(detail?.session.is_account_linked || sessionTrainingAccountId(detail));
+}
+type OrderModalTab = "order" | "risk" | "review";
+
+type RiskScenarioPanelProps = {
+  mode: OrderMode;
+  detail: TrainingSessionDetail;
+  riskDetail: TradeTrainingRiskScenarioDetail | null;
+  onRiskDetailChange: (next: TradeTrainingRiskScenarioDetail | null) => void;
+  onSelectStep: (stepId: number | null) => void;
+  onSaved?: () => void;
+};
+
+function firstStep(steps: TradeTrainingRiskPlanStep[], group: "BUY" | "SELL") {
+  return steps.find((step) => String(step.plan_group).toUpperCase() === group) || null;
+}
+
+function riskStepOptionLabel(step: TradeTrainingRiskPlanStep): string {
+  const type = String(step.plan_type || "").toUpperCase();
+  const triggerLabel = String(step.trigger_text || "").replace(/\s*가격$/, "").trim();
+  const label = type === "ENTRY"
+    ? triggerLabel || `${step.step_no}차 매수`
+    : type === "FULL_STOP" || type === "STOP_LOSS" || type === "STOP"
+      ? "전량 손절"
+      : type === "PARTIAL_STOP"
+        ? triggerLabel || `${step.step_no}차 손절`
+        : triggerLabel || `${step.step_no}차 익절`;
+  const status = String(step.status || "PLANNED").toUpperCase() === "EXECUTED" ? " · 실행 완료" : "";
+  return `${label}${step.trigger_price ? ` · ${fmtWon(step.trigger_price)}` : ""}${status}`;
+}type RiskPriceLineKind = "BUY" | "TAKE_PROFIT" | "FULL_STOP" | "PARTIAL_STOP";
+type RiskPriceSelectionMode = "ENTRY" | "TAKE_PROFIT" | "STOP_LOSS" | null;
+
+type RiskPriceLine = {
+  id: string;
+  kind: RiskPriceLineKind;
+  price: number;
+  stepNo: number;
+};
+
+function roundPlanPrice(price: number): number {
+  if (!Number.isFinite(price) || price <= 0) return 0;
+  const unit = price >= 50000 ? 100 : price >= 10000 ? 50 : price >= 1000 ? 10 : 1;
+  return Math.round(price / unit) * unit;
+}
+
+function isStopLineKind(kind: RiskPriceLineKind): boolean {
+  return kind === "FULL_STOP" || kind === "PARTIAL_STOP";
+}
+
+function isStopPlanType(planType: string): boolean {
+  return ["STOP", "STOP_LOSS", "FULL_STOP", "PARTIAL_STOP"].includes(planType.toUpperCase());
+}
+
+function normalizeStopLineKinds(lines: RiskPriceLine[]): RiskPriceLine[] {
+  const targets = lines.filter((line) => !isStopLineKind(line.kind));
+  const stops = lines
+    .filter((line) => isStopLineKind(line.kind))
+    .sort((a, b) => a.price - b.price)
+    .map((line, index) => ({ ...line, kind: index === 0 ? "FULL_STOP" as const : "PARTIAL_STOP" as const }));
+  return [...targets, ...stops].sort((a, b) => a.stepNo - b.stepNo);
+}
+
+function riskLineLabel(line: RiskPriceLine, index: number): string {
+  if (line.kind === "BUY") return `${index + 1}차 매수`;
+  if (line.kind === "TAKE_PROFIT") return `${index + 1}차 익절`;
+  if (line.kind === "FULL_STOP") return "전량 손절";
+  return `${index + 1}차 손절`;
+}
+
+function riskLineClass(kind: RiskPriceLineKind): string {
+  if (kind === "BUY") return "buy";
+  if (kind === "TAKE_PROFIT") return "target";
+  if (kind === "FULL_STOP") return "full-stop";
+  return "stop";
+}
+
+function riskLinesFromSteps(buySteps: TradeTrainingRiskPlanStep[], sellSteps: TradeTrainingRiskPlanStep[]): { buyLines: RiskPriceLine[]; sellLines: RiskPriceLine[] } {
+  const buyLines = buySteps
+    .filter((step) => Number(step.trigger_price || 0) > 0)
+    .sort((a, b) => Number(a.step_no || 0) - Number(b.step_no || 0))
+    .map((step, index) => ({ id: `buy-${step.id || index}-${step.trigger_price}`, kind: "BUY" as const, price: Number(step.trigger_price), stepNo: Number(step.step_no || index + 1) }));
+  const rawSellLines = sellSteps
+    .filter((step) => Number(step.trigger_price || 0) > 0)
+    .sort((a, b) => Number(a.step_no || 0) - Number(b.step_no || 0))
+    .map((step, index) => {
+      const planType = String(step.plan_type || "").toUpperCase();
+      const kind: RiskPriceLineKind = planType === "TAKE_PROFIT" ? "TAKE_PROFIT" : planType === "PARTIAL_STOP" ? "PARTIAL_STOP" : isStopPlanType(planType) ? "FULL_STOP" : "TAKE_PROFIT";
+      return {
+        id: `sell-${step.id || index}-${step.trigger_price}`,
+        kind,
+        price: Number(step.trigger_price),
+        stepNo: Number(step.step_no || index + 1),
+      };
+    });
+  return { buyLines, sellLines: normalizeStopLineKinds(rawSellLines) };
+}
+
+type RiskPricePickerChartProps = {
+  candles: TrainingCandle[];
+  mode: "BUY" | "SELL";
+  buyLines: RiskPriceLine[];
+  sellLines: RiskPriceLine[];
+  activePickMode: RiskPriceSelectionMode;
+  hoverPrice: number | null;
+  onHoverPrice: (price: number | null) => void;
+  onPickPrice: (price: number) => void;
+  onRemoveLine: (id: string, mode: "BUY" | "SELL") => void;
+};
+
+function RiskPricePickerChart({ candles, mode, buyLines, sellLines, activePickMode, hoverPrice, onHoverPrice, onPickPrice, onRemoveLine }: RiskPricePickerChartProps) {
+  const visible = candles.slice(-80);
+  const width = 720;
+  const height = 250;
+  const pad = { top: 14, right: 126, bottom: 24, left: 48 };
+  const prices = visible.flatMap((candle) => [candle.high, candle.low, candle.close]).filter((value): value is number => Number(value || 0) > 0);
+  const targetLines = sellLines.filter((line) => line.kind === "TAKE_PROFIT").sort((a, b) => a.price - b.price);
+  const stopLines = sellLines.filter((line) => isStopLineKind(line.kind)).sort((a, b) => a.price - b.price);
+  const lines = [...buyLines, ...targetLines, ...stopLines];
+  const planPrices = lines.map((line) => line.price);
+  const minPrice = Math.min(...prices, ...planPrices, hoverPrice || Infinity);
+  const maxPrice = Math.max(...prices, ...planPrices, hoverPrice || 0);
+  const span = Math.max(1, maxPrice - minPrice);
+  const chartW = width - pad.left - pad.right;
+  const chartH = height - pad.top - pad.bottom;
+  const yPrice = (price: number) => pad.top + ((maxPrice - price) / span) * chartH;
+  const priceAt = (offsetY: number) => roundPlanPrice(maxPrice - ((offsetY - pad.top) / chartH) * span);
+  const slot = chartW / Math.max(1, visible.length);
+  const lineIndex = new Map<string, number>();
+  buyLines.forEach((line, index) => lineIndex.set(line.id, index));
+  targetLines.forEach((line, index) => lineIndex.set(line.id, index));
+  stopLines.filter((line) => line.kind === "PARTIAL_STOP").forEach((line, index) => lineIndex.set(line.id, index));
+  const labelY = new Map<string, number>();
+  let previousY = -Infinity;
+  [...lines].sort((a, b) => yPrice(a.price) - yPrice(b.price)).forEach((line) => {
+    const nextY = Math.max(yPrice(line.price), previousY + 18);
+    labelY.set(line.id, Math.min(height - pad.bottom - 10, nextY));
+    previousY = nextY;
+  });
+
+  const handlePointer = (event: MouseEvent<SVGSVGElement>, pick = false) => {
+    if (!activePickMode) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const y = ((event.clientY - rect.top) / rect.height) * height;
+    const nextPrice = priceAt(Math.max(pad.top, Math.min(height - pad.bottom, y)));
+    onHoverPrice(nextPrice);
+    if (pick) onPickPrice(nextPrice);
+  };
+
+  const modeTitle = activePickMode === "ENTRY" ? "분할매수 가격 지정 중" : activePickMode === "TAKE_PROFIT" ? "분할매도(익절) 가격 지정 중" : activePickMode === "STOP_LOSS" ? "분할매도(손절) 가격 지정 중" : "계획 가격 차트";
+  const modeHelp = activePickMode === "STOP_LOSS" ? "가장 낮은 손절 가격은 전량 손절로 등록됩니다." : activePickMode ? "차트에서 원하는 가격 위치를 클릭하세요." : "버튼을 눌러 차트에서 가격을 지정하세요.";
+
+  const renderChipGroup = (label: string, items: RiskPriceLine[], removeMode: "BUY" | "SELL") => (
+    <div className="training-risk-price-group">
+      <strong>{label}</strong>
+      <div>
+        {items.map((line) => (
+          <button type="button" key={line.id} className={`training-risk-price-chip ${riskLineClass(line.kind)}`} onClick={() => onRemoveLine(line.id, removeMode)}>
+            {riskLineLabel(line, lineIndex.get(line.id) ?? 0)} · {fmtWon(line.price)} ×
+          </button>
+        ))}
+        {items.length === 0 ? <span className="training-risk-empty-chip">미지정</span> : null}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="training-risk-chart-card">
+      <div className="training-risk-chart-head">
+        <strong>{modeTitle}</strong>
+        <span>{modeHelp}</span>
+      </div>
+      <svg
+        className={`training-risk-chart-svg ${activePickMode ? "picking" : ""}`}
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label="리스크 계획 가격 선택 차트"
+        onMouseMove={(event) => handlePointer(event)}
+        onMouseLeave={() => onHoverPrice(null)}
+        onClick={(event) => handlePointer(event, true)}
+      >
+        <rect x={0} y={0} width={width} height={height} rx={8} fill="#ffffff" />
+        {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+          const y = pad.top + ratio * chartH;
+          const price = maxPrice - ratio * span;
+          return (
+            <g key={ratio}>
+              <line x1={pad.left} x2={width - pad.right} y1={y} y2={y} stroke="#e5e7eb" />
+              <text x={width - pad.right + 8} y={y + 4} fontSize="10" fill="#64748b">{fmtWon(price)}</text>
+            </g>
+          );
+        })}
+        {visible.map((candle, index) => {
+          const open = Number(candle.open || candle.close || 0);
+          const close = Number(candle.close || open);
+          const high = Number(candle.high || Math.max(open, close));
+          const low = Number(candle.low || Math.min(open, close));
+          const x = pad.left + index * slot + slot / 2;
+          const bodyTop = Math.min(yPrice(open), yPrice(close));
+          const bodyH = Math.max(2, Math.abs(yPrice(open) - yPrice(close)));
+          const up = close >= open;
+          return (
+            <g key={`${candle.trade_date}-${index}`}>
+              <line x1={x} x2={x} y1={yPrice(high)} y2={yPrice(low)} stroke={up ? "#dc2626" : "#2563eb"} strokeWidth={1.2} />
+              <rect x={x - Math.max(2, slot * 0.25)} y={bodyTop} width={Math.max(4, slot * 0.5)} height={bodyH} fill={up ? "#fee2e2" : "#dbeafe"} stroke={up ? "#dc2626" : "#2563eb"} />
+            </g>
+          );
+        })}
+        {lines.map((line) => {
+          const y = yPrice(line.price);
+          const textY = labelY.get(line.id) ?? y;
+          return (
+            <g key={line.id} className={`training-risk-price-line ${riskLineClass(line.kind)}`}>
+              <line x1={pad.left} x2={width - pad.right} y1={y} y2={y} />
+              <circle cx={pad.left + 8} cy={y} r={line.kind === "FULL_STOP" ? 5 : 4} />
+              {Math.abs(textY - y) > 3 ? <line className="label-connector" x1={width - pad.right} x2={width - pad.right + 8} y1={y} y2={textY} /> : null}
+              <text x={width - pad.right + 10} y={textY - 3}>{riskLineLabel(line, lineIndex.get(line.id) ?? 0)}</text>
+              <text x={width - pad.right + 10} y={textY + 10}>{fmtWon(line.price)}</text>
+            </g>
+          );
+        })}
+        {activePickMode && hoverPrice ? (
+          <g className="training-risk-hover-line">
+            <line x1={pad.left} x2={width - pad.right} y1={yPrice(hoverPrice)} y2={yPrice(hoverPrice)} />
+            <text x={pad.left + 10} y={yPrice(hoverPrice) - 6}>현재 선택 {fmtWon(hoverPrice)}</text>
+          </g>
+        ) : null}
+      </svg>
+      <div className="training-risk-price-list grouped">
+        {renderChipGroup("매수", buyLines, "BUY")}
+        {renderChipGroup("익절", targetLines, "SELL")}
+        {renderChipGroup("손절", stopLines, "SELL")}
+      </div>
+    </div>
+  );
+}
+function RiskScenarioPanel({ mode, detail, riskDetail, onRiskDetailChange, onSelectStep, onSaved }: RiskScenarioPanelProps) {
+  const scenario = riskDetail?.scenario ?? null;
+  const currentPrice = Number(detail.current_candle?.close || 0);
+  const { buyLines: savedBuyLines, sellLines: savedSellLines } = riskLinesFromSteps(riskDetail?.buy_steps ?? [], riskDetail?.sell_steps ?? []);
+  const [profitText, setProfitText] = useState(scenario?.profit_scenario_text || "");
+  const [stopText, setStopText] = useState(scenario?.stop_scenario_text || "");
+  const [buyLines, setBuyLines] = useState<RiskPriceLine[]>(savedBuyLines);
+  const [sellLines, setSellLines] = useState<RiskPriceLine[]>(savedSellLines);
+  const [activePickMode, setActivePickMode] = useState<RiskPriceSelectionMode>(null);
+  const [hoverPrice, setHoverPrice] = useState<number | null>(null);
+  const [memo, setMemo] = useState(scenario?.memo || "");
+  const [changeReason, setChangeReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    setProfitText(scenario?.profit_scenario_text || "");
+    setStopText(scenario?.stop_scenario_text || "");
+    setBuyLines(savedBuyLines);
+    setSellLines(savedSellLines);
+    setMemo(scenario?.memo || "");
+  }, [scenario?.id, scenario?.updated_at, riskDetail?.buy_steps?.length, riskDetail?.sell_steps?.length]);
+
+  const selectedStep = mode === "BUY" ? firstStep(riskDetail?.buy_steps ?? [], "BUY") : firstStep(riskDetail?.sell_steps ?? [], "SELL");
+  const statusText = scenario ? `${scenario.status} #${scenario.cycle_no}` : "NO PLAN";
+  const canCancel = scenario?.status === "DRAFT";
+  const preview = riskDetail?.preview;
+  const targetLines = sellLines.filter((line) => line.kind === "TAKE_PROFIT").sort((a, b) => a.price - b.price);
+  const stopLines = sellLines.filter((line) => isStopLineKind(line.kind)).sort((a, b) => a.price - b.price);
+  const fullStopLine = stopLines[0] ?? null;
+  const partialStopLines = stopLines.slice(1);
+  const primaryTarget = targetLines[0]?.price ?? null;
+  const allLines = [...buyLines, ...sellLines];
+  const crossGroupDuplicate = allLines.some((line, index) => allLines.some((other, otherIndex) => index < otherIndex && line.price === other.price && line.kind !== other.kind));
+  const targetBelowStop = Boolean(fullStopLine && targetLines.some((line) => line.price <= fullStopLine.price));
+
+  const nextStepNo = () => Math.max(0, ...buyLines.map((line) => line.stepNo), ...sellLines.map((line) => line.stepNo)) + 1;
+
+  const pickPrice = (price: number) => {
+    const nextPrice = roundPlanPrice(price);
+    if (!nextPrice || !activePickMode) return;
+    if (activePickMode === "ENTRY") {
+      if (buyLines.some((line) => line.price === nextPrice)) {
+        setMessage("이미 등록된 분할매수 가격입니다.");
+        return;
+      }
+      setBuyLines((prev) => [...prev, { id: `buy-local-${Date.now()}-${nextPrice}`, kind: "BUY", price: nextPrice, stepNo: nextStepNo() }]);
+      setMessage(sellLines.some((line) => line.price === nextPrice) ? "매수 가격과 매도 계획 가격이 같습니다. 계획을 다시 확인해 주세요." : "");
+      return;
+    }
+    if (activePickMode === "TAKE_PROFIT") {
+      if (targetLines.some((line) => line.price === nextPrice)) {
+        setMessage("이미 등록된 익절 가격입니다.");
+        return;
+      }
+      setSellLines((prev) => [...prev, { id: `target-local-${Date.now()}-${nextPrice}`, kind: "TAKE_PROFIT", price: nextPrice, stepNo: nextStepNo() }]);
+      setMessage(stopLines.some((line) => line.price === nextPrice) ? "익절 가격과 손절 가격이 같습니다. 계획을 다시 확인해 주세요." : "");
+      return;
+    }
+    if (stopLines.some((line) => line.price === nextPrice)) {
+      setMessage("이미 등록된 손절 가격입니다.");
+      return;
+    }
+    setSellLines((prev) => normalizeStopLineKinds([...prev, { id: `stop-local-${Date.now()}-${nextPrice}`, kind: "PARTIAL_STOP", price: nextPrice, stepNo: nextStepNo() }]));
+    setMessage(targetLines.some((line) => line.price === nextPrice) || buyLines.some((line) => line.price === nextPrice) ? "다른 계획 그룹과 같은 가격입니다. 계획을 다시 확인해 주세요." : "");
+  };
+
+  const removeLine = (id: string, removeMode: "BUY" | "SELL") => {
+    if (removeMode === "BUY") setBuyLines((prev) => prev.filter((line) => line.id !== id));
+    else setSellLines((prev) => normalizeStopLineKinds(prev.filter((line) => line.id !== id)));
+    setMessage("");
+  };
+
+  const save = async () => {
+    if (!profitText.trim() || !stopText.trim()) {
+      setMessage("수익/손절 시나리오를 먼저 입력하세요.");
+      return;
+    }
+    if (!buyLines.length && scenario?.status !== "ACTIVE") {
+      setMessage("분할매수 가격을 차트에서 1개 이상 지정하세요.");
+      return;
+    }
+    if (!fullStopLine && scenario?.status !== "ACTIVE") {
+      setMessage("최초 매수 전 전량 손절 가격을 1개 이상 지정하세요.");
+      return;
+    }
+    setSaving(true);
+    setMessage("");
+    try {
+      const targetIndex = new Map(targetLines.map((line, index) => [line.id, index + 1]));
+      const partialStopIndex = new Map(partialStopLines.map((line, index) => [line.id, index + 1]));
+      const payload: TradeTrainingRiskScenarioDraftRequest = {
+        buy_plan_mode: buyLines.length > 1 ? "SPLIT" : "SINGLE",
+        sell_plan_mode: sellLines.length > 1 ? "SPLIT" : "SINGLE",
+        profit_scenario_text: profitText.trim(),
+        stop_scenario_text: stopText.trim(),
+        stop_price: fullStopLine?.price ?? null,
+        primary_target_price: primaryTarget,
+        memo: memo.trim() || null,
+        change_reason: changeReason.trim() || null,
+        buy_steps: buyLines.map((line, index) => ({
+          plan_group: "BUY",
+          plan_type: "ENTRY",
+          step_no: line.stepNo,
+          status: "PLANNED",
+          trigger_type: "PRICE_LINE",
+          trigger_price: line.price,
+          trigger_text: `${index + 1}차 매수 가격`,
+          planned_ratio_pct: null,
+          planned_quantity: null,
+          planned_amount: null,
+          memo: "chart price line",
+        })),
+        sell_steps: sellLines.map((line) => ({
+          plan_group: "SELL",
+          plan_type: line.kind,
+          step_no: line.stepNo,
+          status: "PLANNED",
+          trigger_type: "PRICE_LINE",
+          trigger_price: line.price,
+          trigger_text: line.kind === "TAKE_PROFIT" ? `${targetIndex.get(line.id) || 1}차 익절 가격` : line.kind === "FULL_STOP" ? "전량 손절 가격" : `${partialStopIndex.get(line.id) || 1}차 손절 가격`,
+          planned_ratio_pct: line.kind === "FULL_STOP" ? 100 : null,
+          planned_quantity: null,
+          planned_amount: null,
+          memo: "chart price line",
+        })),
+      };
+      const next = scenario
+        ? await repositories.tradeTraining.updateRiskScenario(scenario.id, payload)
+        : await repositories.tradeTraining.saveRiskScenarioDraft(detail.session.id, payload);
+      onRiskDetailChange(next);
+      const nextStep = mode === "BUY" ? firstStep(next.buy_steps, "BUY") : firstStep(next.sell_steps, "SELL");
+      onSelectStep(nextStep?.id ?? null);
+      setChangeReason("");
+      setActivePickMode(null);
+      setMessage("리스크 계획을 저장했습니다. 계획 가격은 주문 제한이 아니라 복기 기준입니다.");
+      onSaved?.();
+    } catch (nextError) {
+      setMessage(nextError instanceof Error ? nextError.message : "리스크 계획을 저장하지 못했습니다.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const cancelDraft = async () => {
+    if (!scenario || !canCancel) return;
+    setSaving(true);
+    setMessage("");
+    try {
+      const next = await repositories.tradeTraining.cancelRiskScenario(scenario.id);
+      onRiskDetailChange(next);
+      onSelectStep(null);
+      setMessage("초안 계획을 취소했습니다.");
+    } catch (nextError) {
+      setMessage(nextError instanceof Error ? nextError.message : "리스크 계획을 취소하지 못했습니다.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="training-risk-panel training-order-tab-panel">
+      <section className="training-risk-section training-risk-chart-section">
+        <div className="training-risk-picker-actions">
+          <button type="button" className={activePickMode === "ENTRY" ? "active-entry" : ""} onClick={() => setActivePickMode((current) => current === "ENTRY" ? null : "ENTRY")}>분할매수 가격 지정</button>
+          <button type="button" className={activePickMode === "TAKE_PROFIT" ? "active-target" : ""} onClick={() => setActivePickMode((current) => current === "TAKE_PROFIT" ? null : "TAKE_PROFIT")}>분할매도(익절) 가격 지정</button>
+          <button type="button" className={activePickMode === "STOP_LOSS" ? "active-stop" : ""} onClick={() => setActivePickMode((current) => current === "STOP_LOSS" ? null : "STOP_LOSS")}>분할매도(손절) 가격 지정</button>
+          {activePickMode ? <button type="button" className="complete-action" disabled={saving} onClick={() => void save()}>{saving ? "저장 중..." : "지정 완료"}</button> : null}
+        </div>
+
+        <RiskPricePickerChart
+          candles={detail.candles}
+          mode={mode}
+          buyLines={buyLines}
+          sellLines={sellLines}
+          activePickMode={activePickMode}
+          hoverPrice={hoverPrice}
+          onHoverPrice={setHoverPrice}
+          onPickPrice={pickPrice}
+          onRemoveLine={removeLine}
+        />
+
+        {targetBelowStop ? <div className="inline-result inline-warning">익절 가격이 전량 손절 가격보다 낮거나 같습니다. 가격 계획을 다시 확인해 주세요.</div> : null}
+        {crossGroupDuplicate ? <div className="inline-result inline-warning">서로 다른 계획 그룹에 같은 가격이 있습니다. 저장은 가능하지만 계획을 다시 확인해 주세요.</div> : null}
+      </section>
+
+      <section className="training-risk-section training-risk-order-plan-section">
+        <h3>주문 계획</h3>
+        <div className="training-risk-status-row">
+          <span className={`training-risk-status ${scenario?.status === "ACTIVE" ? "active" : scenario?.status === "DRAFT" ? "draft" : ""}`}>{statusText}</span>
+          {selectedStep ? <span>주문 연결 단계 #{selectedStep.step_no}</span> : <span>주문 연결 단계 없음</span>}
+        </div>
+
+        <div className="training-risk-preview-grid">
+          <div><span>현재 훈련자산</span><strong>{fmtWon(preview?.risk_basis_equity)}</strong></div>
+          <div><span>계좌 위험률</span><strong>{fmtPercent(preview?.account_risk_pct)}</strong></div>
+          <div><span>기준 위험금액</span><strong>{fmtWon(preview?.risk_budget_amount)}</strong></div>
+          <div><span>전량 손절 가격</span><strong>{fullStopLine ? fmtWon(fullStopLine.price) : "-"}</strong></div>
+          <div><span>현재가</span><strong>{fmtWon(currentPrice)}</strong></div>
+        </div>
+
+        {scenario?.status === "ACTIVE" ? <div className="inline-result">활성 계획은 수정 후 저장하면 새 리비전으로 기록됩니다.</div> : null}
+
+        <div className="training-risk-scenario-grid">
+          <label><span>수익 시나리오</span><textarea className="textarea-control" rows={3} value={profitText} onChange={(event) => setProfitText(event.target.value)} placeholder="목표가, 분할매도, 추세 유지 조건" /></label>
+          <label><span>손절 시나리오</span><textarea className="textarea-control" rows={3} value={stopText} onChange={(event) => setStopText(event.target.value)} placeholder="실패 기준, 손절 조건, 전량매도 조건" /></label>
+        </div>
+
+        <div className="training-risk-plan-summary">
+          <span>매수 {buyLines.length}단계</span>
+          <span>익절 {targetLines.length}단계</span>
+          <span>전량 손절 {fullStopLine ? fmtWon(fullStopLine.price) : "미지정"}</span>
+          <span>분할 손절 {partialStopLines.length}단계</span>
+          <span>실제 주문수량 입력 후 위험금액을 계산합니다.</span>
+        </div>
+      </section>
+
+      <section className="training-risk-section training-risk-memo-section">
+        <h3>메모</h3>
+        <label className="training-risk-wide"><span>계획 메모</span><textarea className="textarea-control" rows={2} value={memo} onChange={(event) => setMemo(event.target.value)} /></label>
+        {scenario ? <label className="training-risk-wide"><span>변경 사유</span><input className="input-control" value={changeReason} onChange={(event) => setChangeReason(event.target.value)} placeholder="리비전 기록용" /></label> : null}
+      </section>
+
+      {message ? <div className="inline-result">{message}</div> : null}
+      <div className="training-risk-actions">
+        {canCancel ? <button type="button" className="btn btn-secondary" disabled={saving} onClick={cancelDraft}>초안 취소</button> : null}
+        <button type="button" className="btn btn-primary" disabled={saving} onClick={() => void save()}>{saving ? "저장 중..." : scenario ? "계획 저장 후 주문 입력" : "초안 저장 후 주문 입력"}</button>
+      </div>
+    </div>
+  );
+}
 function OrderModal({
   mode,
   detail,
   onClose,
   onSubmit,
+  onRiskScenarioChange,
+  initialTab,
 }: {
   mode: OrderMode;
   detail: TrainingSessionDetail;
   onClose: () => void;
   onSubmit: (payload: TrainingOrderRequest) => Promise<void>;
+  onRiskScenarioChange: (next: TradeTrainingRiskScenarioDetail | null) => void;
+  initialTab?: OrderModalTab;
 }) {
   const candle = detail.current_candle;
   const close = Number(candle?.close || 0);
   const defaultPercent = mode === "BUY" ? 10 : 100;
+  const linkedAccountId = sessionTrainingAccountId(detail);
+  const linkedAccount = isAccountLinkedSession(detail);
+  const firstBuyNeedsPlan = Boolean(linkedAccount && mode === "BUY" && detail.session.position_qty <= 0 && !detail.risk_scenario?.scenario);
   const [price, setPrice] = useState(close);
   const [percent, setPercent] = useState(defaultPercent);
   const [quantity, setQuantity] = useState(1);
   const [reason, setReason] = useState("");
-  const [activeOrderTab, setActiveOrderTab] = useState<"order" | "review">("order");
-  const [templateMessage, setTemplateMessage] = useState("");
+  const [activeOrderTab, setActiveOrderTab] = useState<OrderModalTab>(initialTab ?? (firstBuyNeedsPlan ? "risk" : "order"));
+  const [riskDetail, setRiskDetail] = useState<TradeTrainingRiskScenarioDetail | null>(detail.risk_scenario ?? null);
+  const [riskLoading, setRiskLoading] = useState(false);
+  const [riskLoadError, setRiskLoadError] = useState("");
+  const [orderError, setOrderError] = useState("");
+  const [selectedRiskPlanStepId, setSelectedRiskPlanStepId] = useState<number | null>(() => {
+    const steps = mode === "BUY" ? detail.risk_scenario?.buy_steps ?? [] : detail.risk_scenario?.sell_steps ?? [];
+    return steps[0]?.id ?? null;
+  });
+  const [unplannedReason, setUnplannedReason] = useState("");
+  const [riskOrderPreview, setRiskOrderPreview] = useState<RiskOrderPreview | null>(null);
+  const [riskPreviewLoading, setRiskPreviewLoading] = useState(false);
+  const [riskPreviewError, setRiskPreviewError] = useState("");
+  const [riskStepTouched, setRiskStepTouched] = useState(false);
+  const [warningConfirmationOpen, setWarningConfirmationOpen] = useState(false);  const [templateMessage, setTemplateMessage] = useState("");
   const [methodReview, setMethodReview] = useState<TrainingMethodReview>(() => ({
     add_buy_plan_type: "none",
   }));
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const feeRate = Number(detail.session.options?.fee_rate || 0);
-  const linkedAccountId = Number(detail.session.training_account_id || 0);
   const availableCash = Number(detail.account.cash_balance ?? detail.session.cash ?? 0);
   const amount = price * quantity;
   const fee = amount * feeRate;
@@ -3380,7 +3890,10 @@ function OrderModal({
     mode === "BUY"
       ? Math.floor(availableCash / Math.max(1, price * (1 + feeRate)))
       : detail.session.position_qty;
+  const riskPlanRequired = Boolean(linkedAccount && mode === "BUY" && detail.session.position_qty <= 0 && !riskLoading && !riskDetail?.scenario);
+  const riskStepsForMode = mode === "BUY" ? riskDetail?.buy_steps ?? [] : riskDetail?.sell_steps ?? [];
   const invalidOrder =
+    riskPlanRequired ||
     quantity < 1 ||
     price < 1 ||
     (mode === "BUY" && totalCost > availableCash) ||
@@ -3399,6 +3912,82 @@ function OrderModal({
     setQuantity(calculateQuantity(percent, price));
   }, [percent, price, mode, feeRate, availableCash]);
 
+
+  const loadRiskScenario = async () => {
+    if (!linkedAccount) return;
+    setRiskLoading(true);
+    setRiskLoadError("");
+    try {
+      const next = await repositories.tradeTraining.getRiskScenario(detail.session.id);
+      setRiskDetail(next);
+      onRiskScenarioChange(next);
+      const steps = mode === "BUY" ? next.buy_steps : next.sell_steps;
+      setSelectedRiskPlanStepId((current) => current ?? steps[0]?.id ?? null);
+      if (mode === "BUY" && detail.session.position_qty <= 0 && !next.scenario) {
+        setActiveOrderTab("risk");
+      }
+    } catch (nextError) {
+      setRiskLoadError(nextError instanceof Error ? nextError.message : "리스크 시나리오를 불러오지 못했습니다.");
+    } finally {
+      setRiskLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadRiskScenario();
+  }, [detail.session.id, linkedAccount, mode]);
+
+  useEffect(() => {
+    if (riskStepTouched || riskStepsForMode.length === 0) return;
+    const planned = riskStepsForMode.filter((step) => String(step.status || "PLANNED").toUpperCase() === "PLANNED" && Number(step.trigger_price || 0) > 0);
+    if (planned.length === 0) return;
+    if (mode === "SELL") {
+      const fullStop = planned.find((step) => ["FULL_STOP", "STOP_LOSS", "STOP"].includes(String(step.plan_type || "").toUpperCase()));
+      if (fullStop && price <= Number(fullStop.trigger_price || 0)) {
+        setSelectedRiskPlanStepId(fullStop.id);
+        return;
+      }
+      const candidates = planned.filter((step) => !["FULL_STOP", "STOP_LOSS", "STOP"].includes(String(step.plan_type || "").toUpperCase()));
+      const nearestSell = [...candidates].sort((a, b) => Math.abs(Number(a.trigger_price) - price) - Math.abs(Number(b.trigger_price) - price))[0];
+      setSelectedRiskPlanStepId(nearestSell?.id ?? null);
+      return;
+    }
+    const nearest = [...planned].sort((a, b) => Math.abs(Number(a.trigger_price) - price) - Math.abs(Number(b.trigger_price) - price))[0];
+    setSelectedRiskPlanStepId(nearest?.id ?? null);
+  }, [mode, price, riskStepTouched, riskStepsForMode]);
+
+  useEffect(() => {
+    setWarningConfirmationOpen(false);
+    if (!linkedAccount || !riskDetail?.scenario || price <= 0 || quantity <= 0) {
+      setRiskOrderPreview(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      setRiskPreviewLoading(true);
+      setRiskPreviewError("");
+      try {
+        const next = await repositories.tradeTraining.previewRiskOrder(detail.session.id, {
+          side: mode,
+          price,
+          quantity,
+          risk_plan_step_id: selectedRiskPlanStepId,
+        });
+        if (!cancelled) setRiskOrderPreview(next);
+      } catch (nextError) {
+        if (!cancelled) {
+          setRiskOrderPreview(null);
+          setRiskPreviewError(nextError instanceof Error ? nextError.message : "리스크 비교값을 계산하지 못했습니다.");
+        }
+      } finally {
+        if (!cancelled) setRiskPreviewLoading(false);
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [detail.session.id, linkedAccount, mode, price, quantity, selectedRiskPlanStepId, riskDetail?.scenario?.id, riskDetail?.scenario?.updated_at]);
   const onQuantityChange = (nextQuantity: number) => {
     const safeQuantity = Math.max(0, Math.min(nextQuantity || 0, maxAffordableQuantity));
     setQuantity(safeQuantity);
@@ -3411,20 +4000,43 @@ function OrderModal({
     }
   };
 
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
+  const executeOrder = async (acknowledgeWarning: boolean) => {
     if (invalidOrder || submitting || submittingRef.current) return;
     const clientOrderId = `training-${detail.session.id}-${mode.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     submittingRef.current = true;
     setSubmitting(true);
     try {
-      await onSubmit({ price, quantity, reason: reason.trim() || null, method_review: hasMethodReview(methodReview) ? methodReview : null, client_order_id: clientOrderId });
+      setOrderError("");
+      await onSubmit({
+        price,
+        quantity,
+        reason: reason.trim() || null,
+        method_review: hasMethodReview(methodReview) ? methodReview : null,
+        client_order_id: clientOrderId,
+        risk_plan_step_id: selectedRiskPlanStepId,
+        unplanned_reason: selectedRiskPlanStepId === null ? unplannedReason.trim() || null : null,
+        risk_warning_acknowledged: acknowledgeWarning,
+        risk_warning_acknowledgement_note: acknowledgeWarning ? "주문 모달에서 경고 확인 후 진행" : null,
+      });
+    } catch (nextError) {
+      const message = nextError instanceof Error ? nextError.message : "주문을 처리하지 못했습니다.";
+      setOrderError(message);
+      if (message.includes("RISK_WARNING_ACK_REQUIRED")) setWarningConfirmationOpen(true);
+      if (message.includes("RISK_SCENARIO_REQUIRED") || message.includes("리스크 시나리오")) setActiveOrderTab("risk");
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
     }
   };
 
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (riskOrderPreview?.severity === "WARNING" && !warningConfirmationOpen) {
+      setWarningConfirmationOpen(true);
+      return;
+    }
+    if (!warningConfirmationOpen) await executeOrder(false);
+  };
   const quickPercents = mode === "BUY" ? [10, 20, 30, 50, 100] : [25, 50, 100];
   const updateMethodReview = (field: keyof TrainingMethodReview, value: string | string[]) => {
     setMethodReview((prev) => ({ ...prev, [field]: value }));
@@ -3480,6 +4092,7 @@ function OrderModal({
 
         <div className="training-order-tabs" role="tablist" aria-label="주문 입력 구분">
           <button type="button" className={activeOrderTab === "order" ? "active" : ""} onClick={() => setActiveOrderTab("order")}>주문 입력</button>
+          {linkedAccount ? <button type="button" className={activeOrderTab === "risk" ? "active" : ""} onClick={() => setActiveOrderTab("risk")}>리스크 계획</button> : null}
           <button type="button" className={activeOrderTab === "review" ? "active" : ""} onClick={() => setActiveOrderTab("review")}>기법 기준 복기</button>
         </div>
 
@@ -3492,6 +4105,37 @@ function OrderModal({
               </div>
             ) : null}
 
+            {linkedAccount ? (
+              <div className="training-risk-order-link">
+                <label>
+                  <span>이번 주문 연결 단계</span>
+                  <select
+                    className="select-control"
+                    value={selectedRiskPlanStepId ?? "UNPLANNED"}
+                    onChange={(event) => {
+                      setRiskStepTouched(true);
+                      setSelectedRiskPlanStepId(event.target.value === "UNPLANNED" ? null : Number(event.target.value));
+                    }}
+                  >
+                    {riskStepsForMode.map((step) => (
+                      <option key={step.id} value={step.id} disabled={String(step.status || "PLANNED").toUpperCase() === "EXECUTED"}>
+                        {riskStepOptionLabel(step)}
+                      </option>
+                    ))}
+                    <option value="UNPLANNED">계획 외 {mode === "BUY" ? "매수" : "매도"}</option>
+                  </select>
+                  <small>가격 기준 자동 추천 · 필요하면 직접 변경할 수 있습니다.</small>
+                </label>
+                {selectedRiskPlanStepId === null ? (
+                  <label>
+                    <span>계획 외 주문 사유</span>
+                    <input className="input-control" value={unplannedReason} onChange={(event) => setUnplannedReason(event.target.value)} placeholder="시장 상황 변화 등 (선택)" />
+                  </label>
+                ) : null}
+                {riskLoading ? <div className="inline-result">리스크 계획을 불러오는 중입니다.</div> : null}
+                {riskLoadError ? <div className="inline-result inline-error">{riskLoadError} <button type="button" className="training-inline-button" onClick={() => void loadRiskScenario()}>다시 시도</button></div> : null}
+                {riskPlanRequired ? <div className="inline-result inline-warning">최초 매수 전 리스크 시나리오를 먼저 등록해 주세요. 계획값은 주문 차단 기준이 아니라 매매 중 참고 기준입니다.</div> : null}
+              </div>            ) : null}
             <div className="training-order-grid">
               <label>
                 <span>주문가격</span>
@@ -3527,6 +4171,32 @@ function OrderModal({
               {mode === "SELL" ? <div><span>예상 실현수익률</span><strong className={profitClass(expectedProfitRate)}>{fmtPercent(expectedProfitRate)}</strong></div> : null}
             </div>
 
+            {linkedAccount ? (
+              <div className={`training-order-risk-compare severity-${String(riskOrderPreview?.severity || "unavailable").toLowerCase()}`}>
+                <div className="training-order-risk-compare-head">
+                  <strong>리스크 계획 비교</strong>
+                  <button type="button" className="training-inline-button" onClick={() => setActiveOrderTab("risk")}>계획 보기</button>
+                </div>
+                <div><span>연결 단계</span><strong>{riskOrderPreview?.selected_step ? riskStepOptionLabel(riskOrderPreview.selected_step) : `계획 외 ${mode === "BUY" ? "매수" : "매도"}`}</strong></div>
+                <div><span>{mode === "BUY" ? "주문 후 포지션" : "매도 후 잔여수량"}</span><strong>{riskOrderPreview ? `${fmtNumber(riskOrderPreview.projected_position.quantity)}주 · ${fmtWon(riskOrderPreview.projected_position.average_price)}` : "계산 중"}</strong></div>
+                <div><span>{mode === "BUY" ? "주문 후 예상위험" : "매도 후 예상위험"}</span><strong>{riskOrderPreview?.projected_estimated_risk !== null && riskOrderPreview?.projected_estimated_risk !== undefined ? fmtWon(riskOrderPreview.projected_estimated_risk) : "계산 제외"}</strong></div>
+                <div><span>위험 사용률</span><strong>{riskOrderPreview?.risk_usage_pct !== null && riskOrderPreview?.risk_usage_pct !== undefined ? fmtPercent(riskOrderPreview.risk_usage_pct) : "계산 제외"}</strong></div>
+                {riskOrderPreview ? <p className="training-risk-compare-meta">손절가 {fmtWon(riskOrderPreview.stop_price)} · 위험예산 {fmtWon(riskOrderPreview.risk_budget_amount)} · 상태 {riskOrderPreview.severity === "WARNING" ? "경고" : riskOrderPreview.severity === "CAUTION" ? "주의" : riskOrderPreview.severity === "INFO" ? "정상" : "계산 제외"}</p> : null}
+                {riskOrderPreview?.warnings.map((warning) => <p key={warning.code} className={`training-risk-warning severity-${warning.severity.toLowerCase()}`}>{warning.message}</p>)}
+                {riskPreviewLoading ? <p>서버 기준 리스크를 계산하는 중입니다.</p> : null}
+                {riskPreviewError ? <p className="training-risk-warning severity-warning">{riskPreviewError}</p> : null}
+                {warningConfirmationOpen && riskOrderPreview?.severity === "WARNING" ? (
+                  <div className="training-risk-warning-confirm">
+                    <strong>리스크 경고를 확인하고 주문을 계속하시겠습니까?</strong>
+                    <span>주문은 계속할 수 있지만 이 확인 내용은 복기에 기록됩니다.</span>
+                    <div>
+                      <button type="button" className="btn btn-secondary" onClick={() => setWarningConfirmationOpen(false)}>주문 수정</button>
+                      <button type="button" className={mode === "BUY" ? "btn btn-primary" : "btn btn-danger"} onClick={() => void executeOrder(true)}>경고를 확인하고 계속</button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             {mode === "BUY" && totalCost > availableCash ? (
               <div className="inline-result inline-error">
                 사용 가능 현금이 부족합니다. 부족금액 {fmtWon(shortageAmount)} · 최대 매수 가능수량 {fmtNumber(maxAffordableQuantity)}주
@@ -3543,6 +4213,17 @@ function OrderModal({
 
             <div className="training-method-review-summary-badge">{methodReviewSummary(mode, methodReview)}</div>
           </div>
+        ) : activeOrderTab === "risk" ? (
+          <RiskScenarioPanel
+            mode={mode}
+            detail={detail}
+            riskDetail={riskDetail}
+            onRiskDetailChange={(next) => {
+              setRiskDetail(next);
+              onRiskScenarioChange(next);
+            }}
+            onSelectStep={setSelectedRiskPlanStepId}
+          />
         ) : (
           <div className="training-method-review-panel training-method-review-tab-panel">
             <p className="training-result-help">
@@ -3645,10 +4326,9 @@ function OrderModal({
             </div>
           </div>
         )}
-
         <div className="training-modal-actions">
           <button type="button" className="btn btn-secondary" onClick={onClose}>취소</button>
-          <button type="submit" className={mode === "BUY" ? "btn btn-primary" : "btn btn-danger"} disabled={submitting || invalidOrder}>
+          <button type="submit" className={mode === "BUY" ? "btn btn-primary" : "btn btn-danger"} disabled={submitting || invalidOrder || (linkedAccount && riskPreviewLoading) || warningConfirmationOpen}>
             {submitting ? "처리 중..." : mode === "BUY" ? "매수 실행" : "매도 실행"}
           </button>
         </div>
@@ -3657,6 +4337,48 @@ function OrderModal({
   );
 }
 
+function ActiveRiskPanel({
+  detail,
+  showPlanLines,
+  onTogglePlanLines,
+  onOpenPlan,
+}: {
+  detail: TrainingSessionDetail;
+  showPlanLines: boolean;
+  onTogglePlanLines: () => void;
+  onOpenPlan: () => void;
+}) {
+  const risk = detail.risk_scenario;
+  const scenario = risk?.scenario;
+  if (!scenario || scenario.status !== "ACTIVE" || detail.session.position_qty <= 0) return null;
+  const holding = risk?.holding_risk;
+  const nextBuy = risk?.buy_steps.filter((step) => String(step.status || "PLANNED").toUpperCase() === "PLANNED").sort((a, b) => a.step_no - b.step_no)[0];
+  const nextSell = risk?.sell_steps.filter((step) => String(step.status || "PLANNED").toUpperCase() === "PLANNED").sort((a, b) => a.step_no - b.step_no)[0];
+  const severity = String(holding?.severity || "UNAVAILABLE").toLowerCase();
+  const statusLabel = severity === "warning" ? "경고" : severity === "caution" ? "주의" : severity === "info" ? "정상" : "계산 제외";
+  return (
+    <section className={`training-active-risk-panel severity-${severity}`}>
+      <div className="training-active-risk-head">
+        <strong>리스크 시나리오 #{scenario.cycle_no}</strong>
+        <span>보유 중</span>
+      </div>
+      <div className="training-active-risk-metrics">
+        <div><span>위험예산</span><strong>{fmtWon(scenario.risk_budget_amount)}</strong></div>
+        <div><span>현재 예상위험</span><strong>{holding?.current_estimated_risk !== null && holding?.current_estimated_risk !== undefined ? fmtWon(holding.current_estimated_risk) : "계산 제외"}</strong></div>
+        <div><span>위험 사용률</span><strong>{holding?.risk_usage_pct !== null && holding?.risk_usage_pct !== undefined ? fmtPercent(holding.risk_usage_pct) : "계산 제외"}</strong></div>
+        <div><span>상태</span><strong>{statusLabel}</strong></div>
+      </div>
+      <div className="training-active-risk-next">
+        <span>{nextBuy ? `다음 매수: ${riskStepOptionLabel(nextBuy)}` : "남은 분할매수 계획 없음"}</span>
+        <span>{nextSell ? `다음 매도: ${riskStepOptionLabel(nextSell)}` : "남은 수익화 단계 없음"}</span>
+      </div>
+      <div className="training-active-risk-actions">
+        <button type="button" className="btn btn-secondary" onClick={onTogglePlanLines}>{showPlanLines ? "계획선 숨기기" : "계획선 보기"}</button>
+        <button type="button" className="btn btn-secondary" onClick={onOpenPlan}>계획 보기·수정</button>
+      </div>
+    </section>
+  );
+}
 function TrainingKpiStrip({
   detail,
   showAvgPriceLine,
@@ -3927,6 +4649,8 @@ function TradeTrainingPage() {
   const [error, setError] = useState("");
   const [orderMode, setOrderMode] = useState<OrderMode | null>(null);
   const [showAvgPriceLine, setShowAvgPriceLine] = useState(false);
+  const [showRiskPlanLines, setShowRiskPlanLines] = useState(false);
+  const [orderInitialTab, setOrderInitialTab] = useState<OrderModalTab>("order");
   const [scrollTargetDate, setScrollTargetDate] = useState<string | null>(null);
   const [highlightedTradeDate, setHighlightedTradeDate] = useState<string | null>(null);
   const [highlightedTradeId, setHighlightedTradeId] = useState<number | null>(null);
@@ -4275,10 +4999,10 @@ function TradeTrainingPage() {
                   <button className="btn btn-secondary" type="button" disabled={!canTrade || loading} onClick={handleNextDay}>
                     <StepForward size={16} /> 다음
                   </button>
-                  <button className="btn btn-primary" type="button" disabled={!canTrade || loading} onClick={() => setOrderMode("BUY")}>
+                  <button className="btn btn-primary" type="button" disabled={!canTrade || loading} onClick={() => { setOrderInitialTab("order"); setOrderMode("BUY"); }}>
                     <ShoppingCart size={16} /> 매수
                   </button>
-                  <button className="btn btn-danger" type="button" disabled={!canTrade || detail.session.position_qty <= 0 || loading} onClick={() => setOrderMode("SELL")}>
+                  <button className="btn btn-danger" type="button" disabled={!canTrade || detail.session.position_qty <= 0 || loading} onClick={() => { setOrderInitialTab("order"); setOrderMode("SELL"); }}>
                     매도
                   </button>
                   <button className="btn btn-secondary" type="button" disabled={resultLoading} onClick={() => void openResultReport()}>
@@ -4291,11 +5015,18 @@ function TradeTrainingPage() {
               </div>
 
               <TrainingKpiStrip detail={detail} showAvgPriceLine={showAvgPriceLine} onToggleAvgPriceLine={toggleAvgPriceLine} />
+              <ActiveRiskPanel
+                detail={detail}
+                showPlanLines={showRiskPlanLines}
+                onTogglePlanLines={() => setShowRiskPlanLines((current) => !current)}
+                onOpenPlan={() => { setOrderInitialTab("risk"); setOrderMode("BUY"); }}
+              />
               <CandleChart
                 sessionId={detail.session.id}
                 candles={detail.candles}
                 trades={detail.trades}
                 avgPriceLine={showAvgPriceLine && detail.session.position_qty > 0 ? detail.session.avg_price : null}
+                riskPlanLines={showRiskPlanLines ? [...(detail.risk_scenario?.buy_steps ?? []), ...(detail.risk_scenario?.sell_steps ?? [])] : []}
                 displayDays={displayDays}
                 scrollTargetDate={scrollTargetDate}
                 highlightedTradeDate={highlightedTradeDate}
@@ -4314,6 +5045,15 @@ function TradeTrainingPage() {
                         {MARKET_INDEX_LABELS[indexCode]}
                       </button>
                     ))}
+                    <button
+                      className={`training-chart-tool-btn training-market-index-toggle ${showRiskPlanLines ? "active" : ""}`}
+                      type="button"
+                      disabled={!detail.risk_scenario?.scenario}
+                      onClick={() => setShowRiskPlanLines((current) => !current)}
+                      title={showRiskPlanLines ? "리스크 계획선 숨기기" : "리스크 계획선 보기"}
+                    >
+                      리스크관리
+                    </button>
                   </>
                 }
                 renderMarketIndexPanel={(chartLayout) => selectedMarketIndex ? (
@@ -4423,7 +5163,16 @@ function TradeTrainingPage() {
           onClose={() => setShowMethodPrinciples(false)}
         />
       ) : null}
-      {detail && orderMode ? <OrderModal mode={orderMode} detail={detail} onClose={() => setOrderMode(null)} onSubmit={submitOrder} /> : null}
+      {detail && orderMode ? (
+        <OrderModal
+          mode={orderMode}
+          detail={detail}
+          initialTab={orderInitialTab}
+          onClose={() => setOrderMode(null)}
+          onSubmit={submitOrder}
+          onRiskScenarioChange={(next) => setDetail((current) => current ? { ...current, risk_scenario: next } : current)}
+        />
+      ) : null}
       {result ? <ResultModal result={result} onClose={() => setResult(null)} /> : null}
     </div>
   );

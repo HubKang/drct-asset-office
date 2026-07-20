@@ -283,6 +283,9 @@ class TradeTrainingAccountPerformanceResponse(BaseModel):
 class TrainingSessionCreate(BaseModel):
     stock_code: str
     method_id: int | None = None
+    training_account_id: int | None = None
+    training_account_name: str | None = None
+    is_account_linked: bool = False
     initial_cash: float = Field(default=50_000_000, gt=0)
     fee_rate: float = Field(default=0.001, ge=0, le=0.1)
     display_days: int = Field(default=80, ge=1, le=400)
@@ -292,12 +295,163 @@ class TrainingSessionCreate(BaseModel):
     training_account_id: int | None = None
 
 
+class RiskPlanStepBase(BaseModel):
+    plan_group: str
+    plan_type: str
+    step_no: int = Field(ge=1)
+    status: str = "PLANNED"
+    trigger_type: str = "CUSTOM"
+    trigger_price: float | None = Field(default=None, gt=0)
+    trigger_text: str = ""
+    planned_ratio_pct: float | None = Field(default=None, ge=0, le=100)
+    planned_quantity: int | None = Field(default=None, ge=0)
+    planned_amount: float | None = Field(default=None, ge=0)
+    memo: str | None = None
+
+
+class RiskPlanStepRequest(RiskPlanStepBase):
+    pass
+
+
+class TradeTrainingRiskPlanStep(RiskPlanStepBase):
+    id: int
+    risk_scenario_id: int
+    executed_trade_id: int | None = None
+    executed_at: str | None = None
+    actual_price: float | None = None
+    actual_quantity: int | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class RiskScenarioPreview(BaseModel):
+    risk_basis_equity: float | None = None
+    account_risk_pct: float | None = None
+    risk_budget_amount: float | None = None
+    estimated_planned_loss: float | None = None
+    estimated_risk_usage_pct: float | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class TradeTrainingRiskScenarioDraftRequest(BaseModel):
+    buy_plan_mode: str = "SINGLE"
+    sell_plan_mode: str = "SPLIT"
+    profit_scenario_text: str = Field(min_length=1)
+    stop_scenario_text: str = Field(min_length=1)
+    stop_price: float | None = Field(default=None, gt=0)
+    primary_target_price: float | None = Field(default=None, gt=0)
+    memo: str | None = None
+    buy_steps: list[RiskPlanStepRequest] = Field(default_factory=list)
+    sell_steps: list[RiskPlanStepRequest] = Field(default_factory=list)
+    change_reason: str | None = None
+
+
+class TradeTrainingRiskScenario(BaseModel):
+    id: int
+    training_account_id: int
+    simulation_session_id: int
+    cycle_no: int
+    status: str
+    buy_plan_mode: str
+    sell_plan_mode: str
+    risk_basis_equity: float | None = None
+    account_risk_pct: float | None = None
+    risk_budget_amount: float | None = None
+    profit_scenario_text: str = ""
+    stop_scenario_text: str = ""
+    stop_price: float | None = None
+    primary_target_price: float | None = None
+    estimated_planned_loss: float | None = None
+    estimated_risk_usage_pct: float | None = None
+    activated_at: str | None = None
+    closed_at: str | None = None
+    cancelled_at: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    closed_trade_id: str | None = None
+    final_trade_id: int | None = None
+    final_net_pnl: float | None = None
+    final_return_pct: float | None = None
+    memo: str | None = None
+
+
+class TradeTrainingRiskScenarioRevision(BaseModel):
+    id: int
+    risk_scenario_id: int
+    revision_no: int
+    revision_type: str
+    snapshot_json: str
+    snapshot: dict = Field(default_factory=dict)
+    change_reason: str | None = None
+    effective_from: str
+    created_at: str
+
+
+class TradeTrainingRiskScenarioDetail(BaseModel):
+    scenario: TradeTrainingRiskScenario | None = None
+    buy_steps: list[TradeTrainingRiskPlanStep] = Field(default_factory=list)
+    sell_steps: list[TradeTrainingRiskPlanStep] = Field(default_factory=list)
+    latest_revision: TradeTrainingRiskScenarioRevision | None = None
+    preview: RiskScenarioPreview | None = None
+    requires_plan_before_buy: bool = False
+    holding_risk: dict | None = None
+    events: list[dict] = Field(default_factory=list)
+
+
+class TradeTrainingRiskScenarioRevisionListResponse(BaseModel):
+    items: list[TradeTrainingRiskScenarioRevision] = Field(default_factory=list)
+
+
+class RiskOrderPreviewRequest(BaseModel):
+    side: str
+    price: float = Field(gt=0)
+    quantity: int = Field(gt=0)
+    risk_plan_step_id: int | None = None
+
+
+class RiskOrderWarning(BaseModel):
+    code: str
+    severity: str
+    message: str
+
+
+class RiskPositionSnapshot(BaseModel):
+    quantity: int
+    average_price: float
+
+
+class RiskOrderPreviewResponse(BaseModel):
+    scenario_id: int
+    revision_id: int | None = None
+    selected_step: TradeTrainingRiskPlanStep | None = None
+    current_position: RiskPositionSnapshot
+    projected_position: RiskPositionSnapshot
+    stop_price: float | None = None
+    risk_budget_amount: float | None = None
+    current_estimated_risk: float | None = None
+    projected_estimated_risk: float | None = None
+    risk_usage_pct: float | None = None
+    severity: str
+    price_deviation_pct: float | None = None
+    warnings: list[RiskOrderWarning] = Field(default_factory=list)
+
+
+class ActiveRiskSummary(BaseModel):
+    current_estimated_risk: float | None = None
+    risk_usage_pct: float | None = None
+    severity: str = "UNAVAILABLE"
+    stop_price: float | None = None
+
 class TrainingOrderRequest(BaseModel):
     price: float = Field(gt=0)
     quantity: int = Field(gt=0)
     reason: str | None = None
     method_review: dict | None = None
     client_order_id: str | None = None
+    risk_plan_step_id: int | None = None
+    unplanned_reason: str | None = None
+    risk_warning_acknowledged: bool = False
+    risk_warning_acknowledgement_note: str | None = None
 
 
 class TrainingSessionResponse(BaseModel):
@@ -305,6 +459,9 @@ class TrainingSessionResponse(BaseModel):
     stock_code: str
     stock_name: str | None = None
     method_id: int | None = None
+    training_account_id: int | None = None
+    training_account_name: str | None = None
+    is_account_linked: bool = False
     start_date: str
     end_date: str
     current_date: str | None = None
@@ -360,6 +517,9 @@ class TrainingTradeResponse(BaseModel):
     realized_profit: float
     reason: str | None = None
     method_review: dict | None = None
+    risk_scenario_id: int | None = None
+    risk_scenario_revision_id: int | None = None
+    risk_plan_step_id: int | None = None
     created_at: str | None = None
 
 
@@ -370,6 +530,7 @@ class TrainingSessionDetailResponse(BaseModel):
     current_candle: TrainingCandle | None = None
     account: TrainingAccountResponse
     trades: list[TrainingTradeResponse] = Field(default_factory=list)
+    risk_scenario: TradeTrainingRiskScenarioDetail | None = None
 
 
 class TrainingFinishResponse(BaseModel):

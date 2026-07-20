@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import math
 import time
 from collections import defaultdict
@@ -267,7 +266,7 @@ class ExternalKiwoomService:
                             detected_at=:detected_at,
                             source=:source,
                             source_api=:source_api,
-                            raw_json=:raw_json
+                            raw_json=NULL
                         WHERE id=:id
                         """
                     ),
@@ -285,7 +284,6 @@ class ExternalKiwoomService:
                         "detected_at": detected_at,
                         "source": payload.source,
                         "source_api": item.source_api,
-                        "raw_json": json.dumps(item.raw, ensure_ascii=False) if item.raw else None,
                     },
                 )
                 saved_count += 1
@@ -300,7 +298,7 @@ class ExternalKiwoomService:
                     VALUES
                     (:condition_id, :condition_seq, :condition_name, :stock_code, :stock_code_raw, :stock_name,
                      :current_price, :change_rate, :intraday_change_rate, :trading_value, :volume,
-                     :detected_at, :source, :source_api, :raw_json, :created_at)
+                     :detected_at, :source, :source_api, NULL, :created_at)
                     """
                 ),
                 {
@@ -318,7 +316,6 @@ class ExternalKiwoomService:
                     "detected_at": detected_at,
                     "source": payload.source,
                     "source_api": item.source_api,
-                    "raw_json": json.dumps(item.raw, ensure_ascii=False) if item.raw else None,
                     "created_at": now,
                 },
             )
@@ -357,7 +354,7 @@ class ExternalKiwoomService:
         except Exception:
             return None
         if abs(rate) > 100:
-            rate = rate / 1000.0
+            rate = rate / 100.0
         return rate
 
     def list_condition_results(self, condition_seq: str, limit: int = 200) -> KiwoomConditionResultListResponse:

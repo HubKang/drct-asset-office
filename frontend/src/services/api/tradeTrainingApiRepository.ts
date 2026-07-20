@@ -3,6 +3,11 @@ import type {
   TrainingFinishResponse,
   TrainingGptPackage,
   TrainingOrderRequest,
+  RiskOrderPreview,
+  RiskOrderPreviewRequest,
+  TradeTrainingRiskScenarioDetail,
+  TradeTrainingRiskScenarioDraftRequest,
+  TradeTrainingRiskScenarioRevisionListResponse,
   TrainingResult,
   SimulationReview,
   SimulationReviewSaveRequest,
@@ -75,7 +80,27 @@ export const tradeTrainingApiRepository = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  next: (sessionId: number) =>
+  getRiskScenario: (sessionId: number) =>
+    apiRequest<TradeTrainingRiskScenarioDetail>(`/trade-training/sessions/${sessionId}/risk-scenario`),
+  saveRiskScenarioDraft: (sessionId: number, payload: TradeTrainingRiskScenarioDraftRequest) =>
+    apiRequest<TradeTrainingRiskScenarioDetail>(`/trade-training/sessions/${sessionId}/risk-scenario/draft`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+  updateRiskScenario: (scenarioId: number, payload: TradeTrainingRiskScenarioDraftRequest) =>
+    apiRequest<TradeTrainingRiskScenarioDetail>(`/trade-training/risk-scenarios/${scenarioId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  cancelRiskScenario: (scenarioId: number) =>
+    apiRequest<TradeTrainingRiskScenarioDetail>(`/trade-training/risk-scenarios/${scenarioId}/cancel`, { method: "POST" }),
+  listRiskScenarioRevisions: (scenarioId: number) =>
+    apiRequest<TradeTrainingRiskScenarioRevisionListResponse>(`/trade-training/risk-scenarios/${scenarioId}/revisions`),
+  previewRiskOrder: (sessionId: number, payload: RiskOrderPreviewRequest) =>
+    apiRequest<RiskOrderPreview>(`/trade-training/sessions/${sessionId}/risk-order-preview`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),  next: (sessionId: number) =>
     apiRequest<TrainingSessionDetail>(`/trade-training/sessions/${sessionId}/next`, { method: "POST" }),
   buy: (sessionId: number, payload: TrainingOrderRequest) =>
     apiRequest<TrainingSessionDetail>(`/trade-training/sessions/${sessionId}/buy`, {

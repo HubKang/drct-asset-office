@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from decimal import Decimal
 import json
 from typing import Any
 
@@ -8,11 +9,21 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from backend.app.repositories.trade_training_repository import TradeTrainingRepository
+from backend.app.services.risk_management_calculator import (
+    calculate_risk_budget,
+    calculate_position_risk,
+    classify_risk_usage,
+    calculate_risk_usage_pct,
+    calculate_scenario_planned_loss,
+    to_decimal,
+)
 from backend.app.schemas.trade_training_schema import (
     SimulationReviewSaveRequest,
     TradeTrainingAccountCreate,
     TradeTrainingAccountUpdate,
     TrainingOrderRequest,
+    RiskOrderPreviewRequest,
+    TradeTrainingRiskScenarioDraftRequest,
     TrainingSessionCreate,
 )
 
@@ -1020,12 +1031,14 @@ class TradeTrainingService:
 
         account_initial_cash = float(payload.initial_cash)
         account_fee_rate = float(payload.fee_rate)
+        training_account_name = None
         if payload.training_account_id:
             training_account = self.get_training_account(int(payload.training_account_id))
             if str(training_account.get("status") or "") != "ACTIVE":
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"code": "ACCOUNT_NOT_ACTIVE", "message": "활성 훈련계좌만 연결할 수 있습니다."})
             account_initial_cash = float(training_account.get("cash_balance") or training_account.get("initial_capital") or payload.initial_cash)
             account_fee_rate = float(training_account.get("commission_rate") or payload.fee_rate)
+            training_account_name = training_account.get("name")
 
         created = self.repo.create_session(
             {
@@ -1050,6 +1063,7 @@ class TradeTrainingService:
                     "display_days": int(payload.display_days),
                     "moving_averages": self._clean_mas(payload.moving_averages),
                     "training_account_id": payload.training_account_id,
+                    "training_account_name": training_account_name,
                 },
             }
         )
@@ -1128,7 +1142,12 @@ class TradeTrainingService:
 
     def _response_session(self, session: dict[str, Any]) -> dict[str, Any]:
         data = dict(session)
-        data["options"] = self._parse_options(session)
+        options = self._parse_options(session)
+        account_id = data.get("training_account_id") or options.get("training_account_id")
+        data["training_account_id"] = int(account_id) if account_id else None
+        data["training_account_name"] = options.get("training_account_name")
+        data["is_account_linked"] = data["training_account_id"] is not None
+        data["options"] = options
         data.pop("options_json", None)
         return data
 
@@ -1150,6 +1169,7 @@ class TradeTrainingService:
             "current_candle": decorated[-1] if decorated else None,
             "account": self._calc_account(session, current_candle),
             "trades": self.repo.list_trades(session_id),
+            "risk_scenario": self.get_current_risk_scenario_detail(session_id),
         }
 
     def _running_session(self, session_id: int) -> dict[str, Any]:
@@ -1217,6 +1237,475 @@ class TradeTrainingService:
         realized_pnl = sum(float(item.get("net_pnl") or 0) for item in closed_trades)
         return round(initial_capital + realized_pnl, 4)
 
+    @staticmethod
+    def _float_or_none(value: Any) -> float | None:
+        if value is None:
+            return None
+        try:
+            return round(float(value), 4)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _is_stop_plan_type(plan_type: Any) -> bool:
+        return str(plan_type or "").upper() in {"STOP", "STOP_LOSS", "FULL_STOP", "PARTIAL_STOP"}
+
+    def _normalize_sell_stop_types(self, steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        normalized = [dict(step) for step in steps]
+        stop_steps = sorted(
+            (step for step in normalized if self._is_stop_plan_type(step.get("plan_type"))),
+            key=lambda step: (float(step.get("trigger_price") or float("inf")), int(step.get("step_no") or 0)),
+        )
+        for index, step in enumerate(stop_steps):
+            step["plan_type"] = "FULL_STOP" if index == 0 else "PARTIAL_STOP"
+            step["trigger_text"] = "전량 손절 가격" if index == 0 else f"{index}차 손절 가격"
+            if index == 0 and step.get("planned_ratio_pct") is None:
+                step["planned_ratio_pct"] = 100.0
+        return normalized
+
+    def _risk_configuration_signature(self, scenario: dict[str, Any], buy_steps: list[dict[str, Any]], sell_steps: list[dict[str, Any]]) -> dict[str, Any]:
+        scenario_fields = (
+            "buy_plan_mode", "sell_plan_mode", "profit_scenario_text", "stop_scenario_text",
+            "stop_price", "primary_target_price", "memo",
+        )
+        step_fields = (
+            "plan_group", "plan_type", "step_no", "trigger_type", "trigger_price", "trigger_text",
+            "planned_ratio_pct", "planned_quantity", "planned_amount", "memo",
+        )
+        canonical_sell = self._normalize_sell_stop_types(sell_steps)
+        return {
+            "scenario": {field: scenario.get(field) for field in scenario_fields},
+            "buy_steps": [{field: step.get(field) for field in step_fields} for step in sorted(buy_steps, key=lambda item: int(item.get("step_no") or 0))],
+            "sell_steps": [{field: step.get(field) for field in step_fields} for step in sorted(canonical_sell, key=lambda item: int(item.get("step_no") or 0))],
+        }
+    def _risk_snapshot(self, scenario: dict[str, Any], buy_steps: list[dict[str, Any]], sell_steps: list[dict[str, Any]], preview: dict[str, Any] | None = None) -> dict[str, Any]:
+        normalized_sell = self._normalize_sell_stop_types(sell_steps)
+        target_prices = sorted(float(step["trigger_price"]) for step in normalized_sell if str(step.get("plan_type") or "").upper() == "TAKE_PROFIT" and step.get("trigger_price") is not None)
+        stop_prices = sorted(float(step["trigger_price"]) for step in normalized_sell if self._is_stop_plan_type(step.get("plan_type")) and step.get("trigger_price") is not None)
+        return {
+            "scenario": dict(scenario),
+            "buy_steps": [dict(step) for step in buy_steps],
+            "sell_steps": [dict(step) for step in normalized_sell],
+            "price_groups": {
+                "entry_prices": [float(step["trigger_price"]) for step in buy_steps if step.get("trigger_price") is not None],
+                "take_profit_prices": target_prices,
+                "stop_loss": {
+                    "full_stop_price": stop_prices[0] if stop_prices else None,
+                    "partial_stop_prices": stop_prices[1:],
+                },
+            },
+            "preview": preview or {},
+        }
+    def _risk_account_basis(self, session: dict[str, Any]) -> tuple[dict[str, Any], Decimal, Decimal, Decimal]:
+        account_id = session.get("training_account_id")
+        if not account_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"code": "RISK_SCENARIO_ACCOUNT_REQUIRED", "message": "Risk scenarios are available only for account-linked sessions."})
+        account = self.get_training_account(int(account_id))
+        summary = self.get_training_account_summary(int(account_id))
+        equity = to_decimal(summary.get("current_training_equity"), Decimal("0")) or Decimal("0")
+        risk_pct = to_decimal(account.get("risk_per_trade_pct"), Decimal("1")) or Decimal("1")
+        budget = calculate_risk_budget(equity, risk_pct)
+        return account, equity, risk_pct, budget
+
+    def _normalize_risk_steps(self, raw_steps: list[Any], plan_group: str, default_plan_type: str) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
+        seen: set[int] = set()
+        for idx, raw in enumerate(raw_steps or [], start=1):
+            data = raw.model_dump() if hasattr(raw, "model_dump") else dict(raw or {})
+            step_no = int(data.get("step_no") or idx)
+            if step_no in seen:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"code": "DUPLICATE_RISK_STEP", "message": f"Duplicate {plan_group} step_no: {step_no}"})
+            seen.add(step_no)
+            normalized.append({
+                "plan_group": plan_group,
+                "plan_type": str(data.get("plan_type") or default_plan_type).upper(),
+                "step_no": step_no,
+                "status": str(data.get("status") or "PLANNED").upper(),
+                "trigger_type": str(data.get("trigger_type") or "CUSTOM").upper(),
+                "trigger_price": self._float_or_none(data.get("trigger_price")),
+                "trigger_text": str(data.get("trigger_text") or ""),
+                "planned_ratio_pct": self._float_or_none(data.get("planned_ratio_pct")),
+                "planned_quantity": int(data.get("planned_quantity") or 0) if data.get("planned_quantity") is not None else None,
+                "planned_amount": self._float_or_none(data.get("planned_amount")),
+                "memo": data.get("memo"),
+                "executed_trade_id": data.get("executed_trade_id"),
+            })
+        ordered = sorted(normalized, key=lambda item: int(item["step_no"]))
+        return self._normalize_sell_stop_types(ordered) if plan_group == "SELL" else ordered
+
+    def calculate_risk_scenario_preview(self, session_id: int, payload: TradeTrainingRiskScenarioDraftRequest | None = None, scenario: dict[str, Any] | None = None, buy_steps: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        session = self.repo.get_session(session_id)
+        if not session:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="training session not found")
+        _, equity, risk_pct, budget = self._risk_account_basis(session)
+        if payload is not None:
+            stop_price = to_decimal(payload.stop_price)
+            steps = self._normalize_risk_steps(payload.buy_steps, "BUY", "ENTRY")
+        else:
+            stop_price = to_decimal((scenario or {}).get("stop_price"))
+            steps = buy_steps or []
+        planned_loss = calculate_scenario_planned_loss(steps, stop_price)
+        usage = calculate_risk_usage_pct(planned_loss, budget)
+        warnings: list[str] = []
+        buy_ratio = sum(float(step.get("planned_ratio_pct") or 0) for step in steps)
+        if steps and round(buy_ratio, 4) != 100:
+            warnings.append(f"BUY_RATIO_SUM_{round(buy_ratio, 4)}")
+        if planned_loss is not None and planned_loss > budget:
+            warnings.append("PLANNED_LOSS_EXCEEDS_RISK_BUDGET")
+        if stop_price is None:
+            warnings.append("STOP_PRICE_MISSING")
+        return {
+            "risk_basis_equity": float(equity),
+            "account_risk_pct": float(risk_pct),
+            "risk_budget_amount": float(budget),
+            "estimated_planned_loss": None if planned_loss is None else float(planned_loss),
+            "estimated_risk_usage_pct": None if usage is None else float(usage),
+            "warnings": warnings,
+        }
+
+    @staticmethod
+    def _severity_rank(value: str) -> int:
+        return {"UNAVAILABLE": 0, "INFO": 1, "CAUTION": 2, "WARNING": 3}.get(value, 0)
+
+    def _holding_risk_summary(self, session: dict[str, Any], scenario: dict[str, Any]) -> dict[str, Any]:
+        quantity = int(session.get("position_qty") or 0)
+        average_price = to_decimal(session.get("avg_price"))
+        stop_price = to_decimal(scenario.get("stop_price"))
+        current_price = to_decimal(self._current_price_row(session).get("close"), Decimal("0")) or Decimal("0")
+        fee_rate = to_decimal(self._parse_options(session).get("fee_rate"), Decimal("0")) or Decimal("0")
+        exit_cost = current_price * Decimal(quantity) * fee_rate
+        estimated_risk = calculate_position_risk(average_price, stop_price, quantity, exit_cost)
+        budget = to_decimal(scenario.get("risk_budget_amount"))
+        usage = calculate_risk_usage_pct(estimated_risk, budget)
+        return {
+            "current_estimated_risk": None if estimated_risk is None else float(estimated_risk),
+            "risk_usage_pct": None if usage is None else float(usage),
+            "severity": classify_risk_usage(usage),
+            "stop_price": None if stop_price is None else float(stop_price),
+        }
+
+    def calculate_risk_order_preview(self, session_id: int, payload: RiskOrderPreviewRequest) -> dict[str, Any]:
+        session = self._running_session(session_id)
+        if not session.get("training_account_id"):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"code": "ACCOUNT_LINK_REQUIRED", "message": "계좌연동 세션에서만 리스크 주문 미리보기를 사용할 수 있습니다."})
+        side = str(payload.side or "").upper()
+        if side not in {"BUY", "SELL"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="side must be BUY or SELL")
+        scenario = self.repo.get_active_risk_scenario(session_id) or self.repo.get_current_risk_scenario(session_id)
+        if not scenario:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "RISK_SCENARIO_REQUIRED", "message": "리스크 시나리오가 없습니다."})
+        revision = self.repo.get_latest_risk_scenario_revision(int(scenario["id"]))
+        current_qty = int(session.get("position_qty") or 0)
+        current_avg = float(session.get("avg_price") or 0)
+        order_qty = int(payload.quantity)
+        order_price = float(payload.price)
+        if side == "SELL" and order_qty > current_qty:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="보유수량이 부족합니다.")
+        projected_qty = current_qty + order_qty if side == "BUY" else current_qty - order_qty
+        projected_avg = ((current_qty * current_avg) + (order_qty * order_price)) / projected_qty if side == "BUY" and projected_qty > 0 else (current_avg if projected_qty > 0 else 0.0)
+        stop_price = to_decimal(scenario.get("stop_price"))
+        budget = to_decimal(scenario.get("risk_budget_amount"))
+        fee_rate = to_decimal(self._parse_options(session).get("fee_rate"), Decimal("0")) or Decimal("0")
+        current_price = to_decimal(self._current_price_row(session).get("close"), Decimal("0")) or Decimal("0")
+        current_exit_cost = current_price * Decimal(current_qty) * fee_rate
+        projected_exit_price = Decimal(str(order_price)) if side == "BUY" else current_price
+        projected_exit_cost = projected_exit_price * Decimal(projected_qty) * fee_rate
+        current_risk = calculate_position_risk(to_decimal(current_avg), stop_price, current_qty, current_exit_cost)
+        projected_risk = calculate_position_risk(to_decimal(projected_avg), stop_price, projected_qty, projected_exit_cost)
+        usage = calculate_risk_usage_pct(projected_risk, budget)
+        severity = classify_risk_usage(usage)
+        warnings: list[dict[str, str]] = []
+        selected_step = self.repo.get_risk_plan_step(int(payload.risk_plan_step_id)) if payload.risk_plan_step_id else None
+        expected_group = "BUY" if side == "BUY" else "SELL"
+        if selected_step and (int(selected_step.get("risk_scenario_id") or 0) != int(scenario["id"]) or str(selected_step.get("plan_group") or "").upper() != expected_group or str(selected_step.get("status") or "").upper() != "PLANNED"):
+            selected_step = None
+        if selected_step is None and side == "SELL" and hasattr(self.repo, "list_risk_plan_steps"):
+            planned_sell = self._normalize_sell_stop_types([
+                step for step in self.repo.list_risk_plan_steps(int(scenario["id"]))
+                if str(step.get("plan_group") or "").upper() == "SELL"
+                and str(step.get("status") or "PLANNED").upper() == "PLANNED"
+                and step.get("trigger_price") is not None
+            ])
+            full_stop_step = next((step for step in planned_sell if str(step.get("plan_type") or "").upper() == "FULL_STOP"), None)
+            if full_stop_step and order_price <= float(full_stop_step.get("trigger_price") or 0):
+                selected_step = full_stop_step
+            else:
+                candidates = [step for step in planned_sell if str(step.get("plan_type") or "").upper() != "FULL_STOP"]
+                if candidates:
+                    selected_step = min(candidates, key=lambda step: abs(float(step.get("trigger_price") or order_price) - order_price))
+        price_deviation_pct = None
+        if selected_step and selected_step.get("trigger_price"):
+            planned_price = float(selected_step["trigger_price"])
+            price_deviation_pct = ((order_price - planned_price) / planned_price) * 100 if planned_price else None
+            if price_deviation_pct is not None and abs(price_deviation_pct) > 1:
+                code = "BUY_PRICE_DEVIATION" if side == "BUY" else "SELL_PRICE_DEVIATION"
+                warnings.append({"code": code, "severity": "CAUTION", "message": f"계획가격과 주문가격 차이가 {price_deviation_pct:+.2f}%입니다."})
+        else:
+            code = "UNPLANNED_BUY" if side == "BUY" else "UNPLANNED_SELL"
+            warnings.append({"code": code, "severity": "CAUTION", "message": f"계획 외 {('매수' if side == 'BUY' else '매도')}로 기록됩니다."})
+        selected_plan_type = str((selected_step or {}).get("plan_type") or "").upper()
+        if side == "SELL" and selected_plan_type == "FULL_STOP" and order_qty < current_qty:
+            warnings.append({"code": "FULL_STOP_PARTIAL_QUANTITY", "severity": "CAUTION", "message": f"전량 손절 계획을 선택했지만 일부 수량만 매도합니다. 보유 {current_qty}주 · 매도 {order_qty}주 · 잔여 {projected_qty}주"})
+        if side == "SELL" and selected_plan_type == "PARTIAL_STOP" and projected_qty == 0:
+            warnings.append({"code": "PARTIAL_STOP_FULL_QUANTITY", "severity": "CAUTION", "message": "분할 손절 계획과 연결했지만 이번 주문으로 전량 매도되어 시나리오가 종료됩니다."})
+        if side == "BUY" and stop_price is not None and Decimal(str(order_price)) <= stop_price:
+            warnings.append({"code": "STOP_AREA_BUY", "severity": "WARNING", "message": "계획상 손절 검토 구간에서 추가매수를 시도하고 있습니다."})
+        if usage is not None and usage > Decimal("100"):
+            warnings.append({"code": "RISK_BUDGET_EXCEEDED", "severity": "WARNING", "message": "주문 후 예상 위험이 계좌 위험예산을 초과합니다."})
+        elif usage is not None and usage >= Decimal("80"):
+            warnings.append({"code": "RISK_BUDGET_NEAR_LIMIT", "severity": "CAUTION", "message": "계좌 위험예산에 근접했습니다."})
+        for warning in warnings:
+            if self._severity_rank(warning["severity"]) > self._severity_rank(severity):
+                severity = warning["severity"]
+        return {
+            "scenario_id": int(scenario["id"]),
+            "revision_id": int(revision["id"]) if revision else None,
+            "selected_step": selected_step,
+            "current_position": {"quantity": current_qty, "average_price": current_avg},
+            "projected_position": {"quantity": projected_qty, "average_price": round(projected_avg, 4)},
+            "stop_price": None if stop_price is None else float(stop_price),
+            "risk_budget_amount": None if budget is None else float(budget),
+            "current_estimated_risk": None if current_risk is None else float(current_risk),
+            "projected_estimated_risk": None if projected_risk is None else float(projected_risk),
+            "risk_usage_pct": None if usage is None else float(usage),
+            "severity": severity,
+            "price_deviation_pct": price_deviation_pct,
+            "warnings": warnings,
+        }
+    def _risk_scenario_detail(self, scenario: dict[str, Any] | None) -> dict[str, Any]:
+        if not scenario:
+            return {"scenario": None, "buy_steps": [], "sell_steps": [], "latest_revision": None, "preview": None, "requires_plan_before_buy": True, "holding_risk": None, "events": []}
+        steps = [
+            step
+            for step in self.repo.list_risk_plan_steps(int(scenario["id"]))
+            if str(step.get("status") or "PLANNED").upper() != "CANCELLED"
+        ]
+        buy_steps = [step for step in steps if str(step.get("plan_group") or "").upper() == "BUY"]
+        sell_steps = self._normalize_sell_stop_types([step for step in steps if str(step.get("plan_group") or "").upper() == "SELL"])
+        normalized_scenario = dict(scenario)
+        full_stop = next((step for step in sell_steps if str(step.get("plan_type") or "").upper() == "FULL_STOP"), None)
+        if full_stop:
+            normalized_scenario["stop_price"] = self._float_or_none(full_stop.get("trigger_price"))
+        preview = self.calculate_risk_scenario_preview(int(scenario["simulation_session_id"]), scenario=normalized_scenario, buy_steps=buy_steps)
+        latest_revision = self.repo.get_latest_risk_scenario_revision(int(scenario["id"]))
+        return {
+            "scenario": normalized_scenario,
+            "buy_steps": buy_steps,
+            "sell_steps": sell_steps,
+            "latest_revision": latest_revision,
+            "preview": preview,
+            "requires_plan_before_buy": False,
+            "holding_risk": self._holding_risk_summary(self.repo.get_session(int(scenario["simulation_session_id"])) or {}, scenario) if str(scenario.get("status") or "").upper() == "ACTIVE" else None,
+            "events": self.repo.list_risk_events(int(scenario["simulation_session_id"])),
+        }
+
+    def get_current_risk_scenario_detail(self, session_id: int) -> dict[str, Any]:
+        session = self.repo.get_session(session_id)
+        if not session:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="training session not found")
+        if not session.get("training_account_id"):
+            return {"scenario": None, "buy_steps": [], "sell_steps": [], "latest_revision": None, "preview": None, "requires_plan_before_buy": False, "holding_risk": None, "events": []}
+        return self._risk_scenario_detail(self.repo.get_current_risk_scenario(session_id))
+
+    def create_or_update_risk_scenario_draft(self, session_id: int, payload: TradeTrainingRiskScenarioDraftRequest) -> dict[str, Any]:
+        session = self.repo.get_session(session_id)
+        if not session:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="training session not found")
+        if not session.get("training_account_id"):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"code": "ACCOUNT_LINK_REQUIRED", "message": "Risk scenarios require an account-linked session."})
+        if self.repo.get_active_risk_scenario(session_id) and not self.repo.get_draft_risk_scenario(session_id):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"code": "ACTIVE_SCENARIO_EXISTS", "message": "Cannot create a draft while an active risk scenario exists."})
+        buy_steps = self._normalize_risk_steps(payload.buy_steps, "BUY", "ENTRY")
+        sell_steps = self._normalize_risk_steps(payload.sell_steps, "SELL", "TAKE_PROFIT")
+        full_stop = next((step for step in sell_steps if str(step.get("plan_type") or "").upper() == "FULL_STOP"), None)
+        targets = sorted((step for step in sell_steps if str(step.get("plan_type") or "").upper() == "TAKE_PROFIT" and step.get("trigger_price") is not None), key=lambda step: float(step["trigger_price"]))
+        if not buy_steps:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"code": "BUY_STEPS_REQUIRED", "message": "At least one buy plan step is required."})
+        if not full_stop:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"code": "FULL_STOP_REQUIRED", "message": "A full-stop price is required before the first buy."})
+        payload.stop_price = self._float_or_none(full_stop.get("trigger_price"))
+        payload.primary_target_price = self._float_or_none(targets[0].get("trigger_price")) if targets else None
+        preview = self.calculate_risk_scenario_preview(session_id, payload=payload)
+        values = {
+            "training_account_id": int(session["training_account_id"]),
+            "simulation_session_id": session_id,
+            "status": "DRAFT",
+            "buy_plan_mode": str(payload.buy_plan_mode or "SINGLE").upper(),
+            "sell_plan_mode": str(payload.sell_plan_mode or "SPLIT").upper(),
+            "risk_basis_equity": preview["risk_basis_equity"],
+            "account_risk_pct": preview["account_risk_pct"],
+            "risk_budget_amount": preview["risk_budget_amount"],
+            "profit_scenario_text": payload.profit_scenario_text.strip(),
+            "stop_scenario_text": payload.stop_scenario_text.strip(),
+            "stop_price": payload.stop_price,
+            "primary_target_price": payload.primary_target_price,
+            "estimated_planned_loss": preview["estimated_planned_loss"],
+            "estimated_risk_usage_pct": preview["estimated_risk_usage_pct"],
+            "memo": payload.memo,
+        }
+        existing = self.repo.get_draft_risk_scenario(session_id)
+        if existing:
+            current_steps = [step for step in self.repo.list_risk_plan_steps(int(existing["id"])) if str(step.get("status") or "PLANNED").upper() != "CANCELLED"]
+            current_buy = [step for step in current_steps if str(step.get("plan_group") or "").upper() == "BUY"]
+            current_sell = [step for step in current_steps if str(step.get("plan_group") or "").upper() == "SELL"]
+            if self._risk_configuration_signature({**existing, **values}, buy_steps, sell_steps) == self._risk_configuration_signature(existing, current_buy, current_sell):
+                return self._risk_scenario_detail(existing)
+            scenario = self.repo.update_risk_scenario(int(existing["id"]), values)
+            revision_type = "PRICE_LINES_UPDATED"
+        else:
+            scenario = self.repo.create_risk_scenario({**values, "cycle_no": self.repo.get_next_risk_scenario_cycle_no(session_id)})
+            revision_type = "CREATE"
+        self.repo.replace_risk_plan_steps(int(scenario["id"]), [*buy_steps, *sell_steps])
+        scenario = self.repo.get_risk_scenario(int(scenario["id"])) or scenario
+        self.repo.create_risk_scenario_revision(int(scenario["id"]), revision_type, self._risk_snapshot(scenario, buy_steps, sell_steps, preview), payload.change_reason)
+        self.repo.db.commit()
+        return self._risk_scenario_detail(scenario)
+
+    def update_active_risk_scenario(self, scenario_id: int, payload: TradeTrainingRiskScenarioDraftRequest) -> dict[str, Any]:
+        scenario = self.repo.get_risk_scenario(scenario_id)
+        if not scenario:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="risk scenario not found")
+        if str(scenario.get("status") or "") not in {"DRAFT", "ACTIVE"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"code": "SCENARIO_NOT_EDITABLE", "message": "Only draft or active scenarios can be edited."})
+        if scenario["status"] == "DRAFT":
+            return self.create_or_update_risk_scenario_draft(int(scenario["simulation_session_id"]), payload)
+        buy_steps = self._normalize_risk_steps(payload.buy_steps, "BUY", "ENTRY")
+        sell_steps = self._normalize_risk_steps(payload.sell_steps, "SELL", "TAKE_PROFIT")
+        full_stop = next((step for step in sell_steps if str(step.get("plan_type") or "").upper() == "FULL_STOP"), None)
+        targets = sorted((step for step in sell_steps if str(step.get("plan_type") or "").upper() == "TAKE_PROFIT" and step.get("trigger_price") is not None), key=lambda step: float(step["trigger_price"]))
+        payload.stop_price = self._float_or_none(full_stop.get("trigger_price")) if full_stop else None
+        payload.primary_target_price = self._float_or_none(targets[0].get("trigger_price")) if targets else None
+        preview = self.calculate_risk_scenario_preview(int(scenario["simulation_session_id"]), payload=payload)
+        values = {
+            "buy_plan_mode": str(payload.buy_plan_mode or "SINGLE").upper(),
+            "sell_plan_mode": str(payload.sell_plan_mode or "SPLIT").upper(),
+            "profit_scenario_text": payload.profit_scenario_text.strip(),
+            "stop_scenario_text": payload.stop_scenario_text.strip(),
+            "stop_price": payload.stop_price,
+            "primary_target_price": payload.primary_target_price,
+            "estimated_planned_loss": preview["estimated_planned_loss"],
+            "estimated_risk_usage_pct": preview["estimated_risk_usage_pct"],
+            "memo": payload.memo,
+        }
+        current_steps = [step for step in self.repo.list_risk_plan_steps(scenario_id) if str(step.get("status") or "PLANNED").upper() != "CANCELLED"]
+        current_buy = [step for step in current_steps if str(step.get("plan_group") or "").upper() == "BUY"]
+        current_sell = [step for step in current_steps if str(step.get("plan_group") or "").upper() == "SELL"]
+        if self._risk_configuration_signature({**scenario, **values}, buy_steps, sell_steps) == self._risk_configuration_signature(scenario, current_buy, current_sell):
+            return self._risk_scenario_detail(scenario)
+        updated = self.repo.update_risk_scenario(scenario_id, values)
+        self.repo.replace_risk_plan_steps(scenario_id, [*buy_steps, *sell_steps])
+        self.repo.create_risk_scenario_revision(scenario_id, "PRICE_LINES_UPDATED", self._risk_snapshot(updated, buy_steps, sell_steps, preview), payload.change_reason)
+        self.repo.db.commit()
+        return self._risk_scenario_detail(updated)
+    def cancel_risk_scenario_draft(self, scenario_id: int) -> dict[str, Any]:
+        scenario = self.repo.get_risk_scenario(scenario_id)
+        if not scenario:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="risk scenario not found")
+        if str(scenario.get("status") or "") != "DRAFT":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"code": "DRAFT_ONLY", "message": "Only draft scenarios can be cancelled."})
+        cancelled = self.repo.cancel_risk_scenario(scenario_id)
+        self.repo.create_risk_scenario_revision(scenario_id, "CANCEL", self._risk_snapshot(cancelled, self.repo.list_risk_plan_steps(scenario_id), []), None)
+        self.repo.db.commit()
+        return self._risk_scenario_detail(None)
+
+    def list_risk_scenario_revisions(self, scenario_id: int) -> dict[str, Any]:
+        if not self.repo.get_risk_scenario(scenario_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="risk scenario not found")
+        return {"items": self.repo.list_risk_scenario_revisions(scenario_id)}
+
+    def activate_risk_scenario_for_first_buy(self, session: dict[str, Any], trade_values: dict[str, Any]) -> tuple[dict[str, Any] | None, int | None, int | None]:
+        if not session.get("training_account_id"):
+            return None, None, None
+        if int(session.get("position_qty") or 0) > 0:
+            active = self.repo.get_active_risk_scenario(int(session["id"]))
+            revision = self.repo.get_latest_risk_scenario_revision(int(active["id"])) if active else None
+            return active, int(revision["id"]) if revision else None, trade_values.get("risk_plan_step_id")
+        draft = self.repo.get_draft_risk_scenario(int(session["id"]))
+        if not draft:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "RISK_SCENARIO_REQUIRED", "message": "최초 매수 전 리스크 시나리오를 등록해 주세요.", "session_id": int(session["id"])})
+        if self.repo.get_active_risk_scenario(int(session["id"])):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "RISK_SCENARIO_ALREADY_ACTIVE", "message": "이미 활성 리스크 시나리오가 있습니다.", "session_id": int(session["id"])})
+        steps = self.repo.list_risk_plan_steps(int(draft["id"]))
+        buy_steps = [step for step in steps if str(step.get("plan_group") or "").upper() == "BUY"]
+        preview = self.calculate_risk_scenario_preview(int(session["id"]), scenario=draft, buy_steps=buy_steps)
+        activated = self.repo.activate_risk_scenario(int(draft["id"]), preview)
+        revision = self.repo.create_risk_scenario_revision(int(activated["id"]), "ACTIVATE", self._risk_snapshot(activated, buy_steps, [step for step in steps if str(step.get("plan_group") or "").upper() == "SELL"], preview), "first buy activated scenario")
+        step_id = trade_values.get("risk_plan_step_id") or (int(buy_steps[0]["id"]) if buy_steps else None)
+        return activated, int(revision["id"]), step_id
+
+    def _require_risk_warning_acknowledgement(self, preview: dict[str, Any], payload: TrainingOrderRequest) -> None:
+        if str(preview.get("severity") or "") != "WARNING" or payload.risk_warning_acknowledged:
+            return
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "RISK_WARNING_ACK_REQUIRED",
+                "message": "리스크 경고를 확인한 후 주문을 계속해 주세요.",
+                "preview": preview,
+            },
+        )
+
+    def _record_order_risk_events(
+        self,
+        session: dict[str, Any],
+        payload: TrainingOrderRequest,
+        trade: dict[str, Any],
+        preview: dict[str, Any],
+        scenario_id: int,
+        revision_id: int | None,
+    ) -> None:
+        selected_step = preview.get("selected_step")
+        step_id = int(selected_step["id"]) if selected_step else None
+        if step_id:
+            self.repo.execute_risk_plan_step(step_id, int(trade["id"]), float(payload.price), int(payload.quantity))
+        side = str(trade.get("side") or "").upper()
+        event_rows: list[dict[str, str]] = []
+        if selected_step:
+            event_rows.append({"code": "BUY_PLAN_MATCHED" if side == "BUY" else "SELL_PLAN_MATCHED", "severity": "INFO", "message": "주문이 선택한 리스크 계획 단계와 연결되었습니다."})
+            event_rows.append({"code": "PLAN_STEP_EXECUTED", "severity": "INFO", "message": "리스크 계획 단계를 실행 완료로 변경했습니다."})
+        else:
+            event_rows.append({"code": "UNPLANNED_BUY" if side == "BUY" else "UNPLANNED_SELL", "severity": "CAUTION", "message": f"계획 외 {('매수' if side == 'BUY' else '매도')}로 기록되었습니다."})
+        existing_codes = {row["code"] for row in event_rows}
+        for warning in preview.get("warnings") or []:
+            if warning.get("code") not in existing_codes:
+                event_rows.append(warning)
+                existing_codes.add(str(warning.get("code")))
+        planned_value = {
+            "planned_step_price": selected_step.get("trigger_price") if selected_step else None,
+            "risk_budget_amount": preview.get("risk_budget_amount"),
+            "stop_price": preview.get("stop_price"),
+        }
+        actual_value = {
+            "order_price": float(payload.price),
+            "order_quantity": int(payload.quantity),
+            "post_position_quantity": preview.get("projected_position", {}).get("quantity"),
+            "post_average_price": preview.get("projected_position", {}).get("average_price"),
+            "estimated_risk_amount": preview.get("projected_estimated_risk"),
+            "risk_usage_pct": preview.get("risk_usage_pct"),
+            "price_deviation_pct": preview.get("price_deviation_pct"),
+            "unplanned_reason": payload.unplanned_reason,
+        }
+        for row in event_rows:
+            severity = str(row.get("severity") or "INFO")
+            self.repo.insert_risk_event_no_commit(
+                {
+                    "training_account_id": int(session["training_account_id"]),
+                    "simulation_session_id": int(session["id"]),
+                    "risk_scenario_id": scenario_id,
+                    "risk_scenario_revision_id": revision_id,
+                    "risk_plan_step_id": step_id,
+                    "simulation_trade_id": int(trade["id"]),
+                    "event_key": f"simulation_trade:{trade['id']}:risk:{row['code']}",
+                    "event_type": row["code"],
+                    "severity": severity,
+                    "planned_value": planned_value,
+                    "actual_value": actual_value,
+                    "message": row.get("message") or "",
+                    "acknowledged": bool(payload.risk_warning_acknowledged and severity == "WARNING"),
+                    "acknowledgement_note": payload.risk_warning_acknowledgement_note,
+                    "chart_date": trade.get("trade_date"),
+                }
+            )
     def buy(self, session_id: int, payload: TrainingOrderRequest) -> dict[str, Any]:
         session = self._running_session(session_id)
         candle = self._current_price_row(session)
@@ -1233,60 +1722,65 @@ class TradeTrainingService:
             if linked_account:
                 raise self._insufficient_cash(cash, amount + fee, float(payload.price), fee_rate)
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="현금이 부족합니다.")
+        risk_order_preview = self.calculate_risk_order_preview(
+            session_id,
+            RiskOrderPreviewRequest(side="BUY", price=payload.price, quantity=payload.quantity, risk_plan_step_id=payload.risk_plan_step_id),
+        ) if linked_account else None
+        if risk_order_preview:
+            self._require_risk_warning_acknowledgement(risk_order_preview, payload)
         if linked_account:
             self.repo.db.info["trade_training_atomic_order"] = True
-        prev_qty = int(session.get("position_qty") or 0)
-        prev_avg = float(session.get("avg_price") or 0)
-        next_qty = prev_qty + int(payload.quantity)
-        next_avg = ((prev_qty * prev_avg) + (int(payload.quantity) * float(payload.price))) / next_qty
-        trade = self.repo.insert_trade(
-            {
-                "session_id": session_id,
-                "trade_date": str(candle["trade_date"]),
-                "side": "BUY",
-                "price": float(payload.price),
-                "quantity": int(payload.quantity),
-                "fee": round(fee, 4),
-                "amount": round(amount, 4),
-                "realized_profit": 0,
-                "reason": payload.reason,
-                "method_review": payload.method_review,
-                "client_order_id": payload.client_order_id,
-            }
-        )
-        cash_after = round(cash - amount - fee, 4)
-        self.repo.update_session(
-            session_id,
-            {
-                "cash": cash_after,
-                "position_qty": next_qty,
-                "avg_price": round(next_avg, 4),
-            },
-        )
-        if linked_account:
-            account_id = int(linked_account["id"])
-            realized_equity_after = float(linked_account.get("realized_equity") or linked_account.get("initial_capital") or 0)
-            self.repo.update_training_account_balances(account_id, cash_balance=cash_after)
-            self.repo.insert_account_ledger(
+        try:
+            risk_scenario, risk_revision_id, risk_step_id = self.activate_risk_scenario_for_first_buy(session, {"risk_plan_step_id": payload.risk_plan_step_id})
+            prev_qty = int(session.get("position_qty") or 0)
+            prev_avg = float(session.get("avg_price") or 0)
+            next_qty = prev_qty + int(payload.quantity)
+            next_avg = ((prev_qty * prev_avg) + (int(payload.quantity) * float(payload.price))) / next_qty
+            trade = self.repo.insert_trade(
                 {
-                    "training_account_id": account_id,
-                    "simulation_session_id": session_id,
-                    "simulation_trade_id": int(trade["id"]),
-                    "event_type": "BUY" if prev_qty == 0 else "ADDITIONAL_BUY",
-                    "event_key": f"simulation_trade:{trade['id']}",
-                    "cash_delta": round(-(amount + fee), 4),
-                    "cash_before": round(cash, 4),
-                    "cash_after": cash_after,
-                    "realized_pnl_delta": 0,
-                    "realized_equity_after": realized_equity_after,
-                    "description": "account-linked buy order",
-                    "metadata": {"amount": round(amount, 4), "fee": round(fee, 4), "quantity": int(payload.quantity), "price": float(payload.price)},
+                    "session_id": session_id, "trade_date": str(candle["trade_date"]), "side": "BUY",
+                    "price": float(payload.price), "quantity": int(payload.quantity), "fee": round(fee, 4),
+                    "amount": round(amount, 4), "realized_profit": 0, "reason": payload.reason,
+                    "method_review": payload.method_review, "client_order_id": payload.client_order_id,
+                    "risk_scenario_id": int(risk_scenario["id"]) if risk_scenario else None,
+                    "risk_scenario_revision_id": risk_revision_id, "risk_plan_step_id": risk_step_id,
                 }
             )
-            self.repo.db.commit()
-            self.repo.db.info.pop("trade_training_atomic_order", None)
+            cash_after = round(cash - amount - fee, 4)
+            self.repo.update_session(session_id, {"cash": cash_after, "position_qty": next_qty, "avg_price": round(next_avg, 4)})
+            if linked_account:
+                account_id = int(linked_account["id"])
+                realized_equity_after = float(linked_account.get("realized_equity") or linked_account.get("initial_capital") or 0)
+                self.repo.update_training_account_balances(account_id, cash_balance=cash_after)
+                self.repo.insert_account_ledger(
+                    {
+                        "training_account_id": account_id, "simulation_session_id": session_id,
+                        "simulation_trade_id": int(trade["id"]), "event_type": "BUY" if prev_qty == 0 else "ADDITIONAL_BUY",
+                        "event_key": f"simulation_trade:{trade['id']}", "cash_delta": round(-(amount + fee), 4),
+                        "cash_before": round(cash, 4), "cash_after": cash_after, "realized_pnl_delta": 0,
+                        "realized_equity_after": realized_equity_after, "description": "account-linked buy order",
+                        "metadata": {"amount": round(amount, 4), "fee": round(fee, 4), "quantity": int(payload.quantity), "price": float(payload.price)},
+                    }
+                )
+                if risk_scenario and risk_order_preview:
+                    effective_step_id = risk_step_id
+                    if effective_step_id and not risk_order_preview.get("selected_step"):
+                        risk_order_preview["selected_step"] = self.repo.get_risk_plan_step(int(effective_step_id))
+                        risk_order_preview["warnings"] = [warning for warning in risk_order_preview.get("warnings") or [] if warning.get("code") != "UNPLANNED_BUY"]
+                        risk_order_preview["severity"] = classify_risk_usage(to_decimal(risk_order_preview.get("risk_usage_pct")))
+                        for warning in risk_order_preview["warnings"]:
+                            if self._severity_rank(str(warning.get("severity") or "")) > self._severity_rank(str(risk_order_preview["severity"])):
+                                risk_order_preview["severity"] = warning["severity"]
+                    self._record_order_risk_events(session, payload, trade, risk_order_preview, int(risk_scenario["id"]), risk_revision_id)
+                self.repo.db.commit()
+        except Exception:
+            if linked_account:
+                self.repo.db.rollback()
+            raise
+        finally:
+            if linked_account:
+                self.repo.db.info.pop("trade_training_atomic_order", None)
         return self.get_session_detail(session_id)
-
     def sell(self, session_id: int, payload: TrainingOrderRequest) -> dict[str, Any]:
         session = self._running_session(session_id)
         candle = self._current_price_row(session)
@@ -1301,63 +1795,83 @@ class TradeTrainingService:
         amount = float(payload.price) * int(payload.quantity)
         fee = amount * fee_rate
         linked_account = self._linked_account(session)
+        active_risk_scenario = self.repo.get_active_risk_scenario(session_id) if linked_account else None
+        active_risk_revision = self.repo.get_latest_risk_scenario_revision(int(active_risk_scenario["id"])) if active_risk_scenario else None
+        risk_order_preview = self.calculate_risk_order_preview(
+            session_id,
+            RiskOrderPreviewRequest(side="SELL", price=payload.price, quantity=payload.quantity, risk_plan_step_id=payload.risk_plan_step_id),
+        ) if active_risk_scenario else None
+        if risk_order_preview:
+            self._require_risk_warning_acknowledgement(risk_order_preview, payload)
         if linked_account:
             self.repo.db.info["trade_training_atomic_order"] = True
-        avg_price = float(session.get("avg_price") or 0)
-        realized_profit = (float(payload.price) - avg_price) * int(payload.quantity) - fee
-        next_qty = position_qty - int(payload.quantity)
-        trade = self.repo.insert_trade(
-            {
-                "session_id": session_id,
-                "trade_date": str(candle["trade_date"]),
-                "side": "SELL",
-                "price": float(payload.price),
-                "quantity": int(payload.quantity),
-                "fee": round(fee, 4),
-                "amount": round(amount, 4),
-                "realized_profit": round(realized_profit, 4),
-                "reason": payload.reason,
-                "method_review": payload.method_review,
-                "client_order_id": payload.client_order_id,
-            }
-        )
-        session_cash_before = float(session.get("cash") or 0)
-        account_cash_before = float(linked_account.get("cash_balance") if linked_account else session_cash_before)
-        cash_return = round(amount - fee, 4)
-        cash_after = round(account_cash_before + cash_return, 4)
-        self.repo.update_session(
-            session_id,
-            {
-                "cash": cash_after if linked_account else round(session_cash_before + cash_return, 4),
-                "position_qty": next_qty,
-                "avg_price": 0 if next_qty == 0 else avg_price,
-                "realized_profit": round(float(session.get("realized_profit") or 0) + realized_profit, 4),
-            },
-        )
-        if linked_account:
-            account_id = int(linked_account["id"])
-            realized_equity_after = self._realized_equity_for_account(account_id) if next_qty == 0 else float(linked_account.get("realized_equity") or linked_account.get("initial_capital") or 0)
-            self.repo.update_training_account_balances(account_id, cash_balance=cash_after, realized_equity=realized_equity_after)
-            self.repo.insert_account_ledger(
+        try:
+            avg_price = float(session.get("avg_price") or 0)
+            realized_profit = (float(payload.price) - avg_price) * int(payload.quantity) - fee
+            next_qty = position_qty - int(payload.quantity)
+            trade = self.repo.insert_trade(
                 {
-                    "training_account_id": account_id,
-                    "simulation_session_id": session_id,
-                    "simulation_trade_id": int(trade["id"]),
-                    "event_type": "FULL_SELL" if next_qty == 0 else "PARTIAL_SELL",
-                    "event_key": f"simulation_trade:{trade['id']}",
-                    "cash_delta": cash_return,
-                    "cash_before": round(account_cash_before, 4),
-                    "cash_after": cash_after,
-                    "realized_pnl_delta": round(realized_profit, 4) if next_qty == 0 else 0,
-                    "realized_equity_after": realized_equity_after,
-                    "description": "account-linked sell order",
-                    "metadata": {"amount": round(amount, 4), "fee": round(fee, 4), "quantity": int(payload.quantity), "price": float(payload.price)},
+                    "session_id": session_id, "trade_date": str(candle["trade_date"]), "side": "SELL",
+                    "price": float(payload.price), "quantity": int(payload.quantity), "fee": round(fee, 4),
+                    "amount": round(amount, 4), "realized_profit": round(realized_profit, 4), "reason": payload.reason,
+                    "method_review": payload.method_review, "client_order_id": payload.client_order_id,
+                    "risk_scenario_id": int(active_risk_scenario["id"]) if active_risk_scenario else None,
+                    "risk_scenario_revision_id": int(active_risk_revision["id"]) if active_risk_revision else None,
+                    "risk_plan_step_id": payload.risk_plan_step_id,
                 }
             )
-            self.repo.db.commit()
-            self.repo.db.info.pop("trade_training_atomic_order", None)
+            session_cash_before = float(session.get("cash") or 0)
+            account_cash_before = float(linked_account.get("cash_balance") if linked_account else session_cash_before)
+            cash_return = round(amount - fee, 4)
+            cash_after = round(account_cash_before + cash_return, 4)
+            self.repo.update_session(
+                session_id,
+                {
+                    "cash": cash_after if linked_account else round(session_cash_before + cash_return, 4),
+                    "position_qty": next_qty, "avg_price": 0 if next_qty == 0 else avg_price,
+                    "realized_profit": round(float(session.get("realized_profit") or 0) + realized_profit, 4),
+                },
+            )
+            if linked_account:
+                account_id = int(linked_account["id"])
+                realized_equity_after = self._realized_equity_for_account(account_id) if next_qty == 0 else float(linked_account.get("realized_equity") or linked_account.get("initial_capital") or 0)
+                self.repo.update_training_account_balances(account_id, cash_balance=cash_after, realized_equity=realized_equity_after)
+                if active_risk_scenario and risk_order_preview:
+                    self._record_order_risk_events(
+                        session, payload, trade, risk_order_preview, int(active_risk_scenario["id"]),
+                        int(active_risk_revision["id"]) if active_risk_revision else None,
+                    )
+                if next_qty == 0 and active_risk_scenario:
+                    closed_trades = self._closed_trades_for_session(account_id, {**session, "position_qty": next_qty})
+                    last_closed = closed_trades[-1] if closed_trades else {}
+                    self.repo.close_risk_scenario(
+                        int(active_risk_scenario["id"]),
+                        {
+                            "closed_trade_id": last_closed.get("closed_trade_id") or f"{session_id}-{trade['id']}",
+                            "final_trade_id": int(trade["id"]), "final_net_pnl": last_closed.get("net_pnl"),
+                            "final_return_pct": last_closed.get("return_pct"),
+                        },
+                    )
+                self.repo.insert_account_ledger(
+                    {
+                        "training_account_id": account_id, "simulation_session_id": session_id,
+                        "simulation_trade_id": int(trade["id"]), "event_type": "FULL_SELL" if next_qty == 0 else "PARTIAL_SELL",
+                        "event_key": f"simulation_trade:{trade['id']}", "cash_delta": cash_return,
+                        "cash_before": round(account_cash_before, 4), "cash_after": cash_after,
+                        "realized_pnl_delta": round(realized_profit, 4) if next_qty == 0 else 0,
+                        "realized_equity_after": realized_equity_after, "description": "account-linked sell order",
+                        "metadata": {"amount": round(amount, 4), "fee": round(fee, 4), "quantity": int(payload.quantity), "price": float(payload.price)},
+                    }
+                )
+                self.repo.db.commit()
+        except Exception:
+            if linked_account:
+                self.repo.db.rollback()
+            raise
+        finally:
+            if linked_account:
+                self.repo.db.info.pop("trade_training_atomic_order", None)
         return self.get_session_detail(session_id)
-
     def finish(self, session_id: int) -> dict[str, Any]:
         session = self.repo.get_session(session_id)
         if not session:

@@ -16,6 +16,11 @@ from backend.app.schemas.trade_training_schema import (
     TradeTrainingAccountSummaryResponse,
     TradeTrainingAccountUpdate,
     TradeTrainingClosedTradeListResponse,
+    TradeTrainingRiskScenarioDetail,
+    TradeTrainingRiskScenarioDraftRequest,
+    TradeTrainingRiskScenarioRevisionListResponse,
+    RiskOrderPreviewRequest,
+    RiskOrderPreviewResponse,
     TrainingFinishResponse,
     TrainingGptPackageResponse,
     TrainingOrderRequest,
@@ -140,6 +145,43 @@ def save_training_review(
 ) -> dict:
     return TradeTrainingService(db).save_simulation_review(session_id, payload)
 
+
+@router.get("/trade-training/sessions/{session_id}/risk-scenario", response_model=TradeTrainingRiskScenarioDetail)
+def get_trade_training_risk_scenario(session_id: int, db: Session = Depends(get_db)) -> dict:
+    return TradeTrainingService(db).get_current_risk_scenario_detail(session_id)
+
+
+@router.put("/trade-training/sessions/{session_id}/risk-scenario/draft", response_model=TradeTrainingRiskScenarioDetail)
+def upsert_trade_training_risk_scenario_draft(
+    session_id: int,
+    payload: TradeTrainingRiskScenarioDraftRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    return TradeTrainingService(db).create_or_update_risk_scenario_draft(session_id, payload)
+
+
+@router.patch("/trade-training/risk-scenarios/{scenario_id}", response_model=TradeTrainingRiskScenarioDetail)
+def update_trade_training_risk_scenario(
+    scenario_id: int,
+    payload: TradeTrainingRiskScenarioDraftRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    return TradeTrainingService(db).update_active_risk_scenario(scenario_id, payload)
+
+
+@router.post("/trade-training/risk-scenarios/{scenario_id}/cancel", response_model=TradeTrainingRiskScenarioDetail)
+def cancel_trade_training_risk_scenario(scenario_id: int, db: Session = Depends(get_db)) -> dict:
+    return TradeTrainingService(db).cancel_risk_scenario_draft(scenario_id)
+
+
+@router.get("/trade-training/risk-scenarios/{scenario_id}/revisions", response_model=TradeTrainingRiskScenarioRevisionListResponse)
+def list_trade_training_risk_scenario_revisions(scenario_id: int, db: Session = Depends(get_db)) -> dict:
+    return TradeTrainingService(db).list_risk_scenario_revisions(scenario_id)
+
+
+@router.post("/trade-training/sessions/{session_id}/risk-order-preview", response_model=RiskOrderPreviewResponse)
+def preview_trade_training_risk_order(session_id: int, payload: RiskOrderPreviewRequest, db: Session = Depends(get_db)) -> dict:
+    return TradeTrainingService(db).calculate_risk_order_preview(session_id, payload)
 
 @router.post("/trade-training/sessions/{session_id}/next", response_model=TrainingSessionDetailResponse)
 def advance_training_session(session_id: int, db: Session = Depends(get_db)) -> dict:

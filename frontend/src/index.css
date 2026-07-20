@@ -31957,3 +31957,877 @@ button.chip-light {
   content: none;
   display: none;
 }
+
+.training-order-tabs {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
+.training-risk-panel {
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #f8fbff;
+  padding: 10px;
+  max-height: min(560px, calc(100vh - 250px));
+  overflow: auto;
+}
+
+.training-risk-status-row,
+.training-risk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.training-risk-status-row span:not(.training-risk-status) {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.training-risk-status {
+  width: fit-content;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #fff;
+  color: #475569;
+  padding: 5px 9px;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.training-risk-status.draft {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.training-risk-status.active {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.training-risk-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.training-risk-preview-grid div,
+.training-risk-order-link {
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 8px;
+  background: #fff;
+  padding: 9px 10px;
+}
+
+.training-risk-preview-grid span,
+.training-risk-grid label > span,
+.training-risk-wide > span,
+.training-risk-order-link label > span {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.training-risk-preview-grid strong {
+  display: block;
+  margin-top: 3px;
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.training-risk-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.training-risk-grid label,
+.training-risk-wide,
+.training-risk-order-link label {
+  display: grid;
+  gap: 5px;
+}
+
+.training-risk-order-link {
+  display: grid;
+  gap: 8px;
+}
+
+@media (max-width: 760px) {
+  .training-risk-grid,
+  .training-risk-preview-grid {
+    grid-template-columns: 1fr;
+  }
+}
+/* Account training modal polish */
+.account-training-modal {
+  width: min(1360px, calc(100vw - 40px));
+  height: min(860px, calc(100vh - 40px));
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.account-training-workspace {
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  background: #ffffff;
+}
+
+.account-training-modal-head {
+  padding: 16px 18px;
+  background: #ffffff;
+}
+
+.account-training-body {
+  grid-template-columns: 250px minmax(0, 1fr);
+  background: #ffffff;
+}
+
+.account-training-sidebar {
+  padding: 14px 12px;
+  background: #f8fafc;
+}
+
+.account-training-sidebar-head {
+  align-items: stretch;
+}
+
+.account-training-sidebar-head .btn {
+  min-height: 38px;
+  padding: 8px 12px;
+  white-space: nowrap;
+}
+
+.account-training-content {
+  padding: 14px 16px 18px;
+  background: #ffffff;
+}
+
+.account-training-form {
+  gap: 10px;
+  max-width: none;
+}
+
+.account-training-form .account-training-detail-head {
+  padding: 0 2px 4px;
+}
+
+.account-training-form .account-training-detail-head h4 {
+  font-size: 17px;
+  line-height: 1.25;
+}
+
+.account-training-form .account-training-detail-head span {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.account-training-form-section {
+  border-color: #e5e7eb;
+  background: #fbfcfe;
+  padding: 12px 14px 14px;
+  gap: 10px;
+}
+
+.account-training-form-section h5 {
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.account-training-form-grid {
+  gap: 10px 12px;
+}
+
+.account-training-form-grid label {
+  gap: 6px;
+}
+
+.account-training-form-grid label > span {
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.account-training-form .input-control,
+.account-training-form .select-control,
+.account-training-form .textarea-control {
+  min-height: 42px;
+  border-radius: 8px;
+  border-color: #d7dde8;
+  padding: 9px 12px;
+  color: #17142b;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.45;
+  box-shadow: none;
+}
+
+.account-training-form .input-control:focus,
+.account-training-form .select-control:focus,
+.account-training-form .textarea-control:focus {
+  border-color: #8ab4f8;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+  outline: none;
+}
+
+.account-training-form textarea.input-control,
+.account-training-form .textarea-control {
+  min-height: 92px;
+  padding-top: 10px;
+  resize: vertical;
+}
+
+.account-training-form-grid-risk .input-control,
+.account-training-form-grid-chart .input-control,
+.account-training-form-grid-basic .input-control {
+  font-variant-numeric: tabular-nums;
+}
+
+.account-training-form-footer {
+  position: static;
+  z-index: auto;
+  margin: 2px 0 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 12px;
+  align-items: center;
+}
+
+.account-training-form-footer .training-modal-actions {
+  align-items: center;
+}
+
+.account-training-form-footer .btn,
+.account-training-footer .btn {
+  min-height: 40px;
+  border-radius: 8px;
+  padding: 9px 16px;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.account-training-footer {
+  padding: 12px 18px;
+  background: #ffffff;
+}
+
+@media (max-width: 900px) {
+  .account-training-body {
+    grid-template-columns: 1fr;
+  }
+
+  .account-training-sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--color-hairline-cloud);
+  }
+
+  .account-training-form-grid-basic,
+  .account-training-form-grid-risk,
+  .account-training-form-grid-chart {
+    grid-template-columns: 1fr;
+  }
+
+  .account-training-form-footer {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+}
+
+/* Keep trade order modal actions out of the form body */
+.training-order-modal {
+  width: min(840px, calc(100vw - 36px));
+  max-height: calc(100vh - 36px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.training-order-modal > .training-modal-head,
+.training-order-modal > .training-modal-market,
+.training-order-modal > .training-order-account-panel,
+.training-order-modal > .training-order-tabs,
+.training-order-modal > .inline-result,
+.training-order-modal > .training-modal-actions {
+  flex: 0 0 auto;
+}
+
+.training-order-modal > .training-order-tab-panel,
+.training-order-modal > .training-method-review-tab-panel,
+.training-order-modal > .training-risk-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+  padding-bottom: 12px;
+}
+
+.training-order-modal > .training-risk-panel,
+.training-order-modal > .training-method-review-tab-panel {
+  max-height: none;
+}
+
+.training-order-modal .training-reason-field textarea {
+  min-height: 112px;
+}
+
+.training-order-modal > .training-modal-actions {
+  position: static;
+  flex-shrink: 0;
+  margin: 0 -16px -16px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--color-hairline-cloud);
+  background: #ffffff;
+  box-shadow: 0 -8px 18px rgba(15, 23, 42, 0.04);
+  z-index: 1;
+}
+
+@media (max-width: 760px) {
+  .training-order-modal {
+    width: 100%;
+  }
+
+  .training-order-modal > .training-modal-actions {
+    margin: 0 -16px -16px;
+  }
+}
+
+/* Chart-based risk planning */
+.training-risk-section {
+  display: grid;
+  gap: 10px;
+}
+
+.training-risk-section + .training-risk-section {
+  border-top: 1px solid #dbe3ef;
+  padding-top: 14px;
+}
+
+.training-risk-section > h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 900;
+}
+.training-risk-scenario-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.training-risk-scenario-grid label {
+  display: grid;
+  gap: 5px;
+}
+
+.training-risk-scenario-grid label > span {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.training-risk-scenario-grid textarea {
+  min-height: 76px;
+}
+
+.training-risk-picker-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.training-risk-picker-actions button,
+.training-inline-button {
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.training-risk-picker-actions button.active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.training-risk-picker-actions button.active-entry {
+  border-color: #7c3aed;
+  background: #f5f3ff;
+  color: #6d28d9;
+}
+
+.training-risk-picker-actions button.active-target {
+  border-color: #dc2626;
+  background: #fff1f2;
+  color: #b91c1c;
+}
+
+.training-risk-picker-actions button.active-stop {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.training-risk-picker-actions button.complete-action {
+  border-color: #1d4ed8;
+  background: #2563eb;
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.24);
+}
+
+.training-risk-picker-actions button.complete-action:hover {
+  border-color: #1e40af;
+  background: #1d4ed8;
+}
+
+.training-risk-picker-actions button.complete-action:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.28);
+  outline-offset: 2px;
+}
+
+.training-risk-chart-card {
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.training-risk-chart-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.training-risk-chart-head strong {
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.training-risk-chart-head span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.training-risk-chart-svg {
+  width: 100%;
+  min-height: 220px;
+  border: 1px solid #edf2f7;
+  border-radius: 8px;
+  display: block;
+}
+
+.training-risk-chart-svg.picking {
+  cursor: crosshair;
+}
+
+.training-risk-price-line line {
+  stroke-width: 2;
+  stroke-dasharray: 5 4;
+}
+
+.training-risk-price-line text {
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.training-risk-price-line.buy line,
+.training-risk-price-line.buy circle {
+  stroke: #7c3aed;
+  fill: #7c3aed;
+}
+
+.training-risk-price-line.buy text {
+  fill: #6d28d9;
+}
+
+.training-risk-price-line.target line,
+.training-risk-price-line.target circle {
+  stroke: #dc2626;
+  fill: #dc2626;
+}
+
+.training-risk-price-line.target text {
+  fill: #b91c1c;
+}
+
+.training-risk-price-line.stop line,
+.training-risk-price-line.stop circle {
+  stroke: #2563eb;
+  fill: #2563eb;
+}
+
+.training-risk-price-line.stop text {
+  fill: #1d4ed8;
+}
+
+.training-risk-price-line.full-stop line,
+.training-risk-price-line.full-stop circle {
+  stroke: #1e3a8a;
+  fill: #1e3a8a;
+}
+
+.training-risk-price-line.full-stop > line:not(.label-connector) {
+  stroke-width: 2.8;
+}
+
+.training-risk-price-line.full-stop text {
+  fill: #1e3a8a;
+}
+
+.training-risk-price-line .label-connector {
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+}
+
+.training-risk-hover-line line {
+  stroke: #111827;
+  stroke-width: 1.5;
+  stroke-dasharray: 3 3;
+}
+
+.training-risk-hover-line text {
+  fill: #111827;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.training-risk-price-list,
+.training-risk-plan-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.training-risk-price-chip,
+.training-risk-empty-chip,
+.training-risk-plan-summary span {
+  border: 1px solid var(--color-hairline-cloud);
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #475569;
+  padding: 5px 9px;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.training-risk-price-chip {
+  cursor: pointer;
+}
+
+.training-risk-price-chip.buy {
+  border-color: #ddd6fe;
+  background: #f5f3ff;
+  color: #6d28d9;
+}
+
+.training-risk-price-chip.target {
+  border-color: #fecdd3;
+  background: #fff1f2;
+  color: #b91c1c;
+}
+
+.training-risk-price-chip.stop {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.training-risk-price-chip.full-stop {
+  border-color: #93c5fd;
+  background: #dbeafe;
+  color: #1e3a8a;
+  box-shadow: inset 3px 0 0 #1e3a8a;
+}
+
+.training-risk-price-list.grouped {
+  display: grid;
+  gap: 7px;
+}
+
+.training-risk-price-group {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: start;
+  gap: 7px;
+}
+
+.training-risk-price-group > strong {
+  padding-top: 5px;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.training-risk-price-group > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.training-active-risk-panel {
+  margin: 0 0 12px;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: minmax(130px, 0.8fr) minmax(360px, 2fr) minmax(260px, 1.4fr) auto;
+  align-items: center;
+  gap: 10px 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.training-active-risk-panel.severity-caution {
+  border-color: #fed7aa;
+  background: #fff7ed;
+}
+
+.training-active-risk-panel.severity-warning {
+  border-color: #fecaca;
+  background: #fff1f2;
+}
+
+.training-active-risk-head,
+.training-active-risk-actions,
+.training-active-risk-next {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.training-active-risk-head {
+  flex-wrap: wrap;
+}
+
+.training-active-risk-head strong {
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.training-active-risk-head span {
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #fff;
+  color: #475569;
+  padding: 3px 7px;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.training-active-risk-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.training-active-risk-metrics div {
+  min-width: 0;
+}
+
+.training-active-risk-metrics span,
+.training-active-risk-metrics strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.training-active-risk-metrics span {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.training-active-risk-metrics strong {
+  margin-top: 2px;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.training-active-risk-next {
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.training-active-risk-next span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.training-active-risk-actions {
+  justify-content: flex-end;
+}
+
+.training-active-risk-actions .btn {
+  min-height: 32px;
+  padding: 6px 9px;
+  white-space: nowrap;
+}
+
+.training-risk-order-link small {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 700;
+}
+.training-order-risk-compare {
+  grid-column: 1 / -1;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #f8fbff;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.training-order-risk-compare div {
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  background: #fff;
+  padding: 8px 10px;
+}
+
+.training-order-risk-compare span,
+.training-order-risk-compare strong {
+  display: block;
+}
+
+.training-order-risk-compare span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.training-order-risk-compare strong {
+  margin-top: 3px;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.training-order-risk-compare p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #c2410c;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.training-order-risk-compare.severity-caution {
+  border-color: #fed7aa;
+  background: #fff7ed;
+}
+
+.training-order-risk-compare.severity-warning {
+  border-color: #fecaca;
+  background: #fff1f2;
+}
+
+.training-order-risk-compare .training-order-risk-compare-head {
+  grid-column: 1 / -1;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.training-order-risk-compare .training-order-risk-compare-head > strong {
+  margin: 0;
+  font-size: 12px;
+}
+
+.training-order-risk-compare .training-risk-compare-meta,
+.training-order-risk-compare .training-risk-warning {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.training-order-risk-compare .training-risk-warning.severity-caution {
+  color: #c2410c;
+}
+
+.training-order-risk-compare .training-risk-warning.severity-warning {
+  color: #b91c1c;
+}
+
+.training-risk-warning-confirm {
+  grid-column: 1 / -1;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.training-risk-warning-confirm > strong,
+.training-risk-warning-confirm > span {
+  margin: 0;
+}
+
+.training-risk-warning-confirm > span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.training-risk-warning-confirm > div {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+@media (max-width: 760px) {
+  .training-active-risk-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .training-active-risk-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .training-active-risk-actions {
+    justify-content: stretch;
+  }
+
+  .training-active-risk-actions .btn {
+    flex: 1 1 0;
+  }
+
+  .training-risk-warning-confirm > div {
+    flex-direction: column;
+  }
+
+  .training-risk-scenario-grid,
+  .training-order-risk-compare {
+    grid-template-columns: 1fr;
+  }
+}
