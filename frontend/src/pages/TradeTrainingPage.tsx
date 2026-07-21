@@ -1,15 +1,18 @@
 import { Fragment, FormEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { BarChart3, BriefcaseBusiness, ChevronDown, ChevronUp, Maximize2, Minimize2, Info, PauseCircle, Play, Plus, Search, Settings, ShoppingCart, StepForward, X } from "lucide-react";
+import { useLocation, useNavigate } from "react-router-dom";
 import EmptyState from "@/components/common/EmptyState";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
+import ScenarioHabitsPanel from "@/components/tradeTraining/ScenarioHabitsPanel";
 import { repositories } from "@/services";
 import type { MarketIndexDailyPriceItem } from "@/types/marketIndex";
 import type { TradeMethod, TradeMethodSaveRequest } from "@/types/tradeJournal";
 import type {
   SimulationReview,
   RiskOrderPreview,
+  RiskPendingResponse,
   TrainingCandle,
   TrainingEquityCurvePoint,
   TrainingGptPackage,
@@ -38,6 +41,7 @@ type OrderMode = "BUY" | "SELL";
 type MarketIndexCode = "KOSPI" | "KOSDAQ";
 type TradeMarkerSide = "BUY" | "SELL";
 type DrawingTool = "horizontal" | "trend" | null;
+type AlertMarkerVisibility = "SELECTED" | "ALL" | "HIDDEN";
 type TrendPoint = {
   index: number;
   price: number;
@@ -445,11 +449,17 @@ function CandleChart({
   trades,
   avgPriceLine,
   riskPlanLines,
+  riskReachAlerts,
+  selectedRiskReachAlertId,
+  riskAlertMarkerVisibility,
+  scrollTargetSignal,
+  restoreViewportSignal,
   displayDays,
   scrollTargetDate,
   highlightedTradeDate,
   highlightedTradeId,
   onMarkerClick,
+  onRiskReachAlertSelect,
   marketIndexControls,
   renderMarketIndexPanel,
 }: {
@@ -458,6 +468,12 @@ function CandleChart({
   trades: TrainingTrade[];
   avgPriceLine?: number | null;
   riskPlanLines?: TradeTrainingRiskPlanStep[];
+  riskReachAlerts?: RiskPendingResponse[];
+  selectedRiskReachAlertId?: number | null;
+  riskAlertMarkerVisibility?: AlertMarkerVisibility;
+  scrollTargetSignal?: number;
+  restoreViewportSignal?: number;
+  onRiskReachAlertSelect?: (id: number) => void;
   displayDays: number;
   scrollTargetDate?: string | null;
   highlightedTradeDate?: string | null;
@@ -473,6 +489,7 @@ function CandleChart({
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
   const [pendingTrendStart, setPendingTrendStart] = useState<TrendPoint | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const previousViewportRef = useRef<number | null>(null);
   const fallbackWidth = 1080;
   const [chartViewportWidth, setChartViewportWidth] = useState(fallbackWidth);
   const priceHeight = 420;
@@ -492,12 +509,34 @@ function CandleChart({
     String(step.status || "PLANNED").toUpperCase() !== "CANCELLED" &&
     Number(step.trigger_price || 0) > 0
   );
+  const allRiskReachAlerts = (riskReachAlerts || []).filter((alert) =>
+    !!alert.chart_date &&
+    Number(alert.trigger_price || 0) > 0 &&
+    candles.some((candle) => candle.trade_date === alert.chart_date)
+  );
+  const visibleRiskReachAlerts = riskAlertMarkerVisibility === "HIDDEN"
+    ? []
+    : riskAlertMarkerVisibility === "ALL"
+      ? allRiskReachAlerts
+      : allRiskReachAlerts.filter((alert) => alert.reach_event_id === selectedRiskReachAlertId);
+  const riskReachGroups = Array.from(visibleRiskReachAlerts.reduce((groups, alert) => {
+    const date = String(alert.chart_date);
+    const current = groups.get(date) || [];
+    current.push(alert);
+    groups.set(date, current);
+    return groups;
+  }, new Map<string, RiskPendingResponse[]>()).entries()).map(([date, alerts]) => ({
+    date,
+    alerts: sortPendingRiskAlerts(alerts),
+    selected: alerts.some((alert) => alert.reach_event_id === selectedRiskReachAlertId),
+  }));
   const riskPlanPrices = visibleRiskPlanLines.map((step) => Number(step.trigger_price));
-  const chartLowPrices = [...priced.map((candle) => Number(candle.low)), ...riskPlanPrices];
-  const chartHighPrices = [...priced.map((candle) => Number(candle.high)), ...riskPlanPrices];
+  const riskReachPrices = visibleRiskReachAlerts.map((alert) => Number(alert.trigger_price));
+  const chartLowPrices = [...priced.map((candle) => Number(candle.low)), ...riskPlanPrices, ...riskReachPrices];
+  const chartHighPrices = [...priced.map((candle) => Number(candle.high)), ...riskPlanPrices, ...riskReachPrices];
   const rawMinPrice = chartLowPrices.length ? Math.min(...chartLowPrices) : 0;
   const rawMaxPrice = chartHighPrices.length ? Math.max(...chartHighPrices) : 1;
-  const riskRangePadding = visibleRiskPlanLines.length ? Math.max(1, (rawMaxPrice - rawMinPrice) * 0.05) : 0;
+  const riskRangePadding = visibleRiskPlanLines.length || visibleRiskReachAlerts.length ? Math.max(1, (rawMaxPrice - rawMinPrice) * 0.05) : 0;
   const minPrice = Math.max(0, rawMinPrice - riskRangePadding);
   const maxPrice = rawMaxPrice + riskRangePadding;
   const span = Math.max(1, maxPrice - minPrice);
@@ -588,11 +627,26 @@ function CandleChart({
     if (!el || !scrollTargetDate) return;
     const targetIndex = candles.findIndex((candle) => candle.trade_date === scrollTargetDate);
     if (targetIndex < 0) return;
+    if (previousViewportRef.current === null) previousViewportRef.current = el.scrollLeft;
     requestAnimationFrame(() => {
       const targetX = xAt(targetIndex);
       el.scrollLeft = Math.max(0, targetX - el.clientWidth / 2);
     });
-  }, [scrollTargetDate, candles]);
+  }, [scrollTargetDate, scrollTargetSignal, candles]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !restoreViewportSignal || previousViewportRef.current === null) return;
+    const previous = previousViewportRef.current;
+    requestAnimationFrame(() => {
+      el.scrollLeft = previous;
+      previousViewportRef.current = null;
+    });
+  }, [restoreViewportSignal]);
+
+  useEffect(() => {
+    previousViewportRef.current = null;
+  }, [sessionId, displayDays]);
 
   useEffect(() => {
     setChartDrawings([]);
@@ -840,7 +894,37 @@ function CandleChart({
             </g>
           );
         })}
-        {tradeMarkers.map((marker) => {
+        {riskReachGroups.map((group) => {
+          const candleIndex = candles.findIndex((candle) => candle.trade_date === group.date);
+          if (candleIndex < 0) return null;
+          const x = xAt(candleIndex);
+          const selectedAlert = group.alerts.find((alert) => alert.reach_event_id === selectedRiskReachAlertId) || group.alerts[0];
+          const y = yPrice(Number(selectedAlert.trigger_price));
+          const isTarget = selectedAlert.event_type === "TAKE_PROFIT_REACHED";
+          const isFullStop = selectedAlert.event_type === "FULL_STOP_REACHED";
+          const color = isTarget ? "#dc2626" : isFullStop ? "#7f1d1d" : "#2563eb";
+          const title = [group.date, ...group.alerts.map((alert) => riskReachAlertLabel(alert) + " · " + fmtWon(alert.trigger_price)), group.alerts.some((alert) => alert.sequence_unknown) ? "같은 봉 내 선후 관계 알 수 없음" : ""].filter(Boolean).join("\n");
+          if (!group.selected) {
+            return (
+              <g key={"risk-reach-" + group.date} className="training-risk-reach-marker muted" onClick={() => onRiskReachAlertSelect?.(group.alerts[0].reach_event_id)}>
+                <line x1={x} x2={x} y1={pad.top + 2} y2={pad.top + 12} stroke={color} strokeWidth={2} opacity={0.45} />
+                <circle cx={x} cy={pad.top + 14} r={3.5} fill={color} opacity={0.45} />
+                <title>{title}</title>
+              </g>
+            );
+          }
+          return (
+            <g key={"risk-reach-" + group.date} className="training-risk-reach-marker selected">
+              <rect x={x - slot / 2} y={pad.top} width={slot} height={priceHeight} fill={color} opacity={0.055} pointerEvents="none" />
+              <line x1={x} x2={x} y1={pad.top} y2={pad.top + priceHeight} stroke={color} strokeWidth={1.2} strokeDasharray="3 5" opacity={0.7} pointerEvents="none" />
+              <circle cx={x} cy={y} r={10} fill={color} stroke="#ffffff" strokeWidth={2} />
+              <text x={x} y={y + 4} textAnchor="middle" fontSize="11" fontWeight="900" fill="#ffffff" pointerEvents="none">{group.alerts.length > 1 ? group.alerts.length : "!"}</text>
+              <rect x={x + 12} y={y - 15} width={92} height={22} rx={5} fill="#ffffff" stroke={color} opacity={0.94} pointerEvents="none" />
+              <text x={x + 18} y={y} fontSize="10" fontWeight="800" fill={color} pointerEvents="none">{riskReachAlertLabel(selectedAlert)} {fmtNumber(selectedAlert.trigger_price)}</text>
+              <title>{title}</title>
+            </g>
+          );
+        })}        {tradeMarkers.map((marker) => {
           const isActive = highlightedTradeDate === marker.tradeDate || marker.trades.some((trade) => trade.id === highlightedTradeId);
           const label = marker.side === "BUY" ? "B" : "S";
           const sideLabel = marker.side === "BUY" ? "매수" : "매도";
@@ -1391,7 +1475,7 @@ function TrainingMethodPrinciples({
 }
 
 type AccountStatusFilter = "ALL" | "ACTIVE" | "COMPLETED";
-type AccountDetailTab = "chart" | "active" | "closed";
+type AccountDetailTab = "chart" | "active" | "closed" | "habits";
 type AccountFormMode = "create" | "edit";
 
 const ACCOUNT_STATUS_LABELS: Record<string, string> = {
@@ -1730,6 +1814,7 @@ function AccountClosedTradesTable({ closedTrades, onOpenResult }: { closedTrades
 }
 
 function AccountPerformanceTabsV2({
+  accountId,
   tab,
   onTabChange,
   onNewTraining,
@@ -1740,6 +1825,7 @@ function AccountPerformanceTabsV2({
   onOpenResult,
   onResumeSession,
 }: {
+  accountId: number;
   tab: AccountDetailTab;
   onTabChange: (tab: AccountDetailTab) => void;
   onNewTraining: () => void;
@@ -1751,10 +1837,11 @@ function AccountPerformanceTabsV2({
   onResumeSession: (sessionId: number) => void;
 }) {
   const plrReason = profitLossRatioMessageV2(summary);
-  const tabs: Array<{ id: AccountDetailTab; label: string; count: number }> = [
+  const tabs: Array<{ id: AccountDetailTab; label: string; count: number | null }> = [
     { id: "chart", label: "손익차트", count: closedTrades.length },
     { id: "active", label: "진행 중 매매", count: sessions.length },
     { id: "closed", label: "완료 거래", count: closedTrades.length },
+    { id: "habits", label: "매매시나리오 습관", count: null },
   ];
   return (
     <div className="account-training-tabs">
@@ -1762,7 +1849,7 @@ function AccountPerformanceTabsV2({
         {tabs.map((item) => (
           <button key={item.id} type="button" role="tab" aria-selected={tab === item.id} className={tab === item.id ? "active" : ""} onClick={() => onTabChange(item.id)}>
             <span>{item.label}</span>
-            <em>{fmtNumber(item.count)}</em>
+            {item.count === null ? null : <em>{fmtNumber(item.count)}</em>}
           </button>
         ))}
       </div>
@@ -1775,6 +1862,7 @@ function AccountPerformanceTabsV2({
         {tab === "chart" ? <AccountProfitChartV2 performance={performance} onNewTraining={onNewTraining} onOpenResult={onOpenResult} /> : null}
         {tab === "active" ? <AccountActiveSessionsV2 sessions={sessions} onResumeSession={onResumeSession} /> : null}
         {tab === "closed" ? <AccountClosedTradesTableV2 closedTrades={closedTrades} onOpenResult={onOpenResult} /> : null}
+        {tab === "habits" ? <ScenarioHabitsPanel accountId={accountId} onOpenResult={onOpenResult} /> : null}
       </div>
     </div>
   );
@@ -2653,6 +2741,7 @@ function TrainingAccountDetail({
         <span>완료 거래 {fmtNumber(summary?.closed_trade_count ?? 0)}건</span>
       </div>
       <AccountPerformanceTabsV2
+        accountId={account.id}
         tab={tab}
         onTabChange={onTabChange}
         onNewTraining={onNewTraining}
@@ -2899,7 +2988,7 @@ function AccountTrainingWorkspace({
           <div className="account-training-confirm" role="dialog" aria-modal="true" aria-label="훈련계좌 삭제 확인">
             <h4>훈련계좌를 삭제하시겠습니까?</h4>
             <p><strong>계좌명: {deleteTarget.name}</strong></p>
-            <p>이 계좌와 연결된 진행 중 매매, 완료 거래, 매수·매도 이력 및 손익 데이터가 모두 삭제됩니다. 삭제한 데이터는 복구할 수 없습니다.</p>
+            <p>이 계좌와 연결된 진행 중 매매, 완료 거래, 매수·매도 이력, 손익 데이터 및 매매시나리오 습관 데이터가 모두 삭제됩니다. 삭제한 데이터는 복구할 수 없습니다.</p>
             <p>연결된 종목훈련 {fmtNumber(sessions.length)}건 · 완료 거래 {fmtNumber(closedTrades.length)}건</p>
         <div className="training-modal-actions">
               <button type="button" className="btn btn-secondary" disabled={saving} onClick={() => setDeleteTarget(null)}>취소</button>
@@ -3115,7 +3204,7 @@ function SettingsModal({
           <label><span>시작일</span><input className="input-control" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label>
           <label><span>종료일</span><input className="input-control" type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label>
         </div>
-        <p className="training-settings-help">선택한 종목의 수집 기간이 기본값으로 설정됩니다. 필요하면 직접 수정할 수 있습니다.</p>
+        <p className="training-settings-help">선택한 종목의 수집 기간이 기본값으로 설정됩니다. 시작일 이전 가격은 최대 30봉까지 차트에 먼저 표시되며, 이전 데이터가 없으면 시작일 1봉부터 표시됩니다.</p>
         <div className="training-modal-actions">
           <button type="button" className="btn btn-secondary" onClick={onClose}>닫기</button>
           <button type="submit" className="btn btn-primary" disabled={!selectedStock || loading}>
@@ -4009,6 +4098,7 @@ function OrderModal({
   onClose,
   onSubmit,
   onRiskScenarioChange,
+  onRiskPlanSaved,
   initialTab,
 }: {
   mode: OrderMode;
@@ -4016,6 +4106,7 @@ function OrderModal({
   onClose: () => void;
   onSubmit: (payload: TrainingOrderRequest) => Promise<void>;
   onRiskScenarioChange: (next: TradeTrainingRiskScenarioDetail | null) => void;
+  onRiskPlanSaved?: () => void;
   initialTab?: OrderModalTab;
 }) {
   const candle = detail.current_candle;
@@ -4395,6 +4486,7 @@ function OrderModal({
               onRiskScenarioChange(next);
             }}
             onSelectStep={setSelectedRiskPlanStepId}
+            onSaved={onRiskPlanSaved}
           />
         ) : (
           <div className="training-method-review-panel training-method-review-tab-panel">
@@ -4509,6 +4601,177 @@ function OrderModal({
   );
 }
 
+function riskReachAlertLabel(item: RiskPendingResponse): string {
+  if (item.event_type === "TAKE_PROFIT_REACHED") return item.step_no ? item.step_no + "차 익절" : "익절";
+  if (item.event_type === "FULL_STOP_REACHED") return "전량손절";
+  return item.step_no ? item.step_no + "차 손절" : "분할손절";
+}
+
+function sortPendingRiskAlerts(items: RiskPendingResponse[]): RiskPendingResponse[] {
+  return [...items].sort((a, b) => {
+    const dateCompare = String(b.chart_date || "").localeCompare(String(a.chart_date || ""));
+    if (dateCompare) return dateCompare;
+    const createdCompare = String(b.created_at || "").localeCompare(String(a.created_at || ""));
+    return createdCompare || Number(b.reach_event_id || 0) - Number(a.reach_event_id || 0);
+  });
+}
+
+function RiskReachAlertPanel({
+  pending,
+  selectedId,
+  loading,
+  responseAction,
+  notice,
+  canRestoreChart,
+  onSelect,
+  onMoveChart,
+  onRestoreChart,
+  onRespond,
+  onOpenPlan,
+}: {
+  pending: RiskPendingResponse[];
+  selectedId: number | null;
+  loading: boolean;
+  responseAction: "SELL" | "HOLD" | "PLAN_REVISED" | null;
+  notice: string;
+  canRestoreChart: boolean;
+  onSelect: (id: number) => void;
+  onMoveChart: (item: RiskPendingResponse) => void;
+  onRestoreChart: () => void;
+  onRespond: (item: RiskPendingResponse, response: "SELL" | "HOLD", reason: string) => void;
+  onOpenPlan: (item: RiskPendingResponse) => void;
+}) {
+  const sorted = useMemo(() => sortPendingRiskAlerts(pending), [pending]);
+  const foundIndex = sorted.findIndex((candidate) => candidate.reach_event_id === selectedId);
+  const selectedIndex = foundIndex >= 0 ? foundIndex : 0;
+  const item = sorted[selectedIndex] ?? null;
+  const ordinal = item ? sorted.length - selectedIndex : 0;
+  const [reason, setReason] = useState("");
+  const [listOpen, setListOpen] = useState(false);
+  const [holdOpen, setHoldOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const listRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    setReason("");
+    setHoldOpen(false);
+    setDetailsOpen(false);
+  }, [item?.reach_event_id]);
+
+  useEffect(() => {
+    if (!listOpen) return;
+    const handlePointer = (event: globalThis.MouseEvent) => {
+      if (!listRef.current?.contains(event.target as Node)) setListOpen(false);
+    };
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setListOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointer);
+    window.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handlePointer);
+      window.removeEventListener("keydown", handleKey);
+    };
+  }, [listOpen]);
+
+  if (!item) return notice ? <div className="training-risk-reach-notice compact" role="status">{notice}</div> : null;
+
+  const isTarget = item.event_type === "TAKE_PROFIT_REACHED";
+  const isFullStop = item.event_type === "FULL_STOP_REACHED";
+  const typeClass = isTarget ? "target" : isFullStop ? "full-stop" : "partial-stop";
+  const sellLabel = isTarget ? "매도" : isFullStop ? "전량매도" : "분할매도";
+  const selectOlder = () => {
+    const older = sorted[selectedIndex + 1];
+    if (older) onSelect(older.reach_event_id);
+  };
+  const selectNewer = () => {
+    const newer = sorted[selectedIndex - 1];
+    if (newer) onSelect(newer.reach_event_id);
+  };
+
+  return (
+    <section className={"training-risk-reach-alert compact " + typeClass} aria-live="polite" aria-busy={responseAction !== null}>
+      <div className="training-risk-alert-main">
+        <button type="button" className="training-risk-alert-summary" onClick={() => setDetailsOpen((current) => !current)} aria-expanded={detailsOpen}>
+          <span className={"training-risk-alert-badge " + typeClass}>{riskReachAlertLabel(item)}</span>
+          <strong>{fmtWon(item.trigger_price)}</strong>
+          <span>{String(item.chart_date || "").slice(2).replace(/-/g, ".")}</span>
+        </button>
+
+        <div className="training-risk-alert-navigation" ref={listRef}>
+          <button type="button" className="training-risk-alert-count" onClick={() => setListOpen((current) => !current)} aria-expanded={listOpen}>
+            미응답 {sorted.length}건
+          </button>
+          <button type="button" onClick={selectOlder} disabled={selectedIndex >= sorted.length - 1} aria-label="이전 알림: 더 오래된 알림" title="더 오래된 알림">‹</button>
+          <strong>{ordinal} / {sorted.length}</strong>
+          <button type="button" onClick={selectNewer} disabled={selectedIndex <= 0} aria-label="다음 알림: 더 최근 알림" title="더 최근 알림">›</button>
+          {listOpen ? (
+            <div className="training-risk-alert-list" role="listbox" aria-label="미응답 알림 목록">
+              <strong>미응답 알림 {sorted.length}건</strong>
+              <div>
+                {sorted.map((alert, index) => {
+                  const alertOrdinal = sorted.length - index;
+                  return (
+                    <button
+                      type="button"
+                      key={alert.reach_event_id}
+                      className={alert.reach_event_id === item.reach_event_id ? "active" : ""}
+                      onClick={() => {
+                        onSelect(alert.reach_event_id);
+                        setListOpen(false);
+                      }}
+                      role="option"
+                      aria-selected={alert.reach_event_id === item.reach_event_id}
+                    >
+                      <b>{alertOrdinal}.</b>
+                      <span>{String(alert.chart_date || "").slice(2).replace(/-/g, ".")}</span>
+                      <span>{riskReachAlertLabel(alert)}</span>
+                      <span>{fmtWon(alert.trigger_price)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="training-risk-reach-actions">
+        <button type="button" className="btn btn-secondary" disabled={!item.chart_date} onClick={() => onMoveChart(item)}>차트 이동</button>
+        {canRestoreChart ? <button type="button" className="training-risk-restore-button" onClick={onRestoreChart} title="차트 이동 전 위치로 돌아가기" aria-label="원래 차트 위치">↶</button> : null}
+        <button type="button" className="btn btn-danger" disabled={loading} onClick={() => onRespond(item, "SELL", reason)}>{sellLabel}</button>
+        <button type="button" className="btn btn-secondary" disabled={loading} onClick={() => setHoldOpen((current) => !current)}>보유</button>
+        <button type="button" className="btn btn-secondary" disabled={loading} onClick={() => onOpenPlan(item)}>수정</button>
+      </div>
+
+      {detailsOpen ? (
+        <div className="training-risk-alert-details">
+          <span>{item.chart_date}</span>
+          <span>{isTarget ? "고가 " + fmtWon(item.day_high) : "저가 " + fmtWon(item.day_low)}</span>
+          <span>보유 {fmtNumber(item.position_quantity)}주</span>
+          {item.sequence_unknown ? <span>같은 봉 내 선후 관계 알 수 없음</span> : null}
+        </div>
+      ) : null}
+
+      {holdOpen ? (
+        <div className="training-risk-hold-panel">
+          <span>계속 보유 사유</span>
+          <div>
+            {["추세 유지", "종가 지지", "거래량 확인"].map((preset) => (
+              <button type="button" key={preset} className={reason === preset ? "active" : ""} onClick={() => setReason(preset)}>{preset}</button>
+            ))}
+          </div>
+          <input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="직접 입력 (선택)" aria-label="계속 보유 사유" />
+          <button type="button" className="btn btn-secondary" disabled={loading} onClick={() => onRespond(item, "HOLD", reason)}>
+            {responseAction === "HOLD" ? "기록 중..." : "기록"}
+          </button>
+        </div>
+      ) : null}
+
+      {notice ? <div className="training-risk-reach-notice compact" role="status">{notice}</div> : null}
+    </section>
+  );
+}
 function ActiveRiskPanel({
   detail,
   showPlanLines,
@@ -4797,6 +5060,9 @@ function TrainingMethodPrinciplesModal({
 }
 
 function TradeTrainingPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const handledCalendarLocationRef = useRef("");
   const [q, setQ] = useState("");
   const [stocks, setStocks] = useState<TrainingStockItem[]>([]);
   const [selectedStock, setSelectedStock] = useState<TrainingStockItem | null>(null);
@@ -4832,11 +5098,58 @@ function TradeTrainingPage() {
   const [marketIndexPriceMap, setMarketIndexPriceMap] = useState<Partial<Record<MarketIndexCode, MarketIndexDailyPriceItem[]>>>({});
   const [marketIndexLoadingCode, setMarketIndexLoadingCode] = useState<MarketIndexCode | null>(null);
   const [marketIndexError, setMarketIndexError] = useState<string | null>(null);
+  const [riskResponseAction, setRiskResponseAction] = useState<"SELL" | "HOLD" | "PLAN_REVISED" | null>(null);
+  const [riskResponseNotice, setRiskResponseNotice] = useState("");
+  const [selectedPendingAlertId, setSelectedPendingAlertId] = useState<number | null>(null);
+  const [pendingSellAlert, setPendingSellAlert] = useState<{ item: RiskPendingResponse; reason: string } | null>(null);
+  const [pendingPlanRevisionAlert, setPendingPlanRevisionAlert] = useState<RiskPendingResponse | null>(null);
+  const [riskAlertMarkerVisibility, setRiskAlertMarkerVisibility] = useState<AlertMarkerVisibility>(() => {
+    const stored = typeof window !== "undefined" ? window.localStorage.getItem("drct.tradeTraining.riskAlertMarkerVisibility") : null;
+    return stored === "ALL" || stored === "HIDDEN" ? stored : "SELECTED";
+  });
+  const [riskControlsOpen, setRiskControlsOpen] = useState(false);
+  const [scrollTargetSignal, setScrollTargetSignal] = useState(0);
+  const [restoreViewportSignal, setRestoreViewportSignal] = useState(0);
+  const [canRestoreRiskViewport, setCanRestoreRiskViewport] = useState(false);
+  const previousPendingAlertIdsRef = useRef<Set<number>>(new Set());
 
   const selectedTrainingMethod = useMemo(
     () => tradeMethods.find((method) => method.id === selectedMethodId) ?? null,
     [tradeMethods, selectedMethodId]
   );
+  const pendingRiskAlerts = useMemo(
+    () => sortPendingRiskAlerts(detail?.risk_scenario?.pending_responses ?? []),
+    [detail?.risk_scenario?.pending_responses]
+  );
+  const pendingRiskAlertKey = pendingRiskAlerts.map((item) => item.reach_event_id).join(",");
+
+  useEffect(() => {
+    window.localStorage.setItem("drct.tradeTraining.riskAlertMarkerVisibility", riskAlertMarkerVisibility);
+  }, [riskAlertMarkerVisibility]);
+
+  useEffect(() => {
+    previousPendingAlertIdsRef.current = new Set();
+    setSelectedPendingAlertId(null);
+    setPendingSellAlert(null);
+    setPendingPlanRevisionAlert(null);
+    setCanRestoreRiskViewport(false);
+  }, [detail?.session.id]);
+
+  useEffect(() => {
+    if (!pendingRiskAlerts.length) {
+      previousPendingAlertIdsRef.current = new Set();
+      setSelectedPendingAlertId(null);
+      return;
+    }
+    const previousIds = previousPendingAlertIdsRef.current;
+    const newlyAdded = pendingRiskAlerts.filter((item) => !previousIds.has(item.reach_event_id));
+    setSelectedPendingAlertId((current) => {
+      if (newlyAdded.length && previousIds.size > 0) return newlyAdded[0].reach_event_id;
+      if (current && pendingRiskAlerts.some((item) => item.reach_event_id === current)) return current;
+      return pendingRiskAlerts[0].reach_event_id;
+    });
+    previousPendingAlertIdsRef.current = new Set(pendingRiskAlerts.map((item) => item.reach_event_id));
+  }, [pendingRiskAlertKey]);
 
   const loadStocks = async (keyword = q) => {
     setLoading(true);
@@ -4940,6 +5253,16 @@ function TradeTrainingPage() {
     }
   };
 
+  useEffect(() => {
+    const calendarState = location.state as {
+      calendarSessionId?: number;
+      calendarSelection?: ResultTradeSelection;
+    } | null;
+    if (!calendarState?.calendarSessionId || handledCalendarLocationRef.current === location.key) return;
+    handledCalendarLocationRef.current = location.key;
+    void openResultReport(calendarState.calendarSessionId, calendarState.calendarSelection ?? null);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.key]);
   const mutateDetail = async (action: () => Promise<TrainingSessionDetail>, successMessage: string) => {
     setLoading(true);
     setError("");
@@ -4977,16 +5300,51 @@ function TradeTrainingPage() {
     }
   };
 
+  const recordRiskResponse = async (
+    item: RiskPendingResponse,
+    responseType: "SELL" | "HOLD" | "PLAN_REVISED",
+    reason: string,
+    baseDetail?: TrainingSessionDetail,
+  ) => {
+    if (!detail) return null;
+    const response = await repositories.tradeTraining.recordRiskLevelResponse(detail.session.id, {
+      reach_event_id: item.reach_event_id,
+      response_type: responseType,
+      reason: reason.trim() || undefined,
+    });
+    const nextSorted = sortPendingRiskAlerts(response.pending_responses);
+    const nextSelectedId = nextSorted[0]?.reach_event_id ?? null;
+    previousPendingAlertIdsRef.current = new Set(nextSorted.map((candidate) => candidate.reach_event_id));
+    setSelectedPendingAlertId(nextSelectedId);
+    setDetail((current) => {
+      const source = baseDetail ?? current;
+      return source ? {
+        ...source,
+        risk_scenario: source.risk_scenario
+          ? { ...source.risk_scenario, pending_responses: response.pending_responses }
+          : source.risk_scenario,
+      } : source;
+    });
+    return response;
+  };
+
   const submitOrder = async (payload: TrainingOrderRequest) => {
     if (!detail || !orderMode) return;
+    const submittedMode = orderMode;
     const response =
-      orderMode === "BUY"
+      submittedMode === "BUY"
         ? await repositories.tradeTraining.buy(detail.session.id, payload)
         : await repositories.tradeTraining.sell(detail.session.id, payload);
-    setDetail(response);
+    if (submittedMode === "SELL" && pendingSellAlert) {
+      await recordRiskResponse(pendingSellAlert.item, "SELL", pendingSellAlert.reason, response);
+      setPendingSellAlert(null);
+      setRiskResponseNotice("매도 주문과 알림 대응을 기록했습니다.");
+    } else {
+      setDetail(response);
+    }
     setScrollTargetDate(null);
     setOrderMode(null);
-    setMessage(orderMode === "BUY" ? "매수 체결되었습니다." : "매도 체결되었습니다.");
+    setMessage(submittedMode === "BUY" ? "매수 체결되었습니다." : "매도 체결되었습니다.");
   };
 
   const handleSaveMethodPrinciples = async (methodId: number, payload: Partial<TradeMethodSaveRequest>) => {
@@ -5015,6 +5373,66 @@ function TradeTrainingPage() {
     setHighlightedTradeId(tradeId);
   };
 
+  const moveToRiskAlert = (item: RiskPendingResponse) => {
+    if (!item.chart_date) return;
+    setSelectedPendingAlertId(item.reach_event_id);
+    setHighlightedTradeDate(item.chart_date);
+    setHighlightedTradeId(null);
+    setScrollTargetDate(item.chart_date);
+    setScrollTargetSignal((current) => current + 1);
+    setCanRestoreRiskViewport(true);
+  };
+
+  const restoreRiskAlertViewport = () => {
+    setScrollTargetDate(null);
+    setRestoreViewportSignal((current) => current + 1);
+    setCanRestoreRiskViewport(false);
+  };
+
+  const handleRiskReachResponse = async (item: RiskPendingResponse, responseType: "SELL" | "HOLD", reason: string) => {
+    if (!detail) return;
+    setRiskResponseNotice("");
+    setError("");
+    if (responseType === "SELL") {
+      setPendingSellAlert({ item, reason });
+      setOrderInitialTab("order");
+      setOrderMode("SELL");
+      return;
+    }
+    setLoading(true);
+    setRiskResponseAction("HOLD");
+    try {
+      const response = await recordRiskResponse(item, "HOLD", reason);
+      const remainingCount = response?.pending_responses.length ?? 0;
+      setRiskResponseNotice(remainingCount ? "보유 대응을 기록했습니다." : "모든 도달 알림을 처리했습니다.");
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "도달 대응을 기록하지 못했습니다.");
+    } finally {
+      setLoading(false);
+      setRiskResponseAction(null);
+    }
+  };
+
+  const openRiskPlanForAlert = (item: RiskPendingResponse) => {
+    setPendingPlanRevisionAlert(item);
+    setRiskResponseNotice("리스크 계획 화면을 열었습니다. 계획 변경을 저장하면 대응이 기록됩니다.");
+    setOrderInitialTab("risk");
+    setOrderMode("BUY");
+  };
+
+  const handleRiskPlanSaved = async () => {
+    if (!pendingPlanRevisionAlert) return;
+    setRiskResponseAction("PLAN_REVISED");
+    try {
+      await recordRiskResponse(pendingPlanRevisionAlert, "PLAN_REVISED", "리스크 계획 변경 저장");
+      setPendingPlanRevisionAlert(null);
+      setRiskResponseNotice("계획 변경과 알림 대응을 기록했습니다.");
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "계획 수정 대응을 기록하지 못했습니다.");
+    } finally {
+      setRiskResponseAction(null);
+    }
+  };
   const handleNextDay = () => {
     if (!detail) return;
     void mutateDetail(() => repositories.tradeTraining.next(detail.session.id), "다음 거래일로 이동했습니다.");
@@ -5043,7 +5461,7 @@ function TradeTrainingPage() {
     setMarketIndexLoadingCode(indexCode);
     try {
       const response = await repositories.marketIndexes.listDailyPrices(indexCode, {
-        start_date: detail.session.start_date,
+        start_date: detail.candles[0]?.trade_date || detail.session.start_date,
         end_date: detail.session.end_date,
       });
       setMarketIndexPriceMap((prev) => ({ ...prev, [indexCode]: response.items || [] }));
@@ -5195,12 +5613,31 @@ function TradeTrainingPage() {
                 onTogglePlanLines={() => setShowRiskPlanLines((current) => !current)}
                 onOpenPlan={() => { setOrderInitialTab("risk"); setOrderMode("BUY"); }}
               />
+              <RiskReachAlertPanel
+                pending={pendingRiskAlerts}
+                selectedId={selectedPendingAlertId}
+                loading={loading}
+                responseAction={riskResponseAction}
+                notice={riskResponseNotice}
+                canRestoreChart={canRestoreRiskViewport}
+                onSelect={setSelectedPendingAlertId}
+                onMoveChart={moveToRiskAlert}
+                onRestoreChart={restoreRiskAlertViewport}
+                onRespond={(item, responseType, reason) => void handleRiskReachResponse(item, responseType, reason)}
+                onOpenPlan={openRiskPlanForAlert}
+              />
               <CandleChart
                 sessionId={detail.session.id}
                 candles={detail.candles}
                 trades={detail.trades}
                 avgPriceLine={showAvgPriceLine && detail.session.position_qty > 0 ? detail.session.avg_price : null}
                 riskPlanLines={showRiskPlanLines ? [...(detail.risk_scenario?.buy_steps ?? []), ...(detail.risk_scenario?.sell_steps ?? [])] : []}
+                riskReachAlerts={pendingRiskAlerts}
+                selectedRiskReachAlertId={selectedPendingAlertId}
+                riskAlertMarkerVisibility={riskAlertMarkerVisibility}
+                scrollTargetSignal={scrollTargetSignal}
+                restoreViewportSignal={restoreViewportSignal}
+                onRiskReachAlertSelect={setSelectedPendingAlertId}
                 displayDays={displayDays}
                 scrollTargetDate={scrollTargetDate}
                 highlightedTradeDate={highlightedTradeDate}
@@ -5219,15 +5656,37 @@ function TradeTrainingPage() {
                         {MARKET_INDEX_LABELS[indexCode]}
                       </button>
                     ))}
-                    <button
-                      className={`training-chart-tool-btn training-market-index-toggle ${showRiskPlanLines ? "active" : ""}`}
-                      type="button"
-                      disabled={!detail.risk_scenario?.scenario}
-                      onClick={() => setShowRiskPlanLines((current) => !current)}
-                      title={showRiskPlanLines ? "리스크 계획선 숨기기" : "리스크 계획선 보기"}
-                    >
-                      리스크관리
-                    </button>
+                    <div className="training-risk-chart-controls">
+                      <button
+                        className={"training-chart-tool-btn training-market-index-toggle " + (riskControlsOpen ? "active" : "")}
+                        type="button"
+                        disabled={!detail.risk_scenario?.scenario}
+                        onClick={() => setRiskControlsOpen((current) => !current)}
+                        aria-expanded={riskControlsOpen}
+                      >
+                        리스크관리
+                      </button>
+                      {riskControlsOpen ? (
+                        <div className="training-risk-chart-popover">
+                          <div>
+                            <span>리스크 계획선</span>
+                            <button type="button" className={showRiskPlanLines ? "active" : ""} onClick={() => setShowRiskPlanLines(true)}>표시</button>
+                            <button type="button" className={!showRiskPlanLines ? "active" : ""} onClick={() => setShowRiskPlanLines(false)}>숨김</button>
+                          </div>
+                          <div>
+                            <span>도달 알림 마커</span>
+                            {([
+                              ["SELECTED", "선택만"],
+                              ["ALL", "전체"],
+                              ["HIDDEN", "숨김"],
+                            ] as Array<[AlertMarkerVisibility, string]>).map(([value, label]) => (
+                              <button type="button" key={value} className={riskAlertMarkerVisibility === value ? "active" : ""} onClick={() => setRiskAlertMarkerVisibility(value)}>{label}</button>
+                            ))}
+                          </div>
+                          <button type="button" className="training-risk-plan-open" onClick={() => { setRiskControlsOpen(false); setOrderInitialTab("risk"); setOrderMode("BUY"); }}>계획 보기·수정</button>
+                        </div>
+                      ) : null}
+                    </div>
                   </>
                 }
                 renderMarketIndexPanel={(chartLayout) => selectedMarketIndex ? (
@@ -5342,9 +5801,14 @@ function TradeTrainingPage() {
           mode={orderMode}
           detail={detail}
           initialTab={orderInitialTab}
-          onClose={() => setOrderMode(null)}
+          onClose={() => {
+            setOrderMode(null);
+            setPendingSellAlert(null);
+            setPendingPlanRevisionAlert(null);
+          }}
           onSubmit={submitOrder}
           onRiskScenarioChange={(next) => setDetail((current) => current ? { ...current, risk_scenario: next } : current)}
+          onRiskPlanSaved={() => void handleRiskPlanSaved()}
         />
       ) : null}
       {result ? (

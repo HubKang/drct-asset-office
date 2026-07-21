@@ -397,6 +397,7 @@ class TradeTrainingRiskScenarioDetail(BaseModel):
     requires_plan_before_buy: bool = False
     holding_risk: dict | None = None
     events: list[dict] = Field(default_factory=list)
+    pending_responses: list[dict] = Field(default_factory=list)
 
 
 class TradeTrainingRiskScenarioRevisionListResponse(BaseModel):
@@ -408,6 +409,15 @@ class RiskOrderPreviewRequest(BaseModel):
     price: float = Field(gt=0)
     quantity: int = Field(gt=0)
     risk_plan_step_id: int | None = None
+
+class RiskLevelReachCheckRequest(BaseModel):
+    chart_date: str
+
+
+class RiskLevelResponseRequest(BaseModel):
+    reach_event_id: int
+    response_type: str
+    reason: str | None = None
 
 
 class RiskOrderWarning(BaseModel):
@@ -653,40 +663,53 @@ class SimulationReviewSaveRequest(BaseModel):
     discipline_score: int | None = Field(default=None, ge=0, le=100)
 
 
-class TrainingCalendarStock(BaseModel):
+class TrainingCalendarItem(BaseModel):
+    calendar_item_id: str
+    training_type: str
+    completed_date: str
+    completed_at: str | None = None
+    session_id: int
+    closed_trade_id: str | None = None
+    training_account_id: int | None = None
+    training_account_name: str | None = None
     stock_code: str | None = None
     stock_name: str
-    training_count: int
-    total_return_rate: float
-    avg_return_rate: float
-    review_saved_count: int
-
-
-class TrainingCalendarMethodGroup(BaseModel):
-    trade_method_id: int | None = None
-    trade_method_name: str
-    training_count: int
-    total_return_rate: float
-    avg_return_rate: float
-    review_saved_count: int
-    stocks: list[TrainingCalendarStock] = Field(default_factory=list)
+    chart_entry_date: str | None = None
+    chart_exit_date: str | None = None
+    net_pnl: float
+    return_rate: float
+    result_type: str
+    scenario_execution_rate: float | None = None
+    review_status: str
+    review_done: bool
 
 
 class TrainingCalendarDay(BaseModel):
     date: str
     training_count: int
+    unique_stock_count: int
     total_return_rate: float
     avg_return_rate: float
-    training_score: int
+    win_count: int
+    loss_count: int
+    flat_count: int
     review_saved_count: int
     review_required_count: int
-    method_groups: list[TrainingCalendarMethodGroup] = Field(default_factory=list)
+    items: list[TrainingCalendarItem] = Field(default_factory=list)
+
+
+class TrainingCalendarGrowthPoint(BaseModel):
+    date: str
+    training_count: int
+    daily_return_rate: float
+    cumulative_return_rate: float
 
 
 class TrainingCalendarSummary(BaseModel):
-    total_sessions: int
+    total_trainings: int
     training_days: int
-    avg_training_score: int
+    unique_stock_count: int
+    total_return_rate: float
     avg_return_rate: float
     review_completion_rate: float
 
@@ -695,3 +718,4 @@ class TrainingCalendarResponse(BaseModel):
     month: str
     summary: TrainingCalendarSummary
     days: list[TrainingCalendarDay] = Field(default_factory=list)
+    growth: list[TrainingCalendarGrowthPoint] = Field(default_factory=list)

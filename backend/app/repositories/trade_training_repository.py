@@ -179,7 +179,7 @@ class TradeTrainingRepository:
                     risk_scenario_id INTEGER NOT NULL,
                     risk_scenario_revision_id INTEGER,
                     risk_plan_step_id INTEGER,
-                    simulation_trade_id INTEGER NOT NULL,
+                    simulation_trade_id INTEGER,
                     event_key TEXT NOT NULL,
                     event_type TEXT NOT NULL,
                     severity TEXT NOT NULL,
@@ -195,6 +195,50 @@ class TradeTrainingRepository:
                 """
             )
         )
+        risk_event_columns = {
+            str(row["name"]): row
+            for row in self.db.execute(text("PRAGMA table_info(trade_training_risk_events)")).mappings().all()
+        }
+        trade_id_column = risk_event_columns.get("simulation_trade_id")
+        if trade_id_column and int(trade_id_column.get("notnull") or 0) == 1:
+            self.db.execute(text("ALTER TABLE trade_training_risk_events RENAME TO trade_training_risk_events_legacy_nonnullable"))
+            self.db.execute(text("""
+                CREATE TABLE trade_training_risk_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    training_account_id INTEGER NOT NULL,
+                    simulation_session_id INTEGER NOT NULL,
+                    risk_scenario_id INTEGER NOT NULL,
+                    risk_scenario_revision_id INTEGER,
+                    risk_plan_step_id INTEGER,
+                    simulation_trade_id INTEGER,
+                    event_key TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    planned_value_json TEXT,
+                    actual_value_json TEXT,
+                    message TEXT NOT NULL DEFAULT '',
+                    acknowledged INTEGER NOT NULL DEFAULT 0,
+                    acknowledged_at TEXT,
+                    acknowledgement_note TEXT,
+                    chart_date TEXT,
+                    created_at TEXT NOT NULL
+                )
+            """))
+            self.db.execute(text("""
+                INSERT INTO trade_training_risk_events (
+                    id, training_account_id, simulation_session_id, risk_scenario_id,
+                    risk_scenario_revision_id, risk_plan_step_id, simulation_trade_id,
+                    event_key, event_type, severity, planned_value_json, actual_value_json,
+                    message, acknowledged, acknowledged_at, acknowledgement_note, chart_date, created_at
+                )
+                SELECT
+                    id, training_account_id, simulation_session_id, risk_scenario_id,
+                    risk_scenario_revision_id, risk_plan_step_id, simulation_trade_id,
+                    event_key, event_type, severity, planned_value_json, actual_value_json,
+                    message, acknowledged, acknowledged_at, acknowledgement_note, chart_date, created_at
+                FROM trade_training_risk_events_legacy_nonnullable
+            """))
+            self.db.execute(text("DROP TABLE trade_training_risk_events_legacy_nonnullable"))
         self.db.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_trade_training_risk_events_key ON trade_training_risk_events(event_key)"))
         self.db.execute(text("CREATE INDEX IF NOT EXISTS idx_trade_training_risk_events_session ON trade_training_risk_events(simulation_session_id, created_at)"))
         self.db.execute(text("CREATE INDEX IF NOT EXISTS idx_trade_training_risk_events_scenario ON trade_training_risk_events(risk_scenario_id, event_type)"))
@@ -309,12 +353,63 @@ class TradeTrainingRepository:
                 {"account_id": account_id},
             ).mappings().all()
         ]
+        scenario_ids = [
+            int(row["id"])
+            for row in self.db.execute(
+                text("SELECT id FROM trade_training_risk_scenarios WHERE training_account_id = :account_id"),
+                {"account_id": account_id},
+            ).mappings().all()
+        ]
         counts = {
             "session_count": len(session_ids),
             "trade_count": 0,
             "snapshot_count": 0,
             "review_count": 0,
+            "risk_scenario_count": len(scenario_ids),
+            "risk_plan_step_count": 0,
+            "risk_revision_count": 0,
+            "risk_event_count": int(
+                self.db.execute(
+                    text("SELECT COUNT(*) FROM trade_training_risk_events WHERE training_account_id = :account_id"),
+                    {"account_id": account_id},
+                ).scalar() or 0
+            ),
         }
+        if scenario_ids:
+            scenario_params = {f"scenario_id_{idx}": scenario_id for idx, scenario_id in enumerate(scenario_ids)}
+            scenario_clause = ", ".join(f":scenario_id_{idx}" for idx in range(len(scenario_ids)))
+            counts["risk_plan_step_count"] = int(
+                self.db.execute(
+                    text(f"SELECT COUNT(*) FROM trade_training_risk_plan_steps WHERE risk_scenario_id IN ({scenario_clause})"),
+                    scenario_params,
+                ).scalar() or 0
+            )
+            counts["risk_revision_count"] = int(
+                self.db.execute(
+                    text(f"SELECT COUNT(*) FROM trade_training_risk_scenario_revisions WHERE risk_scenario_id IN ({scenario_clause})"),
+                    scenario_params,
+                ).scalar() or 0
+            )
+            self.db.execute(
+                text(f"DELETE FROM trade_training_risk_events WHERE risk_scenario_id IN ({scenario_clause})"),
+                scenario_params,
+            )
+            self.db.execute(
+                text(f"DELETE FROM trade_training_risk_scenario_revisions WHERE risk_scenario_id IN ({scenario_clause})"),
+                scenario_params,
+            )
+            self.db.execute(
+                text(f"DELETE FROM trade_training_risk_plan_steps WHERE risk_scenario_id IN ({scenario_clause})"),
+                scenario_params,
+            )
+            self.db.execute(
+                text(f"DELETE FROM trade_training_risk_scenarios WHERE id IN ({scenario_clause})"),
+                scenario_params,
+            )
+        self.db.execute(
+            text("DELETE FROM trade_training_risk_events WHERE training_account_id = :account_id"),
+            {"account_id": account_id},
+        )
         if session_ids:
             id_params = {f"id_{idx}": session_id for idx, session_id in enumerate(session_ids)}
             id_clause = ", ".join(f":id_{idx}" for idx in range(len(session_ids)))
@@ -335,7 +430,6 @@ class TradeTrainingRepository:
         self.db.execute(text("DELETE FROM trade_training_accounts WHERE id = :account_id"), {"account_id": account_id})
         self._commit_unless_atomic_order()
         return counts
-
     def update_training_account_balances(self, account_id: int, cash_balance: float, realized_equity: float | None = None) -> dict[str, Any]:
         self.update_training_account_balances_no_commit(account_id, cash_balance=cash_balance, realized_equity=realized_equity)
         self._commit_unless_atomic_order()
@@ -1270,6 +1364,25 @@ class TradeTrainingRepository:
                     item[field.removesuffix("_json")] = {}
             result.append(item)
         return result
+    def get_risk_event(self, event_id: int) -> dict[str, Any] | None:
+        self.ensure_training_account_table()
+        row = self.db.execute(
+            text("SELECT * FROM trade_training_risk_events WHERE id = :id"),
+            {"id": event_id},
+        ).mappings().first()
+        if not row:
+            return None
+        item = dict(row)
+        for field in ("planned_value_json", "actual_value_json"):
+            try:
+                item[field.removesuffix("_json")] = json.loads(str(item.get(field) or "{}"))
+            except json.JSONDecodeError:
+                item[field.removesuffix("_json")] = {}
+        return item
+
+    def list_risk_events_by_scenario(self, scenario_id: int) -> list[dict[str, Any]]:
+        scenario = self.get_risk_scenario(scenario_id)
+        return self.list_risk_events(int(scenario["simulation_session_id"])) if scenario else []
     def create_risk_scenario_revision(self, scenario_id: int, revision_type: str, snapshot: dict[str, Any], change_reason: str | None = None) -> dict[str, Any]:
         self.ensure_training_account_table()
         revision_no = int(
@@ -1325,41 +1438,32 @@ class TradeTrainingRepository:
         rows = self.db.execute(
             text(
                 """
-                WITH calendar_rows AS (
-                    SELECT
-                        s.id,
-                        s.stock_code,
-                        s.stock_name,
-                        s.method_id,
-                        COALESCE(m.method_name, '자유훈련') AS trade_method_name,
-                        s.current_date,
-                        s.start_date,
-                        s.end_date,
-                        s.initial_cash,
-                        s.cash,
-                        s.realized_profit,
-                        s.status,
-                        s.created_at AS session_created_at,
-                        s.updated_at AS session_updated_at,
-                        r.id AS review_id,
-                        r.review_status,
-                        r.reviewed_at,
-                        r.created_at AS review_created_at,
-                        r.updated_at AS review_updated_at,
-                        COALESCE(r.updated_at, r.created_at, r.reviewed_at, s.updated_at, s.created_at) AS activity_at
-                    FROM simulation_sessions s
-                    LEFT JOIN trade_methods m ON m.id = s.method_id
-                    LEFT JOIN simulation_reviews r ON r.session_id = s.id
-                    WHERE s.status = '완료'
-                       OR r.id IS NOT NULL
-                )
                 SELECT
-                    *,
-                    date(activity_at) AS activity_date
-                FROM calendar_rows
-                WHERE date(activity_at) >= date(:month_start)
-                  AND date(activity_at) < date(:month_start, '+1 month')
-                ORDER BY activity_date ASC, id ASC
+                    s.id,
+                    s.stock_code,
+                    s.stock_name,
+                    s.method_id,
+                    COALESCE(m.method_name, '자유훈련') AS trade_method_name,
+                    s.current_date,
+                    s.start_date,
+                    s.end_date,
+                    s.initial_cash,
+                    s.cash,
+                    s.realized_profit,
+                    s.status,
+                    s.created_at AS session_created_at,
+                    s.updated_at AS completed_at,
+                    r.id AS review_id,
+                    r.review_status,
+                    r.reviewed_at
+                FROM simulation_sessions s
+                LEFT JOIN trade_methods m ON m.id = s.method_id
+                LEFT JOIN simulation_reviews r ON r.session_id = s.id
+                WHERE s.status = '완료'
+                  AND s.training_account_id IS NULL
+                  AND date(s.updated_at) >= date(:month_start)
+                  AND date(s.updated_at) < date(:month_start, '+1 month')
+                ORDER BY s.updated_at ASC, s.id ASC
                 """
             ),
             {"month_start": month_start},

@@ -296,8 +296,124 @@ export type TradeTrainingRiskScenarioDetail = {
   requires_plan_before_buy: boolean;
   holding_risk?: ActiveRiskSummary | null;
   events?: Array<Record<string, unknown>>;
+  pending_responses?: RiskPendingResponse[];
 };
 
+export type RiskPendingResponse = {
+  reach_event_id: number;
+  event_type: string;
+  chart_date?: string | null;
+  created_at?: string | null;
+  risk_scenario_id?: number | null;
+  risk_scenario_revision_id?: number | null;
+  risk_plan_step_id?: number | null;
+  step_no?: number | null;
+  plan_type?: string | null;
+  trigger_price?: number | null;
+  day_high?: number | null;
+  day_low?: number | null;
+  position_quantity?: number | null;
+  sequence_unknown?: boolean;
+};
+
+export type RiskLevelReachCheckResponse = {
+  events: Array<Record<string, unknown>>;
+  pending_responses: RiskPendingResponse[];
+};
+
+export type ScenarioCategoryScore = {
+  key: string;
+  label: string;
+  applicable?: boolean;
+  score?: number | null;
+  rate?: number | null;
+  eligible_count: number;
+  applicable_trade_count?: number;
+  applicable_item_count?: number;
+  earned_score?: number;
+  max_score?: number;
+  full_count?: number;
+  partial_count?: number;
+  miss_count?: number;
+  excluded_count?: number;
+};
+
+export type ScenarioHabitTrade = TradeTrainingClosedTrade & {
+  has_scenario_data: boolean;
+  scenario_id?: number | null;
+  scenario_execution_rate?: number | null;
+  category_scores: ScenarioCategoryScore[];
+  max_risk_pct?: number | null;
+  unplanned_action_count: number;
+  target_response?: Record<string, unknown>;
+  stop_response?: Record<string, unknown>;
+};
+
+export type ScenarioHabitsResponse = {
+  account_id: number;
+  filters: Record<string, unknown>;
+  coverage: { trade_count: number; closed_trade_count?: number; scenario_trade_count: number; legacy_trade_count: number; scored_trade_count: number; evaluable_trade_count?: number };
+  summary: {
+    average_execution_rate?: number | null;
+    scenario_created_count?: number;
+    scenario_creation_denominator?: number;
+    scenario_creation_rate?: number | null;
+    plan_creation_rate?: number | null;
+    unplanned_order_count?: number;
+    evaluated_order_count?: number;
+    unplanned_order_rate?: number | null;
+  };
+  execution_trend: Array<{ trade_sequence: number; stock_name: string; result_type: string; score?: number | null; scenario_id?: number | null }>;
+  category_scores: ScenarioCategoryScore[];
+  target_response_distribution: ScenarioResponseDistribution;
+  stop_response_distribution: ScenarioResponseDistribution;
+  plan_change_distribution: ScenarioReasonDistribution;
+  unplanned_action_distribution: ScenarioReasonDistribution;
+  asymmetry: {
+    average_profit?: number | null;
+    average_loss?: number | null;
+    average_win_pnl?: number | null;
+    average_loss_pnl_abs?: number | null;
+    average_win_holding_bars?: number | null;
+    average_loss_holding_bars?: number | null;
+    win_count?: number;
+    loss_count?: number;
+    flat_count?: number;
+    winning_ratio?: number | null;
+    profit_loss_ratio?: number | null;
+  };
+  account_risk: { max_open_risk_pct?: number | null; current_open_risk_pct?: number | null; thresholds: number[]; positions: Array<{ session_id: number; stock_name: string; risk_amount?: number | null; risk_usage_pct?: number | null }> };
+  volatility_positioning: null;
+  trades: ScenarioHabitTrade[];
+};
+
+export type ScenarioResponseDistribution = {
+  unit?: "EPISODE";
+  episode_count?: number;
+  total: number;
+  same_day_count?: number;
+  within_1_2_count?: number;
+  over_3_count?: number;
+  unresolved_count?: number;
+  max_unresolved_bars?: number;
+  counts: { same_day: number; one_to_two: number; three_plus: number; held_or_unanswered: number };
+  percentages: { same_day: number; one_to_two: number; three_plus: number; held_or_unanswered: number };
+};
+
+export type ScenarioReasonDistribution = { total: number; reason_recorded: number; reason_recording_rate?: number | null };
+
+export type ScenarioExecutionReview = {
+  scenario_id: number;
+  has_scenario_data: boolean;
+  overall_execution_rate?: number | null;
+  category_scores: ScenarioCategoryScore[];
+  timeline: Array<Record<string, unknown>>;
+  reach_events: Array<Record<string, unknown>>;
+  response_events: Array<Record<string, unknown>>;
+  warning_events: Array<Record<string, unknown>>;
+  revision_events: Array<Record<string, unknown>>;
+  rule_based_summary: string;
+};
 export type RiskOrderPreviewRequest = {
   side: "BUY" | "SELL";
   price: number;
@@ -619,40 +735,55 @@ export type SimulationReviewSaveRequest = {
   discipline_score?: number | null;
 };
 
-export type TrainingCalendarStock = {
+export type TrainingCalendarType = "ACCOUNT" | "STANDALONE";
+
+export type TrainingCalendarItem = {
+  calendar_item_id: string;
+  training_type: TrainingCalendarType;
+  completed_date: string;
+  completed_at?: string | null;
+  session_id: number;
+  closed_trade_id?: string | null;
+  training_account_id?: number | null;
+  training_account_name?: string | null;
   stock_code?: string | null;
   stock_name: string;
-  training_count: number;
-  total_return_rate: number;
-  avg_return_rate: number;
-  review_saved_count: number;
-};
-
-export type TrainingCalendarMethodGroup = {
-  trade_method_id?: number | null;
-  trade_method_name: string;
-  training_count: number;
-  total_return_rate: number;
-  avg_return_rate: number;
-  review_saved_count: number;
-  stocks: TrainingCalendarStock[];
+  chart_entry_date?: string | null;
+  chart_exit_date?: string | null;
+  net_pnl: number;
+  return_rate: number;
+  result_type: "WIN" | "LOSS" | "FLAT";
+  scenario_execution_rate?: number | null;
+  review_status: string;
+  review_done: boolean;
 };
 
 export type TrainingCalendarDay = {
   date: string;
   training_count: number;
+  unique_stock_count: number;
   total_return_rate: number;
   avg_return_rate: number;
-  training_score: number;
+  win_count: number;
+  loss_count: number;
+  flat_count: number;
   review_saved_count: number;
   review_required_count: number;
-  method_groups: TrainingCalendarMethodGroup[];
+  items: TrainingCalendarItem[];
+};
+
+export type TrainingCalendarGrowthPoint = {
+  date: string;
+  training_count: number;
+  daily_return_rate: number;
+  cumulative_return_rate: number;
 };
 
 export type TrainingCalendarSummary = {
-  total_sessions: number;
+  total_trainings: number;
   training_days: number;
-  avg_training_score: number;
+  unique_stock_count: number;
+  total_return_rate: number;
   avg_return_rate: number;
   review_completion_rate: number;
 };
@@ -661,4 +792,5 @@ export type TrainingCalendarResponse = {
   month: string;
   summary: TrainingCalendarSummary;
   days: TrainingCalendarDay[];
+  growth: TrainingCalendarGrowthPoint[];
 };

@@ -21,6 +21,8 @@ from backend.app.schemas.trade_training_schema import (
     TradeTrainingRiskScenarioRevisionListResponse,
     RiskOrderPreviewRequest,
     RiskOrderPreviewResponse,
+    RiskLevelReachCheckRequest,
+    RiskLevelResponseRequest,
     TrainingFinishResponse,
     TrainingGptPackageResponse,
     TrainingOrderRequest,
@@ -178,6 +180,40 @@ def cancel_trade_training_risk_scenario(scenario_id: int, db: Session = Depends(
 def list_trade_training_risk_scenario_revisions(scenario_id: int, db: Session = Depends(get_db)) -> dict:
     return TradeTrainingService(db).list_risk_scenario_revisions(scenario_id)
 
+
+@router.get("/trade-training/accounts/{account_id}/scenario-habits")
+def get_trade_training_scenario_habits(
+    account_id: int,
+    range: str = Query(default="20", pattern=r"^(20|50|all)$"),
+    stock_id: int | None = Query(default=None),
+    result: str = Query(default="all", pattern=r"^(all|win|loss|flat)$"),
+    scenario: str = Query(default="all", pattern=r"^(all|planned|unplanned)$"),
+    db: Session = Depends(get_db),
+) -> dict:
+    return TradeTrainingService(db).get_training_account_scenario_habits(account_id, range, stock_id, result, scenario)
+
+
+@router.get("/trade-training/risk-scenarios/{scenario_id}/execution-review")
+def get_trade_training_risk_scenario_execution_review(scenario_id: int, db: Session = Depends(get_db)) -> dict:
+    return TradeTrainingService(db).get_risk_scenario_execution_review(scenario_id)
+
+
+@router.post("/trade-training/sessions/{session_id}/risk-level-reach-check")
+def check_trade_training_risk_level_reach(
+    session_id: int,
+    payload: RiskLevelReachCheckRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    return TradeTrainingService(db).check_risk_level_reaches(session_id, payload.chart_date)
+
+
+@router.post("/trade-training/sessions/{session_id}/risk-level-responses")
+def record_trade_training_risk_level_response(
+    session_id: int,
+    payload: RiskLevelResponseRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    return TradeTrainingService(db).record_risk_level_response(session_id, payload)
 
 @router.post("/trade-training/sessions/{session_id}/risk-order-preview", response_model=RiskOrderPreviewResponse)
 def preview_trade_training_risk_order(session_id: int, payload: RiskOrderPreviewRequest, db: Session = Depends(get_db)) -> dict:

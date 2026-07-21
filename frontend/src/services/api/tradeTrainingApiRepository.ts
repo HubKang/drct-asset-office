@@ -8,6 +8,9 @@ import type {
   TradeTrainingRiskScenarioDetail,
   TradeTrainingRiskScenarioDraftRequest,
   TradeTrainingRiskScenarioRevisionListResponse,
+  ScenarioExecutionReview,
+  ScenarioHabitsResponse,
+  RiskLevelReachCheckResponse,
   TrainingResult,
   SimulationReview,
   SimulationReviewSaveRequest,
@@ -96,7 +99,23 @@ export const tradeTrainingApiRepository = {
     apiRequest<TradeTrainingRiskScenarioDetail>(`/trade-training/risk-scenarios/${scenarioId}/cancel`, { method: "POST" }),
   listRiskScenarioRevisions: (scenarioId: number) =>
     apiRequest<TradeTrainingRiskScenarioRevisionListResponse>(`/trade-training/risk-scenarios/${scenarioId}/revisions`),
-  previewRiskOrder: (sessionId: number, payload: RiskOrderPreviewRequest) =>
+  getScenarioHabits: (accountId: number, params: { range: "20" | "50" | "all"; stock_id?: number; result: string; scenario: string }) => {
+    const search = new URLSearchParams({ range: params.range, result: params.result, scenario: params.scenario });
+    if (params.stock_id) search.set("stock_id", String(params.stock_id));
+    return apiRequest<ScenarioHabitsResponse>(`/trade-training/accounts/${accountId}/scenario-habits?${search}`);
+  },
+  getRiskScenarioExecutionReview: (scenarioId: number) =>
+    apiRequest<ScenarioExecutionReview>(`/trade-training/risk-scenarios/${scenarioId}/execution-review`),
+  checkRiskLevelReach: (sessionId: number, chartDate: string) =>
+    apiRequest<RiskLevelReachCheckResponse>(`/trade-training/sessions/${sessionId}/risk-level-reach-check`, {
+      method: "POST",
+      body: JSON.stringify({ chart_date: chartDate }),
+    }),
+  recordRiskLevelResponse: (sessionId: number, payload: { reach_event_id: number; response_type: "SELL" | "HOLD" | "PLAN_REVISED"; reason?: string }) =>
+    apiRequest<{ event: Record<string, unknown>; pending_responses: import("@/types/tradeTraining").RiskPendingResponse[] }>(`/trade-training/sessions/${sessionId}/risk-level-responses`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),  previewRiskOrder: (sessionId: number, payload: RiskOrderPreviewRequest) =>
     apiRequest<RiskOrderPreview>(`/trade-training/sessions/${sessionId}/risk-order-preview`, {
       method: "POST",
       body: JSON.stringify(payload),

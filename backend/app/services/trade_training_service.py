@@ -23,6 +23,7 @@ from backend.app.schemas.trade_training_schema import (
     TradeTrainingAccountUpdate,
     TrainingOrderRequest,
     RiskOrderPreviewRequest,
+    RiskLevelResponseRequest,
     TradeTrainingRiskScenarioDraftRequest,
     TrainingSessionCreate,
 )
@@ -32,6 +33,7 @@ RUNNING_STATUS = "진행중"
 FINISHED_STATUS = "완료"
 ABORTED_STATUS = "중단"
 TRAINING_ACCOUNT_STATUSES = {"ACTIVE", "PAUSED", "COMPLETED", "ARCHIVED"}
+TRAINING_PREVIEW_CANDLE_COUNT = 30
 
 
 class TradeTrainingService:
@@ -599,86 +601,92 @@ class TradeTrainingService:
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="month must be YYYY-MM") from exc
 
-        day_bucket: dict[str, dict[str, Any]] = {}
+        items: list[dict[str, Any]] = []
         for row in self.repo.list_calendar_sessions(month):
-            date = str(row.get("activity_date") or row.get("activity_at") or row.get("current_date") or "")[:10]
-            if not date:
+            completed_at = str(row.get("completed_at") or "")
+            completed_date = completed_at[:10]
+            if not completed_date:
                 continue
             return_rate = self._calendar_return_rate(row)
             review_done = self._calendar_review_done(row)
-            day = day_bucket.setdefault(
-                date,
+            session_id = int(row["id"])
+            items.append(
                 {
-                    "date": date,
-                    "training_count": 0,
-                    "total_return_rate": 0.0,
-                    "review_saved_count": 0,
-                    "review_required_count": 0,
-                    "_methods": {},
-                },
+                    "calendar_item_id": f"STANDALONE:{session_id}",
+                    "training_type": "STANDALONE",
+                    "completed_date": completed_date,
+                    "completed_at": completed_at or None,
+                    "session_id": session_id,
+                    "closed_trade_id": None,
+                    "training_account_id": None,
+                    "training_account_name": None,
+                    "stock_code": str(row.get("stock_code") or "") or None,
+                    "stock_name": str(row.get("stock_name") or row.get("stock_code") or "종목 미상"),
+                    "chart_entry_date": row.get("start_date"),
+                    "chart_exit_date": row.get("current_date") or row.get("end_date"),
+                    "net_pnl": round(float(row.get("realized_profit") or 0), 4),
+                    "return_rate": return_rate,
+                    "result_type": self._calendar_result_type(return_rate),
+                    "scenario_execution_rate": None,
+                    "review_status": str(row.get("review_status") or "미복기"),
+                    "review_done": review_done,
+                }
             )
-            day["training_count"] += 1
-            day["total_return_rate"] += return_rate
-            day["review_required_count"] += 1
-            if review_done:
-                day["review_saved_count"] += 1
 
-            method_id = row.get("method_id")
-            method_key = str(method_id) if method_id is not None else "free"
-            method = day["_methods"].setdefault(
-                method_key,
-                {
-                    "trade_method_id": method_id,
-                    "trade_method_name": row.get("trade_method_name") or "자유훈련",
-                    "training_count": 0,
-                    "total_return_rate": 0.0,
-                    "review_saved_count": 0,
-                    "_stocks": {},
-                },
-            )
-            method["training_count"] += 1
-            method["total_return_rate"] += return_rate
-            if review_done:
-                method["review_saved_count"] += 1
+        for account in self.repo.list_training_accounts():
+            account_id = int(account["id"])
+            account_name = str(account.get("name") or f"훈련계좌 #{account_id}")
+            review_cache: dict[int, dict[str, Any] | None] = {}
+            scenario_cache: dict[int, list[dict[str, Any]]] = {}
+            for trade in self.list_training_account_closed_trades(account_id)["items"]:
+                completed_at = str(trade.get("completed_at") or "")
+                completed_date = completed_at[:10]
+                if not completed_date.startswith(month):
+                    continue
+                session_id = int(trade["training_session_id"])
+                closed_trade_id = str(trade.get("closed_trade_id") or trade.get("id") or "")
+                if session_id not in review_cache:
+                    review_cache[session_id] = self.repo.get_review(session_id)
+                review = review_cache[session_id] or {}
+                if session_id not in scenario_cache:
+                    scenario_cache[session_id] = self.repo.list_risk_scenarios_by_session(session_id)
+                scenario = next(
+                    (
+                        candidate
+                        for candidate in scenario_cache[session_id]
+                        if str(candidate.get("closed_trade_id") or "") == closed_trade_id
+                    ),
+                    None,
+                )
+                scenario_rate = None
+                if scenario:
+                    scenario_rate = self.get_risk_scenario_execution_review(int(scenario["id"])).get("overall_execution_rate")
+                return_rate = round(float(trade.get("return_pct") or 0), 4)
+                review_done = self._calendar_review_done(review)
+                items.append(
+                    {
+                        "calendar_item_id": f"ACCOUNT:{closed_trade_id}",
+                        "training_type": "ACCOUNT",
+                        "completed_date": completed_date,
+                        "completed_at": completed_at or None,
+                        "session_id": session_id,
+                        "closed_trade_id": closed_trade_id,
+                        "training_account_id": account_id,
+                        "training_account_name": account_name,
+                        "stock_code": str(trade.get("stock_code") or "") or None,
+                        "stock_name": str(trade.get("stock_name") or trade.get("stock_code") or "종목 미상"),
+                        "chart_entry_date": trade.get("chart_entry_date") or trade.get("opened_chart_date"),
+                        "chart_exit_date": trade.get("chart_exit_date") or trade.get("closed_chart_date"),
+                        "net_pnl": round(float(trade.get("net_pnl") or 0), 4),
+                        "return_rate": return_rate,
+                        "result_type": str(trade.get("result_type") or self._calendar_result_type(return_rate)),
+                        "scenario_execution_rate": scenario_rate,
+                        "review_status": str(review.get("review_status") or "미복기"),
+                        "review_done": review_done,
+                    }
+                )
 
-            stock_code = str(row.get("stock_code") or "")
-            stock_name = str(row.get("stock_name") or stock_code or "종목 미지정")
-            stock_key = stock_code or stock_name
-            stock = method["_stocks"].setdefault(
-                stock_key,
-                {
-                    "stock_code": stock_code or None,
-                    "stock_name": stock_name,
-                    "training_count": 0,
-                    "total_return_rate": 0.0,
-                    "review_saved_count": 0,
-                },
-            )
-            stock["training_count"] += 1
-            stock["total_return_rate"] += return_rate
-            if review_done:
-                stock["review_saved_count"] += 1
-
-        days = [self._finalize_calendar_day(day) for day in day_bucket.values()]
-        days.sort(key=lambda item: item["date"])
-
-        total_sessions = sum(int(day["training_count"]) for day in days)
-        training_days = len(days)
-        total_score = sum(int(day["training_score"]) for day in days)
-        total_return = sum(float(day["total_return_rate"]) for day in days)
-        review_saved = sum(int(day["review_saved_count"]) for day in days)
-        review_required = sum(int(day["review_required_count"]) for day in days)
-        return {
-            "month": month,
-            "summary": {
-                "total_sessions": total_sessions,
-                "training_days": training_days,
-                "avg_training_score": round(total_score / training_days) if training_days else 0,
-                "avg_return_rate": round(total_return / total_sessions, 2) if total_sessions else 0.0,
-                "review_completion_rate": round((review_saved / review_required) * 100, 1) if review_required else 0.0,
-            },
-            "days": days,
-        }
+        return self._build_training_calendar_response(month, items)
 
     @staticmethod
     def _calendar_return_rate(row: dict[str, Any]) -> float:
@@ -690,73 +698,109 @@ class TradeTrainingService:
 
     @staticmethod
     def _calendar_review_done(row: dict[str, Any]) -> bool:
-        if row.get("review_id"):
-            return True
         status_value = str(row.get("review_status") or "").strip()
         return status_value == "복기완료" or bool(row.get("reviewed_at"))
 
     @staticmethod
-    def _calendar_training_score(training_count: int, total_return_rate: float, review_saved_count: int) -> int:
-        base = 20 if training_count > 0 else 0
-        count_score = min(training_count * 5, 30)
-        positive_return = max(total_return_rate, 0)
-        return_score = min(positive_return * 3, 30)
-        count_bonus = min((training_count // 3) * 5, 15)
-        return_bonus = min((int(positive_return) // 3) * 5, 15)
-        review_bonus = min(review_saved_count * 5, 20)
-        return min(round(base + count_score + return_score + count_bonus + return_bonus + review_bonus), 100)
+    def _calendar_result_type(return_rate: float) -> str:
+        if return_rate > 0:
+            return "WIN"
+        if return_rate < 0:
+            return "LOSS"
+        return "FLAT"
 
-    def _finalize_calendar_day(self, day: dict[str, Any]) -> dict[str, Any]:
-        training_count = int(day["training_count"] or 0)
-        total_return_rate = round(float(day["total_return_rate"] or 0.0), 2)
-        review_saved_count = int(day["review_saved_count"] or 0)
-        method_groups = []
-        for method in day["_methods"].values():
-            method_training_count = int(method["training_count"] or 0)
-            stocks = []
-            for stock in method["_stocks"].values():
-                stock_count = int(stock["training_count"] or 0)
-                stock_total = round(float(stock["total_return_rate"] or 0.0), 2)
-                stocks.append(
-                    {
-                        "stock_code": stock.get("stock_code"),
-                        "stock_name": stock.get("stock_name") or "종목 미지정",
-                        "training_count": stock_count,
-                        "total_return_rate": stock_total,
-                        "avg_return_rate": round(stock_total / stock_count, 2) if stock_count else 0.0,
-                        "review_saved_count": int(stock["review_saved_count"] or 0),
-                    }
-                )
-            stocks.sort(key=lambda item: (-item["training_count"], item["stock_name"]))
-            method_total = round(float(method["total_return_rate"] or 0.0), 2)
-            method_groups.append(
+    @classmethod
+    def _build_training_calendar_response(cls, month: str, raw_items: list[dict[str, Any]]) -> dict[str, Any]:
+        unique_items = {
+            str(item["calendar_item_id"]): item
+            for item in raw_items
+            if str(item.get("completed_date") or "").startswith(month)
+        }
+        day_bucket: dict[str, list[dict[str, Any]]] = {}
+        for item in unique_items.values():
+            day_bucket.setdefault(str(item["completed_date"]), []).append(item)
+
+        days: list[dict[str, Any]] = []
+        for date in sorted(day_bucket):
+            day_items = sorted(
+                day_bucket[date],
+                key=lambda item: (
+                    str(item.get("completed_at") or ""),
+                    int(item.get("session_id") or 0),
+                    str(item.get("calendar_item_id") or ""),
+                ),
+                reverse=True,
+            )
+            training_count = len(day_items)
+            total_return = round(sum(float(item.get("return_rate") or 0) for item in day_items), 2)
+            review_saved = sum(1 for item in day_items if bool(item.get("review_done")))
+            stocks = {
+                str(item.get("stock_code") or item.get("stock_name") or "")
+                for item in day_items
+                if item.get("stock_code") or item.get("stock_name")
+            }
+            result_counts = {
+                result: sum(1 for item in day_items if str(item.get("result_type") or "").upper() == result)
+                for result in ("WIN", "LOSS", "FLAT")
+            }
+            days.append(
                 {
-                    "trade_method_id": method.get("trade_method_id"),
-                    "trade_method_name": method.get("trade_method_name") or "자유훈련",
-                    "training_count": method_training_count,
-                    "total_return_rate": method_total,
-                    "avg_return_rate": round(method_total / method_training_count, 2) if method_training_count else 0.0,
-                    "review_saved_count": int(method["review_saved_count"] or 0),
-                    "stocks": stocks,
+                    "date": date,
+                    "training_count": training_count,
+                    "unique_stock_count": len(stocks),
+                    "total_return_rate": total_return,
+                    "avg_return_rate": round(total_return / training_count, 2) if training_count else 0.0,
+                    "win_count": result_counts["WIN"],
+                    "loss_count": result_counts["LOSS"],
+                    "flat_count": result_counts["FLAT"],
+                    "review_saved_count": review_saved,
+                    "review_required_count": training_count,
+                    "items": day_items,
                 }
             )
-        method_groups.sort(key=lambda item: (-item["training_count"], item["trade_method_name"]))
-        score = self._calendar_training_score(
-            training_count=training_count,
-            total_return_rate=total_return_rate,
-            review_saved_count=review_saved_count,
-        )
-        return {
-            "date": str(day["date"]),
-            "training_count": training_count,
-            "total_return_rate": total_return_rate,
-            "avg_return_rate": round(total_return_rate / training_count, 2) if training_count else 0.0,
-            "training_score": score,
-            "review_saved_count": review_saved_count,
-            "review_required_count": int(day["review_required_count"] or 0),
-            "method_groups": method_groups,
-        }
+        daily_by_date = {str(day["date"]): day for day in days}
+        month_start = datetime.strptime(f"{month}-01", "%Y-%m-%d")
+        next_month = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+        growth: list[dict[str, Any]] = []
+        cumulative_return = 0.0
+        cursor = month_start
+        while cursor < next_month:
+            date = cursor.strftime("%Y-%m-%d")
+            day = daily_by_date.get(date)
+            daily_return = round(float((day or {}).get("avg_return_rate") or 0), 2)
+            cumulative_return = round(cumulative_return + daily_return, 2)
+            growth.append(
+                {
+                    "date": date,
+                    "training_count": int((day or {}).get("training_count") or 0),
+                    "daily_return_rate": daily_return,
+                    "cumulative_return_rate": cumulative_return,
+                }
+            )
+            cursor += timedelta(days=1)
 
+        all_items = [item for day in days for item in day["items"]]
+        total_trainings = len(all_items)
+        review_saved = sum(1 for item in all_items if bool(item.get("review_done")))
+        unique_stocks = {
+            str(item.get("stock_code") or item.get("stock_name") or "")
+            for item in all_items
+            if item.get("stock_code") or item.get("stock_name")
+        }
+        total_return = round(sum(float(item.get("return_rate") or 0) for item in all_items), 2)
+        return {
+            "month": month,
+            "summary": {
+                "total_trainings": total_trainings,
+                "training_days": len(days),
+                "unique_stock_count": len(unique_stocks),
+                "total_return_rate": total_return,
+                "avg_return_rate": round(total_return / total_trainings, 2) if total_trainings else 0.0,
+                "review_completion_rate": round(review_saved / total_trainings * 100, 1) if total_trainings else 0.0,
+            },
+            "days": days,
+            "growth": growth,
+        }
     @staticmethod
     def _parse_options(session: dict[str, Any]) -> dict[str, Any]:
         raw = session.get("options_json")
@@ -1161,15 +1205,17 @@ class TradeTrainingService:
         options = self._parse_options(session)
         moving_averages = self._clean_mas(list(options.get("moving_averages") or [5, 20, 60]))
         visible_prices = prices[: current_index + 1]
-        warmup_count = max(moving_averages, default=1) - 1
-        warmup_prices = self.repo.list_prices_before(
+        indicator_warmup_count = max(moving_averages, default=1) - 1
+        history_limit = TRAINING_PREVIEW_CANDLE_COUNT + indicator_warmup_count
+        history_prices = self.repo.list_prices_before(
             stock_id=int(options.get("stock_id") or 0),
             source=str(options.get("source") or ""),
             before_date=str(session["start_date"]),
-            limit=warmup_count,
-        ) if warmup_count > 0 else []
-        decorated_with_history = self._decorate_candles([*warmup_prices, *visible_prices], moving_averages)
-        decorated = decorated_with_history[len(warmup_prices):]
+            limit=history_limit,
+        ) if history_limit > 0 else []
+        decorated_with_history = self._decorate_candles([*history_prices, *visible_prices], moving_averages)
+        preview_count = min(TRAINING_PREVIEW_CANDLE_COUNT, len(history_prices))
+        decorated = decorated_with_history[len(history_prices) - preview_count:]
         return {
             "session": self._response_session(session),
             "trade_method": self.repo.get_trade_method(int(session["method_id"])) if session.get("method_id") else None,
@@ -1205,6 +1251,7 @@ class TradeTrainingService:
             values["status"] = FINISHED_STATUS
         updated = self.repo.update_session(session_id, values)
         self._save_snapshot(updated, prices[next_index])
+        self.check_risk_level_reaches(session_id, str(prices[next_index]["trade_date"]))
         return self.get_session_detail(session_id)
 
     @staticmethod
@@ -1504,7 +1551,8 @@ class TradeTrainingService:
             "preview": preview,
             "requires_plan_before_buy": False,
             "holding_risk": self._holding_risk_summary(self.repo.get_session(int(scenario["simulation_session_id"])) or {}, scenario) if str(scenario.get("status") or "").upper() == "ACTIVE" else None,
-            "events": self.repo.list_risk_events(int(scenario["simulation_session_id"])),
+            "events": (events := self.repo.list_risk_events(int(scenario["simulation_session_id"]))),
+            "pending_responses": self._pending_risk_responses(events),
         }
 
     def get_current_risk_scenario_detail(self, session_id: int) -> dict[str, Any]:
@@ -1621,6 +1669,716 @@ class TradeTrainingService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="risk scenario not found")
         return {"items": self.repo.list_risk_scenario_revisions(scenario_id)}
 
+    @staticmethod
+    def _reach_response_event_type(reach_type: str, response_type: str) -> str:
+        prefix = {
+            "TAKE_PROFIT_REACHED": "TAKE_PROFIT",
+            "PARTIAL_STOP_REACHED": "PARTIAL_STOP",
+            "FULL_STOP_REACHED": "FULL_STOP",
+        }.get(reach_type)
+        if not prefix:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="지원하지 않는 도달 이벤트입니다.")
+        normalized = str(response_type or "").upper()
+        if normalized not in {"SELL", "HOLD", "PLAN_REVISED"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="지원하지 않는 대응 유형입니다.")
+        return f"{prefix}_RESPONSE_{normalized}"
+
+    @staticmethod
+    def _pending_risk_responses(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        reach_types = {"TAKE_PROFIT_REACHED", "PARTIAL_STOP_REACHED", "FULL_STOP_REACHED"}
+        answered = {
+            int((event.get("actual_value") or {}).get("reach_event_id"))
+            for event in events
+            if "_RESPONSE_" in str(event.get("event_type") or "")
+            and (event.get("actual_value") or {}).get("reach_event_id")
+        }
+        result = []
+        for event in events:
+            if str(event.get("event_type") or "") not in reach_types or int(event["id"]) in answered:
+                continue
+            planned = event.get("planned_value") or {}
+            actual = event.get("actual_value") or {}
+            result.append(
+                {
+                    "reach_event_id": int(event["id"]),
+                    "event_type": event["event_type"],
+                    "chart_date": event.get("chart_date"),
+                    "created_at": event.get("created_at"),
+                    "risk_scenario_id": event.get("risk_scenario_id"),
+                    "risk_scenario_revision_id": event.get("risk_scenario_revision_id"),
+                    "risk_plan_step_id": event.get("risk_plan_step_id"),
+                    "step_no": planned.get("step_no"),
+                    "plan_type": planned.get("plan_type"),
+                    "trigger_price": planned.get("trigger_price"),
+                    "day_high": actual.get("day_high"),
+                    "day_low": actual.get("day_low"),
+                    "position_quantity": actual.get("position_quantity"),
+                    "sequence_unknown": bool(actual.get("sequence_unknown")),
+                }
+            )
+        return result
+
+    def check_risk_level_reaches(self, session_id: int, chart_date: str) -> dict[str, Any]:
+        session = self.repo.get_session(session_id)
+        if not session:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="training session not found")
+        scenario = self.repo.get_active_risk_scenario(session_id)
+        if not scenario:
+            return {"events": [], "pending_responses": []}
+        candle = next((row for row in self._session_prices(session) if str(row.get("trade_date")) == chart_date), None)
+        if not candle:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="해당 차트 날짜의 가격 데이터가 없습니다.")
+        day_high = float(candle.get("high_price") or 0)
+        day_low = float(candle.get("low_price") or 0)
+        revision = self.repo.get_latest_risk_scenario_revision(int(scenario["id"]))
+        reached_rows: list[tuple[dict[str, Any], str]] = []
+        for step in self.repo.list_risk_plan_steps(int(scenario["id"])):
+            if str(step.get("plan_group") or "").upper() != "SELL":
+                continue
+            if str(step.get("status") or "PLANNED").upper() != "PLANNED" or bool(step.get("is_removed")):
+                continue
+            price = self._float_or_none(step.get("trigger_price"))
+            plan_type = str(step.get("plan_type") or "").upper()
+            event_type = {
+                "TAKE_PROFIT": "TAKE_PROFIT_REACHED",
+                "PARTIAL_STOP": "PARTIAL_STOP_REACHED",
+                "FULL_STOP": "FULL_STOP_REACHED",
+            }.get(plan_type)
+            if not event_type or price is None:
+                continue
+            if (event_type == "TAKE_PROFIT_REACHED" and day_high >= price) or (
+                event_type != "TAKE_PROFIT_REACHED" and day_low <= price
+            ):
+                reached_rows.append((step, event_type))
+        sequence_unknown = len(reached_rows) > 1
+        created = []
+        for step, event_type in reached_rows:
+            planned_value = {
+                "plan_type": str(step.get("plan_type") or "").upper(),
+                "step_no": int(step.get("step_no") or 0),
+                "trigger_price": float(step.get("trigger_price") or 0),
+            }
+            actual_value = {
+                "day_high": day_high,
+                "day_low": day_low,
+                "day_open": self._float_or_none(candle.get("open_price")),
+                "day_close": self._float_or_none(candle.get("close_price")),
+                "position_quantity": int(session.get("position_qty") or 0),
+                "current_price": self._float_or_none(candle.get("close_price")),
+                "sequence_unknown": sequence_unknown,
+            }
+            event = self.repo.insert_risk_event_no_commit(
+                {
+                    "training_account_id": int(scenario["training_account_id"]),
+                    "simulation_session_id": session_id,
+                    "risk_scenario_id": int(scenario["id"]),
+                    "risk_scenario_revision_id": int(revision["id"]) if revision else None,
+                    "risk_plan_step_id": int(step["id"]),
+                    "simulation_trade_id": None,
+                    "event_key": f"scenario:{scenario['id']}:step:{step['id']}:date:{chart_date}:event:{event_type}",
+                    "event_type": event_type,
+                    "severity": "WARNING" if event_type == "FULL_STOP_REACHED" else "CAUTION",
+                    "planned_value": planned_value,
+                    "actual_value": actual_value,
+                    "message": "계획 가격에 도달했습니다. 자동 매도하지 않으며 대응을 선택해 기록합니다.",
+                    "acknowledged": False,
+                    "acknowledgement_note": None,
+                    "chart_date": chart_date,
+                }
+            )
+            created.append(self.repo.get_risk_event(int(event["id"])) or event)
+        if sequence_unknown:
+            event = self.repo.insert_risk_event_no_commit(
+                {
+                    "training_account_id": int(scenario["training_account_id"]),
+                    "simulation_session_id": session_id,
+                    "risk_scenario_id": int(scenario["id"]),
+                    "risk_scenario_revision_id": int(revision["id"]) if revision else None,
+                    "risk_plan_step_id": None,
+                    "simulation_trade_id": None,
+                    "event_key": f"scenario:{scenario['id']}:date:{chart_date}:event:MULTIPLE_PLAN_LEVELS_REACHED",
+                    "event_type": "MULTIPLE_PLAN_LEVELS_REACHED",
+                    "severity": "CAUTION",
+                    "planned_value": {"step_ids": [int(step["id"]) for step, _ in reached_rows]},
+                    "actual_value": {"day_high": day_high, "day_low": day_low, "sequence_unknown": True},
+                    "message": "같은 봉에서 여러 계획 가격에 도달했습니다. 봉 내부의 선후 관계는 알 수 없습니다.",
+                    "acknowledged": False,
+                    "acknowledgement_note": None,
+                    "chart_date": chart_date,
+                }
+            )
+            created.append(self.repo.get_risk_event(int(event["id"])) or event)
+        self.repo.db.commit()
+        all_events = self.repo.list_risk_events(session_id)
+        return {"events": created, "pending_responses": self._pending_risk_responses(all_events)}
+
+    def record_risk_level_response(self, session_id: int, payload: RiskLevelResponseRequest) -> dict[str, Any]:
+        session = self.repo.get_session(session_id)
+        reach = self.repo.get_risk_event(payload.reach_event_id)
+        if not session or not reach or int(reach.get("simulation_session_id") or 0) != session_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="도달 이벤트를 찾을 수 없습니다.")
+        event_type = self._reach_response_event_type(str(reach.get("event_type") or ""), payload.response_type)
+        existing = next(
+            (
+                event
+                for event in self.repo.list_risk_events(session_id)
+                if "_RESPONSE_" in str(event.get("event_type") or "")
+                and int((event.get("actual_value") or {}).get("reach_event_id") or 0) == int(reach["id"])
+            ),
+            None,
+        )
+        if existing:
+            return {"event": existing, "pending_responses": self._pending_risk_responses(self.repo.list_risk_events(session_id))}
+        candle = self._current_price_row(session)
+        actual_value = {
+            "reach_event_id": int(reach["id"]),
+            "response_type": str(payload.response_type).upper(),
+            "reason": (payload.reason or "").strip() or None,
+            "position_quantity": int(session.get("position_qty") or 0),
+            "current_price": self._float_or_none(candle.get("close_price")),
+        }
+        event = self.repo.insert_risk_event_no_commit(
+            {
+                "training_account_id": int(reach["training_account_id"]),
+                "simulation_session_id": session_id,
+                "risk_scenario_id": int(reach["risk_scenario_id"]),
+                "risk_scenario_revision_id": reach.get("risk_scenario_revision_id"),
+                "risk_plan_step_id": reach.get("risk_plan_step_id"),
+                "simulation_trade_id": None,
+                "event_key": f"reach:{reach['id']}:response",
+                "event_type": event_type,
+                "severity": "INFO",
+                "planned_value": reach.get("planned_value") or {},
+                "actual_value": actual_value,
+                "message": "계획 가격 도달 대응을 기록했습니다.",
+                "acknowledged": True,
+                "acknowledgement_note": actual_value["reason"],
+                "chart_date": session.get("current_date"),
+            }
+        )
+        self.repo.db.commit()
+        decoded = self.repo.get_risk_event(int(event["id"])) or event
+        return {"event": decoded, "pending_responses": self._pending_risk_responses(self.repo.list_risk_events(session_id))}
+
+    @staticmethod
+    def _score_category(key: str, label: str, scores: list[float], excluded_count: int = 0) -> dict[str, Any]:
+        normalized = [max(0.0, min(1.0, float(score))) for score in scores]
+        if not normalized:
+            return {
+                "key": key, "label": label, "applicable": False, "score": None, "eligible_count": 0,
+                "applicable_trade_count": 0, "applicable_item_count": 0,
+                "earned_score": 0.0, "max_score": 0.0,
+                "full_count": 0, "partial_count": 0, "miss_count": 0,
+                "excluded_count": excluded_count,
+            }
+        earned_score = sum(normalized)
+        max_score = float(len(normalized))
+        return {
+            "key": key,
+            "label": label,
+            "applicable": True,
+            "score": round(earned_score / max_score * 100, 2),
+            "eligible_count": len(normalized),
+            "applicable_trade_count": 1,
+            "applicable_item_count": len(normalized),
+            "earned_score": round(earned_score, 4),
+            "max_score": max_score,
+            "full_count": sum(1 for score in normalized if score >= 1.0),
+            "partial_count": sum(1 for score in normalized if 0 < score < 1.0),
+            "miss_count": sum(1 for score in normalized if score <= 0),
+            "excluded_count": excluded_count,
+        }
+
+    @staticmethod
+    def _warning_behavior_scores(warnings: list[dict[str, Any]]) -> list[float]:
+        groups: dict[tuple[Any, Any, str], list[dict[str, Any]]] = {}
+        for event in warnings:
+            key = (
+                event.get("simulation_trade_id"),
+                event.get("risk_plan_step_id"),
+                str(event.get("chart_date") or ""),
+            )
+            groups.setdefault(key, []).append(event)
+        return [1.0 if any(bool(event.get("acknowledged")) for event in rows) else 0.0 for rows in groups.values()]
+
+    @staticmethod
+    def _build_reach_episodes(
+        reach_events: list[dict[str, Any]],
+        response_events: list[dict[str, Any]],
+        date_index: dict[str, int],
+    ) -> list[dict[str, Any]]:
+        responses_by_reach = {
+            int((event.get("actual_value") or {}).get("reach_event_id")): event
+            for event in response_events
+            if (event.get("actual_value") or {}).get("reach_event_id")
+        }
+        grouped: dict[tuple[int, int, str], list[dict[str, Any]]] = {}
+        for event in reach_events:
+            chart_date = str(event.get("chart_date") or "")
+            if chart_date not in date_index:
+                continue
+            key = (
+                int(event.get("risk_scenario_id") or 0),
+                int(event.get("risk_plan_step_id") or 0),
+                str(event.get("event_type") or ""),
+            )
+            grouped.setdefault(key, []).append(event)
+
+        episodes: list[dict[str, Any]] = []
+        for key, rows in grouped.items():
+            rows.sort(key=lambda row: (date_index[str(row.get("chart_date"))], int(row.get("id") or 0)))
+            group_episodes: list[dict[str, Any]] = []
+            current: dict[str, Any] | None = None
+            for event in rows:
+                event_index = date_index[str(event.get("chart_date"))]
+                response = responses_by_reach.get(int(event.get("id") or 0))
+                response_index = date_index.get(str((response or {}).get("chart_date")))
+                response_ended = (
+                    current is not None
+                    and current.get("response_end_index") is not None
+                    and event_index > int(current["response_end_index"])
+                )
+                if current is None or event_index != int(current["last_index"]) + 1 or response_ended:
+                    current = {
+                        "risk_scenario_id": key[0],
+                        "risk_plan_step_id": key[1],
+                        "reach_type": key[2],
+                        "first_reached_chart_date": event.get("chart_date"),
+                        "latest_reached_chart_date": event.get("chart_date"),
+                        "start_index": event_index,
+                        "last_index": event_index,
+                        "reach_event_ids": [int(event.get("id") or 0)],
+                        "response_event": response,
+                        "response_end_index": response_index,
+                    }
+                    group_episodes.append(current)
+                    episodes.append(current)
+                else:
+                    current["last_index"] = event_index
+                    current["latest_reached_chart_date"] = event.get("chart_date")
+                    current["reach_event_ids"].append(int(event.get("id") or 0))
+                    if response:
+                        current["response_event"] = response
+                        current["response_end_index"] = response_index
+
+            for episode in group_episodes:
+                episode["duration_bars"] = int(episode["last_index"]) - int(episode["start_index"]) + 1
+                response = episode.get("response_event")
+                response_index = date_index.get(str((response or {}).get("chart_date")))
+                episode["response_bars"] = (
+                    max(0, response_index - int(episode["start_index"])) if response_index is not None else None
+                )
+                episode.pop("start_index", None)
+                episode.pop("last_index", None)
+                episode.pop("response_end_index", None)
+        return episodes
+
+    @staticmethod
+    def _episode_distribution(episodes: list[dict[str, Any]]) -> dict[str, Any]:
+        delays = [int(row["response_bars"]) for row in episodes if row.get("response_bars") is not None]
+        unresolved = [row for row in episodes if row.get("response_bars") is None]
+        counts = {
+            "same_day": sum(1 for value in delays if value == 0),
+            "one_to_two": sum(1 for value in delays if 1 <= value <= 2),
+            "three_plus": sum(1 for value in delays if value >= 3),
+            "held_or_unanswered": len(unresolved),
+        }
+        total = len(episodes)
+        return {
+            "unit": "EPISODE",
+            "episode_count": total,
+            "total": total,
+            "same_day_count": counts["same_day"],
+            "within_1_2_count": counts["one_to_two"],
+            "over_3_count": counts["three_plus"],
+            "unresolved_count": counts["held_or_unanswered"],
+            "max_unresolved_bars": max((int(row.get("duration_bars") or 0) for row in unresolved), default=0),
+            "counts": counts,
+            "percentages": {key: round(value / total * 100, 2) if total else 0 for key, value in counts.items()},
+        }
+
+    def get_risk_scenario_execution_review(self, scenario_id: int) -> dict[str, Any]:
+        scenario = self.repo.get_risk_scenario(scenario_id)
+        if not scenario:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="risk scenario not found")
+        steps = [
+            step for step in self.repo.list_risk_plan_steps(scenario_id)
+            if not bool(step.get("is_removed")) and str(step.get("status") or "").upper() != "CANCELLED"
+        ]
+        events = self.repo.list_risk_events_by_scenario(scenario_id)
+        revisions = self.repo.list_risk_scenario_revisions(scenario_id)
+        unplanned = [event for event in events if str(event.get("event_type") or "").startswith("UNPLANNED_")]
+        warnings = [event for event in events if str(event.get("severity") or "").upper() == "WARNING"]
+        reach_types = {"TAKE_PROFIT_REACHED", "PARTIAL_STOP_REACHED", "FULL_STOP_REACHED"}
+        reach_events = [event for event in events if str(event.get("event_type") or "") in reach_types]
+        response_events = [event for event in events if "_RESPONSE_" in str(event.get("event_type") or "")]
+        reach_groups: dict[tuple[int, str], list[dict[str, Any]]] = {}
+        for event in reach_events:
+            key = (int(event.get("risk_plan_step_id") or 0), str(event.get("event_type") or ""))
+            reach_groups.setdefault(key, []).append(event)
+        decorated_reaches = []
+        for event in reach_events:
+            key = (int(event.get("risk_plan_step_id") or 0), str(event.get("event_type") or ""))
+            dates = sorted(str(row.get("chart_date") or "") for row in reach_groups[key] if row.get("chart_date"))
+            decorated_reaches.append({
+                **event,
+                "first_reached_chart_date": dates[0] if dates else None,
+                "latest_reached_chart_date": dates[-1] if dates else None,
+                "reach_count": len(reach_groups[key]),
+            })
+        review_session = self.repo.get_session(int(scenario["simulation_session_id"])) or {}
+        date_index = {str(row.get("trade_date")): idx for idx, row in enumerate(self._session_prices(review_session))}
+        reach_by_id = {int(event["id"]): event for event in reach_events}
+        decorated_responses = []
+        for event in response_events:
+            reach_id = int((event.get("actual_value") or {}).get("reach_event_id") or 0)
+            reach = reach_by_id.get(reach_id)
+            start_index = date_index.get(str((reach or {}).get("chart_date")))
+            end_index = date_index.get(str(event.get("chart_date")))
+            response_candles = max(0, end_index - start_index) if start_index is not None and end_index is not None else None
+            decorated_responses.append({**event, "response_candles": response_candles})
+        category_scores = [
+            self._score_category("pre_plan", "사전 계획", [1.0]),
+            self._score_category(
+                "split_entry",
+                "분할 진입",
+                [1.0 if str(step.get("status") or "").upper() == "EXECUTED" else 0.0 for step in steps if str(step.get("plan_group") or "").upper() == "BUY"]
+                if len([step for step in steps if str(step.get("plan_group") or "").upper() == "BUY"]) > 1 else [],
+            ),
+            self._score_category(
+                "profit_exit",
+                "익절·분할 청산",
+                [1.0 if str(step.get("status") or "").upper() == "EXECUTED" else 0.0 for step in steps if str(step.get("plan_type") or "").upper() == "TAKE_PROFIT"],
+            ),
+            self._score_category(
+                "stop_exit",
+                "손절·정리",
+                [1.0 if str(step.get("status") or "").upper() == "EXECUTED" else 0.0 for step in steps if str(step.get("plan_type") or "").upper() in {"PARTIAL_STOP", "FULL_STOP"}],
+            ),
+            self._score_category(
+                "change_warning",
+                "계획 변경·경고 대응",
+                self._warning_behavior_scores(warnings)
+                + [1.0 for _ in response_events]
+                + [0.5 if str(revision.get("change_reason") or "").strip() else 0.0 for revision in revisions if str(revision.get("revision_type") or "") == "PRICE_LINES_UPDATED"]
+                + [0.5 if str((event.get("actual_value") or {}).get("unplanned_reason") or "").strip() else 0.0 for event in unplanned],
+            ),
+        ]
+        eligible = [row for row in category_scores if row["applicable"]]
+        overall = round(sum(float(row["score"]) for row in eligible) / len(eligible), 2) if eligible else None
+        timeline = [
+            {
+                "id": f"event-{event['id']}",
+                "kind": "event",
+                "event_type": event.get("event_type"),
+                "chart_date": event.get("chart_date"),
+                "created_at": event.get("created_at"),
+                "message": event.get("message"),
+                "severity": event.get("severity"),
+                "planned_value": event.get("planned_value") or {},
+                "actual_value": event.get("actual_value") or {},
+                "simulation_trade_id": event.get("simulation_trade_id"),
+                "risk_plan_step_id": event.get("risk_plan_step_id"),
+                "risk_scenario_id": event.get("risk_scenario_id"),
+                "acknowledged": bool(event.get("acknowledged")),
+            }
+            for event in events
+        ] + [
+            {
+                "id": f"revision-{revision['id']}",
+                "kind": "revision",
+                "event_type": revision.get("revision_type"),
+                "chart_date": None,
+                "created_at": revision.get("created_at"),
+                "message": revision.get("change_reason") or "계획 변경 사유 미입력",
+                "severity": "INFO",
+            }
+            for revision in revisions
+        ]
+        timeline.sort(key=lambda row: (str(row.get("created_at") or ""), str(row.get("id") or "")))
+        return {
+            "scenario_id": scenario_id,
+            "has_scenario_data": True,
+            "overall_execution_rate": overall,
+            "category_scores": category_scores,
+            "timeline": timeline,
+            "reach_events": decorated_reaches,
+            "response_events": decorated_responses,
+            "warning_events": warnings,
+            "revision_events": revisions,
+            "rule_based_summary": "계획 단계 실행, 계획 밖 주문의 사유, 경고 확인 및 도달 대응만으로 산출한 규칙 기반 결과입니다.",
+        }
+
+    @staticmethod
+    def _distribution(delays: list[int], pending_count: int) -> dict[str, Any]:
+        counts = {
+            "same_day": sum(1 for value in delays if value == 0),
+            "one_to_two": sum(1 for value in delays if 1 <= value <= 2),
+            "three_plus": sum(1 for value in delays if value >= 3),
+            "held_or_unanswered": pending_count,
+        }
+        total = sum(counts.values())
+        return {
+            "total": total,
+            "counts": counts,
+            "percentages": {key: round(value / total * 100, 2) if total else 0 for key, value in counts.items()},
+        }
+
+    def get_training_account_scenario_habits(
+        self,
+        account_id: int,
+        range_filter: str = "20",
+        stock_id: int | None = None,
+        result_filter: str = "all",
+        scenario_filter: str = "all",
+    ) -> dict[str, Any]:
+        account = self.get_training_account(account_id)
+        closed = self.list_training_account_closed_trades(account_id)["items"]
+        if stock_id:
+            closed = [trade for trade in closed if int(trade.get("stock_id") or 0) == stock_id]
+        if result_filter != "all":
+            closed = [trade for trade in closed if str(trade.get("result_type") or "").lower() == result_filter]
+        if range_filter in {"20", "50"}:
+            closed = closed[-int(range_filter):]
+
+        reviews: list[tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any] | None]] = []
+        for trade in closed:
+            scenarios = self.repo.list_risk_scenarios_by_session(int(trade["training_session_id"]))
+            scenario = next(
+                (
+                    row for row in scenarios
+                    if str(row.get("closed_trade_id") or "") == str(trade.get("closed_trade_id") or "")
+                ),
+                None,
+            )
+            if scenario_filter == "planned" and not scenario:
+                continue
+            if scenario_filter == "unplanned" and scenario:
+                continue
+            review = self.get_risk_scenario_execution_review(int(scenario["id"])) if scenario else None
+            reviews.append((trade, scenario, review))
+
+        scored = [review for _, _, review in reviews if review and review.get("overall_execution_rate") is not None]
+        all_events: list[dict[str, Any]] = []
+        all_target_episodes: list[dict[str, Any]] = []
+        all_stop_episodes: list[dict[str, Any]] = []
+        scenario_distributions: dict[int, tuple[dict[str, Any], dict[str, Any]]] = {}
+        for trade, scenario, review in reviews:
+            if not scenario or not review:
+                continue
+            all_events.extend(review["timeline"])
+            prices = self._session_prices(self.repo.get_session(int(trade["training_session_id"])) or {})
+            date_index = {str(row.get("trade_date")): idx for idx, row in enumerate(prices)}
+            episodes = self._build_reach_episodes(review["reach_events"], review["response_events"], date_index)
+            target_episodes = [row for row in episodes if row.get("reach_type") == "TAKE_PROFIT_REACHED"]
+            stop_episodes = [row for row in episodes if row.get("reach_type") != "TAKE_PROFIT_REACHED"]
+            all_target_episodes.extend(target_episodes)
+            all_stop_episodes.extend(stop_episodes)
+            scenario_distributions[int(scenario["id"])] = (
+                self._episode_distribution(target_episodes),
+                self._episode_distribution(stop_episodes),
+            )
+
+        category_scores = []
+        for key, label in [
+            ("pre_plan", "사전 계획"),
+            ("split_entry", "분할 진입"),
+            ("profit_exit", "익절·분할 청산"),
+            ("stop_exit", "손절·정리"),
+            ("change_warning", "계획 변경·경고 대응"),
+        ]:
+            all_rows = [row for review in scored for row in review["category_scores"] if row["key"] == key]
+            rows = [row for row in all_rows if row["applicable"]]
+            earned_score = sum(
+                float(row.get("earned_score") if row.get("earned_score") is not None else float(row.get("score") or 0) / 100 * int(row.get("eligible_count") or 0))
+                for row in rows
+            )
+            max_score = sum(
+                float(row.get("max_score") if row.get("max_score") is not None else int(row.get("eligible_count") or 0))
+                for row in rows
+            )
+            applicable_item_count = sum(int(row.get("applicable_item_count") or row.get("eligible_count") or 0) for row in rows)
+            category_scores.append(
+                {
+                    "key": key,
+                    "label": label,
+                    "applicable": bool(rows),
+                    "score": round(earned_score / max_score * 100, 2) if max_score else None,
+                    "rate": round(earned_score / max_score * 100, 2) if max_score else None,
+                    "eligible_count": len(rows),
+                    "applicable_trade_count": len(rows),
+                    "applicable_item_count": applicable_item_count,
+                    "earned_score": round(earned_score, 4),
+                    "max_score": round(max_score, 4),
+                    "full_count": sum(int(row.get("full_count") or 0) for row in rows),
+                    "partial_count": sum(int(row.get("partial_count") or 0) for row in rows),
+                    "miss_count": sum(int(row.get("miss_count") or 0) for row in rows),
+                    "excluded_count": sum(int(row.get("excluded_count") or 0) for row in all_rows),
+                }
+            )
+
+        planned_count = sum(1 for _, scenario, _ in reviews if scenario)
+        order_event_types = {"BUY_PLAN_MATCHED", "SELL_PLAN_MATCHED", "UNPLANNED_BUY", "UNPLANNED_SELL"}
+        order_events = [event for event in all_events if str(event.get("event_type") or "") in order_event_types]
+        def order_key(event: dict[str, Any]) -> str:
+            trade_id = event.get("simulation_trade_id")
+            return f"trade:{trade_id}" if trade_id is not None else str(event.get("id") or "")
+
+        evaluated_order_keys = {order_key(event) for event in order_events}
+        unplanned_events_by_order: dict[str, dict[str, Any]] = {}
+        for event in order_events:
+            if str(event.get("event_type") or "").startswith("UNPLANNED_"):
+                unplanned_events_by_order.setdefault(order_key(event), event)
+        unplanned_events = list(unplanned_events_by_order.values())
+        reasoned_unplanned = sum(
+            1 for event in unplanned_events
+            if str((event.get("actual_value") or {}).get("unplanned_reason") or "").strip()
+        )
+
+        revision_events_by_id = {
+            str(event.get("id")): event
+            for event in all_events
+            if event.get("kind") == "revision" and event.get("event_type") == "PRICE_LINES_UPDATED"
+        }
+        revisions = list(revision_events_by_id.values())
+        reasoned_revisions = sum(1 for event in revisions if event.get("message") != "계획 변경 사유 미입력")
+
+        wins = [trade for trade, _, _ in reviews if trade.get("result_type") == "WIN"]
+        losses = [trade for trade, _, _ in reviews if trade.get("result_type") == "LOSS"]
+        flats = [trade for trade, _, _ in reviews if trade.get("result_type") == "FLAT"]
+        avg_profit = sum(float(row.get("net_pnl") or 0) for row in wins) / len(wins) if wins else None
+        avg_loss = abs(sum(float(row.get("net_pnl") or 0) for row in losses) / len(losses)) if losses else None
+        avg_win_hold = sum(int(row.get("holding_bars") or 0) for row in wins) / len(wins) if wins else None
+        avg_loss_hold = sum(int(row.get("holding_bars") or 0) for row in losses) / len(losses) if losses else None
+        completed_result_count = len(wins) + len(losses) + len(flats)
+        winning_ratio = round(len(wins) / completed_result_count * 100, 4) if completed_result_count else None
+        profit_loss_ratio = round(avg_profit / avg_loss, 4) if avg_profit is not None and avg_loss else None
+
+        summary = self.get_training_account_summary(account_id)
+        active_risk = []
+        for session in self.repo.list_account_sessions(account_id, status_filter=RUNNING_STATUS):
+            scenario = self.repo.get_active_risk_scenario(int(session["id"]))
+            if scenario:
+                detail = self._risk_scenario_detail(scenario)
+                holding = detail.get("holding_risk") or {}
+                active_risk.append(
+                    {
+                        "session_id": int(session["id"]),
+                        "stock_name": session.get("stock_name") or session.get("stock_code"),
+                        "risk_amount": holding.get("current_estimated_risk"),
+                        "risk_usage_pct": holding.get("risk_usage_pct"),
+                    }
+                )
+        account_risk_budget = (
+            float(summary.get("training_equity") or account.get("realized_equity") or account.get("initial_capital") or 0)
+            * float(account.get("max_open_risk_pct") or 0)
+            / 100
+        )
+        for row in active_risk:
+            row["risk_usage_pct"] = self._safe_rate(float(row.get("risk_amount") or 0), account_risk_budget)
+        current_open_risk_pct = (
+            self._safe_rate(sum(float(row.get("risk_amount") or 0) for row in active_risk), account_risk_budget)
+            if account_risk_budget > 0 else None
+        )
+        average = round(sum(float(review["overall_execution_rate"]) for review in scored) / len(scored), 2) if scored else None
+        evaluated_order_count = len(evaluated_order_keys)
+        unplanned_order_count = len(unplanned_events)
+
+        trades = []
+        for trade, scenario, review in reviews:
+            scenario_id = int(scenario["id"]) if scenario else None
+            target_distribution, stop_distribution = scenario_distributions.get(
+                scenario_id or 0,
+                (self._episode_distribution([]), self._episode_distribution([])),
+            )
+            trades.append(
+                {
+                    **trade,
+                    "has_scenario_data": bool(scenario),
+                    "scenario_id": scenario_id,
+                    "scenario_execution_rate": review.get("overall_execution_rate") if review else None,
+                    "category_scores": review.get("category_scores") if review else [],
+                    "max_risk_pct": scenario.get("account_risk_pct") if scenario else None,
+                    "unplanned_action_count": len(
+                        {
+                            order_key(event)
+                            for event in (review or {}).get("timeline", [])
+                            if str(event.get("event_type") or "").startswith("UNPLANNED_")
+                        }
+                    ),
+                    "target_response": target_distribution,
+                    "stop_response": stop_distribution,
+                }
+            )
+
+        return {
+            "account_id": account_id,
+            "filters": {"range": range_filter, "stock_id": stock_id, "result": result_filter, "scenario": scenario_filter},
+            "coverage": {
+                "trade_count": len(reviews),
+                "closed_trade_count": len(reviews),
+                "scenario_trade_count": planned_count,
+                "legacy_trade_count": len(reviews) - planned_count,
+                "scored_trade_count": len(scored),
+                "evaluable_trade_count": len(scored),
+            },
+            "summary": {
+                "average_execution_rate": average,
+                "scenario_created_count": planned_count,
+                "scenario_creation_denominator": len(reviews),
+                "scenario_creation_rate": round(planned_count / len(reviews) * 100, 2) if reviews else None,
+                "plan_creation_rate": round(planned_count / len(reviews) * 100, 2) if reviews else None,
+                "unplanned_order_count": unplanned_order_count,
+                "evaluated_order_count": evaluated_order_count,
+                "unplanned_order_rate": (
+                    round(unplanned_order_count / evaluated_order_count * 100, 2) if evaluated_order_count else None
+                ),
+            },
+            "execution_trend": [
+                {
+                    "trade_sequence": trade.get("trade_sequence"),
+                    "stock_name": trade.get("stock_name") or trade.get("stock_code"),
+                    "result_type": trade.get("result_type"),
+                    "score": review.get("overall_execution_rate") if review else None,
+                    "scenario_id": int(scenario["id"]) if scenario else None,
+                }
+                for trade, scenario, review in reviews
+            ],
+            "category_scores": category_scores,
+            "target_response_distribution": self._episode_distribution(all_target_episodes),
+            "stop_response_distribution": self._episode_distribution(all_stop_episodes),
+            "plan_change_distribution": {
+                "total": len(revisions),
+                "reason_recorded": reasoned_revisions,
+                "reason_recording_rate": round(reasoned_revisions / len(revisions) * 100, 2) if revisions else None,
+            },
+            "unplanned_action_distribution": {
+                "total": unplanned_order_count,
+                "reason_recorded": reasoned_unplanned,
+                "reason_recording_rate": round(reasoned_unplanned / unplanned_order_count * 100, 2) if unplanned_order_count else None,
+            },
+            "asymmetry": {
+                "average_profit": avg_profit,
+                "average_loss": avg_loss,
+                "average_win_pnl": avg_profit,
+                "average_loss_pnl_abs": avg_loss,
+                "average_win_holding_bars": avg_win_hold,
+                "average_loss_holding_bars": avg_loss_hold,
+                "win_count": len(wins),
+                "loss_count": len(losses),
+                "flat_count": len(flats),
+                "winning_ratio": winning_ratio,
+                "profit_loss_ratio": profit_loss_ratio,
+            },
+            "account_risk": {
+                "max_open_risk_pct": account.get("max_open_risk_pct"),
+                "current_open_risk_pct": current_open_risk_pct,
+                "thresholds": [60, 80, 100],
+                "positions": active_risk,
+            },
+            "volatility_positioning": None,
+            "trades": trades,
+        }
     def activate_risk_scenario_for_first_buy(self, session: dict[str, Any], trade_values: dict[str, Any]) -> tuple[dict[str, Any] | None, int | None, int | None]:
         if not session.get("training_account_id"):
             return None, None, None

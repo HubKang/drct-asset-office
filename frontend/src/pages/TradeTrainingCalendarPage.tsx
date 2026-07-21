@@ -1,175 +1,305 @@
 import { useEffect, useMemo, useState } from "react";
+import { ChevronLeft, ChevronRight, ClipboardCheck } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import SectionCard from "@/components/common/SectionCard";
 import { repositories } from "@/services";
-import type { TrainingCalendarDay, TrainingCalendarResponse } from "@/types/tradeTraining";
+import type {
+  TrainingCalendarDay,
+  TrainingCalendarGrowthPoint,
+  TrainingCalendarItem,
+  TrainingCalendarResponse,
+} from "@/types/tradeTraining";
 
 const formatMonth = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 const formatDate = (date: Date) =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-const todayMonth = () => formatMonth(new Date());
-const todayDate = () => formatDate(new Date());
+const currentMonth = () => formatMonth(new Date());
+const currentDate = () => formatDate(new Date());
 
-const fmtCount = (value: number) => `${Number(value || 0).toLocaleString("ko-KR")}건`;
-const fmtScore = (value: number) => `${Math.round(Number(value || 0))}점`;
 const fmtRate = (value: number) => {
-  const n = Number(value || 0);
-  return `${n > 0 ? "+" : ""}${n.toFixed(1)}%`;
+  const number = Number(value || 0);
+  return `${number > 0 ? "+" : ""}${number.toFixed(2)}%`;
 };
 
-const getReturnGradientLevel = (value: number) => {
-  const absValue = Math.abs(value);
-  if (absValue >= 30) return "strong";
-  if (absValue >= 10) return "medium";
-  if (absValue >= 3) return "soft";
-  return "pale";
+const fmtMoney = (value: number) => {
+  const number = Math.round(Number(value || 0));
+  return `${number > 0 ? "+" : ""}${number.toLocaleString("ko-KR")}원`;
 };
 
-const getReturnToneClass = (value?: number | null) => {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n === 0) return "training-return-neutral";
-  return `training-return-${n > 0 ? "positive" : "negative"}-${getReturnGradientLevel(n)}`;
+const returnClass = (value?: number | null) => {
+  const number = Number(value || 0);
+  if (number > 0) return "training-positive";
+  if (number < 0) return "training-negative";
+  return "training-neutral";
 };
 
-const getReturnTextClass = (value?: number | null) => {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n === 0) return "training-neutral";
-  return n > 0 ? "training-positive" : "training-negative";
-};
-
-const monthDays = (month: string) => {
+const monthCells = (month: string) => {
   const [year, monthNumber] = month.split("-").map(Number);
   const first = new Date(year, monthNumber - 1, 1);
   const last = new Date(year, monthNumber, 0);
-  const blanks = Array.from({ length: first.getDay() }, () => null);
-  const days = Array.from({ length: last.getDate() }, (_, idx) => {
-    const day = String(idx + 1).padStart(2, "0");
-    return `${month}-${day}`;
-  });
-  return [...blanks, ...days];
+  return [
+    ...Array.from({ length: first.getDay() }, () => null),
+    ...Array.from({ length: last.getDate() }, (_, index) => `${month}-${String(index + 1).padStart(2, "0")}`),
+  ];
 };
 
-function TradeTrainingCalendarPage() {
-  const [month, setMonth] = useState(todayMonth());
-  const [data, setData] = useState<TrainingCalendarResponse | null>(null);
-  const [selectedDate, setSelectedDate] = useState(todayDate());
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [showScoreHelp, setShowScoreHelp] = useState(false);
+const compactTime = (value?: string | null) => {
+  if (!value) return "";
+  const normalized = value.replace("T", " ");
+  return normalized.length >= 16 ? normalized.slice(11, 16) : "";
+};
 
-  const dayMap = useMemo(() => {
-    const map = new Map<string, TrainingCalendarDay>();
-    (data?.days ?? []).forEach((day) => map.set(day.date, day));
-    return map;
-  }, [data]);
+function GrowthChart({
+  points,
+  selectedDate,
+  onSelect,
+}: {
+  points: TrainingCalendarGrowthPoint[];
+  selectedDate: string;
+  onSelect: (date: string) => void;
+}) {
+  if (!points.length) return <p className="training-calendar-empty">이 달에 완료된 매매훈련이 없습니다.</p>;
 
-  const selectedDay = dayMap.get(selectedDate) ?? null;
-  const calendarCells = useMemo(() => monthDays(month), [month]);
-  const maxScore = Math.max(1, ...(data?.days ?? []).map((day) => day.training_score));
+  const width = 1000;
+  const height = 320;
+  const left = 78;
+  const right = 82;
+  const top = 50;
+  const bottom = 44;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const maxDaily = Math.max(1, ...points.map((point) => Math.abs(point.daily_return_rate)));
+  const dailyLimit = Math.ceil(maxDaily * 10) / 10;
+  const dailyTicks = [dailyLimit, dailyLimit / 2, 0, -dailyLimit / 2, -dailyLimit];
 
-  const load = async (targetMonth = month) => {
-    setLoading(true);
-    setError("");
-    try {
-      const result = await repositories.tradeTraining.getCalendar(targetMonth);
-      setData(result);
-      if (!selectedDate.startsWith(targetMonth)) {
-        const fallback = result.days[0]?.date || `${targetMonth}-01`;
-        setSelectedDate(fallback);
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "매매훈련 캘린더를 불러오지 못했습니다.");
-    } finally {
-      setLoading(false);
-    }
+  const cumulativeValues = points.map((point) => point.cumulative_return_rate);
+  const maxCumulative = Math.max(1, ...cumulativeValues.map((value) => Math.abs(value)));
+  const cumulativeLimit = Math.ceil(maxCumulative * 10) / 10;
+  const cumulativeMin = -cumulativeLimit;
+  const cumulativeMax = cumulativeLimit;
+  const cumulativeRange = cumulativeLimit * 2;
+  const step = points.length === 1 ? 0 : plotWidth / (points.length - 1);
+  const xAt = (index: number) => (points.length === 1 ? left + plotWidth / 2 : left + step * index);
+  const dailyY = (value: number) => top + ((dailyLimit - value) / (dailyLimit * 2)) * plotHeight;
+  const cumulativeY = (value: number) => top + ((cumulativeMax - value) / cumulativeRange) * plotHeight;
+  const zeroY = dailyY(0);
+  const linePoints = points.map((point, index) => `${xAt(index)},${cumulativeY(point.cumulative_return_rate)}`).join(" ");
+  const barWidth = points.length === 1 ? 150 : Math.max(7, Math.min(20, step * 0.62));
+  const axisRate = (value: number) => {
+    const absolute = Math.abs(value);
+    const digits = absolute < 10 ? 1 : 0;
+    return `${value > 0 ? "+" : ""}${value.toFixed(digits)}%`;
   };
-
-  useEffect(() => {
-    void load(month);
-  }, []);
-
-  const applyMonth = (nextMonth: string, nextSelectedDate = `${nextMonth}-01`) => {
-    if (!/^\d{4}-\d{2}$/.test(nextMonth)) return;
-    setMonth(nextMonth);
-    setSelectedDate(nextSelectedDate);
-    void load(nextMonth);
-  };
-
-  const moveMonth = (delta: number) => {
-    const [year, monthNumber] = month.split("-").map(Number);
-    const next = new Date(year, monthNumber - 1 + delta, 1);
-    applyMonth(formatMonth(next));
-  };
-
-  const goThisMonth = () => {
-    applyMonth(todayMonth(), todayDate());
+  const showDateLabel = (point: TrainingCalendarGrowthPoint, index: number) => {
+    const day = Number(point.date.slice(-2));
+    return index === 0 || index === points.length - 1 || day % 5 === 0 || point.training_count > 0;
   };
 
   return (
-    <div className="training-calendar-page space-y-4">
-      <div className="journal-hero-row training-calendar-hero-row">
-        <section className="journal-hero-panel">
-          <h1>매매훈련 캘린더</h1>
-          <p>매일의 매매훈련 기록, 복기 상태, 훈련점수와 성장 추이를 확인합니다.</p>
-        </section>
-
-        <section className="journal-summary-compact training-calendar-hero-summary" aria-label="월간 훈련 요약">
-          <div className="journal-summary-mini-card">
-            <span className="journal-summary-label">총 훈련</span>
-            <strong className="journal-summary-value">{fmtCount(data?.summary.total_sessions ?? 0)}</strong>
-          </div>
-          <div className="journal-summary-mini-card">
-            <span className="journal-summary-label">훈련일</span>
-            <strong className="journal-summary-value">{fmtCount(data?.summary.training_days ?? 0)}</strong>
-          </div>
-          <div className="journal-summary-mini-card">
-            <span className="journal-summary-label">평균 훈련점수</span>
-            <strong className="journal-summary-value">{fmtScore(data?.summary.avg_training_score ?? 0)}</strong>
-          </div>
-          <div className="journal-summary-mini-card">
-            <span className="journal-summary-label">평균 수익률</span>
-            <strong className="journal-summary-value">{fmtRate(data?.summary.avg_return_rate ?? 0)}</strong>
-          </div>
-          <div className="journal-summary-mini-card">
-            <span className="journal-summary-label">복기 완료율</span>
-            <strong className="journal-summary-value">{fmtRate(data?.summary.review_completion_rate ?? 0).replace("+", "")}</strong>
-          </div>
-        </section>
+    <div className="training-calendar-growth-chart-v2">
+      <div className="training-calendar-chart-legend">
+        <span><i className="daily" />일별 평균 수익률</span>
+        <span><i className="cumulative" />월 누적 수익률</span>
       </div>
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="일별 평균 수익률과 월 누적 수익률 이중 축 차트">
+        <text x={left} y={20} textAnchor="start" className="growth-axis-title">일별 평균 수익률</text>
+        <text x={width - right} y={20} textAnchor="end" className="growth-axis-title">월 누적 수익률</text>
 
-      <SectionCard title="월간 훈련 조회">
-        <div className="training-calendar-toolbar">
-          <div className="training-calendar-month-control calendar-period-nav">
-            <button type="button" className="btn btn-secondary calendar-nav-button" onClick={() => moveMonth(-1)} aria-label="이전 월">◀</button>
-            <input className="input-control calendar-period-input" type="month" value={month} onChange={(e) => applyMonth(e.target.value)} />
-            <button type="button" className="btn btn-secondary calendar-nav-button" onClick={() => moveMonth(1)} aria-label="다음 월">▶</button>
-            <button type="button" className="btn btn-secondary calendar-today-button" onClick={goThisMonth} disabled={loading}>이번달</button>
-          </div>
+        {dailyTicks.map((tick, index) => {
+          const y = top + (plotHeight / (dailyTicks.length - 1)) * index;
+          const cumulativeTick = cumulativeMax - (cumulativeRange / (dailyTicks.length - 1)) * index;
+          return (
+            <g key={`axis-${tick}`}>
+              <line x1={left} y1={y} x2={width - right} y2={y} className="growth-grid-line" />
+              <text x={left - 10} y={y + 4} textAnchor="end" className="growth-axis-label">{axisRate(tick)}</text>
+              <text x={width - right + 10} y={y + 4} textAnchor="start" className="growth-axis-label">{axisRate(cumulativeTick)}</text>
+            </g>
+          );
+        })}
+
+        {points.map((point, index) => {
+          const x = xAt(index);
+          const selected = point.date === selectedDate;
+          return selected ? (
+            <rect
+              key={`selected-${point.date}`}
+              x={x - Math.max(barWidth, 12)}
+              y={top}
+              width={Math.max(barWidth * 2, 24)}
+              height={plotHeight}
+              className="growth-selected-band"
+            />
+          ) : null;
+        })}
+
+        {points.map((point, index) => {
+          const x = xAt(index);
+          const valueY = dailyY(point.daily_return_rate);
+          const barY = Math.min(zeroY, valueY);
+          const barHeight = Math.abs(valueY - zeroY);
+          return (
+            <g key={point.date} onClick={() => onSelect(point.date)} className="growth-point-group">
+              {point.daily_return_rate !== 0 ? (
+                <rect
+                  x={x - barWidth / 2}
+                  y={barY}
+                  width={barWidth}
+                  height={Math.max(2, barHeight)}
+                  rx={3}
+                  className={point.daily_return_rate > 0 ? "growth-bar-positive" : "growth-bar-negative"}
+                />
+              ) : null}
+              <rect x={x - Math.max(step / 2, 12)} y={top} width={Math.max(step, 24)} height={plotHeight} fill="transparent" />
+              {showDateLabel(point, index) ? (
+                <text x={x} y={height - 14} textAnchor="middle" className="growth-date-label">{Number(point.date.slice(-2))}일</text>
+              ) : null}
+              <title>{`${point.date} · 완료 ${point.training_count}건 · 일별 평균 ${fmtRate(point.daily_return_rate)} · 누적 ${fmtRate(point.cumulative_return_rate)}`}</title>
+            </g>
+          );
+        })}
+
+        <polyline points={linePoints} className="growth-cumulative-line" />
+        {points.map((point, index) => (
+          point.training_count > 0 || point.date === selectedDate ? (
+            <circle
+              key={`line-${point.date}`}
+              cx={xAt(index)}
+              cy={cumulativeY(point.cumulative_return_rate)}
+              r={point.date === selectedDate ? 5 : 3}
+              className="growth-cumulative-dot"
+            />
+          ) : null
+        ))}
+
+        <line x1={left} y1={zeroY} x2={width - right} y2={zeroY} className="growth-axis-zero" />
+      </svg>
+    </div>
+  );
+}
+
+function CalendarItemRow({ item, onOpen }: { item: TrainingCalendarItem; onOpen: (item: TrainingCalendarItem) => void }) {
+  return (
+    <article className="training-calendar-item-row">
+      <div className="training-calendar-item-main">
+        <span className={`training-calendar-type-badge ${item.training_type.toLowerCase()}`}>
+          {item.training_type === "ACCOUNT" ? "계좌매매" : "종목매매"}
+        </span>
+        <strong>{item.stock_name}</strong>
+        <small>{item.stock_code || ""}</small>
+        <time>{compactTime(item.completed_at)}</time>
+      </div>
+      <div className="training-calendar-item-meta">
+        {item.training_account_name ? <span>{item.training_account_name}</span> : null}
+        <span>{item.chart_entry_date || "-"} → {item.chart_exit_date || "-"}</span>
+        <strong className={returnClass(item.return_rate)}>{fmtRate(item.return_rate)}</strong>
+        <span className={returnClass(item.net_pnl)}>{fmtMoney(item.net_pnl)}</span>
+        <span>복기 {item.review_done ? "완료" : "미완료"}</span>
+        {item.scenario_execution_rate != null ? <span>시나리오 {item.scenario_execution_rate.toFixed(1)}%</span> : null}
+      </div>
+      <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => onOpen(item)}>
+        <ClipboardCheck size={15} /> 결과·복기
+      </button>
+    </article>
+  );
+}
+
+function TradeTrainingCalendarPage() {
+  const navigate = useNavigate();
+  const [month, setMonth] = useState(currentMonth());
+  const [data, setData] = useState<TrainingCalendarResponse | null>(null);
+  const [selectedDate, setSelectedDate] = useState(currentDate());
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const dayMap = useMemo(() => new Map((data?.days ?? []).map((day) => [day.date, day])), [data]);
+  const selectedDay = dayMap.get(selectedDate) ?? null;
+  const cells = useMemo(() => monthCells(month), [month]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    repositories.tradeTraining.getCalendar(month)
+      .then((result) => {
+        if (cancelled) return;
+        setData(result);
+        const latestCompletedDate = result.days[result.days.length - 1]?.date;
+        const fallback = latestCompletedDate || (month === currentMonth() ? currentDate() : `${month}-01`);
+        setSelectedDate(fallback);
+      })
+      .catch((nextError) => {
+        if (cancelled) return;
+        setError(nextError instanceof Error ? nextError.message : "매매훈련 캘린더를 불러오지 못했습니다.");
+        setData(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [month]);
+
+  const moveMonth = (delta: number) => {
+    const [year, monthNumber] = month.split("-").map(Number);
+    setMonth(formatMonth(new Date(year, monthNumber - 1 + delta, 1)));
+  };
+
+  const openTrainingResult = (item: TrainingCalendarItem) => {
+    navigate("/trading/training", {
+      state: {
+        calendarSessionId: item.session_id,
+        calendarSelection: item.chart_entry_date && item.chart_exit_date
+          ? { buyDate: item.chart_entry_date, sellDate: item.chart_exit_date }
+          : null,
+      },
+    });
+  };
+
+  return (
+    <div className="training-calendar-page training-calendar-unified space-y-4">
+      <header className="training-calendar-page-header">
+        <div>
+          <h1>매매훈련 캘린더</h1>
+          <p>실제 훈련 완료일을 기준으로 계좌매매와 종목매매 결과를 함께 확인합니다.</p>
         </div>
-        {error ? <div className="inline-result inline-error">{error}</div> : null}
-      </SectionCard>
+        <div className="training-calendar-month-control calendar-period-nav">
+          <button type="button" className="btn btn-secondary calendar-nav-button" onClick={() => moveMonth(-1)} aria-label="이전 달">
+            <ChevronLeft size={17} />
+          </button>
+          <input type="month" className="input-control calendar-period-input" value={month} onChange={(event) => setMonth(event.target.value)} />
+          <button type="button" className="btn btn-secondary calendar-nav-button" onClick={() => moveMonth(1)} aria-label="다음 달">
+            <ChevronRight size={17} />
+          </button>
+          <button type="button" className="btn btn-secondary calendar-today-button" onClick={() => setMonth(currentMonth())} disabled={loading}>
+            이번 달
+          </button>
+        </div>
+      </header>
+
+      {error ? <div className="inline-result inline-error">{error}</div> : null}
 
       <div className="training-calendar-main-grid">
-        <SectionCard title="월간 훈련 캘린더">
+        <SectionCard title="완료 훈련">
           <div className="training-calendar-week-row">
             {["일", "월", "화", "수", "목", "금", "토"].map((label) => <span key={label}>{label}</span>)}
           </div>
           <div className="training-calendar-grid">
-            {calendarCells.map((date, idx) => {
-              if (!date) return <div key={`blank-${idx}`} className="training-calendar-day-cell blank" />;
+            {cells.map((date, index) => {
+              if (!date) return <div key={`blank-${index}`} className="training-calendar-day-cell blank" />;
               const day = dayMap.get(date);
-              const selected = date === selectedDate;
               return (
                 <button
                   key={date}
                   type="button"
-                  className={`training-calendar-day-cell ${day ? getReturnToneClass(day.total_return_rate) : "training-calendar-day-cell-empty"} ${selected ? "training-calendar-day-cell-selected" : ""}`}
+                  className={`training-calendar-day-cell ${day ? "has-training" : "training-calendar-day-cell-empty"} ${date === selectedDate ? "training-calendar-day-cell-selected" : ""}`}
                   onClick={() => setSelectedDate(date)}
                 >
                   <span className="training-calendar-day-number">{Number(date.slice(-2))}</span>
                   {day ? (
                     <span className="training-calendar-day-body">
-                      <b>{day.training_count}건 · {day.training_score}점</b>
-                      <em className={getReturnTextClass(day.total_return_rate)}>{fmtRate(day.total_return_rate)}</em>
+                      <b>완료 {day.training_count}건</b>
+                      <em className={returnClass(day.total_return_rate)}>{fmtRate(day.total_return_rate)}</em>
                       <small>복기 {day.review_saved_count}/{day.review_required_count}</small>
                     </span>
                   ) : null}
@@ -179,95 +309,77 @@ function TradeTrainingCalendarPage() {
           </div>
         </SectionCard>
 
-        <SectionCard title="선택일 상세">
+        <SectionCard title="선택일 매매 상세">
           <div className="training-calendar-selected-detail">
             <div className="training-calendar-detail-head">
               <div>
                 <strong>{selectedDate}</strong>
-                <span>{selectedDay ? `훈련 ${selectedDay.training_count}건` : "저장된 훈련 기록 없음"}</span>
+                <span>{selectedDay ? `완료 훈련 ${selectedDay.training_count}건 · ${selectedDay.unique_stock_count}종목` : "완료된 훈련 없음"}</span>
               </div>
-              <button type="button" className="info-dot" onClick={() => setShowScoreHelp((prev) => !prev)} title="훈련점수 계산 기준">i</button>
             </div>
-            {showScoreHelp ? (
-              <div className="training-calendar-score-help">
-                <strong>일일 훈련점수 계산 기준</strong>
-                <p>기본 20점, 훈련 1건당 5점, 양수 수익률 1%당 3점, 훈련 3건 단위 보너스, 수익률 +3% 단위 보너스, 복기 저장 1건당 5점을 더해 최대 100점으로 계산합니다.</p>
-              </div>
-            ) : null}
             {selectedDay ? (
               <>
-                <div className="training-calendar-detail-kpis">
-                  <div><span>훈련점수</span><strong>{fmtScore(selectedDay.training_score)}</strong></div>
-                  <div><span>총 수익률</span><strong className={getReturnTextClass(selectedDay.total_return_rate)}>{fmtRate(selectedDay.total_return_rate)}</strong></div>
-                  <div><span>평균 수익률</span><strong className={getReturnTextClass(selectedDay.avg_return_rate)}>{fmtRate(selectedDay.avg_return_rate)}</strong></div>
-                  <div><span>복기</span><strong>{selectedDay.review_saved_count}/{selectedDay.review_required_count}</strong></div>
+                <div className="training-calendar-day-summary">
+                  <span>합산 <strong className={returnClass(selectedDay.total_return_rate)}>{fmtRate(selectedDay.total_return_rate)}</strong></span>
+                  <span>평균 <strong className={returnClass(selectedDay.avg_return_rate)}>{fmtRate(selectedDay.avg_return_rate)}</strong></span>
+                  <span>수익 {selectedDay.win_count} · 손실 {selectedDay.loss_count} · 보합 {selectedDay.flat_count}</span>
                 </div>
-                <div className="training-calendar-method-list">
-                  {selectedDay.method_groups.map((group) => (
-                    <article key={`${group.trade_method_id ?? "free"}-${group.trade_method_name}`} className="training-calendar-method-card">
-                      <div className="training-calendar-method-head">
-                        <strong>{group.trade_method_name}</strong>
-                        <span className={getReturnTextClass(group.total_return_rate)}>{group.training_count}건 · {fmtRate(group.total_return_rate)}</span>
-                      </div>
-                      {group.stocks.map((stock) => (
-                        <div key={`${stock.stock_code || stock.stock_name}`} className="training-calendar-stock-row">
-                          <span>{stock.stock_name}<small>{stock.stock_code || ""}</small></span>
-                          <span>{stock.training_count}건</span>
-                          <span className={getReturnTextClass(stock.avg_return_rate)}>{fmtRate(stock.avg_return_rate)}</span>
-                          <span>복기 {stock.review_saved_count}건</span>
-                        </div>
-                      ))}
-                    </article>
+                <div className="training-calendar-item-list">
+                  {selectedDay.items.map((item) => (
+                    <CalendarItemRow key={item.calendar_item_id} item={item} onOpen={openTrainingResult} />
                   ))}
                 </div>
               </>
             ) : (
-              <p className="training-calendar-empty">선택한 날짜에 저장된 매매훈련 기록이 없습니다.</p>
+              <p className="training-calendar-empty">선택한 날짜에 완료된 매매훈련이 없습니다.</p>
             )}
           </div>
         </SectionCard>
       </div>
 
       <SectionCard title="월간 성장 추이">
-        <div className="training-calendar-growth-chart">
-          {(data?.days ?? []).map((day) => (
-            <button key={day.date} type="button" onClick={() => setSelectedDate(day.date)} title={`${day.date} ${fmtRate(day.total_return_rate)}`}>
-              <span
-                className={getReturnToneClass(day.total_return_rate)}
-                style={{ height: `${Math.max(8, (day.training_score / maxScore) * 100)}%` }}
-              />
-              <small>{Number(day.date.slice(-2))}</small>
-            </button>
-          ))}
-          {(data?.days ?? []).length === 0 ? <p className="training-calendar-empty">이 달에 저장된 매매훈련 기록이 없습니다.</p> : null}
-        </div>
+        <GrowthChart points={data?.growth ?? []} selectedDate={selectedDate} onSelect={setSelectedDate} />
         <div className="training-calendar-daily-table-wrap">
           <table className="data-table compact-table training-calendar-daily-table">
             <thead>
               <tr>
-                <th>날짜</th>
+                <th>완료일</th>
                 <th>훈련</th>
-                <th>훈련점수</th>
-                <th>총 수익률</th>
+                <th>종목</th>
+                <th>합산 수익률</th>
+                <th>평균 수익률</th>
+                <th>수익/손실/보합</th>
                 <th>복기</th>
-                <th>주요 매매기법</th>
                 <th>상세</th>
               </tr>
             </thead>
             <tbody>
-              {(data?.days ?? []).map((day) => (
-                <tr key={day.date}>
+              {[...(data?.days ?? [])].reverse().map((day: TrainingCalendarDay) => (
+                <tr
+                  key={day.date}
+                  className={day.date === selectedDate ? "training-calendar-table-selected" : ""}
+                  onClick={() => setSelectedDate(day.date)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setSelectedDate(day.date);
+                    }
+                  }}
+                  tabIndex={0}
+                  aria-selected={day.date === selectedDate}
+                >
                   <td>{day.date}</td>
                   <td>{day.training_count}건</td>
-                  <td>{day.training_score}점</td>
-                  <td className={getReturnTextClass(day.total_return_rate)}>{fmtRate(day.total_return_rate)}</td>
+                  <td>{day.unique_stock_count}종목</td>
+                  <td className={returnClass(day.total_return_rate)}>{fmtRate(day.total_return_rate)}</td>
+                  <td className={returnClass(day.avg_return_rate)}>{fmtRate(day.avg_return_rate)}</td>
+                  <td>{day.win_count}/{day.loss_count}/{day.flat_count}</td>
                   <td>{day.review_saved_count}/{day.review_required_count}</td>
-                  <td>{day.method_groups[0]?.trade_method_name || "-"}</td>
-                  <td><button type="button" className="btn btn-secondary btn-table-sm" onClick={() => setSelectedDate(day.date)}>보기</button></td>
+                  <td><button type="button" className="btn btn-secondary btn-table-sm" onClick={(event) => { event.stopPropagation(); setSelectedDate(day.date); }}>보기</button></td>
                 </tr>
               ))}
               {(data?.days ?? []).length === 0 ? (
-                <tr><td colSpan={7}>조회된 훈련 기록이 없습니다.</td></tr>
+                <tr><td colSpan={8}>이 달에 완료된 매매훈련이 없습니다.</td></tr>
               ) : null}
             </tbody>
           </table>
