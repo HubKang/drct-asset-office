@@ -18,6 +18,7 @@ import type {
   MarketThemeStock,
   MarketThemeStockCreateInput,
   MarketThemeStockMemoResponse,
+  MarketThemeStockSupplySummary,
   MarketThemeStockUpdateInput,
   MarketThemeUpdateInput,
 } from "@/types/marketTheme";
@@ -66,7 +67,10 @@ export const marketThemeApiRepository = {
     if (params.keyword) search.set("keyword", params.keyword);
     if (params.limit !== undefined) search.set("limit", String(params.limit));
     return apiRequest<MarketThemeMonthlyReturnResponse>(`/external/kiwoom/market-themes/returns/range?${search.toString()}`);
-  },  listThemeStocks: (themeId: number) => apiRequest<MarketThemeStock[]>(`/market-themes/${themeId}/stocks`),
+  },
+  listThemeStocks: (themeId: number) => apiRequest<MarketThemeStock[]>(`/market-themes/${themeId}/stocks`),
+  getThemeStockSupplySummary: (themeId: number, stockId: number) =>
+    apiRequest<MarketThemeStockSupplySummary>(`/market-themes/${themeId}/stocks/${stockId}/supply-summary`),
   createThemeStock: (themeId: number, payload: MarketThemeStockCreateInput) =>
     apiRequest<MarketThemeStock>(`/market-themes/${themeId}/stocks`, { method: "POST", body: JSON.stringify(payload) }),
   updateThemeStock: (mappingId: number, payload: MarketThemeStockUpdateInput) =>

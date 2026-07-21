@@ -61,20 +61,27 @@ function GrowthChart({
   if (!points.length) return <p className="training-calendar-empty">이 달에 완료된 매매훈련이 없습니다.</p>;
 
   const width = 1000;
-  const height = 320;
-  const left = 78;
-  const right = 82;
-  const top = 50;
-  const bottom = 44;
+  const height = 286;
+  const left = 72;
+  const right = 76;
+  const top = 42;
+  const bottom = 38;
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
+  const niceAxisLimit = (value: number) => {
+    const safeValue = Math.max(1, value);
+    const magnitude = 10 ** Math.floor(Math.log10(safeValue));
+    const normalized = safeValue / magnitude;
+    const niceNormalized = [1, 1.2, 1.5, 2, 2.5, 5, 10].find((candidate) => candidate >= normalized) ?? 10;
+    return niceNormalized * magnitude;
+  };
   const maxDaily = Math.max(1, ...points.map((point) => Math.abs(point.daily_return_rate)));
-  const dailyLimit = Math.ceil(maxDaily * 10) / 10;
+  const dailyLimit = niceAxisLimit(maxDaily);
   const dailyTicks = [dailyLimit, dailyLimit / 2, 0, -dailyLimit / 2, -dailyLimit];
 
   const cumulativeValues = points.map((point) => point.cumulative_return_rate);
   const maxCumulative = Math.max(1, ...cumulativeValues.map((value) => Math.abs(value)));
-  const cumulativeLimit = Math.ceil(maxCumulative * 10) / 10;
+  const cumulativeLimit = niceAxisLimit(maxCumulative);
   const cumulativeMin = -cumulativeLimit;
   const cumulativeMax = cumulativeLimit;
   const cumulativeRange = cumulativeLimit * 2;
@@ -84,7 +91,7 @@ function GrowthChart({
   const cumulativeY = (value: number) => top + ((cumulativeMax - value) / cumulativeRange) * plotHeight;
   const zeroY = dailyY(0);
   const linePoints = points.map((point, index) => `${xAt(index)},${cumulativeY(point.cumulative_return_rate)}`).join(" ");
-  const barWidth = points.length === 1 ? 150 : Math.max(7, Math.min(20, step * 0.62));
+  const barWidth = points.length === 1 ? 18 : Math.max(5, Math.min(14, step * 0.46));
   const axisRate = (value: number) => {
     const absolute = Math.abs(value);
     const digits = absolute < 10 ? 1 : 0;
@@ -102,8 +109,9 @@ function GrowthChart({
         <span><i className="cumulative" />월 누적 수익률</span>
       </div>
       <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="일별 평균 수익률과 월 누적 수익률 이중 축 차트">
-        <text x={left} y={20} textAnchor="start" className="growth-axis-title">일별 평균 수익률</text>
-        <text x={width - right} y={20} textAnchor="end" className="growth-axis-title">월 누적 수익률</text>
+        <rect x={left} y={top} width={plotWidth} height={plotHeight} rx={6} className="growth-plot-background" />
+        <text x={left} y={18} textAnchor="start" className="growth-axis-title">일별 평균 수익률</text>
+        <text x={width - right} y={18} textAnchor="end" className="growth-axis-title">월 누적 수익률</text>
 
         {dailyTicks.map((tick, index) => {
           const y = top + (plotHeight / (dailyTicks.length - 1)) * index;
@@ -116,6 +124,7 @@ function GrowthChart({
             </g>
           );
         })}
+        <line x1={left} y1={zeroY} x2={width - right} y2={zeroY} className="growth-axis-zero" />
 
         {points.map((point, index) => {
           const x = xAt(index);
@@ -145,13 +154,13 @@ function GrowthChart({
                   y={barY}
                   width={barWidth}
                   height={Math.max(2, barHeight)}
-                  rx={3}
+                  rx={Math.min(3, barWidth / 2)}
                   className={point.daily_return_rate > 0 ? "growth-bar-positive" : "growth-bar-negative"}
                 />
               ) : null}
               <rect x={x - Math.max(step / 2, 12)} y={top} width={Math.max(step, 24)} height={plotHeight} fill="transparent" />
               {showDateLabel(point, index) ? (
-                <text x={x} y={height - 14} textAnchor="middle" className="growth-date-label">{Number(point.date.slice(-2))}일</text>
+                <text x={x} y={height - 10} textAnchor="middle" className="growth-date-label">{Number(point.date.slice(-2))}일</text>
               ) : null}
               <title>{`${point.date} · 완료 ${point.training_count}건 · 일별 평균 ${fmtRate(point.daily_return_rate)} · 누적 ${fmtRate(point.cumulative_return_rate)}`}</title>
             </g>
@@ -165,13 +174,11 @@ function GrowthChart({
               key={`line-${point.date}`}
               cx={xAt(index)}
               cy={cumulativeY(point.cumulative_return_rate)}
-              r={point.date === selectedDate ? 5 : 3}
-              className="growth-cumulative-dot"
+              r={point.date === selectedDate ? 4 : 2.4}
+              className={`growth-cumulative-dot ${point.date === selectedDate ? "selected" : ""}`}
             />
           ) : null
         ))}
-
-        <line x1={left} y1={zeroY} x2={width - right} y2={zeroY} className="growth-axis-zero" />
       </svg>
     </div>
   );

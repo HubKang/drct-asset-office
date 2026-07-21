@@ -221,8 +221,26 @@ export type MarketThemeStock = {
   confidence_score: number | null;
   is_primary: number;
   is_active: number;
+  supply_day_count: number;
+  recent_30d_supply_day_count: number;
+  first_supply_date: string | null;
+  last_supply_date: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type MarketThemeStockSupplySummary = {
+  theme_id: number;
+  theme_name: string;
+  stock_id: number;
+  stock_code: string;
+  stock_name: string;
+  supply_day_count: number;
+  recent_30d_supply_day_count: number;
+  first_supply_date: string | null;
+  last_supply_date: string | null;
+  all_theme_supply_day_count: number;
+  recent_supply_dates: string[];
 };
 
 export type MarketThemeStockMemo = {

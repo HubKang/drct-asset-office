@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 from fastapi import HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -16,6 +18,7 @@ from backend.app.schemas.market_theme_stock_schema import (
     MarketThemeStockMemoResponse,
     MarketThemeStockCreateRequest,
     MarketThemeStockResponse,
+    MarketThemeStockSupplySummaryResponse,
     MarketThemeStockUpdateRequest,
 )
 from backend.app.utils.stock_code import normalize_stock_code
@@ -45,15 +48,45 @@ class MarketThemeStockService:
             updated_at=row.updated_at,
         )
 
-    def list_theme_stocks(self, theme_id: int) -> list[MarketThemeStockResponse]:
+    @staticmethod
+    def _date_window(as_of_date: date | None = None) -> tuple[str, str]:
+        end = as_of_date or date.fromisoformat(now_kst()[:10])
+        return end.isoformat(), (end - timedelta(days=29)).isoformat()
+
+    def list_theme_stocks(
+        self,
+        theme_id: int,
+        *,
+        as_of_date: date | None = None,
+    ) -> list[MarketThemeStockResponse]:
         theme = self.theme_repo.get_by_id(theme_id)
         if not theme:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="market theme not found")
-        rows = self.repo.list_with_stock(theme_id)
-        return [
-            self._to_response(mapping, stock.stock_code, stock.stock_name, stock.market)
-            for mapping, stock in rows
-        ]
+        end_date, recent_start_date = self._date_window(as_of_date)
+        rows = self.repo.list_with_supply_summary(
+            theme_id,
+            as_of_date=end_date,
+            recent_start_date=recent_start_date,
+        )
+        return [MarketThemeStockResponse(**row) for row in rows]
+
+    def get_supply_summary(
+        self,
+        theme_id: int,
+        stock_id: int,
+        *,
+        as_of_date: date | None = None,
+    ) -> MarketThemeStockSupplySummaryResponse:
+        end_date, recent_start_date = self._date_window(as_of_date)
+        row = self.repo.get_supply_summary(
+            theme_id,
+            stock_id,
+            as_of_date=end_date,
+            recent_start_date=recent_start_date,
+        )
+        if not row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="market theme or stock not found")
+        return MarketThemeStockSupplySummaryResponse(**row)
 
     def create_theme_stock(self, theme_id: int, payload: MarketThemeStockCreateRequest) -> MarketThemeStockResponse:
         theme = self.theme_repo.get_by_id(theme_id)

@@ -14,6 +14,7 @@ from backend.app.schemas.market_theme_stock_schema import (
     MarketThemeStockMemoResponse,
     MarketThemeStockCreateRequest,
     MarketThemeStockResponse,
+    MarketThemeStockSupplySummaryResponse,
     MarketThemeStockUpdateRequest,
 )
 from backend.app.services.market_theme_service import MarketThemeService
@@ -69,6 +70,18 @@ def deactivate_market_theme(theme_id: int, db: Session = Depends(get_db)) -> Mar
 @router.get("/market-themes/{theme_id}/stocks", response_model=list[MarketThemeStockResponse])
 def list_market_theme_stocks(theme_id: int, db: Session = Depends(get_db)) -> list[MarketThemeStockResponse]:
     return MarketThemeStockService(db).list_theme_stocks(theme_id)
+
+
+@router.get(
+    "/market-themes/{theme_id}/stocks/{stock_id}/supply-summary",
+    response_model=MarketThemeStockSupplySummaryResponse,
+)
+def get_market_theme_stock_supply_summary(
+    theme_id: int,
+    stock_id: int,
+    db: Session = Depends(get_db),
+) -> MarketThemeStockSupplySummaryResponse:
+    return MarketThemeStockService(db).get_supply_summary(theme_id, stock_id)
 
 
 @router.post("/market-themes/{theme_id}/stocks", response_model=MarketThemeStockResponse)

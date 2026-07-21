@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class MarketThemeStockCreateRequest(BaseModel):
@@ -27,8 +27,26 @@ class MarketThemeStockResponse(BaseModel):
     confidence_score: float | None
     is_primary: int
     is_active: int
+    supply_day_count: int = 0
+    recent_30d_supply_day_count: int = 0
+    first_supply_date: str | None = None
+    last_supply_date: str | None = None
     created_at: str
     updated_at: str
+
+
+class MarketThemeStockSupplySummaryResponse(BaseModel):
+    theme_id: int
+    theme_name: str
+    stock_id: int
+    stock_code: str
+    stock_name: str
+    supply_day_count: int = 0
+    recent_30d_supply_day_count: int = 0
+    first_supply_date: str | None = None
+    last_supply_date: str | None = None
+    all_theme_supply_day_count: int = 0
+    recent_supply_dates: list[str] = Field(default_factory=list)
 
 
 class MarketThemeByStockItem(BaseModel):

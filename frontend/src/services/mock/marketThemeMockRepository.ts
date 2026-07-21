@@ -17,6 +17,7 @@ import type {
   MarketThemeStock,
   MarketThemeStockCreateInput,
   MarketThemeStockMemoResponse,
+  MarketThemeStockSupplySummary,
   MarketThemeStockUpdateInput,
   MarketThemeUpdateInput,
 } from "@/types/marketTheme";
@@ -123,8 +124,25 @@ export const marketThemeMockRepository = {
         top_continuous_rising_theme: null,
       },
     };
-  },  async listThemeStocks(themeId: number): Promise<MarketThemeStock[]> {
+  },
+  async listThemeStocks(themeId: number): Promise<MarketThemeStock[]> {
     return mappings.filter((x) => x.theme_id === themeId);
+  },
+  async getThemeStockSupplySummary(themeId: number, stockId: number): Promise<MarketThemeStockSupplySummary> {
+    const row = mappings.find((item) => item.theme_id === themeId && item.stock_id === stockId);
+    return {
+      theme_id: themeId,
+      theme_name: themes.find((theme) => theme.id === themeId)?.theme_name ?? "-",
+      stock_id: stockId,
+      stock_code: row?.stock_code ?? "",
+      stock_name: row?.stock_name ?? "-",
+      supply_day_count: row?.supply_day_count ?? 0,
+      recent_30d_supply_day_count: row?.recent_30d_supply_day_count ?? 0,
+      first_supply_date: row?.first_supply_date ?? null,
+      last_supply_date: row?.last_supply_date ?? null,
+      all_theme_supply_day_count: row?.supply_day_count ?? 0,
+      recent_supply_dates: [],
+    };
   },
   async createThemeStock(_themeId: number, _payload: MarketThemeStockCreateInput): Promise<MarketThemeStock> {
     throw new Error("mock mode: createThemeStock not implemented");

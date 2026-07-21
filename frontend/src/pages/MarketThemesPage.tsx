@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Info, RefreshCw } from "lucide-react";
 import SectionCard from "@/components/common/SectionCard";
 import StatusBadge from "@/components/common/StatusBadge";
 import { repositories } from "@/services";
@@ -21,6 +22,7 @@ import type {
   MarketThemeLevel,
   MarketThemeStock,
   MarketThemeStockMemo,
+  MarketThemeStockSupplySummary,
   MarketThemeType,
 } from "@/types/marketTheme";
 import type { Stock } from "@/types/stock";
@@ -28,6 +30,7 @@ import type { Stock } from "@/types/stock";
 type ActiveTab = "themes" | "mapping" | "candidates";
 type ThemeViewMode = "group" | "theme" | "trend";
 type ThemeReturnSort = "default" | "desc" | "asc";
+type SupplyCountSort = "default" | "desc" | "asc";
 type ThemeReturnTrendViewMode = "heatmap" | "line";
 const THEME_PAGE_SIZE = 20;
 const THEME_RETURN_LINE_COLORS = [
@@ -501,8 +504,14 @@ function MarketThemesPage() {
   const [stockMemos, setStockMemos] = useState<MarketThemeStockMemo[]>([]);
   const [stockMemoLoading, setStockMemoLoading] = useState(false);
   const [stockMemoError, setStockMemoError] = useState("");
+  const [stockSupplySummary, setStockSupplySummary] = useState<MarketThemeStockSupplySummary | null>(null);
+  const [stockSupplyLoading, setStockSupplyLoading] = useState(false);
+  const [stockSupplyError, setStockSupplyError] = useState("");
+  const [supplyCountSort, setSupplyCountSort] = useState<SupplyCountSort>("default");
+  const [supplyCountInfoOpen, setSupplyCountInfoOpen] = useState(false);
   const [updatingPrimaryMappingId, setUpdatingPrimaryMappingId] = useState<number | null>(null);
   const mappingThemePickerRef = useRef<HTMLDivElement | null>(null);
+  const supplyCountInfoRef = useRef<HTMLDivElement | null>(null);
 
   const [themeModalOpen, setThemeModalOpen] = useState(false);
   const [formThemeId, setFormThemeId] = useState<number | null>(null);
@@ -613,6 +622,14 @@ function MarketThemesPage() {
     [mappingThemeGroupId, themeGroups],
   );
   const activeThemeStocks = useMemo(() => themeStocks.filter((x) => x.is_active === 1), [themeStocks]);
+  const displayedThemeStocks = useMemo(() => {
+    if (supplyCountSort === "default") return activeThemeStocks;
+    return [...activeThemeStocks].sort((a, b) => {
+      const difference = a.supply_day_count - b.supply_day_count;
+      if (difference !== 0) return supplyCountSort === "desc" ? -difference : difference;
+      return a.stock_name.localeCompare(b.stock_name, "ko-KR");
+    });
+  }, [activeThemeStocks, supplyCountSort]);
   const isMappingAllThemesSelected = mappingAllThemesSelected && !selectedThemeId && mappingThemeGroupId === "all";
   const chartSidcode = useMemo(() => createNaverChartSidcode(), [selectedThemeId, activeThemeStocks.length]);
   const selectedLinkedStockCode = useMemo(() => normalizeNaverStockCode(selectedLinkedStock?.stock_code), [selectedLinkedStock?.stock_code]);
@@ -790,6 +807,23 @@ function MarketThemesPage() {
     setStockMemos([]);
     setStockMemoLoading(false);
     setStockMemoError("");
+    setStockSupplySummary(null);
+    setStockSupplyLoading(false);
+    setStockSupplyError("");
+  };
+
+  const loadStockSupplySummary = async (row: MarketThemeStock) => {
+    setStockSupplyLoading(true);
+    setStockSupplyError("");
+    setStockSupplySummary(null);
+    try {
+      const summary = await repositories.marketThemes.getThemeStockSupplySummary(row.theme_id, row.stock_id);
+      setStockSupplySummary(summary);
+    } catch (e) {
+      setStockSupplyError(toErrorMessage(e, "수급 이력을 불러오지 못했습니다."));
+    } finally {
+      setStockSupplyLoading(false);
+    }
   };
 
   const openLinkedStockDrawer = async (row: MarketThemeStock) => {
@@ -798,6 +832,7 @@ function MarketThemesPage() {
     setStockMemoLoading(true);
     setStockMemoError("");
     setStockMemos([]);
+    void loadStockSupplySummary(row);
     try {
       const res = await repositories.marketThemes.listStockMemos(row.stock_code);
       setStockMemos(res.items ?? []);
@@ -810,6 +845,10 @@ function MarketThemesPage() {
 
   const toggleThemeReturnSort = () => {
     setThemeReturnSort((prev) => (prev === "default" ? "desc" : prev === "desc" ? "asc" : "default"));
+  };
+
+  const toggleSupplyCountSort = () => {
+    setSupplyCountSort((prev) => (prev === "default" ? "desc" : prev === "desc" ? "asc" : "default"));
   };
   const loadCandidates = async () => {
     try {
@@ -841,6 +880,27 @@ function MarketThemesPage() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [stockDrawerOpen, zoomedChart]);
+
+  useEffect(() => {
+    if (!supplyCountInfoOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (!supplyCountInfoRef.current?.contains(event.target as Node)) setSupplyCountInfoOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSupplyCountInfoOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [supplyCountInfoOpen]);
+
+  useEffect(() => {
+    setSupplyCountSort("default");
+    setSupplyCountInfoOpen(false);
+  }, [selectedThemeId, mappingAllThemesSelected]);
 
   useEffect(() => {
     if (!zoomedChart) return;
@@ -1599,14 +1659,45 @@ function MarketThemesPage() {
                   <col className="theme-linked-stock-col-market" />
                   <col className="theme-linked-stock-col-primary" />
                   <col className="theme-linked-stock-col-status" />
+                  <col className="theme-linked-stock-col-supply" />
                   <col className="theme-linked-stock-col-chart" />
                   <col className="theme-linked-stock-col-chart" />
                   <col className="theme-linked-stock-col-chart" />
                   <col className="theme-linked-stock-col-action" />
                 </colgroup>
-                <thead><tr><th>종목</th><th>시장</th><th>대표</th><th>상태</th><th>일봉</th><th>주봉</th><th>월봉</th><th>작업</th></tr></thead>
+                <thead><tr><th>종목</th><th>시장</th><th>대표</th><th>상태</th><th>
+                  <div className="theme-supply-count-heading" ref={supplyCountInfoRef}>
+                    <button
+                      type="button"
+                      className="theme-supply-count-sort"
+                      onClick={toggleSupplyCountSort}
+                      aria-label={`수급횟수 정렬${supplyCountSort === "desc" ? ": 내림차순" : supplyCountSort === "asc" ? ": 오름차순" : ": 기본순"}`}
+                      title="수급횟수 정렬"
+                    >
+                      <span>수급횟수</span>
+                      {supplyCountSort === "desc" ? <ArrowDown size={13} /> : supplyCountSort === "asc" ? <ArrowUp size={13} /> : <ArrowUpDown size={13} />}
+                    </button>
+                    <button
+                      type="button"
+                      className="theme-supply-count-info-button"
+                      onClick={() => setSupplyCountInfoOpen((prev) => !prev)}
+                      aria-label="수급횟수 집계 기준"
+                      aria-expanded={supplyCountInfoOpen}
+                    >
+                      <Info size={13} />
+                    </button>
+                    {supplyCountInfoOpen ? (
+                      <div className="theme-supply-count-popover" role="dialog">
+                        선택한 테마와 종목에 연결된 수급 기록을 날짜 기준으로 집계합니다. 같은 날 기록이 여러 건이어도 1회로 계산합니다.
+                      </div>
+                    ) : null}
+                  </div>
+                </th><th>일봉</th><th>주봉</th><th>월봉</th><th>작업</th></tr></thead>
                 <tbody>
-                  {activeThemeStocks.map((row) => {
+                  {displayedThemeStocks.length === 0 ? (
+                    <tr><td colSpan={9} className="text-center text-muted">연결된 종목이 없습니다.</td></tr>
+                  ) : null}
+                  {displayedThemeStocks.map((row) => {
                     const stockCode = normalizeNaverStockCode(row.stock_code);
                     return (
                       <tr
@@ -1621,6 +1712,7 @@ function MarketThemesPage() {
                         <td>{row.market ?? "-"}</td>
                         <td><label className="theme-linked-stock-primary"><input type="checkbox" checked={row.is_primary === 1} disabled={updatingPrimaryMappingId === row.mapping_id} onChange={(e) => void onTogglePrimary(row.mapping_id, e.target.checked)} /><span>{row.is_primary === 1 ? "대표" : "일반"}</span></label></td>
                         <td><span className={`badge ${row.is_active === 1 ? "badge-emerald" : "badge-slate"}`}>{row.is_active === 1 ? "활성" : "비활성"}</span></td>
+                        <td><span className="theme-supply-count-value" title={`최초 ${row.first_supply_date ?? "-"} · 최근 ${row.last_supply_date ?? "-"}`}>{row.supply_day_count}회</span></td>
                         <td><ThemeLinkedStockChart stockCode={stockCode} stockName={row.stock_name} period="day" label="일봉" sidcode={chartSidcode} onOpen={setZoomedChart} /></td>
                         <td><ThemeLinkedStockChart stockCode={stockCode} stockName={row.stock_name} period="week" label="주봉" sidcode={chartSidcode} onOpen={setZoomedChart} /></td>
                         <td><ThemeLinkedStockChart stockCode={stockCode} stockName={row.stock_name} period="month" label="월봉" sidcode={chartSidcode} onOpen={setZoomedChart} /></td>
@@ -1733,6 +1825,45 @@ function MarketThemesPage() {
                 ) : (
                   <p className="selected-empty-message">종목코드가 없어 매매동향 이미지를 표시할 수 없습니다.</p>
                 )}
+              </section>
+
+              <section className="market-theme-stock-supply-section">
+                <div className="market-theme-stock-section-heading">
+                  <div>
+                    <h4 className="market-theme-stock-section-title">수급 이력</h4>
+                    <p>{stockSupplySummary ? `${stockSupplySummary.theme_name} · ${stockSupplySummary.stock_name}` : "테마별 수급 기록"}</p>
+                  </div>
+                  {stockSupplyError ? (
+                    <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => void loadStockSupplySummary(selectedLinkedStock)}>
+                      <RefreshCw size={13} /> 재시도
+                    </button>
+                  ) : null}
+                </div>
+                {stockSupplyLoading ? (
+                  <div className="market-theme-stock-supply-skeleton" aria-label="수급 이력 불러오는 중">
+                    {Array.from({ length: 5 }, (_, index) => <span key={index} />)}
+                  </div>
+                ) : null}
+                {stockSupplyError ? <p className="market-theme-stock-section-error">{stockSupplyError}</p> : null}
+                {!stockSupplyLoading && !stockSupplyError && stockSupplySummary ? (
+                  <>
+                    <div className="market-theme-stock-supply-grid">
+                      <div><span>테마 수급일</span><strong>{stockSupplySummary.supply_day_count}일</strong></div>
+                      <div><span>최근 30일</span><strong>{stockSupplySummary.recent_30d_supply_day_count}일</strong></div>
+                      <div><span>최근 수급일</span><strong>{stockSupplySummary.last_supply_date ?? "-"}</strong></div>
+                      <div><span>최초 수급일</span><strong>{stockSupplySummary.first_supply_date ?? "-"}</strong></div>
+                      <div><span>전체 테마 고유일</span><strong>{stockSupplySummary.all_theme_supply_day_count}일</strong></div>
+                    </div>
+                    {stockSupplySummary.recent_supply_dates.length > 0 ? (
+                      <div className="market-theme-stock-recent-supply">
+                        <span>최근 수급일 5건</span>
+                        <div>{stockSupplySummary.recent_supply_dates.map((date) => <em key={date}>{date}</em>)}</div>
+                      </div>
+                    ) : (
+                      <p className="selected-empty-message">등록된 수급 이력이 없습니다.</p>
+                    )}
+                  </>
+                ) : null}
               </section>
 
               <section className="market-theme-stock-memo-section">

@@ -1816,6 +1816,10 @@ def ensure_runtime_schema() -> None:
             "ON market_trend_events(condition_seq, trade_date, is_active)"
         )
         conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_trend_events_stock_trade_date "
+            "ON market_trend_events(stock_id, trade_date, is_active)"
+        )
+        conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_market_trend_event_theme_links_event_active "
             "ON market_trend_event_theme_links(event_id, is_active)"
         )
