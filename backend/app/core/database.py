@@ -7,6 +7,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from backend.app.core.config import DATABASE_URL, SQLITE_BUSY_TIMEOUT_MS, SQLITE_JOURNAL_MODE, SQLITE_SYNCHRONOUS, KIWOOM_REST_MARKET_KOSPI_CODE, KIWOOM_REST_MARKET_KOSDAQ_CODE, KIWOOM_REST_MARKET_KOSPI_TYPE, KIWOOM_REST_MARKET_KOSDAQ_TYPE
+from backend.app.core.market_signal_validation_summary import compact_validation_summary
 from backend.app.services.analysis_indicator_defaults import (
     BASE_OPERATORS,
     DEFAULT_ANALYSIS_ALIASES,
@@ -3468,6 +3469,73 @@ def ensure_market_signal_schema() -> None:
             )
             """
         )
+        evaluation_columns = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(market_signal_evaluations)").fetchall()}
+        if "evaluation_type" not in evaluation_columns:
+            # Rebuild once so baseline and later evaluation types can coexist; legacy rows are copied intact.
+            conn.exec_driver_sql(
+                """
+                CREATE TABLE market_signal_evaluations_v2 (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    signal_definition_id INTEGER NOT NULL,
+                    trend_model_id INTEGER,
+                    evaluated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    observation_date TEXT NOT NULL,
+                    evaluation_type TEXT NOT NULL DEFAULT 'PERIODIC',
+                    rule_version INTEGER NOT NULL DEFAULT 1,
+                    state TEXT NOT NULL,
+                    previous_state TEXT,
+                    current_state TEXT,
+                    direction_state TEXT,
+                    score REAL NOT NULL DEFAULT 0,
+                    previous_score REAL,
+                    current_value REAL,
+                    trend_strength REAL,
+                    channel_position REAL,
+                    duration_count INTEGER NOT NULL DEFAULT 0,
+                    normalized_slope REAL,
+                    r_squared REAL,
+                    data_quality_score REAL NOT NULL DEFAULT 0,
+                    data_quality TEXT,
+                    required_pass_count INTEGER NOT NULL DEFAULT 0,
+                    required_total_count INTEGER NOT NULL DEFAULT 0,
+                    confirm_pass_count INTEGER NOT NULL DEFAULT 0,
+                    opposing_pass_count INTEGER NOT NULL DEFAULT 0,
+                    phenomenon_text TEXT,
+                    process_text TEXT,
+                    result_text TEXT,
+                    easy_explanation TEXT,
+                    evaluation_reason TEXT,
+                    evidence_json TEXT NOT NULL DEFAULT '[]',
+                    opposing_evidence_json TEXT NOT NULL DEFAULT '[]',
+                    missing_data_json TEXT NOT NULL DEFAULT '[]',
+                    collection_run_id INTEGER,
+                    is_state_transition INTEGER NOT NULL DEFAULT 0,
+                    is_live INTEGER NOT NULL DEFAULT 1,
+                    error_message TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(signal_definition_id, rule_version, observation_date, evaluation_type),
+                    FOREIGN KEY (signal_definition_id) REFERENCES market_signal_definitions(id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.exec_driver_sql(
+                """
+                INSERT INTO market_signal_evaluations_v2
+                (id, signal_definition_id, evaluated_at, observation_date, evaluation_type, rule_version,
+                 state, current_state, score, previous_score, data_quality_score,
+                 required_pass_count, required_total_count, confirm_pass_count, opposing_pass_count,
+                 phenomenon_text, process_text, result_text, evidence_json, opposing_evidence_json,
+                 missing_data_json, is_live, created_at)
+                SELECT id, signal_definition_id, evaluated_at, observation_date, 'LEGACY', 1,
+                       state, state, score, previous_score, data_quality_score,
+                       required_pass_count, required_total_count, confirm_pass_count, opposing_pass_count,
+                       phenomenon_text, process_text, result_text, evidence_json, opposing_evidence_json,
+                       missing_data_json, 1, created_at
+                FROM market_signal_evaluations
+                """
+            )
+            conn.exec_driver_sql("DROP TABLE market_signal_evaluations")
+            conn.exec_driver_sql("ALTER TABLE market_signal_evaluations_v2 RENAME TO market_signal_evaluations")
         conn.exec_driver_sql(
             """
             CREATE TABLE IF NOT EXISTS market_signal_events (
@@ -3486,6 +3554,17 @@ def ensure_market_signal_schema() -> None:
             )
             """
         )
+        event_columns = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(market_signal_events)").fetchall()}
+        event_additions = {
+            "evaluation_id": "INTEGER",
+            "rule_version": "INTEGER NOT NULL DEFAULT 1",
+            "observation_date": "TEXT",
+            "is_live": "INTEGER NOT NULL DEFAULT 1",
+        }
+        for column_name, column_type in event_additions.items():
+            if column_name not in event_columns:
+                conn.exec_driver_sql(f"ALTER TABLE market_signal_events ADD COLUMN {column_name} {column_type}")
+        conn.exec_driver_sql("UPDATE market_signal_events SET observation_date = event_date WHERE observation_date IS NULL")
         conn.exec_driver_sql(
             """
             CREATE TABLE IF NOT EXISTS market_signal_versions (
@@ -3503,7 +3582,10 @@ def ensure_market_signal_schema() -> None:
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_market_signal_definitions_status ON market_signal_definitions(status)")
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_market_signal_conditions_definition ON market_signal_conditions(signal_definition_id)")
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_market_signal_evaluations_signal_date ON market_signal_evaluations(signal_definition_id, observation_date)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_market_signal_evaluations_live_type ON market_signal_evaluations(signal_definition_id, is_live, evaluation_type)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_market_signal_conditions_dependency ON market_signal_conditions(item_type, item_code, signal_definition_id)")
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_market_signal_events_date ON market_signal_events(event_date)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_market_signal_events_live_state ON market_signal_events(signal_definition_id, is_live, new_state)")
 
         signal_columns = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(market_signal_definitions)").fetchall()}
         definition_additions = {
@@ -3531,6 +3613,28 @@ def ensure_market_signal_schema() -> None:
         for column_name, column_type in definition_additions.items():
             if column_name not in signal_columns:
                 conn.exec_driver_sql(f"ALTER TABLE market_signal_definitions ADD COLUMN {column_name} {column_type}")
+
+        # Keep only durable aggregate validation metrics. Detailed samples and
+        # chart series belong to transient simulation responses, not SQLite.
+        validation_rows = conn.exec_driver_sql(
+            "SELECT id, validation_summary_json FROM market_signal_definitions WHERE length(validation_summary_json) > 2"
+        ).fetchall()
+        for definition_id, raw_summary in validation_rows:
+            try:
+                parsed_summary = json.loads(raw_summary or "{}")
+            except (TypeError, json.JSONDecodeError):
+                parsed_summary = {}
+            compact_json = json.dumps(
+                compact_validation_summary(parsed_summary),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            if compact_json != (raw_summary or "{}"):
+                conn.exec_driver_sql(
+                    "UPDATE market_signal_definitions SET validation_summary_json = ? WHERE id = ?",
+                    (compact_json, definition_id),
+                )
 
         condition_columns = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(market_signal_conditions)").fetchall()}
         condition_additions = {
@@ -3683,6 +3787,26 @@ def ensure_market_signal_schema() -> None:
             )
             """
         )
+        experiment_validation_rows = conn.exec_driver_sql(
+            "SELECT id, validation_summary_json FROM market_signal_rule_experiments WHERE length(validation_summary_json) > 2"
+        ).fetchall()
+        for experiment_id, raw_summary in experiment_validation_rows:
+            try:
+                parsed_summary = json.loads(raw_summary or "{}")
+            except (TypeError, json.JSONDecodeError):
+                parsed_summary = {}
+            compact_json = json.dumps(
+                compact_validation_summary(parsed_summary),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            if compact_json != (raw_summary or "{}"):
+                conn.exec_driver_sql(
+                    "UPDATE market_signal_rule_experiments SET validation_summary_json = ? WHERE id = ?",
+                    (compact_json, experiment_id),
+                )
+
         conn.exec_driver_sql(
             """
             CREATE TABLE IF NOT EXISTS market_signal_rule_templates (
@@ -3997,4 +4121,104 @@ def ensure_market_signal_schema() -> None:
                 """,
                 (row[0], row[4], row[4], row[4]),
             )
-
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_objective_phenomena (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                phenomenon_code TEXT NOT NULL UNIQUE,
+                source_composite_signal_id INTEGER NOT NULL UNIQUE,
+                source_rule_version INTEGER NOT NULL DEFAULT 1,
+                source_title TEXT NOT NULL,
+                display_title TEXT,
+                category TEXT,
+                tags_json TEXT NOT NULL DEFAULT '[]',
+                description TEXT,
+                operation_grade TEXT NOT NULL DEFAULT 'REFERENCE',
+                current_state TEXT NOT NULL DEFAULT 'NOT_EVALUATED',
+                phenomenon_score REAL,
+                first_observed_at TEXT,
+                confirmed_at TEXT,
+                released_at TEXT,
+                last_evaluated_at TEXT,
+                evidence_count INTEGER NOT NULL DEFAULT 0,
+                opposing_count INTEGER NOT NULL DEFAULT 0,
+                missing_count INTEGER NOT NULL DEFAULT 0,
+                next_check_count INTEGER NOT NULL DEFAULT 0,
+                user_confirmed_title INTEGER NOT NULL DEFAULT 0,
+                user_note TEXT,
+                importance TEXT NOT NULL DEFAULT 'NORMAL',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (source_composite_signal_id) REFERENCES market_signal_definitions(id) ON DELETE RESTRICT
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_objective_phenomenon_evaluations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                phenomenon_id INTEGER NOT NULL,
+                source_composite_evaluation_id INTEGER,
+                evaluation_type TEXT NOT NULL DEFAULT 'PERIODIC',
+                observation_date TEXT NOT NULL,
+                is_live INTEGER NOT NULL DEFAULT 1,
+                previous_state TEXT,
+                current_state TEXT NOT NULL,
+                phenomenon_score REAL NOT NULL DEFAULT 0,
+                evidence_count INTEGER NOT NULL DEFAULT 0,
+                opposing_count INTEGER NOT NULL DEFAULT 0,
+                missing_count INTEGER NOT NULL DEFAULT 0,
+                next_check_count INTEGER NOT NULL DEFAULT 0,
+                easy_explanation TEXT,
+                is_state_transition INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(phenomenon_id, source_composite_evaluation_id, evaluation_type),
+                FOREIGN KEY (phenomenon_id) REFERENCES market_objective_phenomena(id) ON DELETE CASCADE,
+                FOREIGN KEY (source_composite_evaluation_id) REFERENCES market_signal_evaluations(id) ON DELETE SET NULL
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_objective_phenomenon_flow_candidates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                phenomenon_id INTEGER NOT NULL,
+                source_evaluation_id INTEGER,
+                candidate_title TEXT NOT NULL,
+                category TEXT,
+                status TEXT NOT NULL DEFAULT 'CANDIDATE',
+                importance TEXT NOT NULL DEFAULT 'NORMAL',
+                user_note TEXT,
+                auto_update INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (phenomenon_id) REFERENCES market_objective_phenomena(id) ON DELETE CASCADE,
+                FOREIGN KEY (source_evaluation_id) REFERENCES market_objective_phenomenon_evaluations(id) ON DELETE SET NULL
+            )
+            """
+        )
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_objective_phenomena_grade_state ON market_objective_phenomena(operation_grade, current_state)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_objective_phenomenon_eval_date ON market_objective_phenomenon_evaluations(phenomenon_id, observation_date DESC)")
+        conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS idx_objective_flow_candidate_active ON market_objective_phenomenon_flow_candidates(phenomenon_id) WHERE status IN ('CANDIDATE', 'LINKED')")
+        conn.exec_driver_sql(
+            """
+            INSERT OR IGNORE INTO market_objective_phenomena
+            (phenomenon_code, source_composite_signal_id, source_rule_version, source_title,
+             display_title, category, description, operation_grade, current_state)
+            SELECT 'PHENOMENON_' || signal_code, id, current_version, signal_name,
+                   signal_name, category, description,
+                   CASE status WHEN 'ACTIVE' THEN 'OFFICIAL' ELSE 'REFERENCE' END,
+                   'NOT_EVALUATED'
+            FROM market_signal_definitions
+            WHERE signal_type = 'COMPOSITE'
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            UPDATE market_objective_phenomena
+            SET source_rule_version = COALESCE((SELECT current_version FROM market_signal_definitions WHERE id = source_composite_signal_id), source_rule_version),
+                operation_grade = CASE (SELECT status FROM market_signal_definitions WHERE id = source_composite_signal_id)
+                    WHEN 'ACTIVE' THEN 'OFFICIAL' ELSE 'REFERENCE' END,
+                updated_at = CURRENT_TIMESTAMP
+            """
+        )

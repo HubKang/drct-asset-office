@@ -166,3 +166,8 @@ Verified:
 - production frontend build
 
 Visual viewport checks were not automated in this pass.
+
+
+## 운영 평가 이력
+
+운영 활성화 이후 BASELINE·PERIODIC·MANUAL 평가와 상태 전환 이벤트 정책은 [운영 시그널 평가 이력](./market-signal-evaluation-history.md)을 따른다. 사용자 표시는 FALSE_BREAK를 ‘일시 이탈 후 복귀’로 통일한다.

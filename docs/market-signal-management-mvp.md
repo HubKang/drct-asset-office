@@ -181,7 +181,7 @@ The next enhancement keeps Economic Flow Management deferred and upgrades this s
 
 The implementation adds non-destructive trend/composite/phenomenon structures, including `market_signal_trend_models`, evidence sources, episodes, episode outcomes, user reviews, and rule experiments. Existing signal definitions and conditions remain compatible.
 
-The single-indicator layer evaluates regression-channel trend state, normalized slope, trend strength, channel position, break candidate/confirmed states, false break, reversal confirmation, and trend resumed states using only data up to the observation date.
+The single-indicator layer evaluates regression-channel trend state, normalized slope, trend strength, channel position, break candidate/confirmed states, 일시 이탈 후 복귀 (`FALSE_BREAK`), reversal confirmation, and trend resumed states using only data up to the observation date.
 
 The composite layer separates trigger, confirm, context, opposing, and invalidation evidence while keeping `REQUIRED` compatible with trigger semantics.
 

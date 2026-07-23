@@ -142,9 +142,42 @@ def get_single_indicator_trend_chart(model_id: int, observation_date: str | None
     return MarketSignalService(db).trend_chart(model_id, observation_date=observation_date)
 
 
-@router.get("/market-signals/{signal_id}/evaluation-history", response_model=MarketSignalEvaluateResponse)
-def get_market_signal_evaluation_history(signal_id: int, limit: int = Query(default=50, ge=1, le=300), db: Session = Depends(get_db)) -> MarketSignalEvaluateResponse:
-    return MarketSignalService(db).list_evaluations(signal_id, limit=limit)
+@router.get("/market-signals/{signal_id}/evaluation-history", response_model=dict)
+def get_market_signal_evaluation_history(
+    signal_id: int,
+    event_only: bool = Query(default=False),
+    state: str | None = Query(default=None),
+    evaluation_type: str | None = Query(default=None),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=300),
+    db: Session = Depends(get_db),
+) -> dict:
+    return MarketSignalService(db).evaluation_history(
+        signal_id, event_only=event_only, state=state, evaluation_type=evaluation_type,
+        date_from=date_from, date_to=date_to, page=page, page_size=page_size,
+    )
+
+
+@router.get("/market-signals/{signal_id}/evaluation-history/summary", response_model=dict)
+def get_market_signal_evaluation_history_summary(signal_id: int, db: Session = Depends(get_db)) -> dict:
+    return MarketSignalService(db).evaluation_history_summary(signal_id)
+
+
+@router.post("/market-signals/{signal_id}/evaluate-now", response_model=MarketSignalGenericItemResponse)
+def evaluate_market_signal_now(signal_id: int, db: Session = Depends(get_db)) -> MarketSignalGenericItemResponse:
+    return MarketSignalService(db).evaluate_now(signal_id)
+
+
+@router.post("/market-signals/{signal_id}/repair-baseline", response_model=MarketSignalGenericItemResponse)
+def repair_market_signal_baseline(signal_id: int, payload: MarketSignalGenericActionRequest, db: Session = Depends(get_db)) -> MarketSignalGenericItemResponse:
+    return MarketSignalService(db).repair_baseline(signal_id, apply=bool((payload.payload or {}).get("apply")))
+
+
+@router.post("/market-signals/repair-baselines", response_model=MarketSignalGenericItemResponse)
+def repair_active_market_signal_baselines(payload: MarketSignalGenericActionRequest, db: Session = Depends(get_db)) -> MarketSignalGenericItemResponse:
+    return MarketSignalService(db).repair_active_baselines(apply=bool((payload.payload or {}).get("apply")))
 
 
 @router.post("/market-signals/{signal_id}/mark-validation-complete", response_model=MarketSignalGenericItemResponse)
@@ -172,6 +205,11 @@ def list_composite_signals(db: Session = Depends(get_db)) -> MarketSignalGeneric
     return MarketSignalService(db).list_composite_signals()
 
 
+@router.post("/market-signals/composite/audit", response_model=MarketSignalGenericItemResponse)
+def audit_composite_signal_operations(payload: MarketSignalGenericActionRequest, db: Session = Depends(get_db)) -> MarketSignalGenericItemResponse:
+    return MarketSignalService(db).audit_composite_operations(apply=bool((payload.payload or {}).get("apply")))
+
+
 @router.get("/market-signals/composite/{signal_id}", response_model=MarketSignalGenericItemResponse)
 def get_composite_signal(signal_id: int, db: Session = Depends(get_db)) -> MarketSignalGenericItemResponse:
     return MarketSignalService(db).get_composite_signal(signal_id)
@@ -193,8 +231,33 @@ def validate_composite_template_readiness(template_id: int, db: Session = Depend
 
 
 @router.get("/market-signals/phenomena", response_model=MarketSignalGenericListResponse)
-def list_objective_phenomena(db: Session = Depends(get_db)) -> MarketSignalGenericListResponse:
+def list_objective_phenomena(
+    grade: str | None = Query(default=None),
+    state: str | None = Query(default=None),
+    category: str | None = Query(default=None),
+    flow_candidate: bool | None = Query(default=None),
+    source_status: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> MarketSignalGenericListResponse:
+    return MarketSignalService(db).list_phenomena(
+        grade=grade,
+        state=state,
+        category=category,
+        flow_candidate=flow_candidate,
+        source_status=source_status,
+        search=search,
+    )
+
+
+@router.get("/market-signals/phenomena/overview", response_model=MarketSignalGenericListResponse)
+def objective_phenomena_overview(db: Session = Depends(get_db)) -> MarketSignalGenericListResponse:
     return MarketSignalService(db).list_phenomena()
+
+
+@router.post("/market-signals/phenomena/repair", response_model=MarketSignalGenericItemResponse)
+def repair_objective_phenomena(payload: MarketSignalGenericActionRequest, db: Session = Depends(get_db)) -> MarketSignalGenericItemResponse:
+    return MarketSignalService(db).repair_objective_phenomena(apply=bool((payload.payload or {}).get("apply", False)))
 
 
 @router.get("/market-signals/phenomena/{phenomenon_id}", response_model=MarketSignalGenericItemResponse)
@@ -202,20 +265,50 @@ def get_objective_phenomenon(phenomenon_id: int, db: Session = Depends(get_db)) 
     return MarketSignalService(db).get_phenomenon(phenomenon_id)
 
 
+@router.patch("/market-signals/phenomena/{phenomenon_id}", response_model=MarketSignalGenericItemResponse)
+def update_objective_phenomenon(phenomenon_id: int, payload: MarketSignalGenericActionRequest, db: Session = Depends(get_db)) -> MarketSignalGenericItemResponse:
+    return MarketSignalService(db).update_phenomenon(phenomenon_id, payload)
+
+
 @router.post("/market-signals/phenomena/{phenomenon_id}/evaluate", response_model=MarketSignalGenericItemResponse)
 def evaluate_objective_phenomenon(phenomenon_id: int, payload: MarketSignalGenericActionRequest, db: Session = Depends(get_db)) -> MarketSignalGenericItemResponse:
     return MarketSignalService(db).evaluate_phenomenon(phenomenon_id, observation_date=payload.observation_date, save=payload.save)
 
 
+@router.post("/market-signals/phenomena/{phenomenon_id}/evaluate-now", response_model=MarketSignalGenericItemResponse)
+def evaluate_objective_phenomenon_now(phenomenon_id: int, payload: MarketSignalGenericActionRequest, db: Session = Depends(get_db)) -> MarketSignalGenericItemResponse:
+    return MarketSignalService(db).evaluate_phenomenon(phenomenon_id, observation_date=payload.observation_date, save=True)
+
+
 @router.get("/market-signals/phenomena/{phenomenon_id}/episodes", response_model=MarketSignalGenericListResponse)
+@router.get("/market-signals/phenomena/{phenomenon_id}/evaluation-history", response_model=MarketSignalGenericListResponse)
 def list_objective_phenomenon_episodes(phenomenon_id: int, db: Session = Depends(get_db)) -> MarketSignalGenericListResponse:
-    return MarketSignalService(db).list_phenomenon_episodes(phenomenon_id)
+    return MarketSignalService(db).list_phenomenon_evaluation_history(phenomenon_id)
+
+
+@router.get("/market-signals/phenomena/{phenomenon_id}/evaluation-history/summary", response_model=MarketSignalGenericItemResponse)
+def objective_phenomenon_history_summary(phenomenon_id: int, db: Session = Depends(get_db)) -> MarketSignalGenericItemResponse:
+    return MarketSignalService(db).phenomenon_evaluation_history_summary(phenomenon_id)
+
+
+@router.post("/market-signals/phenomena/{phenomenon_id}/flow-candidate", response_model=MarketSignalGenericItemResponse)
+def add_objective_phenomenon_flow_candidate(phenomenon_id: int, payload: MarketSignalGenericActionRequest, db: Session = Depends(get_db)) -> MarketSignalGenericItemResponse:
+    return MarketSignalService(db).add_phenomenon_flow_candidate(phenomenon_id, payload)
+
+
+@router.post("/market-signals/phenomena/{phenomenon_id}/flow-candidate/remove", response_model=MarketSignalGenericItemResponse)
+def remove_objective_phenomenon_flow_candidate(phenomenon_id: int, db: Session = Depends(get_db)) -> MarketSignalGenericItemResponse:
+    return MarketSignalService(db).remove_phenomenon_flow_candidate(phenomenon_id)
+
+
+@router.get("/market-signals/phenomena/{phenomenon_id}/gpt-diagnosis-prompt", response_model=MarketSignalGenericItemResponse)
+def get_objective_phenomenon_gpt_prompt(phenomenon_id: int, db: Session = Depends(get_db)) -> MarketSignalGenericItemResponse:
+    return MarketSignalService(db).gpt_phenomenon_diagnosis(phenomenon_id, MarketSignalGenericActionRequest())
 
 
 @router.post("/market-signals/phenomena/{phenomenon_id}/gpt-diagnosis", response_model=MarketSignalGenericItemResponse)
 def diagnose_objective_phenomenon_with_gpt(phenomenon_id: int, payload: MarketSignalGenericActionRequest, db: Session = Depends(get_db)) -> MarketSignalGenericItemResponse:
     return MarketSignalService(db).gpt_phenomenon_diagnosis(phenomenon_id, payload)
-
 
 @router.get("/market-signals/evidence-sources", response_model=MarketSignalGenericListResponse)
 def list_market_signal_evidence_sources(db: Session = Depends(get_db)) -> MarketSignalGenericListResponse:

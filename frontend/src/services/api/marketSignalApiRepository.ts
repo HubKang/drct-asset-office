@@ -5,6 +5,7 @@ import type {
   MarketSignalConditionPreviewResponse,
   MarketSignalDefinition,
   MarketSignalEvaluationResponse,
+  MarketSignalEvaluationHistory,
   MarketSignalEventListResponse,
   MarketSignalGenericItemResponse,
   MarketSignalGenericListResponse,
@@ -56,7 +57,18 @@ export const marketSignalApiRepository = {
   evaluate: (payload: { signal_ids?: number[]; active_only?: boolean; observation_date?: string; save?: boolean }) =>
     apiRequest<MarketSignalEvaluationResponse>("/market-signals/evaluate", { method: "POST", body: JSON.stringify(payload) }),
   evaluations: (id: number, limit = 50) => apiRequest<MarketSignalEvaluationResponse>(`/market-signals/${id}/evaluations?limit=${limit}`),
-  evaluationHistory: (id: number, limit = 50) => apiRequest<MarketSignalEvaluationResponse>(`/market-signals/${id}/evaluation-history?limit=${limit}`),
+  evaluationHistory: (id: number, params: { event_only?: boolean; state?: string; evaluation_type?: string; page?: number; page_size?: number } = {}) => {
+    const query = new URLSearchParams();
+    if (params.event_only) query.set("event_only", "true");
+    if (params.state) query.set("state", params.state);
+    if (params.evaluation_type) query.set("evaluation_type", params.evaluation_type);
+    query.set("page", String(params.page ?? 1));
+    query.set("page_size", String(params.page_size ?? 50));
+    return apiRequest<MarketSignalEvaluationHistory>(`/market-signals/${id}/evaluation-history?${query.toString()}`);
+  },
+  evaluationHistorySummary: (id: number) => apiRequest<Pick<MarketSignalEvaluationHistory, "operation_summary" | "live_statistics" | "validation_statistics" | "baseline_status">>(`/market-signals/${id}/evaluation-history/summary`),
+  evaluateNow: (id: number) => apiRequest<MarketSignalGenericItemResponse<Record<string, unknown>>>(`/market-signals/${id}/evaluate-now`, { method: "POST" }),
+  repairBaseline: (id: number, apply = false) => apiRequest<MarketSignalGenericItemResponse<Record<string, unknown>>>(`/market-signals/${id}/repair-baseline`, { method: "POST", body: JSON.stringify({ payload: { apply } }) }),
   events: (limit = 50) => apiRequest<MarketSignalEventListResponse>(`/market-signals/events?limit=${limit}`),
   overview: () => apiRequest<MarketSignalOverview>("/market-signals/overview"),
   simulate: (id: number, years = 1) => apiRequest<MarketSignalSimulationResponse>(`/market-signals/${id}/simulate?years=${years}`, { method: "POST" }),
@@ -82,17 +94,33 @@ export const marketSignalApiRepository = {
     return apiRequest<Record<string, unknown>>(`/market-signals/single-indicator/${id}/trend-chart${query}`);
   },
   compositeSignals: () => apiRequest<MarketSignalGenericListResponse<CompositeSignalItem>>("/market-signals/composite"),
+  compositeSignal: (id: number) => apiRequest<MarketSignalGenericItemResponse<CompositeSignalItem>>(`/market-signals/composite/${id}`),
   evaluateComposite: (id: number, payload: { observation_date?: string | null; save?: boolean } = {}) =>
     apiRequest<MarketSignalGenericItemResponse<CompositeSignalItem>>(`/market-signals/composite/${id}/evaluate`, { method: "POST", body: JSON.stringify(payload) }),
+  simulateComposite: (id: number, years = 3) =>
+    apiRequest<Record<string, unknown>>(`/market-signals/composite/${id}/simulate`, { method: "POST", body: JSON.stringify({ years }) }),
+  auditCompositeOperations: (apply = false) =>
+    apiRequest<MarketSignalGenericItemResponse<Record<string, unknown>>>("/market-signals/composite/audit", { method: "POST", body: JSON.stringify({ payload: { apply } }) }),
   validateCompositeTemplateReadiness: (id: number) =>
     apiRequest<MarketSignalGenericItemResponse<Record<string, unknown>>>(`/market-signals/composite/templates/${id}/validate-readiness`, { method: "POST" }),
-  phenomena: () => apiRequest<MarketSignalGenericListResponse<ObjectivePhenomenonItem>>("/market-signals/phenomena"),
+  phenomena: (query: Record<string, string | boolean | undefined> = {}) => {
+    const params = new URLSearchParams(Object.entries(query).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]));
+    return apiRequest<MarketSignalGenericListResponse<ObjectivePhenomenonItem>>(`/market-signals/phenomena${params.size ? `?${params}` : ""}`);
+  },
+  phenomenon: (id: number) => apiRequest<MarketSignalGenericItemResponse<ObjectivePhenomenonItem>>(`/market-signals/phenomena/${id}`),
+  updatePhenomenon: (id: number, payload: Record<string, unknown>) =>
+    apiRequest<MarketSignalGenericItemResponse<ObjectivePhenomenonItem>>(`/market-signals/phenomena/${id}`, { method: "PATCH", body: JSON.stringify({ payload }) }),
   evaluatePhenomenon: (id: number, payload: { observation_date?: string | null; save?: boolean } = {}) =>
     apiRequest<MarketSignalGenericItemResponse<ObjectivePhenomenonItem>>(`/market-signals/phenomena/${id}/evaluate`, { method: "POST", body: JSON.stringify(payload) }),
-  phenomenonEpisodes: (id: number) => apiRequest<MarketSignalGenericListResponse<Record<string, unknown>>>(`/market-signals/phenomena/${id}/episodes`),
+  phenomenonEpisodes: (id: number) => apiRequest<MarketSignalGenericListResponse<Record<string, unknown>>>(`/market-signals/phenomena/${id}/evaluation-history`),
+  phenomenonHistorySummary: (id: number) => apiRequest<MarketSignalGenericItemResponse<Record<string, unknown>>>(`/market-signals/phenomena/${id}/evaluation-history/summary`),
+  addPhenomenonFlowCandidate: (id: number, payload: Record<string, unknown>) =>
+    apiRequest<MarketSignalGenericItemResponse<ObjectivePhenomenonItem>>(`/market-signals/phenomena/${id}/flow-candidate`, { method: "POST", body: JSON.stringify({ payload }) }),
+  removePhenomenonFlowCandidate: (id: number) =>
+    apiRequest<MarketSignalGenericItemResponse<ObjectivePhenomenonItem>>(`/market-signals/phenomena/${id}/flow-candidate/remove`, { method: "POST" }),
   gptPhenomenonDiagnosis: (id: number, payload: { observation_date?: string | null; payload?: Record<string, unknown> } = {}) =>
     apiRequest<MarketSignalGenericItemResponse<Record<string, unknown>>>(`/market-signals/phenomena/${id}/gpt-diagnosis`, { method: "POST", body: JSON.stringify(payload) }),
-  evidenceSources: () => apiRequest<MarketSignalGenericListResponse<Record<string, unknown>>>("/market-signals/evidence-sources"),
+  repairPhenomena: (apply = false) => apiRequest<MarketSignalGenericItemResponse<Record<string, unknown>>>("/market-signals/phenomena/repair", { method: "POST", body: JSON.stringify({ payload: { apply } }) }),  evidenceSources: () => apiRequest<MarketSignalGenericListResponse<Record<string, unknown>>>("/market-signals/evidence-sources"),
   ruleExperiments: () => apiRequest<MarketSignalGenericListResponse<Record<string, unknown>>>("/market-signals/rule-experiments"),
   ruleTemplates: () => apiRequest<MarketSignalGenericListResponse<MarketSignalRuleTemplate>>("/market-signals/rule-templates"),
   copyTemplate: (id: number) => apiRequest<MarketSignalDefinition>(`/market-signals/rule-templates/${id}/copy`, { method: "POST" }),

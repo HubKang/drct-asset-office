@@ -56,6 +56,14 @@ class MarketDataCollectionService:
         if totals["failed_count"] == len(results) and results:
             final_status = "FAILED"
         self._finish_run(run_id, final_status, totals, elapsed_ms)
+        changed_items = [
+            {"item_type": str(item.get("item_type") or ""), "item_code": str(item.get("item_code") or "")}
+            for item in results
+            if int(item.get("inserted_count") or 0) + int(item.get("updated_count") or 0) > 0
+        ]
+        from backend.app.services.market_signal_service import MarketSignalService
+
+        signal_evaluation = MarketSignalService(self.db).evaluate_active_signals_for_changed_items(changed_items, collection_run_id=run_id)
         return {
             "run_id": run_id,
             "run_type": mode,
@@ -64,6 +72,7 @@ class MarketDataCollectionService:
             "elapsed_ms": elapsed_ms,
             "message": self._message(mode, totals, elapsed_ms),
             "results": results,
+            "signal_evaluation": signal_evaluation,
             **totals,
         }
 

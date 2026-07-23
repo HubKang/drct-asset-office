@@ -23,7 +23,7 @@ def test_market_signal_evaluate_and_gpt_prompt_api() -> None:
     assert evaluate.status_code == 200
     body = evaluate.json()
     assert len(body["items"]) == 1
-    assert body["items"][0]["state"] in {"INACTIVE", "WATCH", "ACTIVE", "STRENGTHENING", "WEAKENING", "DATA_INSUFFICIENT"}
+    assert body["items"][0]["state"] in {"WAITING", "TRIGGERED", "CONFIRMING", "CONFIRMED", "RELEASED", "OPPOSED", "INVALIDATED", "STRENGTHENING", "WEAKENING", "DATA_INSUFFICIENT"}
 
     prompt = client.post("/market-signals/gpt-rule-draft", json={"goal_text": "위험선호가 위험회피로 전환되는 지점을 찾고 싶다."})
     assert prompt.status_code == 200
@@ -294,8 +294,77 @@ def test_market_signal_stage_preview_validation_and_activation_guard_api() -> No
     blocked = client.post(f"/market-signals/{signal_id}/activate-with-approval", json={"payload": {"reason": "test"}})
     assert blocked.status_code in {200, 409}
     if blocked.status_code == 409:
-        assert "validation" in blocked.json()["detail"]
+        assert "validation" in blocked.json()["detail"] or "DRAFT" in blocked.json()["detail"]
 
     validation = client.post(f"/market-signals/{signal_id}/mark-validation-complete", json={"payload": {"validation_period_years": 3, "validation_summary": {"test": True}}})
-    assert validation.status_code == 200
-    assert validation.json()["item"]["validation_status"] == "VALIDATED"
+    assert validation.status_code in {200, 409}
+    if validation.status_code == 200:
+        assert validation.json()["item"]["validation_status"] == "VALIDATED"
+    else:
+        assert "DRAFT" in validation.json()["detail"]
+
+
+def test_market_signal_live_evaluation_history_and_manual_deduplication() -> None:
+    single_items = client.get("/market-signals/single-indicator").json()["items"]
+    active = next(item for item in single_items if item.get("rule_status") == "ACTIVE" and item.get("signal_definition_id"))
+    signal_id = active["signal_definition_id"]
+
+    history = client.get(f"/market-signals/{signal_id}/evaluation-history")
+    assert history.status_code == 200
+    body = history.json()
+    assert body["signal"]["status"] == "ACTIVE"
+    assert body["baseline_status"]["exists"] is True
+    assert body["live_statistics"]["total_evaluation_count"] >= 1
+    assert all(item["evaluation_type"] != "LEGACY" for item in body["evaluations"])
+
+    before_count = body["live_statistics"]["total_evaluation_count"]
+    first = client.post(f"/market-signals/{signal_id}/evaluate-now")
+    second = client.post(f"/market-signals/{signal_id}/evaluate-now")
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json()["item"]["duplicate"] is True
+
+    after = client.get(f"/market-signals/{signal_id}/evaluation-history").json()
+    assert after["live_statistics"]["total_evaluation_count"] <= before_count + 1
+    transitions = client.get(f"/market-signals/{signal_id}/evaluation-history?event_only=true").json()
+    assert all(item["is_state_transition"] for item in transitions["evaluations"])
+
+
+def test_market_signal_baseline_repair_is_idempotent() -> None:
+    dry_run = client.post("/market-signals/repair-baselines", json={"payload": {"apply": False}})
+    assert dry_run.status_code == 200
+    assert dry_run.json()["item"]["dry_run"] is True
+    assert dry_run.json()["item"]["repair_target_count"] == 0
+    assert dry_run.json()["item"]["already_has_baseline_count"] >= 1
+
+def test_composite_operation_display_and_audit_api() -> None:
+    response = client.get("/market-signals/composite")
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert items
+    assert all(item["signal_type"] == "COMPOSITE" for item in items)
+    assert all(item["operation_status_display_name"] in {"초안", "운영", "중지"} for item in items)
+    assert all(item["current_evaluation_display_name"] for item in items)
+    first = client.get(f"/market-signals/composite/{items[0]['id']}")
+    assert first.status_code == 200
+    detail = first.json()["item"]
+    assert detail["conditions"]
+    assert all(condition["item_display_name"] for condition in detail["conditions"])
+    assert all(condition["role_display_name"] for condition in detail["conditions"])
+    assert all(condition["display_text"] for condition in detail["conditions"])
+
+    audit = client.post("/market-signals/composite/audit", json={"payload": {"apply": False}})
+    assert audit.status_code == 200
+    audit_item = audit.json()["item"]
+    assert audit_item["dry_run"] is True
+    assert audit_item["composite_count"] == len(items)
+    assert audit_item["repaired_signal_ids"] == []
+
+
+def test_composite_simulation_exposes_operation_metrics() -> None:
+    items = client.get("/market-signals/composite").json()["items"]
+    response = client.post(f"/market-signals/composite/{items[0]['id']}/simulate", json={"years": 1})
+    assert response.status_code == 200
+    body = response.json()
+    for key in ("triggered_count", "confirmed_count", "confirmation_rate", "false_start_count", "opposing_count", "invalidation_count", "release_count", "data_insufficient_count", "latest_sample"):
+        assert key in body

@@ -328,6 +328,28 @@ class MarketThemeMonthlyReturnThemeItem(BaseModel):
     falling_days: int = 0
     flat_days: int = 0
     data_days: int = 0
+    rolling_30d_change_rate: float | None = None
+    weighted_return_10d: float | None = None
+    weighted_return_score: float | None = None
+    positive_days_10d: int = 0
+    observed_days_10d: int = 0
+    persistence_10d: float | None = None
+    recent_5d_return: float | None = None
+    previous_5d_return: float | None = None
+    momentum_delta: float | None = None
+    momentum_score: float | None = None
+    last_positive_impulse_date: str | None = None
+    days_since_positive_impulse: int | None = None
+    freshness_score: float | None = None
+    rolling_30d_peak: float | None = None
+    rolling_30d_peak_gap: float | None = None
+    stale_penalty: float = 0
+    theme_strength_score: float | None = None
+    strength_status_code: str = "INSUFFICIENT"
+    strength_status_name: str = "데이터 부족"
+    persistence_rank: int | None = None
+    current_strength_rank: int | None = None
+    rolling_30d_rank: int | None = None
     daily_returns: list[MarketThemeMonthlyReturnDailyItem] = Field(default_factory=list)
 
 
@@ -338,6 +360,11 @@ class MarketThemeMonthlyReturnSummaryTopItem(BaseModel):
     period_compound_return: float | None = None
     total_trading_value_100m: float | None = None
     continuous_rising_days: int | None = None
+    rolling_30d_change_rate: float | None = None
+    theme_strength_score: float | None = None
+    persistence_10d: float | None = None
+    strength_status_code: str | None = None
+    strength_status_name: str | None = None
 
 
 class MarketThemeMonthlyReturnSummary(BaseModel):
@@ -346,6 +373,10 @@ class MarketThemeMonthlyReturnSummary(BaseModel):
     top_trading_value_theme: MarketThemeMonthlyReturnSummaryTopItem | None = None
     rising_day_theme: MarketThemeMonthlyReturnSummaryTopItem | None = None
     top_continuous_rising_theme: MarketThemeMonthlyReturnSummaryTopItem | None = None
+    current_strength_top: MarketThemeMonthlyReturnSummaryTopItem | None = None
+    rolling_30d_top: MarketThemeMonthlyReturnSummaryTopItem | None = None
+    trading_value_top: MarketThemeMonthlyReturnSummaryTopItem | None = None
+    persistence_top: MarketThemeMonthlyReturnSummaryTopItem | None = None
 
 
 class MarketThemeMonthlyReturnResponse(BaseModel):
@@ -355,6 +386,7 @@ class MarketThemeMonthlyReturnResponse(BaseModel):
     active_only: bool = True
     display_start_date: str
     display_end_date: str
+    sort_by: str | None = None
     themes: list[MarketThemeMonthlyReturnThemeItem] = Field(default_factory=list)
     summary: MarketThemeMonthlyReturnSummary
 
@@ -453,11 +485,47 @@ class MonthlyThemeFlowCalendarDayItem(BaseModel):
     memo_items: list[MonthlyThemeFlowMemoItem] = Field(default_factory=list)
 
 
+class MonthlySupplySummaryStockItem(BaseModel):
+    rank: int
+    stock_id: int | None = None
+    stock_code: str | None = None
+    stock_name: str
+    appearance_count: int
+    latest_detected_date: str | None = None
+
+
+class MonthlySupplySummaryThemeItem(BaseModel):
+    theme_id: int
+    theme_name: str
+    appearance_count: int
+    latest_appearance_date: str | None = None
+    unique_stock_count: int = 0
+
+
+class MonthlySupplySummary30d(BaseModel):
+    period_start_date: str
+    period_end_date: str
+    appeared_theme_count: int = 0
+    top_theme: MonthlySupplySummaryThemeItem | None = None
+    top_stocks: list[MonthlySupplySummaryStockItem] = Field(default_factory=list)
+
+class MonthlySupplyClassificationDiagnostics(BaseModel):
+    classification_basis: str = "CURRENT_ACTIVE_THEME_MAPPING"
+    event_count: int = 0
+    unique_stock_count: int = 0
+    active_theme_count: int = 0
+    reclassified_event_stock_count: int = 0
+    unclassified_stock_count: int = 0
+    period_start_date: str
+    period_end_date: str
+
 class MonthlyThemeFlowCalendarResponse(BaseModel):
     success: bool
     month: str
     start_date: str
     end_date: str
+    summary_30d: MonthlySupplySummary30d
+    diagnostics: MonthlySupplyClassificationDiagnostics
     days: list[MonthlyThemeFlowCalendarDayItem] = Field(default_factory=list)
 
 
@@ -491,6 +559,7 @@ class MonthlyThemeFlowTrendResponse(BaseModel):
     month: str
     start_date: str
     end_date: str
+    diagnostics: MonthlySupplyClassificationDiagnostics
     themes: list[MonthlyThemeFlowTrendTheme] = Field(default_factory=list)
 
 

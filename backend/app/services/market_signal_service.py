@@ -10,6 +10,9 @@ from fastapi import HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from backend.app.core.market_signal_validation_summary import compact_validation_summary
+from backend.app.services.market_signal_display_service import MarketSignalDisplayService
+
 
 SUPPORTED_TRANSFORMS = {
     "RAW_VALUE",
@@ -59,10 +62,41 @@ SUPPORTED_TRANSFORMS = {
     "TREND_RESUMED_DOWN",
 }
 
+SIGNAL_STATE_LABELS = {
+    "TREND_INTACT": "\ucd94\uc138 \uc720\uc9c0",
+    "TREND_MAINTAINED": "\ucd94\uc138 \uc720\uc9c0",
+    "TREND_WEAKENING": "\ucd94\uc138 \uc57d\ud654",
+    "BREAK_CANDIDATE": "\ucd94\uc138 \uc774\ud0c8 \ud6c4\ubcf4",
+    "BREAK_CONFIRMED": "\ucd94\uc138 \uc774\ud0c8 \ud655\uc778",
+    "FALSE_BREAK": "\uc77c\uc2dc \uc774\ud0c8 \ud6c4 \ubcf5\uadc0",
+    "REVERSAL_CONFIRMED": "\ubc18\uc804 \ud655\uc778",
+    "TREND_RESUMED": "\uae30\uc874 \ucd94\uc138 \uc7ac\uac1c",
+    "SIDEWAYS": "\ud6a1\ubcf4",
+    "DATA_INSUFFICIENT": "\ub370\uc774\ud130 \ubd80\uc871",
+    "ERROR": "\ud3c9\uac00 \uc624\ub958",
+}
+
+EVALUATION_TYPE_LABELS = {
+    "BASELINE": "\uc6b4\uc601 \uc2dc\uc791 \uae30\uc900 \ud3c9\uac00",
+    "PERIODIC": "\uc790\ub3d9 \ud3c9\uac00",
+    "MANUAL": "\uc218\ub3d9 \uc7ac\ud3c9\uac00",
+    "REPAIR_BASELINE": "\uae30\uc900 \ud3c9\uac00 \ubcf4\uc644",
+    "LEGACY": "\uae30\uc874 \ud3c9\uac00",
+}
+ROLE_LABELS = {
+    "TRIGGER": "시작 조건",
+    "REQUIRED": "시작 조건",
+    "CONFIRM": "지지 확인",
+    "CONTEXT": "배경 조건",
+    "OPPOSING": "반대 근거",
+    "INVALIDATION": "무효화 조건",
+}
+
 
 class MarketSignalService:
     def __init__(self, db: Session) -> None:
         self.db = db
+        self.display = MarketSignalDisplayService(db)
 
     def list_signals(self, *, status_filter: str | None = None) -> dict[str, Any]:
         params: dict[str, Any] = {}
@@ -136,39 +170,39 @@ class MarketSignalService:
     def set_status(self, signal_id: int, status_value: str) -> dict[str, Any]:
         normalized = status_value.upper()
         if normalized == "ACTIVE":
-            row = self._definition_row(signal_id)
+            row = dict(self._definition_row(signal_id))
+            if str(row.get("status") or "").upper() != "DRAFT":
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="only a DRAFT signal can be activated")
             if str(row.get("validation_status") or "UNVALIDATED").upper() not in {"VALIDATED", "ACTIVATION_READY"} and not int(row.get("activation_ready") or 0):
                 raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="validation must be completed before activation")
             self.db.execute(
-                text(
-                    """
+                text("""
                     UPDATE market_signal_definitions
-                    SET status = 'ACTIVE', activated_at = CURRENT_TIMESTAMP,
-                        activation_reason = COALESCE(:reason, activation_reason),
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = :id
-                    """
-                ),
-                {"id": signal_id, "reason": None},
+                    SET status='ACTIVE', activated_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP
+                    WHERE id=:id
+                """),
+                {"id": signal_id},
             )
         elif normalized == "INACTIVE":
             self.db.execute(
-                text(
-                    """
+                text("""
                     UPDATE market_signal_definitions
-                    SET status = 'INACTIVE', deactivated_at = CURRENT_TIMESTAMP,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = :id
-                    """
-                ),
+                    SET status='INACTIVE', deactivated_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP
+                    WHERE id=:id
+                """),
                 {"id": signal_id},
             )
         else:
             self.db.execute(
-                text("UPDATE market_signal_definitions SET status = :status, updated_at = CURRENT_TIMESTAMP WHERE id = :id"),
+                text("UPDATE market_signal_definitions SET status=:status, updated_at=CURRENT_TIMESTAMP WHERE id=:id"),
                 {"id": signal_id, "status": normalized},
             )
         self.db.commit()
+        if normalized == "ACTIVE":
+            if trend_model := self._trend_model_for_signal(signal_id):
+                self._evaluate_single_operation(trend_model, evaluation_type="BASELINE")
+            else:
+                self._evaluate_signal(dict(self._definition_row(signal_id)), observation_date=self._latest_observation_date(), save=True, evaluation_type="BASELINE")
         return self.get_signal(signal_id)
 
     def evaluate(self, payload: Any) -> dict[str, Any]:
@@ -195,6 +229,196 @@ class MarketSignalService:
             {"id": signal_id, "limit": limit},
         ).mappings().all()
         return {"items": [self._evaluation_item(row) for row in rows]}
+
+    def evaluation_history(
+        self,
+        signal_id: int,
+        *,
+        event_only: bool = False,
+        state: str | None = None,
+        evaluation_type: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, Any]:
+        signal = dict(self._definition_row(signal_id))
+        params: dict[str, Any] = {"id": signal_id}
+        clauses = ["e.signal_definition_id = :id", "e.is_live = 1", "e.evaluation_type <> 'LEGACY'"]
+        if event_only:
+            clauses.append("e.is_state_transition = 1")
+        if state:
+            clauses.append("e.current_state = :state")
+            params["state"] = state.upper()
+        if evaluation_type:
+            clauses.append("e.evaluation_type = :evaluation_type")
+            params["evaluation_type"] = evaluation_type.upper()
+        if date_from:
+            clauses.append("e.observation_date >= :date_from")
+            params["date_from"] = date_from
+        if date_to:
+            clauses.append("e.observation_date <= :date_to")
+            params["date_to"] = date_to
+        where = " AND ".join(clauses)
+        total = int(self.db.execute(text(f"SELECT COUNT(*) FROM market_signal_evaluations e WHERE {where}"), params).scalar() or 0)
+        params.update({"limit": page_size, "offset": (page - 1) * page_size})
+        rows = self.db.execute(
+            text(
+                f"""
+                SELECT e.*, ev.id AS event_id, ev.event_type, ev.summary AS event_summary
+                FROM market_signal_evaluations e
+                LEFT JOIN market_signal_events ev ON ev.evaluation_id = e.id AND ev.is_live = 1
+                WHERE {where}
+                ORDER BY e.observation_date DESC, e.evaluated_at DESC, e.id DESC
+                LIMIT :limit OFFSET :offset
+                """
+            ),
+            params,
+        ).mappings().all()
+        summary = self._evaluation_history_summary(signal_id, signal)
+        model = self._trend_model_for_signal(signal_id)
+        chart: list[dict[str, Any]] = []
+        if model:
+            chart = self._trend_diagnostic(model["item_type"], model["item_code"], self._latest_observation_date(), model=model).get("series", [])
+        return {
+            "signal": {
+                "id": signal_id,
+                "signal_code": signal.get("signal_code"),
+                "signal_name": signal.get("signal_name"),
+                "status": signal.get("status"),
+                "rule_version": int(signal.get("current_version") or 1),
+                "display_name": signal.get("signal_name"),
+            },
+            "operation_summary": summary["operation_summary"],
+            "live_statistics": summary["live_statistics"],
+            "validation_statistics": summary["validation_statistics"],
+            "baseline_status": summary["baseline_status"],
+            "evaluations": [self._operation_evaluation_item(row) for row in rows],
+            "chart": chart,
+            "pagination": {"page": page, "page_size": page_size, "total": total, "has_more": page * page_size < total},
+        }
+
+    def evaluation_history_summary(self, signal_id: int) -> dict[str, Any]:
+        signal = dict(self._definition_row(signal_id))
+        return self._evaluation_history_summary(signal_id, signal)
+
+    def evaluate_now(self, signal_id: int) -> dict[str, Any]:
+        signal = dict(self._definition_row(signal_id))
+        if str(signal.get("status") or "").upper() != "ACTIVE":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="ACTIVE signal only")
+        model = self._trend_model_for_signal(signal_id)
+        if not model:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="single-indicator trend model required")
+        return {"item": self._evaluate_single_operation(model, evaluation_type="MANUAL")}
+
+    def repair_baseline(self, signal_id: int, *, apply: bool = False) -> dict[str, Any]:
+        signal = dict(self._definition_row(signal_id))
+        model = self._trend_model_for_signal(signal_id)
+        if str(signal.get("status") or "").upper() != "ACTIVE" or not model:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="ACTIVE single-indicator signal required")
+        exists = bool(self.db.execute(text("SELECT 1 FROM market_signal_evaluations WHERE signal_definition_id=:id AND evaluation_type IN ('BASELINE','REPAIR_BASELINE') LIMIT 1"), {"id": signal_id}).first())
+        result = {"signal_definition_id": signal_id, "eligible": not exists, "already_exists": exists, "dry_run": not apply}
+        if apply and not exists:
+            result["evaluation"] = self._evaluate_single_operation(model, evaluation_type="REPAIR_BASELINE")
+            result["created"] = not bool(result["evaluation"].get("duplicate"))
+        return {"item": result}
+
+    def repair_active_baselines(self, *, apply: bool = False) -> dict[str, Any]:
+        rows = self.db.execute(text("""SELECT tm.* FROM market_signal_trend_models tm JOIN market_signal_definitions d ON d.id=tm.signal_definition_id WHERE d.status='ACTIVE' AND tm.is_active=1 ORDER BY d.id,tm.id""")).mappings().all()
+        seen: set[int] = set()
+        targets: list[dict[str, Any]] = []
+        already = 0
+        for source in rows:
+            signal_id = int(source["signal_definition_id"])
+            if signal_id in seen:
+                continue
+            seen.add(signal_id)
+            exists = bool(self.db.execute(text("SELECT 1 FROM market_signal_evaluations WHERE signal_definition_id=:id AND evaluation_type IN ('BASELINE','REPAIR_BASELINE') LIMIT 1"), {"id": signal_id}).first())
+            if exists:
+                already += 1
+                continue
+            item = {"signal_definition_id": signal_id, "trend_model_id": int(source["id"]), "item_type": source["item_type"], "item_code": source["item_code"]}
+            if apply:
+                item["evaluation"] = self._evaluate_single_operation(dict(source), evaluation_type="REPAIR_BASELINE")
+            targets.append(item)
+        return {"item": {"dry_run": not apply, "repair_target_count": len(targets), "already_has_baseline_count": already, "targets": targets}}
+
+    def evaluate_active_signals_for_changed_items(self, changed_items: list[dict[str, str]], collection_run_id: int | None = None) -> dict[str, int]:
+        wanted = {(str(item.get("item_type") or "").upper(), str(item.get("item_code") or "").upper()) for item in changed_items}
+        rows = self.db.execute(text("""SELECT tm.* FROM market_signal_trend_models tm JOIN market_signal_definitions d ON d.id=tm.signal_definition_id WHERE d.status='ACTIVE' AND tm.is_active=1""")).mappings().all()
+        targets = [dict(row) for row in rows if (str(row["item_type"]).upper(), str(row["item_code"]).upper()) in wanted]
+        result = {"target_count": len(targets), "evaluated_count": 0, "unchanged_count": 0, "transition_count": 0, "error_count": 0, "skipped_count": 0, "created_event_count": 0, "false_break_event_count": 0}
+        for model in targets:
+            try:
+                evaluation = self._evaluate_single_operation(model, evaluation_type="PERIODIC", collection_run_id=collection_run_id)
+                if evaluation.get("duplicate"):
+                    result["skipped_count"] += 1
+                else:
+                    result["evaluated_count"] += 1
+                    if evaluation.get("is_state_transition"):
+                        result["transition_count"] += 1
+                        result["created_event_count"] += 1
+                        if evaluation.get("current_state") == "FALSE_BREAK":
+                            result["false_break_event_count"] += 1
+                    else:
+                        result["unchanged_count"] += 1
+            except Exception:  # noqa: BLE001 - collection results must remain available if evaluation fails.
+                self.db.rollback()
+                result["error_count"] += 1
+        return result
+    def evaluate_active_composites_for_changed_items(
+        self,
+        changed_items: list[dict[str, str]],
+        *,
+        observation_date: str,
+        collection_run_id: int | None = None,
+    ) -> dict[str, int]:
+        wanted = {(str(item.get("item_type") or "").upper(), str(item.get("item_code") or "").upper()) for item in changed_items}
+        rows = self.db.execute(
+            text("""
+                SELECT DISTINCT d.*
+                FROM market_signal_definitions d
+                JOIN market_signal_conditions c ON c.signal_definition_id = d.id
+                WHERE d.signal_type = 'COMPOSITE' AND d.status = 'ACTIVE'
+            """)
+        ).mappings().all()
+        targets = []
+        for row in rows:
+            dependencies = {
+                (str(condition["item_type"]).upper(), str(condition["item_code"]).upper())
+                for condition in self._condition_rows(int(row["id"]))
+            }
+            if dependencies & wanted:
+                targets.append(dict(row))
+        result = {"target_count": len(targets), "evaluated_count": 0, "skipped_count": 0, "transition_count": 0, "error_count": 0}
+        for signal in targets:
+            duplicate = self.db.execute(
+                text("""
+                    SELECT 1 FROM market_signal_evaluations
+                    WHERE signal_definition_id = :id AND rule_version = :version
+                      AND observation_date = :date AND evaluation_type = 'PERIODIC'
+                    LIMIT 1
+                """),
+                {"id": int(signal["id"]), "version": int(signal.get("current_version") or 1), "date": observation_date},
+            ).first()
+            if duplicate:
+                result["skipped_count"] += 1
+                continue
+            try:
+                evaluation = self._evaluate_signal(
+                    signal,
+                    observation_date=observation_date,
+                    save=True,
+                    evaluation_type="PERIODIC",
+                    collection_run_id=collection_run_id,
+                )
+                result["evaluated_count"] += 1
+                if evaluation.get("is_state_transition"):
+                    result["transition_count"] += 1
+            except Exception:  # noqa: BLE001 - one composite must not stop the collection run.
+                self.db.rollback()
+                result["error_count"] += 1
+        return result
 
     def list_events(self, *, limit: int = 50) -> dict[str, Any]:
         rows = self.db.execute(
@@ -378,10 +602,59 @@ class MarketSignalService:
             }
         }
 
+    def audit_composite_operations(self, *, apply: bool = False) -> dict[str, Any]:
+        rows = self.db.execute(
+            text("SELECT * FROM market_signal_definitions WHERE signal_type = 'COMPOSITE' ORDER BY id")
+        ).mappings().all()
+        status_counts: dict[str, int] = {}
+        evaluation_counts: dict[str, int] = {}
+        missing_display: list[dict[str, Any]] = []
+        missing_baseline: list[dict[str, Any]] = []
+        repaired: list[int] = []
+        for source in rows:
+            row = dict(source)
+            row_status = str(row.get("status") or "DRAFT").upper()
+            status_counts[row_status] = status_counts.get(row_status, 0) + 1
+            counts = self.db.execute(
+                text("SELECT evaluation_type, COUNT(*) AS count FROM market_signal_evaluations WHERE signal_definition_id=:id GROUP BY evaluation_type"),
+                {"id": int(row["id"])},
+            ).mappings().all()
+            for count in counts:
+                key = str(count["evaluation_type"])
+                evaluation_counts[key] = evaluation_counts.get(key, 0) + int(count["count"])
+            conditions = [dict(condition) for condition in self._condition_rows(int(row["id"]))]
+            for condition in conditions:
+                display_name = self.display.resolve_indicator_display_name(condition.get("item_type"), condition.get("item_code"))
+                if display_name == str(condition.get("item_code") or ""):
+                    missing_display.append({"signal_id": row["id"], "item_code": condition.get("item_code")})
+            baseline = self.db.execute(
+                text("SELECT 1 FROM market_signal_evaluations WHERE signal_definition_id=:id AND evaluation_type IN ('BASELINE','REPAIR_BASELINE') LIMIT 1"),
+                {"id": int(row["id"])},
+            ).first()
+            if row_status == "ACTIVE" and not baseline:
+                missing_baseline.append({"signal_id": row["id"], "signal_code": row.get("signal_code")})
+                if apply:
+                    self._evaluate_signal(row, observation_date=self._latest_observation_date(), save=True, evaluation_type="REPAIR_BASELINE")
+                    repaired.append(int(row["id"]))
+        return {
+            "item": {
+                "dry_run": not apply,
+                "composite_count": len(rows),
+                "status_counts": status_counts,
+                "evaluation_counts": evaluation_counts,
+                "missing_display_names": missing_display,
+                "missing_baselines": missing_baseline,
+                "repaired_signal_ids": repaired,
+            }
+        }
+
     def mark_validation_complete(self, signal_id: int, payload: Any) -> dict[str, Any]:
+        row = self._definition_row(signal_id)
+        if str(row.get("status") or "").upper() != "DRAFT":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="only a DRAFT signal can be validated")
         data = getattr(payload, "payload", None) or {}
         years = int(data.get("validation_period_years") or data.get("years") or 3)
-        summary = data.get("validation_summary") or self.simulate(signal_id, years=years)
+        summary = compact_validation_summary(data.get("validation_summary") or self.simulate(signal_id, years=years))
         self.db.execute(
             text(
                 """
@@ -395,32 +668,38 @@ class MarketSignalService:
                 WHERE id = :id
                 """
             ),
-            {"id": signal_id, "years": years, "summary": json.dumps(summary, ensure_ascii=False, sort_keys=True)},
+            {"id": signal_id, "years": years, "summary": json.dumps(summary, ensure_ascii=False, sort_keys=True, separators=(",", ":"))},
         )
         self.db.commit()
         return {"item": self.get_signal(signal_id)}
 
     def activate_with_approval(self, signal_id: int, payload: Any) -> dict[str, Any]:
         data = getattr(payload, "payload", None) or {}
-        row = self._definition_row(signal_id)
+        row = dict(self._definition_row(signal_id))
+        if str(row.get("status") or "").upper() != "DRAFT":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="only a DRAFT signal can be activated")
         if str(row.get("validation_status") or "UNVALIDATED").upper() not in {"VALIDATED", "ACTIVATION_READY"} and not int(row.get("activation_ready") or 0):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="validation must be completed before activation")
         reason = str(data.get("reason") or data.get("activation_reason") or "").strip()
+        purpose = str(data.get("purpose") or "").strip()
+        memo = str(data.get("memo") or "").strip()
+        activation_note = " · ".join(part for part in (reason, purpose, memo) if part)
         self.db.execute(
-            text(
-                """
+            text("""
                 UPDATE market_signal_definitions
-                SET status = 'ACTIVE',
-                    activated_at = CURRENT_TIMESTAMP,
-                    activation_reason = :reason,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = :id
-                """
-            ),
-            {"id": signal_id, "reason": reason or None},
+                SET status='ACTIVE', activated_at=CURRENT_TIMESTAMP,
+                    activation_reason=:reason, updated_at=CURRENT_TIMESTAMP
+                WHERE id=:id
+            """),
+            {"id": signal_id, "reason": activation_note or None},
         )
         self.db.commit()
-        evaluation = self._evaluate_signal(dict(self._definition_row(signal_id)), observation_date=self._latest_observation_date(), save=True)
+        self._snapshot_version(signal_id, activation_note or "운영 활성화")
+        trend_model = self._trend_model_for_signal(signal_id)
+        if trend_model:
+            evaluation = self._evaluate_single_operation(trend_model, evaluation_type="BASELINE")
+        else:
+            evaluation = self._evaluate_signal(dict(self._definition_row(signal_id)), observation_date=self._latest_observation_date(), save=True, evaluation_type="BASELINE")
         return {"item": {"signal": self.get_signal(signal_id), "evaluation": evaluation}}
 
     def deactivate_with_reason(self, signal_id: int, payload: Any) -> dict[str, Any]:
@@ -446,23 +725,89 @@ class MarketSignalService:
         original = self.get_signal(signal_id)
         data = getattr(payload, "payload", None) or {}
         next_version = int(original.get("current_version") or 1) + 1
+        next_signal_code = f"{original['signal_code']}_V{next_version}"
+        existing_draft = self.db.execute(
+            text("SELECT id FROM market_signal_definitions WHERE signal_code = :code AND status = 'DRAFT'"),
+            {"code": next_signal_code},
+        ).mappings().first()
+        if existing_draft:
+            return {
+                "item": {
+                    "source_signal_id": signal_id,
+                    "signal": self.get_signal(int(existing_draft["id"])),
+                    "already_exists": True,
+                }
+            }
+
         clone = dict(original)
         clone.pop("id", None)
-        clone["signal_code"] = f"{original['signal_code']}_V{next_version}"
+        clone["signal_code"] = next_signal_code
         clone["signal_name"] = f"{original['signal_name']} v{next_version} 초안"
         clone["status"] = "DRAFT"
         clone["current_version"] = next_version
         clone["change_reason"] = data.get("reason") or "Cloned as new draft version"
         created = self.upsert_signal(clone)
-        return {"item": {"source_signal_id": signal_id, "signal": created}}
+        created_id = int(created["id"])
+        self.db.execute(
+            text(
+                """
+                UPDATE market_signal_definitions
+                SET current_version = :version,
+                    validation_status = 'UNVALIDATED', validation_period_years = NULL,
+                    validation_completed_at = NULL, validation_summary_json = '{}',
+                    activation_ready = 0, activated_at = NULL, activation_reason = NULL,
+                    deactivated_at = NULL, deactivation_reason = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = :id
+                """
+            ),
+            {"id": created_id, "version": next_version},
+        )
+        if str(original.get("signal_type") or "").upper() in {"ATOMIC", "SINGLE_INDICATOR"}:
+            source_model = self.db.execute(
+                text(
+                    """
+                    SELECT * FROM market_signal_trend_models
+                    WHERE signal_definition_id = :id AND is_active = 1
+                    ORDER BY id DESC LIMIT 1
+                    """
+                ),
+                {"id": signal_id},
+            ).mappings().first()
+            if source_model:
+                model = dict(source_model)
+                model.pop("id", None)
+                model["signal_definition_id"] = created_id
+                self.db.execute(
+                    text(
+                        """
+                        INSERT INTO market_signal_trend_models
+                        (signal_definition_id, item_type, item_code, model_type, model_profile_code,
+                         short_window, medium_window, trend_window, minimum_trend_duration,
+                         channel_multiplier, minimum_break_distance, minimum_break_persistence,
+                         reversal_persistence, false_break_window, minimum_trend_strength,
+                         minimum_r_squared, volatility_window, is_active)
+                        VALUES
+                        (:signal_definition_id, :item_type, :item_code, :model_type, :model_profile_code,
+                         :short_window, :medium_window, :trend_window, :minimum_trend_duration,
+                         :channel_multiplier, :minimum_break_distance, :minimum_break_persistence,
+                         :reversal_persistence, :false_break_window, :minimum_trend_strength,
+                         :minimum_r_squared, :volatility_window, 1)
+                        """
+                    ),
+                    model,
+                )
+        self.db.commit()
+        created = self.get_signal(created_id)
+        return {"item": {"source_signal_id": signal_id, "signal": created, "already_exists": False}}
 
     def overview(self) -> dict[str, Any]:
         observation_date = self._latest_observation_date()
         self._ensure_default_trend_models()
         singles = [self._overview_single_card(dict(row), observation_date) for row in self._trend_model_rows()]
-        composite_rows = [dict(row) for row in self._target_signals(signal_ids=None, active_only=False)]
+        composite_rows = [dict(row) for row in self.db.execute(text("SELECT * FROM market_signal_definitions WHERE signal_type = 'COMPOSITE' ORDER BY id")).mappings().all()]
         composites = [self._overview_composite_card(row, observation_date) for row in composite_rows]
-        phenomena = [self._overview_phenomenon_card(row, observation_date) for row in composite_rows]
+        phenomena = self.list_phenomena()["items"]
         today = self.list_events_today()
         summary = {
             "trend_break_candidate": sum(1 for item in singles if item["evaluation_status"] == "BREAK_CANDIDATE"),
@@ -470,7 +815,7 @@ class MarketSignalService:
             "reversal_confirmed": sum(1 for item in singles if item["evaluation_status"] == "REVERSAL_CONFIRMED"),
             "false_break": sum(1 for item in singles if item["evaluation_status"] == "FALSE_BREAK"),
             "composite_candidate": sum(1 for item in composites if item["evaluation_status"] in {"WATCH", "ACTIVE", "STRENGTHENING"}),
-            "phenomenon_confirmed": sum(1 for item in phenomena if item["evaluation_status"] in {"CONFIRMED", "STRENGTHENING"}),
+            "phenomenon_confirmed": sum(1 for item in phenomena if item.get("current_state") == "CONFIRMED"),
             "data_insufficient": sum(1 for item in singles if item["evaluation_status"] == "DATA_INSUFFICIENT"),
         }
         return {
@@ -505,8 +850,10 @@ class MarketSignalService:
         item = self._single_indicator_item(row, observation_date=obs_date, include_chart=False)
         item["evaluation_status"] = diagnostic["trend_health"]
         item["trend"] = diagnostic
-        if save and row.get("signal_definition_id"):
-            self._save_trend_episode_marker(int(row["signal_definition_id"]), row["item_code"], obs_date, diagnostic)
+        if save and row.get("signal_definition_id") and str(row.get("definition_status") or "").upper() == "ACTIVE":
+            item["operation_evaluation"] = self._evaluate_single_operation(
+                row, observation_date=obs_date, evaluation_type="MANUAL", diagnostic=diagnostic
+            )
         return {"item": item}
 
     def simulate_single_indicator(self, model_id: int, *, years: int = 1) -> dict[str, Any]:
@@ -536,16 +883,29 @@ class MarketSignalService:
         }
 
     def list_composite_signals(self) -> dict[str, Any]:
-        rows = self._target_signals(signal_ids=None, active_only=False)
+        rows = self.db.execute(text("SELECT * FROM market_signal_definitions WHERE signal_type = 'COMPOSITE' ORDER BY id")).mappings().all()
         return {"items": [self._composite_item(dict(row), include_conditions=False) for row in rows]}
 
     def get_composite_signal(self, signal_id: int) -> dict[str, Any]:
-        return {"item": self._composite_item(dict(self._definition_row(signal_id)), include_conditions=True)}
+        signal = dict(self._definition_row(signal_id))
+        item = self._composite_item(signal, include_conditions=True)
+        evaluation = self._evaluate_signal(signal, observation_date=self._latest_observation_date(), save=False)
+        results = {
+            int(result["condition_id"]): result
+            for result in [*evaluation.get("evidence", []), *evaluation.get("opposing_evidence", []), *evaluation.get("missing_data", [])]
+            if result.get("condition_id") is not None
+        }
+        item["conditions"] = [{**condition, **results.get(int(condition["id"]), {})} for condition in item["conditions"]]
+        item["evaluation"] = evaluation
+        item["current_evaluation_state"] = evaluation["state"]
+        item["current_evaluation_display_name"] = self.display.evaluation_state_display_name(evaluation["state"])
+        item["relation_diagnostic"] = self._composite_relation_diagnostic(signal, evaluation)
+        return {"item": item}
 
     def evaluate_composite(self, signal_id: int, *, observation_date: str | None = None, save: bool = True) -> dict[str, Any]:
         signal = dict(self._definition_row(signal_id))
         obs_date = observation_date or self._latest_observation_date()
-        evaluation = self._evaluate_signal(signal, observation_date=obs_date, save=save)
+        evaluation = self._evaluate_signal(signal, observation_date=obs_date, save=save, evaluation_type="MANUAL")
         item = self._composite_item(signal, include_conditions=True)
         item["evaluation"] = evaluation
         item["relation_diagnostic"] = self._composite_relation_diagnostic(signal, evaluation)
@@ -556,69 +916,456 @@ class MarketSignalService:
         result["relation_type"] = dict(self._definition_row(signal_id)).get("relation_type") or "CONDITIONAL_RELATION"
         return result
 
-    def list_phenomena(self) -> dict[str, Any]:
-        rows = self._target_signals(signal_ids=None, active_only=False)
-        observation_date = self._latest_observation_date()
-        return {"items": [self._phenomenon_item(dict(row), observation_date=observation_date, evaluate_now=False) for row in rows]}
+    def list_phenomena(
+        self,
+        *,
+        grade: str | None = None,
+        state: str | None = None,
+        category: str | None = None,
+        flow_candidate: bool | None = None,
+        source_status: str | None = None,
+        search: str | None = None,
+    ) -> dict[str, Any]:
+        rows = self._objective_phenomenon_rows()
+        items = [self._objective_phenomenon_item(row, evaluate_now=True) for row in rows]
+        needle = str(search or '').strip().lower()
+        filtered = []
+        for item in items:
+            if grade and grade.upper() != str(item.get('operation_grade') or '').upper():
+                continue
+            if state and state.upper() != str(item.get('current_state') or '').upper():
+                continue
+            if category and category != item.get('category'):
+                continue
+            if flow_candidate is not None and bool(item.get('is_flow_candidate')) != flow_candidate:
+                continue
+            if source_status and source_status.upper() != str(item.get('source_operation_status') or '').upper():
+                continue
+            if needle and needle not in f"{item.get('display_title', '')} {item.get('source_title', '')} {item.get('phenomenon_code', '')}".lower():
+                continue
+            if str(item.get('source_operation_status')).upper() == 'INACTIVE' and not source_status:
+                continue
+            filtered.append(item)
+        return {'items': filtered}
 
     def get_phenomenon(self, phenomenon_id: int) -> dict[str, Any]:
-        row = dict(self._definition_row(phenomenon_id))
-        return {"item": self._phenomenon_item(row, observation_date=self._latest_observation_date(), evaluate_now=True)}
+        return {'item': self._objective_phenomenon_item(self._objective_phenomenon_row(phenomenon_id), evaluate_now=True)}
 
     def evaluate_phenomenon(self, phenomenon_id: int, *, observation_date: str | None = None, save: bool = True) -> dict[str, Any]:
-        row = dict(self._definition_row(phenomenon_id))
+        row = self._objective_phenomenon_row(phenomenon_id)
+        signal = dict(self._definition_row(int(row['source_composite_signal_id'])))
         obs_date = observation_date or self._latest_observation_date()
-        item = self._phenomenon_item(row, observation_date=obs_date, evaluate_now=True)
-        if save:
-            self._upsert_episode(row, item)
-        return {"item": item}
+        is_official = str(signal.get('status') or '').upper() == 'ACTIVE'
+        evaluation = self._evaluate_signal(
+            signal,
+            observation_date=obs_date,
+            save=bool(save and is_official),
+            evaluation_type='MANUAL',
+        )
+        return {'item': self._objective_phenomenon_item(row, evaluate_now=False, evaluation=evaluation)}
 
     def list_phenomenon_episodes(self, phenomenon_id: int) -> dict[str, Any]:
+        return self.list_phenomenon_evaluation_history(phenomenon_id)
+
+    def list_phenomenon_evaluation_history(self, phenomenon_id: int) -> dict[str, Any]:
+        self._objective_phenomenon_row(phenomenon_id)
         rows = self.db.execute(
             text(
                 """
-                SELECT *
-                FROM market_signal_episodes
-                WHERE phenomenon_definition_id = :id
-                ORDER BY COALESCE(trigger_date, created_at) DESC, id DESC
+                SELECT e.*, s.evaluation_type AS source_evaluation_type, s.rule_version AS source_rule_version
+                FROM market_objective_phenomenon_evaluations e
+                LEFT JOIN market_signal_evaluations s ON s.id = e.source_composite_evaluation_id
+                WHERE e.phenomenon_id = :id
+                ORDER BY e.observation_date DESC, e.id DESC
                 LIMIT 100
                 """
             ),
-            {"id": phenomenon_id},
+            {'id': phenomenon_id},
         ).mappings().all()
-        return {"items": [self._episode_item(dict(row)) for row in rows]}
+        return {'items': [dict(row) for row in rows]}
+
+    def phenomenon_evaluation_history_summary(self, phenomenon_id: int) -> dict[str, Any]:
+        row = self._objective_phenomenon_row(phenomenon_id)
+        summary = self.db.execute(
+            text(
+                """
+                SELECT COUNT(*) AS evaluation_count,
+                       MIN(observation_date) AS first_evaluation_date,
+                       MAX(observation_date) AS last_evaluation_date,
+                       SUM(CASE WHEN is_state_transition = 1 THEN 1 ELSE 0 END) AS transition_count,
+                       SUM(CASE WHEN current_state = 'CONFIRMED' THEN 1 ELSE 0 END) AS confirmed_count,
+                       SUM(CASE WHEN current_state = 'RELEASED' THEN 1 ELSE 0 END) AS released_count,
+                       SUM(CASE WHEN current_state = 'OPPOSED' THEN 1 ELSE 0 END) AS opposed_count,
+                       SUM(CASE WHEN current_state = 'DATA_INSUFFICIENT' THEN 1 ELSE 0 END) AS data_insufficient_count
+                FROM market_objective_phenomenon_evaluations
+                WHERE phenomenon_id = :id
+                """
+            ),
+            {'id': phenomenon_id},
+        ).mappings().first()
+        return {'item': {**dict(summary or {}), 'phenomenon_id': phenomenon_id, 'current_state': row.get('current_state')}}
+
+    def update_phenomenon(self, phenomenon_id: int, payload: Any) -> dict[str, Any]:
+        self._objective_phenomenon_row(phenomenon_id)
+        data = getattr(payload, 'payload', None) or {}
+        allowed = {'display_title', 'category', 'tags', 'user_note', 'importance'}
+        unknown = set(data) - allowed
+        if unknown:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"read-only phenomenon fields: {', '.join(sorted(unknown))}")
+        tags_json = json.dumps(data.get('tags') or [], ensure_ascii=False, separators=(',', ':')) if 'tags' in data else None
+        self.db.execute(
+            text(
+                """
+                UPDATE market_objective_phenomena
+                SET display_title = CASE WHEN :has_title THEN :display_title ELSE display_title END,
+                    user_confirmed_title = CASE WHEN :has_title THEN 1 ELSE user_confirmed_title END,
+                    category = CASE WHEN :has_category THEN :category ELSE category END,
+                    tags_json = CASE WHEN :has_tags THEN :tags_json ELSE tags_json END,
+                    user_note = CASE WHEN :has_note THEN :user_note ELSE user_note END,
+                    importance = CASE WHEN :has_importance THEN :importance ELSE importance END,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = :id
+                """
+            ),
+            {
+                'id': phenomenon_id,
+                'has_title': 'display_title' in data,
+                'display_title': data.get('display_title'),
+                'has_category': 'category' in data,
+                'category': data.get('category'),
+                'has_tags': 'tags' in data,
+                'tags_json': tags_json,
+                'has_note': 'user_note' in data,
+                'user_note': data.get('user_note'),
+                'has_importance': 'importance' in data,
+                'importance': str(data.get('importance') or 'NORMAL').upper(),
+            },
+        )
+        self.db.commit()
+        return self.get_phenomenon(phenomenon_id)
+
+    def add_phenomenon_flow_candidate(self, phenomenon_id: int, payload: Any) -> dict[str, Any]:
+        item = self.get_phenomenon(phenomenon_id)['item']
+        if item.get('operation_grade') != 'OFFICIAL':
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='정식 운영 현상만 경제 흐름 후보로 등록할 수 있습니다.')
+        if item.get('current_state') not in {'OBSERVED', 'CONFIRMING', 'CONFIRMED', 'WEAKENING'} or item.get('missing_count'):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='현재 상태 또는 데이터 준비도 때문에 후보로 등록할 수 없습니다.')
+        data = getattr(payload, 'payload', None) or {}
+        latest_eval = self.db.execute(text('SELECT id FROM market_objective_phenomenon_evaluations WHERE phenomenon_id = :id ORDER BY observation_date DESC, id DESC LIMIT 1'), {'id': phenomenon_id}).first()
+        self.db.execute(
+            text(
+                """
+                INSERT INTO market_objective_phenomenon_flow_candidates
+                (phenomenon_id, source_evaluation_id, candidate_title, category, status, importance, user_note, auto_update)
+                VALUES (:phenomenon_id, :source_evaluation_id, :candidate_title, :category, 'CANDIDATE', :importance, :user_note, :auto_update)
+                ON CONFLICT(phenomenon_id) WHERE status IN ('CANDIDATE', 'LINKED') DO UPDATE SET
+                    candidate_title = excluded.candidate_title,
+                    category = excluded.category,
+                    importance = excluded.importance,
+                    user_note = excluded.user_note,
+                    auto_update = excluded.auto_update,
+                    updated_at = CURRENT_TIMESTAMP
+                """
+            ),
+            {
+                'phenomenon_id': phenomenon_id,
+                'source_evaluation_id': int(latest_eval[0]) if latest_eval else None,
+                'candidate_title': data.get('candidate_title') or item.get('display_title'),
+                'category': data.get('category') or item.get('category'),
+                'importance': str(data.get('importance') or item.get('importance') or 'NORMAL').upper(),
+                'user_note': data.get('user_note'),
+                'auto_update': 1 if data.get('auto_update', True) else 0,
+            },
+        )
+        self.db.commit()
+        return self.get_phenomenon(phenomenon_id)
+
+    def remove_phenomenon_flow_candidate(self, phenomenon_id: int) -> dict[str, Any]:
+        self._objective_phenomenon_row(phenomenon_id)
+        self.db.execute(text("UPDATE market_objective_phenomenon_flow_candidates SET status = 'REMOVED', updated_at = CURRENT_TIMESTAMP WHERE phenomenon_id = :id AND status IN ('CANDIDATE', 'LINKED')"), {'id': phenomenon_id})
+        self.db.commit()
+        return self.get_phenomenon(phenomenon_id)
 
     def gpt_phenomenon_diagnosis(self, phenomenon_id: int, payload: Any) -> dict[str, Any]:
-        phenomenon = self.evaluate_phenomenon(phenomenon_id, observation_date=getattr(payload, "observation_date", None), save=False)["item"]
-        goal_text = ""
-        if getattr(payload, "payload", None):
-            goal_text = str(getattr(payload, "payload").get("goal_text") or "")
+        phenomenon = self.get_phenomenon(phenomenon_id)['item']
+        goal_text = str((getattr(payload, 'payload', None) or {}).get('goal_text') or '')
+        safe_snapshot = {key: phenomenon.get(key) for key in (
+            'display_title', 'current_state', 'easy_explanation', 'observed_evidence', 'opposing_evidence',
+            'missing_conditions', 'next_checks', 'recent_change', 'phenomenon_score', 'category'
+        )}
         prompt = (
-            "DrCT objective phenomenon second-opinion assistant.\n"
-            "Do not change DrCT state, score, rule status, or activation. Do not provide probabilities or buy/sell advice.\n"
-            "Return economic meaning, alternative diagnosis, opposing diagnosis, additional checks, invalidation conditions, "
-            "possible economic-flow handoff candidates, rule improvement proposals, unsupported engine features, and limitations.\n\n"
-            f"User focus: {goal_text or '-'}\n\nPhenomenon snapshot:\n{json.dumps(phenomenon, ensure_ascii=False, indent=2)}"
+            'DrCT objective phenomenon second-opinion assistant. Do not change DrCT state, score, rule status, or conditions.\n'
+            'DrCT 상태·점수·룰·조건을 변경하지 말고 매수·매도 추천을 하지 마세요.\n'
+            '가능한 경제 전달 경로, 대안 가설, 반대 시나리오, 추가 확인 지표, 국내시장·업종 파급 가능성, 해석의 한계만 제안하세요.\n\n'
+            f"사용자 초점: {goal_text or '-'}\n\n현상 스냅샷:\n{json.dumps(safe_snapshot, ensure_ascii=False, indent=2)}"
         )
+        return {'item': {'mode': 'PROMPT_ONLY', 'validation_status': 'PROMPT_READY', 'prompt': prompt, 'drct_state_locked': True}}
+
+    def repair_objective_phenomena(self, *, apply: bool = False) -> dict[str, Any]:
+        rows = self._objective_phenomenon_rows()
+        report = {
+            'total_count': len(rows),
+            'official_targets': sum(1 for row in rows if str(row.get('source_operation_status')).upper() == 'ACTIVE'),
+            'reference_targets': sum(1 for row in rows if str(row.get('source_operation_status')).upper() == 'DRAFT'),
+            'inactive_source_count': sum(1 for row in rows if str(row.get('source_operation_status')).upper() == 'INACTIVE'),
+            'title_suggestion_targets': sum(1 for row in rows if not row.get('user_confirmed_title') and self._suggest_phenomenon_title(str(row.get('signal_code')), str(row.get('source_title'))) != row.get('display_title')),
+            'apply': apply,
+        }
+        if apply:
+            for row in rows:
+                if row.get('user_confirmed_title'):
+                    continue
+                title = self._suggest_phenomenon_title(str(row.get('signal_code')), str(row.get('source_title')))
+                self.db.execute(text('UPDATE market_objective_phenomena SET display_title = :title, updated_at = CURRENT_TIMESTAMP WHERE id = :id'), {'title': title, 'id': row['id']})
+            self.db.commit()
+        return {'item': report}
+
+    def _objective_phenomenon_rows(self) -> list[dict[str, Any]]:
+        rows = self.db.execute(
+            text(
+                """
+                SELECT p.*, d.signal_code, d.signal_name, d.status AS source_operation_status,
+                       d.current_version, d.phenomenon_template, d.process_template, d.result_template,
+                       c.id AS flow_candidate_id, c.status AS flow_candidate_status
+                FROM market_objective_phenomena p
+                JOIN market_signal_definitions d ON d.id = p.source_composite_signal_id
+                LEFT JOIN market_objective_phenomenon_flow_candidates c
+                  ON c.phenomenon_id = p.id AND c.status IN ('CANDIDATE', 'LINKED')
+                ORDER BY CASE d.status WHEN 'ACTIVE' THEN 0 WHEN 'DRAFT' THEN 1 ELSE 2 END, p.id
+                """
+            )
+        ).mappings().all()
+        return [dict(row) for row in rows]
+
+    def _objective_phenomenon_row(self, phenomenon_id: int) -> dict[str, Any]:
+        row = next((row for row in self._objective_phenomenon_rows() if int(row['id']) == phenomenon_id), None)
+        if not row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='objective phenomenon not found')
+        return row
+
+    def _objective_phenomenon_item(self, row: dict[str, Any], *, evaluate_now: bool, evaluation: dict[str, Any] | None = None) -> dict[str, Any]:
+        signal = dict(self._definition_row(int(row['source_composite_signal_id'])))
+        observation_date = self._latest_observation_date()
+        evaluation = evaluation or (self._evaluate_signal(signal, observation_date=observation_date, save=False) if evaluate_now else None)
+        latest_source = self.db.execute(text("SELECT * FROM market_signal_evaluations WHERE signal_definition_id = :id AND is_live = 1 ORDER BY observation_date DESC, id DESC LIMIT 1"), {'id': signal['id']}).mappings().first()
+        if evaluation is None and latest_source:
+            source = dict(latest_source)
+            source['evidence'] = json.loads(source.get('evidence_json') or '[]')
+            source['opposing_evidence'] = json.loads(source.get('opposing_evidence_json') or '[]')
+            source['missing_data'] = json.loads(source.get('missing_data_json') or '[]')
+            evaluation = source
+        evaluation = evaluation or {'state': 'WAITING', 'score': 0, 'evidence': [], 'opposing_evidence': [], 'missing_data': []}
+        state = self._objective_state(str(evaluation.get('state') or 'WAITING'))
+        evidence = [self._objective_evidence_item(item) for item in evaluation.get('evidence') or []]
+        if state == 'NOT_EVALUATED' and evidence:
+            state = 'OBSERVED'
+        opposing = [self._objective_evidence_item(item) for item in evaluation.get('opposing_evidence') or []]
+        missing = [self._objective_missing_item(item) for item in evaluation.get('missing_data') or []]
+        official = str(signal.get('status') or '').upper() == 'ACTIVE' and latest_source is not None and not missing
+        grade = 'OFFICIAL' if official else 'REFERENCE'
+        next_checks = self._objective_next_checks(signal, evaluation, evidence, opposing, missing)
+        title = row.get('display_title') or self._suggest_phenomenon_title(str(signal.get('signal_code')), str(row.get('source_title') or signal.get('signal_name')))
+        recent = self.db.execute(text('SELECT previous_state, current_state, observation_date FROM market_objective_phenomenon_evaluations WHERE phenomenon_id = :id ORDER BY observation_date DESC, id DESC LIMIT 1'), {'id': row['id']}).mappings().first()
         return {
-            "item": {
-                "mode": "PROMPT_ONLY",
-                "validation_status": "PROMPT_READY",
-                "prompt": prompt,
-                "drct_state_locked": True,
-                "allowed_outputs": [
-                    "economic_meaning",
-                    "alternative_diagnosis",
-                    "opposing_diagnosis",
-                    "additional_checks",
-                    "invalidation_conditions",
-                    "economic_flow_candidates",
-                    "rule_improvement_proposals",
-                    "limitations",
-                ],
-            }
+            'id': row['id'],
+            'phenomenon_code': row['phenomenon_code'],
+            'signal_level': 'PHENOMENON',
+            'user_label': '객관적 현상',
+            'source_composite_signal_id': signal['id'],
+            'source_rule_version': signal.get('current_version') or 1,
+            'source_title': row.get('source_title') or signal.get('signal_name'),
+            'display_title': title,
+            'phenomenon_name': title,
+            'category': row.get('category') or signal.get('category'),
+            'tags': json.loads(row.get('tags_json') or '[]'),
+            'description': row.get('description') or signal.get('description'),
+            'operation_grade': grade,
+            'operation_grade_label': '정식 현상' if grade == 'OFFICIAL' else '참고 현상',
+            'source_operation_status': signal.get('status'),
+            'source_operation_status_label': self.display.operation_status_display_name(signal.get('status')),
+            'current_state': state,
+            'current_state_label': self._objective_state_label(state),
+            'evaluation_status': state,
+            'phenomenon_score': self._score_100(evaluation.get('score')),
+            'easy_explanation': self._objective_easy_explanation(title, state),
+            'observation_date': evaluation.get('observation_date') or observation_date,
+            'observed_evidence': evidence,
+            'trigger_evidence': [item for item in evidence if item.get('condition_role') in {'TRIGGER', 'REQUIRED'}],
+            'confirm_evidence': [item for item in evidence if item.get('condition_role') == 'CONFIRM'],
+            'opposing_evidence': opposing,
+            'missing_conditions': missing,
+            'invalidation_evidence': [item for item in opposing if item.get('condition_role') == 'INVALIDATION'],
+            'next_checks': next_checks,
+            'evidence_count': len(evidence),
+            'opposing_count': len(opposing),
+            'missing_count': len(missing),
+            'next_check_count': len(next_checks),
+            'recent_change': f"{self._objective_state_label(recent.get('previous_state'))} → {self._objective_state_label(recent.get('current_state'))}" if recent and recent.get('previous_state') and recent.get('previous_state') != recent.get('current_state') else '최근 상태 변화 없음',
+            'is_flow_candidate': bool(row.get('flow_candidate_id')),
+            'flow_candidate_status': row.get('flow_candidate_status'),
+            'can_add_flow_candidate': grade == 'OFFICIAL' and state in {'OBSERVED', 'CONFIRMING', 'CONFIRMED', 'WEAKENING'} and not missing and not row.get('flow_candidate_id'),
+            'user_note': row.get('user_note'),
+            'importance': row.get('importance') or 'NORMAL',
+            'user_confirmed_title': bool(row.get('user_confirmed_title')),
+            'source_evaluation_id': int(latest_source['id']) if latest_source else None,
         }
 
+    @staticmethod
+    def _objective_state(source_state: str) -> str:
+        return {
+            'WAITING': 'NOT_EVALUATED', 'INACTIVE': 'NOT_EVALUATED',
+            'TRIGGERED': 'OBSERVED', 'WATCH': 'OBSERVED',
+            'CONFIRMING': 'CONFIRMING', 'CANDIDATE': 'CONFIRMING',
+            'CONFIRMED': 'CONFIRMED', 'ACTIVE': 'CONFIRMED', 'STRENGTHENING': 'CONFIRMED',
+            'WEAKENING': 'WEAKENING', 'RELEASED': 'RELEASED', 'OPPOSED': 'OPPOSED',
+            'INVALIDATED': 'INVALIDATED', 'DATA_INSUFFICIENT': 'DATA_INSUFFICIENT', 'ERROR': 'ERROR',
+        }.get(source_state.upper(), 'NOT_EVALUATED')
+
+    @staticmethod
+    def _objective_state_label(state_value: Any) -> str:
+        return {
+            'NOT_EVALUATED': '미평가', 'OBSERVED': '징후 관찰', 'CONFIRMING': '확인 진행',
+            'CONFIRMED': '현상 확인', 'WEAKENING': '현상 약화', 'RELEASED': '현상 해제',
+            'OPPOSED': '반대 근거 우세', 'INVALIDATED': '무효화',
+            'DATA_INSUFFICIENT': '데이터 부족', 'ERROR': '평가 오류',
+        }.get(str(state_value or '').upper(), str(state_value or '-'))
+
+    @classmethod
+    def _objective_easy_explanation(cls, title: str, state_value: str) -> str:
+        messages = {
+            'OBSERVED': '관련 지표 일부가 같은 방향으로 움직이기 시작했지만 아직 현상이 확인됐다고 판단하기에는 근거가 부족합니다.',
+            'CONFIRMING': '핵심 시작 조건은 나타났으며 추가 확인 조건의 지속 여부를 관찰하고 있습니다.',
+            'CONFIRMED': '핵심 조건과 지속 확인 조건이 함께 충족되어 현재 현상이 확인 구간에 들어왔습니다.',
+            'WEAKENING': '현상을 지지하던 조건 일부가 약해지거나 반대 근거가 증가하고 있습니다.',
+            'RELEASED': '핵심 조건 또는 지속 확인 조건이 해제되어 기존 현상이 더 이상 유지되지 않습니다.',
+            'OPPOSED': '현상을 지지하는 근거보다 반대 방향의 조건이 더 강하게 나타나고 있습니다.',
+            'DATA_INSUFFICIENT': '필수 지표 또는 시그널 데이터가 부족하여 현재 현상을 객관적으로 판단하기 어렵습니다.',
+            'INVALIDATED': '무효화 조건이 충족되어 현재 현상 판단을 유지할 수 없습니다.',
+            'ERROR': '평가 과정의 오류로 현재 현상을 판단하지 못했습니다.',
+            'NOT_EVALUATED': '아직 저장된 평가가 없어 현재 관찰 사실을 확정하지 않았습니다.',
+        }
+        return f"{title}: {messages.get(state_value, messages['NOT_EVALUATED'])}"
+
+    def _objective_evidence_item(self, item: dict[str, Any]) -> dict[str, Any]:
+        role = str(item.get('role') or '').upper()
+        return {
+            **item,
+            'condition_role': role,
+            'condition_role_label': ROLE_LABELS.get(role, role),
+            'fact_text': item.get('display_text') or item.get('condition_display_text') or item.get('item_display_name') or item.get('item_code'),
+            'latest_judgement': item.get('result_display_text') or ('충족' if item.get('passed') else '미충족'),
+            'base_date': item.get('observation_date'),
+            'data_quality': '정상' if not item.get('missing') else '데이터 부족',
+        }
+
+    def _objective_missing_item(self, item: dict[str, Any]) -> dict[str, Any]:
+        decorated = self._objective_evidence_item(item)
+        decorated['missing_reason'] = '평가에 필요한 최신 관측값이 없거나 허용 기준보다 오래되었습니다.'
+        return decorated
+
+    def _objective_next_checks(self, signal: dict[str, Any], evaluation: dict[str, Any], evidence: list[dict[str, Any]], opposing: list[dict[str, Any]], missing: list[dict[str, Any]]) -> list[str]:
+        checks = [f"{item.get('item_display_name') or item.get('item_code')} 데이터 갱신 후 다시 평가" for item in missing]
+        passed_ids = {item.get('condition_id') for item in [*evidence, *opposing]}
+        for condition in [self._condition_item(row) for row in self._condition_rows(int(signal['id']))]:
+            if condition.get('id') in passed_ids:
+                continue
+            role = str(condition.get('condition_role') or '').upper()
+            name = condition.get('item_display_name') or condition.get('item_code')
+            if role in {'REQUIRED', 'TRIGGER', 'CONFIRM'}:
+                checks.append(f"{name} 조건이 추가로 충족되는지 확인")
+            elif role == 'INVALIDATION':
+                checks.append(f"{name} 무효화 조건 발생 여부 확인")
+            elif role == 'OPPOSING':
+                checks.append(f"반대 근거인 {name} 조건 발생 여부 확인")
+        if not checks:
+            checks = [f"{signal.get('signal_name')} 관찰 근거가 다음 평가에서도 지속되는지 확인", '반대 근거와 무효화 조건 발생 여부 확인']
+        return list(dict.fromkeys(checks))[:3]
+
+    @staticmethod
+    def _suggest_phenomenon_title(signal_code: str, source_title: str) -> str:
+        return {
+            'US_REAL_RATE_GROWTH_PRESSURE': '미국 실질금리·장기금리 상승과 성장주 상대강도 약화 동반',
+            'RISK_ON_TO_RISK_OFF_TURN': 'VIX 상승·달러 강세와 성장주 상대강도 약화 조합 관찰',
+            'DISINFLATION_TO_REFLATION_TURN': '에너지·기대물가 상승과 물가 둔화세 훼손 동반',
+            'US_EMPLOYMENT_STABLE_TO_WEAKENING': '신규 실업수당 증가와 고용 안정성 약화 징후 관찰',
+        }.get(signal_code.upper(), source_title)
+
+    def _record_objective_phenomenon_evaluation(self, signal: dict[str, Any], evaluation: dict[str, Any]) -> None:
+        if str(signal.get('signal_type') or '').upper() != 'COMPOSITE' or str(signal.get('status') or '').upper() != 'ACTIVE':
+            return
+        phenomenon = self.db.execute(text('SELECT * FROM market_objective_phenomena WHERE source_composite_signal_id = :id'), {'id': signal['id']}).mappings().first()
+        if not phenomenon:
+            return
+        current_state = self._objective_state(str(evaluation.get('state') or 'WAITING'))
+        previous_state = str(phenomenon.get('current_state') or 'NOT_EVALUATED')
+        evidence_count = len(evaluation.get('evidence') or [])
+        opposing_count = len(evaluation.get('opposing_evidence') or [])
+        missing_count = len(evaluation.get('missing_data') or [])
+        next_count = len(self._objective_next_checks(signal, evaluation, [self._objective_evidence_item(item) for item in evaluation.get('evidence') or []], [self._objective_evidence_item(item) for item in evaluation.get('opposing_evidence') or []], [self._objective_missing_item(item) for item in evaluation.get('missing_data') or []]))
+        transitioned = previous_state != current_state
+        title = phenomenon.get('display_title') or phenomenon.get('source_title')
+        self.db.execute(
+            text(
+                """
+                INSERT INTO market_objective_phenomenon_evaluations
+                (phenomenon_id, source_composite_evaluation_id, evaluation_type, observation_date, is_live,
+                 previous_state, current_state, phenomenon_score, evidence_count, opposing_count, missing_count,
+                 next_check_count, easy_explanation, is_state_transition)
+                VALUES (:phenomenon_id, :source_id, :evaluation_type, :observation_date, 1,
+                        :previous_state, :current_state, :score, :evidence_count, :opposing_count, :missing_count,
+                        :next_count, :easy_explanation, :transitioned)
+                ON CONFLICT(phenomenon_id, source_composite_evaluation_id, evaluation_type) DO UPDATE SET
+                    previous_state = excluded.previous_state, current_state = excluded.current_state,
+                    phenomenon_score = excluded.phenomenon_score, evidence_count = excluded.evidence_count,
+                    opposing_count = excluded.opposing_count, missing_count = excluded.missing_count,
+                    next_check_count = excluded.next_check_count, easy_explanation = excluded.easy_explanation,
+                    is_state_transition = excluded.is_state_transition
+                """
+            ),
+            {
+                'phenomenon_id': phenomenon['id'], 'source_id': evaluation.get('id'),
+                'evaluation_type': evaluation.get('evaluation_type') or 'PERIODIC',
+                'observation_date': evaluation.get('observation_date'), 'previous_state': previous_state,
+                'current_state': current_state, 'score': evaluation.get('score') or 0,
+                'evidence_count': evidence_count, 'opposing_count': opposing_count, 'missing_count': missing_count,
+                'next_count': next_count, 'easy_explanation': self._objective_easy_explanation(str(title), current_state),
+                'transitioned': 1 if transitioned else 0,
+            },
+        )
+        self.db.execute(
+            text(
+                """
+                UPDATE market_objective_phenomena
+                SET operation_grade = 'OFFICIAL', current_state = :state, phenomenon_score = :score,
+                    first_observed_at = CASE WHEN :state IN ('OBSERVED','CONFIRMING','CONFIRMED','WEAKENING') THEN COALESCE(first_observed_at, :date) ELSE first_observed_at END,
+                    confirmed_at = CASE WHEN :state = 'CONFIRMED' THEN COALESCE(confirmed_at, :date) ELSE confirmed_at END,
+                    released_at = CASE WHEN :state IN ('RELEASED','INVALIDATED') THEN :date ELSE released_at END,
+                    last_evaluated_at = :date, evidence_count = :evidence_count, opposing_count = :opposing_count,
+                    missing_count = :missing_count, next_check_count = :next_count, updated_at = CURRENT_TIMESTAMP
+                WHERE id = :id
+                """
+            ),
+            {'id': phenomenon['id'], 'state': current_state, 'score': evaluation.get('score') or 0, 'date': evaluation.get('observation_date'), 'evidence_count': evidence_count, 'opposing_count': opposing_count, 'missing_count': missing_count, 'next_count': next_count},
+        )
+        if transitioned:
+            self.db.execute(
+                text(
+                    """
+                    INSERT OR IGNORE INTO market_signal_events
+                    (signal_definition_id, evaluation_id, event_date, observation_date, previous_state, new_state,
+                     previous_score, new_score, event_type, summary, rule_version, is_live)
+                    VALUES (:signal_id, :evaluation_id, :date, :date, :previous_state, :new_state,
+                            NULL, :score, :event_type, :summary, :rule_version, 1)
+                    """
+                ),
+                {
+                    'signal_id': signal['id'], 'evaluation_id': evaluation.get('id'), 'date': evaluation.get('observation_date'),
+                    'previous_state': previous_state, 'new_state': current_state, 'score': evaluation.get('score') or 0,
+                    'event_type': f'PHENOMENON_{current_state}',
+                    'summary': f"객관적 현상 · {self._objective_state_label(previous_state)} → {self._objective_state_label(current_state)}",
+                    'rule_version': int(signal.get('current_version') or 1),
+                },
+            )
     def list_evidence_sources(self) -> dict[str, Any]:
         self._ensure_evidence_sources()
         rows = self.db.execute(text("SELECT * FROM market_signal_evidence_sources ORDER BY source_type, source_code")).mappings().all()
@@ -806,7 +1553,7 @@ class MarketSignalService:
                 "experiment_type": str(data.get("experiment_type") or "CHALLENGER").upper(),
                 "hypothesis": data.get("hypothesis"),
                 "proposed_rule_json": json.dumps(data.get("proposed_rule") or {}, ensure_ascii=False, sort_keys=True),
-                "validation_summary_json": json.dumps(data.get("validation_summary") or {}, ensure_ascii=False, sort_keys=True),
+                "validation_summary_json": json.dumps(compact_validation_summary(data.get("validation_summary") or {}), ensure_ascii=False, sort_keys=True, separators=(",", ":")),
             },
         )
         self.db.commit()
@@ -860,7 +1607,7 @@ class MarketSignalService:
         dates = self._simulation_dates(signal_id, years=years)
         samples = [self._evaluate_signal(signal, observation_date=obs_date, save=False, conditions_override=conditions) for obs_date in dates]
         scores = [float(item["score"]) for item in samples if item["state"] != "DATA_INSUFFICIENT"]
-        active = [item for item in samples if item["state"] in {"ACTIVE", "STRENGTHENING", "WEAKENING"}]
+        active = [item for item in samples if item["state"] in {"CONFIRMED", "ACTIVE", "STRENGTHENING", "WEAKENING"}]
         persistence_runs = self._persistence_runs(samples)
         condition_pass_counts: dict[str, int] = {}
         required_satisfaction_count = 0
@@ -887,10 +1634,21 @@ class MarketSignalService:
         duplicate_keys = self._duplicate_condition_keys(signal_id)
         if duplicate_keys:
             warnings.append("DUPLICATE_CONDITION:" + ",".join(duplicate_keys[:5]))
+        trigger_states = {"TRIGGERED", "CONFIRMING", "CONFIRMED", "STRENGTHENING", "WEAKENING", "RELEASED"}
+        confirmed_states = {"CONFIRMED", "STRENGTHENING", "WEAKENING"}
+        triggered_samples = [item for item in samples if item["state"] in trigger_states]
+        confirmed_samples = [item for item in samples if item["state"] in confirmed_states]
         return {
             "signal_id": signal_id,
             "sample_count": len(samples),
-            "triggered_count": len(active),
+            "triggered_count": len(triggered_samples),
+            "confirmed_count": len(confirmed_samples),
+            "confirmation_rate": round(len(confirmed_samples) / len(triggered_samples), 4) if triggered_samples else None,
+            "average_confirmation_periods": None,
+            "false_start_count": sum(1 for item in samples if item["state"] in {"TRIGGERED", "CONFIRMING"}),
+            "opposing_count": sum(1 for item in samples if item["state"] == "OPPOSED"),
+            "invalidation_count": sum(1 for item in samples if item["state"] == "INVALIDATED"),
+            "release_count": sum(1 for item in samples if item["state"] == "RELEASED"),
             "occurrence_count": len(persistence_runs),
             "average_persistence": round(sum(persistence_runs) / len(persistence_runs), 2) if persistence_runs else None,
             "median_persistence": round(statistics.median(persistence_runs), 2) if persistence_runs else None,
@@ -907,6 +1665,7 @@ class MarketSignalService:
             "variant_summaries": self._variant_summaries(signal, conditions, dates),
             "transition_points": self._transition_points(samples),
             "warnings": warnings,
+            "latest_sample": samples[-1] if samples else None,
             "recent_samples": samples[-20:],
         }
 
@@ -941,8 +1700,10 @@ class MarketSignalService:
                        CASE COALESCE(i.data_frequency, 'DAILY') WHEN 'MONTHLY' THEN 12 WHEN 'WEEKLY' THEN 26 ELSE 60 END,
                        CASE COALESCE(i.data_frequency, 'DAILY') WHEN 'MONTHLY' THEN 36 WHEN 'WEEKLY' THEN 52 ELSE 120 END
                 FROM market_signal_conditions c
+                JOIN market_signal_definitions d ON d.id = c.signal_definition_id
                 LEFT JOIN market_indicators i ON i.indicator_code = c.item_code
                 WHERE c.item_code IS NOT NULL AND c.item_code <> ''
+                  AND d.signal_type IN ('ATOMIC', 'SINGLE_INDICATOR')
                 """
             )
         )
@@ -972,34 +1733,56 @@ class MarketSignalService:
     def _overview_composite_card(self, signal: dict[str, Any], observation_date: str) -> dict[str, Any]:
         evaluation = self._evaluate_signal(signal, observation_date=observation_date, save=False)
         relation = self._composite_relation_diagnostic(signal, evaluation)
-        conditions = [dict(row) for row in self._condition_rows(int(signal["id"]))]
+        conditions = [self._condition_item(row) for row in self._condition_rows(int(signal["id"]))]
         trigger_conditions = [row for row in conditions if str(row.get("condition_role")).upper() in {"REQUIRED", "TRIGGER"}]
-        trigger_chart = []
+        trigger_chart: list[dict[str, Any]] = []
         if trigger_conditions:
             first = trigger_conditions[0]
             series = self._series(first["item_type"], first["item_code"], observation_date, limit=60)
             trigger_chart = self._sparkline_points(series)
+        operation_status = str(signal.get("status") or "DRAFT").upper()
+        current_state = str(evaluation["state"])
         return {
             "id": signal["id"],
             "card_type": "composite",
             "signal_code": signal.get("signal_code"),
             "signal_name": signal.get("signal_name"),
-            "rule_status": signal.get("status"),
-            "rule_status_label": self._rule_status_label(signal.get("status")),
-            "evaluation_status": evaluation["state"],
-            "status_label": self._status_label(evaluation["state"]),
+            "rule_version": int(signal.get("current_version") or 1),
+            "rule_status": operation_status,
+            "rule_status_label": self.display.operation_status_display_name(operation_status),
+            "operation_status": operation_status,
+            "operation_status_display_name": self.display.operation_status_display_name(operation_status),
+            "evaluation_status": current_state,
+            "status_label": self.display.evaluation_state_display_name(current_state),
+            "current_evaluation_state": current_state,
+            "current_evaluation_display_name": self.display.evaluation_state_display_name(current_state),
+            "model_display_name": self.display.resolve_model_display_name(signal.get("relation_type")),
+            "validation_status": signal.get("validation_status") or "UNVALIDATED",
+            "activation_ready": bool(signal.get("activation_ready") or 0),
+            "validation_period_years": signal.get("validation_period_years"),
             "observation_date": observation_date,
             "number_label": f"현상 충족률 {self._score_100(evaluation.get('score'))}점",
             "score": evaluation.get("score"),
             "sparkline": trigger_chart,
             "timeline": self._relation_timeline(evaluation),
             "trigger_summary": f"시작 조건 {evaluation['required_pass_count']}/{evaluation['required_total_count']}",
-            "confirm_summary": f"지속 확인 {evaluation['confirm_pass_count']}/{max(1, relation['minimum_confirm_count'])}",
+            "confirm_summary": f"지지 확인 {evaluation['confirm_pass_count']}/{max(1, relation['minimum_confirm_count'])}",
             "opposing_summary": f"반대 근거 {evaluation['opposing_pass_count']}개",
+            "data_summary": f"데이터 부족 {len(evaluation.get('missing_data') or [])}개",
+            "condition_summaries": [condition["display_text"] for condition in conditions],
+            "condition_groups": {
+                role: [condition for condition in conditions if str(condition.get("condition_role")).upper() in roles]
+                for role, roles in {
+                    "TRIGGER": {"REQUIRED", "TRIGGER"},
+                    "CONFIRM": {"CONFIRM"},
+                    "CONTEXT": {"CONTEXT"},
+                    "OPPOSING": {"OPPOSING"},
+                    "INVALIDATION": {"INVALIDATION"},
+                }.items()
+            },
             "relation_diagnostic": relation,
             "next_checks": self._next_checks(signal, evaluation.get("missing_data") or []),
         }
-
     def _overview_phenomenon_card(self, signal: dict[str, Any], observation_date: str) -> dict[str, Any]:
         item = self._phenomenon_item(signal, observation_date=observation_date, evaluate_now=True)
         item["card_type"] = "phenomenon"
@@ -1049,8 +1832,8 @@ class MarketSignalService:
             ("trend_break_down", "하단 이탈 후보"),
             ("break_confirmed_up", "상단 이탈 확인"),
             ("break_confirmed_down", "하단 이탈 확인"),
-            ("false_break_up", "상단 False Break"),
-            ("false_break_down", "하단 False Break"),
+            ("false_break_up", "상단 일시 이탈 후 복귀"),
+            ("false_break_down", "하단 일시 이탈 후 복귀"),
             ("reversal_confirmed_up", "상승 반전 확인"),
             ("reversal_confirmed_down", "하락 반전 확인"),
         ):
@@ -1324,6 +2107,7 @@ class MarketSignalService:
                 FROM market_signal_conditions c
                 JOIN market_signal_definitions d ON d.id = c.signal_definition_id
                 WHERE c.item_type = :item_type AND c.item_code = :item_code
+                  AND d.signal_type IN ('ATOMIC', 'SINGLE_INDICATOR')
                 GROUP BY d.status
                 """
             ),
@@ -1334,8 +2118,10 @@ class MarketSignalService:
             text(
                 """
                 SELECT COUNT(*)
-                FROM market_signal_trend_models
-                WHERE item_type = :item_type AND item_code = :item_code AND is_active = 1
+                FROM market_signal_trend_models tm
+                LEFT JOIN market_signal_definitions d ON d.id = tm.signal_definition_id
+                WHERE tm.item_type = :item_type AND tm.item_code = :item_code AND tm.is_active = 1
+                  AND (d.id IS NULL OR d.signal_type IN ('ATOMIC', 'SINGLE_INDICATOR'))
                 """
             ),
             {"item_type": item["item_type"], "item_code": item["item_code"]},
@@ -1524,7 +2310,8 @@ class MarketSignalService:
                   AND c.item_code = :item_code
                   AND COALESCE(tm.model_profile_code, :profile_code) = :profile_code
                   AND d.signal_type IN ('ATOMIC', 'SINGLE_INDICATOR')
-                ORDER BY d.id
+                ORDER BY CASE d.status WHEN 'ACTIVE' THEN 0 WHEN 'DRAFT' THEN 1 WHEN 'INACTIVE' THEN 2 ELSE 3 END,
+                         d.current_version DESC, d.id DESC
                 LIMIT 1
                 """
             ),
@@ -1619,6 +2406,226 @@ class MarketSignalService:
         )
         self.db.commit()
 
+    def _trend_model_for_signal(self, signal_id: int) -> dict[str, Any] | None:
+        row = self.db.execute(
+            text(
+                """
+                SELECT tm.*, d.status AS definition_status, d.current_version, d.activated_at,
+                       d.validation_period_years,
+                       COALESCE(i.indicator_name, ix.index_name, tm.item_code) AS indicator_name
+                FROM market_signal_trend_models tm
+                JOIN market_signal_definitions d ON d.id = tm.signal_definition_id
+                LEFT JOIN market_indicators i ON i.indicator_code = tm.item_code AND tm.item_type = 'INDICATOR'
+                LEFT JOIN market_indexes ix ON ix.index_code = tm.item_code AND tm.item_type = 'INDEX'
+                WHERE tm.signal_definition_id = :id AND tm.is_active = 1
+                ORDER BY tm.id DESC LIMIT 1
+                """
+            ),
+            {"id": signal_id},
+        ).mappings().first()
+        return dict(row) if row else None
+
+    def _evaluate_single_operation(
+        self,
+        model: dict[str, Any],
+        *,
+        evaluation_type: str,
+        observation_date: str | None = None,
+        collection_run_id: int | None = None,
+        diagnostic: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        signal_id = int(model["signal_definition_id"])
+        signal = dict(self._definition_row(signal_id))
+        if str(signal.get("status") or "").upper() != "ACTIVE":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="ACTIVE signal only")
+        eval_type = evaluation_type.upper()
+        rule_version = int(signal.get("current_version") or 1)
+        requested_date = observation_date or self._latest_observation_date()
+        diagnostic = diagnostic or self._trend_diagnostic(model["item_type"], model["item_code"], requested_date, model=model)
+        obs_date = str(diagnostic.get("observation_date") or requested_date)
+        duplicate_clause = "evaluation_type=:evaluation_type"
+        if eval_type == "PERIODIC":
+            duplicate_clause = "evaluation_type IN ('PERIODIC','BASELINE','REPAIR_BASELINE')"
+        elif eval_type in {"BASELINE", "REPAIR_BASELINE"}:
+            duplicate_clause = "evaluation_type IN ('BASELINE','REPAIR_BASELINE')"
+        duplicate = self.db.execute(
+            text(
+                f"""
+                SELECT * FROM market_signal_evaluations
+                WHERE signal_definition_id=:id AND rule_version=:version AND observation_date=:date
+                  AND {duplicate_clause}
+                ORDER BY id DESC LIMIT 1
+                """
+            ),
+            {"id": signal_id, "version": rule_version, "date": obs_date, "evaluation_type": eval_type},
+        ).mappings().first()
+        if duplicate:
+            item = self._operation_evaluation_item(duplicate)
+            item["duplicate"] = True
+            return item
+        previous = self.db.execute(
+            text(
+                """
+                SELECT * FROM market_signal_evaluations
+                WHERE signal_definition_id=:id AND is_live=1 AND evaluation_type <> 'LEGACY'
+                ORDER BY observation_date DESC, evaluated_at DESC, id DESC LIMIT 1
+                """
+            ),
+            {"id": signal_id},
+        ).mappings().first()
+        previous_state = str(previous.get("current_state") or previous.get("state")) if previous else None
+        current_state = str(diagnostic.get("trend_health") or "ERROR")
+        is_baseline = eval_type in {"BASELINE", "REPAIR_BASELINE"}
+        transitioned = bool(previous and previous_state != current_state and not is_baseline and current_state != "DATA_INSUFFICIENT")
+        data_quality = "INSUFFICIENT" if current_state == "DATA_INSUFFICIENT" else "GOOD"
+        data_quality_score = 0.0 if data_quality == "INSUFFICIENT" else 100.0
+        explanation = self._operation_explanation(current_state, diagnostic)
+        inserted = self.db.execute(
+            text(
+                """
+                INSERT INTO market_signal_evaluations
+                (signal_definition_id, trend_model_id, observation_date, evaluation_type, rule_version,
+                 state, previous_state, current_state, direction_state, score, previous_score, current_value,
+                 trend_strength, channel_position, duration_count, normalized_slope, r_squared,
+                 data_quality_score, data_quality, easy_explanation, evaluation_reason,
+                 evidence_json, opposing_evidence_json, missing_data_json, collection_run_id,
+                 is_state_transition, is_live)
+                VALUES (:signal_definition_id, :trend_model_id, :observation_date, :evaluation_type, :rule_version,
+                        :state, :previous_state, :current_state, :direction_state, :score, :previous_score, :current_value,
+                        :trend_strength, :channel_position, :duration_count, :normalized_slope, :r_squared,
+                        :data_quality_score, :data_quality, :easy_explanation, :evaluation_reason,
+                        '[]', '[]', '[]', :collection_run_id, :is_state_transition, 1)
+                RETURNING id
+                """
+            ),
+            {
+                "signal_definition_id": signal_id,
+                "trend_model_id": int(model["id"]),
+                "observation_date": obs_date,
+                "evaluation_type": eval_type,
+                "rule_version": rule_version,
+                "state": current_state,
+                "previous_state": previous_state,
+                "current_state": current_state,
+                "direction_state": diagnostic.get("trend_state"),
+                "score": float(diagnostic.get("trend_strength") or 0),
+                "previous_score": previous.get("score") if previous else None,
+                "current_value": diagnostic.get("latest_value"),
+                "trend_strength": diagnostic.get("trend_strength"),
+                "channel_position": diagnostic.get("channel_position"),
+                "duration_count": int(diagnostic.get("trend_duration") or 0),
+                "normalized_slope": diagnostic.get("normalized_slope"),
+                "r_squared": diagnostic.get("r_squared"),
+                "data_quality_score": data_quality_score,
+                "data_quality": data_quality,
+                "easy_explanation": explanation,
+                "evaluation_reason": EVALUATION_TYPE_LABELS.get(eval_type, eval_type),
+                "collection_run_id": collection_run_id,
+                "is_state_transition": int(transitioned),
+            },
+        ).first()
+        evaluation_id = int(inserted[0])
+        if transitioned:
+            self.db.execute(
+                text(
+                    """
+                    INSERT OR IGNORE INTO market_signal_events
+                    (signal_definition_id, evaluation_id, event_date, observation_date, previous_state, new_state,
+                     previous_score, new_score, event_type, summary, rule_version, is_live)
+                    VALUES (:signal_definition_id, :evaluation_id, :event_date, :event_date, :previous_state, :new_state,
+                            :previous_score, :new_score, :event_type, :summary, :rule_version, 1)
+                    """
+                ),
+                {
+                    "signal_definition_id": signal_id,
+                    "evaluation_id": evaluation_id,
+                    "event_date": obs_date,
+                    "previous_state": previous_state,
+                    "new_state": current_state,
+                    "previous_score": previous.get("score") if previous else None,
+                    "new_score": float(diagnostic.get("trend_strength") or 0),
+                    "event_type": f"SINGLE_{current_state}",
+                    "summary": f"{SIGNAL_STATE_LABELS.get(previous_state or '', previous_state or '-')} → {SIGNAL_STATE_LABELS.get(current_state, current_state)}",
+                    "rule_version": rule_version,
+                },
+            )
+        self.db.commit()
+        row = self.db.execute(text("SELECT * FROM market_signal_evaluations WHERE id=:id"), {"id": evaluation_id}).mappings().first()
+        item = self._operation_evaluation_item(row)
+        if eval_type in {"MANUAL", "PERIODIC"}:
+            item["composite_evaluation_summary"] = self.evaluate_active_composites_for_changed_items(
+                [{"item_type": str(model["item_type"]), "item_code": str(model["item_code"])}],
+                observation_date=obs_date,
+                collection_run_id=collection_run_id,
+            )
+        return item
+
+    def _evaluation_history_summary(self, signal_id: int, signal: dict[str, Any]) -> dict[str, Any]:
+        evaluation = self.db.execute(
+            text(
+                """
+                SELECT COUNT(*) AS total_count, MAX(evaluated_at) AS last_evaluated_at,
+                       SUM(CASE WHEN is_state_transition=1 THEN 1 ELSE 0 END) AS transition_count,
+                       SUM(CASE WHEN current_state='ERROR' OR error_message IS NOT NULL THEN 1 ELSE 0 END) AS error_count
+                FROM market_signal_evaluations
+                WHERE signal_definition_id=:id AND is_live=1 AND evaluation_type <> 'LEGACY'
+                """
+            ),
+            {"id": signal_id},
+        ).mappings().one()
+        event_counts = {str(row["new_state"]): int(row["count"]) for row in self.db.execute(text("SELECT new_state,COUNT(*) count FROM market_signal_events WHERE signal_definition_id=:id AND is_live=1 AND evaluation_id IS NOT NULL GROUP BY new_state"), {"id": signal_id}).mappings().all()}
+        baseline = self.db.execute(text("SELECT evaluation_type,observation_date FROM market_signal_evaluations WHERE signal_definition_id=:id AND evaluation_type IN ('BASELINE','REPAIR_BASELINE') ORDER BY id LIMIT 1"), {"id": signal_id}).mappings().first()
+        validation = {}
+        try:
+            validation = json.loads(signal.get("validation_summary_json") or "{}")
+        except (TypeError, json.JSONDecodeError):
+            validation = {}
+        validation_counts = validation.get("state_counts") or {}
+        return {
+            "operation_summary": {"activated_at": signal.get("activated_at"), "last_evaluated_at": evaluation["last_evaluated_at"], "current_rule_version": int(signal.get("current_version") or 1)},
+            "live_statistics": {
+                "total_evaluation_count": int(evaluation["total_count"] or 0),
+                "transition_count": int(evaluation["transition_count"] or 0),
+                "break_candidate_count": event_counts.get("BREAK_CANDIDATE", 0),
+                "break_confirmed_count": event_counts.get("BREAK_CONFIRMED", 0),
+                "false_break_count": event_counts.get("FALSE_BREAK", 0),
+                "reversal_confirmed_count": event_counts.get("REVERSAL_CONFIRMED", 0),
+                "error_count": int(evaluation["error_count"] or 0),
+            },
+            "validation_statistics": {"period_years": signal.get("validation_period_years"), "false_break_count": int(validation_counts.get("FALSE_BREAK", 0)), "state_counts": validation_counts},
+            "baseline_status": {"exists": bool(baseline), "evaluation_type": baseline.get("evaluation_type") if baseline else None, "observation_date": baseline.get("observation_date") if baseline else None, "repair_available": str(signal.get("status") or "").upper() == "ACTIVE" and not baseline},
+        }
+
+    @staticmethod
+    def _operation_explanation(state: str, diagnostic: dict[str, Any]) -> str:
+        if state == "FALSE_BREAK":
+            return "추세 채널을 이탈했지만 설정된 확인 기간 안에 기존 추세 채널 내부로 다시 진입했습니다."
+        if state == "BREAK_CANDIDATE":
+            return "현재값이 추세 채널을 벗어나 추세 이탈 후보로 관찰 중입니다."
+        if state == "BREAK_CONFIRMED":
+            return "현재값이 설정된 확인 기간 이상 추세 채널 밖에 머물러 추세 이탈이 확인됐습니다."
+        if state == "REVERSAL_CONFIRMED":
+            return "기존 추세와 반대 방향의 움직임이 확인 기간 이상 지속돼 반전이 확인됐습니다."
+        if state == "DATA_INSUFFICIENT":
+            return "평가에 필요한 관측값이 부족합니다."
+        return f"현재 판정은 {SIGNAL_STATE_LABELS.get(state, state)}이며 채널 위치와 추세 강도를 계속 관찰합니다."
+
+    @staticmethod
+    def _operation_evaluation_item(row: Any) -> dict[str, Any]:
+        item = dict(row)
+        item["current_state"] = item.get("current_state") or item.get("state")
+        item["state"] = item["current_state"]
+        item["display_name"] = SIGNAL_STATE_LABELS.get(str(item["current_state"]), str(item["current_state"]))
+        item["previous_display_name"] = SIGNAL_STATE_LABELS.get(str(item.get("previous_state") or ""), item.get("previous_state"))
+        item["evaluation_type_display_name"] = EVALUATION_TYPE_LABELS.get(str(item.get("evaluation_type") or ""), str(item.get("evaluation_type") or ""))
+        for source, target in (("evidence_json", "evidence"), ("opposing_evidence_json", "opposing_evidence"), ("missing_data_json", "missing_data")):
+            try:
+                item[target] = json.loads(item.pop(source, "[]") or "[]")
+            except (TypeError, json.JSONDecodeError):
+                item[target] = []
+        item["is_state_transition"] = bool(item.get("is_state_transition"))
+        item["is_live"] = bool(item.get("is_live"))
+        return item
     def _trend_model_rows(self) -> list[Any]:
         rows = self.db.execute(
             text(
@@ -1644,7 +2651,10 @@ class MarketSignalService:
                 LEFT JOIN market_indicator_provider_mappings m ON m.indicator_code = tm.item_code AND m.is_enabled = 1 AND tm.item_type = 'INDICATOR'
                 LEFT JOIN market_indexes ix ON ix.index_code = tm.item_code AND tm.item_type = 'INDEX'
                 WHERE tm.is_active = 1
-                ORDER BY tm.item_type, tm.item_code, COALESCE(tm.model_profile_code, 'MARKET_PRICE_TREND'), tm.id
+                  AND (d.id IS NULL OR d.signal_type IN ('ATOMIC', 'SINGLE_INDICATOR'))
+                ORDER BY tm.item_type, tm.item_code, COALESCE(tm.model_profile_code, 'MARKET_PRICE_TREND'),
+                         CASE COALESCE(d.status, '') WHEN 'ACTIVE' THEN 0 WHEN 'DRAFT' THEN 1 WHEN 'INACTIVE' THEN 2 ELSE 3 END,
+                         COALESCE(d.current_version, 0) DESC, tm.id DESC
                 """
             )
         ).mappings().all()
@@ -1722,32 +2732,86 @@ class MarketSignalService:
             "latest_value_date": diagnostic["observation_date"],
             "diagnostic": {key: value for key, value in diagnostic.items() if key != "series"},
         }
+        if row.get("signal_definition_id"):
+            latest_evaluation = self.db.execute(
+                text("""SELECT evaluated_at,current_state,state FROM market_signal_evaluations WHERE signal_definition_id=:id AND is_live=1 AND evaluation_type <> 'LEGACY' ORDER BY observation_date DESC,evaluated_at DESC,id DESC LIMIT 1"""),
+                {"id": int(row["signal_definition_id"])},
+            ).mappings().first()
+            latest_event = self.db.execute(
+                text("""SELECT previous_state,new_state,created_at FROM market_signal_events WHERE signal_definition_id=:id AND is_live=1 AND evaluation_id IS NOT NULL ORDER BY observation_date DESC,id DESC LIMIT 1"""),
+                {"id": int(row["signal_definition_id"])},
+            ).mappings().first()
+            counts = self.db.execute(
+                text("""SELECT COUNT(*) total_count,SUM(CASE WHEN new_state='FALSE_BREAK' THEN 1 ELSE 0 END) false_break_count FROM market_signal_events WHERE signal_definition_id=:id AND is_live=1 AND evaluation_id IS NOT NULL"""),
+                {"id": int(row["signal_definition_id"])},
+            ).mappings().one()
+            item["latest_operation_evaluation_at"] = latest_evaluation.get("evaluated_at") if latest_evaluation else None
+            item["latest_operation_state"] = (latest_evaluation.get("current_state") or latest_evaluation.get("state")) if latest_evaluation else None
+            item["latest_transition"] = dict(latest_event) if latest_event else None
+            item["live_transition_count"] = int(counts.get("total_count") or 0)
+            item["live_false_break_count"] = int(counts.get("false_break_count") or 0)
         if include_chart:
             item["series"] = diagnostic["series"]
         return item
 
     def _composite_item(self, row: dict[str, Any], *, include_conditions: bool) -> dict[str, Any]:
         item = self._definition_item(row, include_conditions=include_conditions)
-        item["signal_level"] = "COMPOSITE_INDICATOR"
-        item["user_label"] = "복합 지표 시그널"
-        item["relation_type"] = item.get("relation_type") or "CONDITIONAL_RELATION"
-        item["confirmation_window"] = int(item.get("confirmation_window") or 5)
-        item["minimum_confirm_count"] = int(item.get("minimum_confirm_count") or 1)
-        if include_conditions:
-            for condition in item["conditions"]:
-                if condition["condition_role"] == "REQUIRED":
-                    condition["display_role"] = "TRIGGER"
+        relation_type = str(item.get("relation_type") or "CONDITIONAL_RELATION")
+        latest_row = self.db.execute(
+            text("""
+                SELECT * FROM market_signal_evaluations
+                WHERE signal_definition_id = :id AND is_live = 1 AND evaluation_type <> 'LEGACY'
+                ORDER BY observation_date DESC, evaluated_at DESC, id DESC LIMIT 1
+            """),
+            {"id": int(item["id"])},
+        ).mappings().first()
+        latest = self._evaluation_item(latest_row) if latest_row else None
+        operation_status = str(item.get("status") or "DRAFT").upper()
+        current_state = str((latest or {}).get("current_state") or "WAITING")
+        item.update(
+            {
+                "signal_level": "COMPOSITE_INDICATOR",
+                "user_label": "복합 지표 시그널",
+                "relation_type": relation_type,
+                "model_display_name": self.display.resolve_model_display_name(relation_type),
+                "operation_status": operation_status,
+                "operation_status_display_name": self.display.operation_status_display_name(operation_status),
+                "current_evaluation_state": current_state,
+                "current_evaluation_display_name": self.display.evaluation_state_display_name(current_state),
+                "latest_evaluation": latest,
+                "confirmation_window": int(item.get("confirmation_window") or 5),
+                "minimum_confirm_count": int(item.get("minimum_confirm_count") or 1),
+            }
+        )
+        conditions = item.get("conditions") if include_conditions else [self._condition_item(condition) for condition in self._condition_rows(int(item["id"]))]
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for condition in conditions:
+            role = str(condition.get("condition_role") or condition.get("role") or "CONTEXT").upper()
+            grouped.setdefault(role, []).append(condition)
+        item["condition_groups"] = grouped
+        item["condition_summary"] = {
+            "trigger_total": len(grouped.get("TRIGGER", [])) + len(grouped.get("REQUIRED", [])),
+            "confirm_total": len(grouped.get("CONFIRM", [])),
+            "context_total": len(grouped.get("CONTEXT", [])),
+            "opposing_total": len(grouped.get("OPPOSING", [])),
+            "invalidation_total": len(grouped.get("INVALIDATION", [])),
+        }
         return item
-
     def _phenomenon_item(self, row: dict[str, Any], *, observation_date: str, evaluate_now: bool) -> dict[str, Any]:
         evaluation = self._evaluate_signal(row, observation_date=observation_date, save=False) if evaluate_now else None
         status_map = {
+            "CONFIRMED": "CONFIRMED",
             "ACTIVE": "CONFIRMED",
             "STRENGTHENING": "STRENGTHENING",
             "WEAKENING": "WEAKENING",
+            "TRIGGERED": "CANDIDATE",
+            "CONFIRMING": "CANDIDATE",
             "WATCH": "CANDIDATE",
             "RELEASED": "RELEASED",
+            "OPPOSED": "OPPOSED",
+            "INVALIDATED": "INVALIDATED",
             "DATA_INSUFFICIENT": "DATA_INSUFFICIENT",
+            "WAITING": "NOT_EVALUATED",
             "INACTIVE": "NOT_EVALUATED",
         }
         evaluation_status = status_map.get(str(evaluation.get("state") if evaluation else "NOT_EVALUATED"), "NOT_EVALUATED")
@@ -1774,7 +2838,7 @@ class MarketSignalService:
             "confirm_evidence": confirm_evidence,
             "context_evidence": [item for item in trigger_evidence if str(item.get("role") or "").upper() == "CONTEXT"],
             "opposing_evidence": opposing,
-            "invalidation_evidence": [item for item in trigger_evidence if str(item.get("role") or "").upper() == "INVALIDATION"],
+            "invalidation_evidence": [item for item in opposing if str(item.get("role") or "").upper() == "INVALIDATION"],
             "missing_conditions": missing,
             "timeline": self._phenomenon_timeline(int(row["id"])),
             "next_checks": self._next_checks(row, missing),
@@ -2144,15 +3208,13 @@ class MarketSignalService:
         ).mappings().all()
         return [dict(row) for row in reversed(rows)]
 
-    @staticmethod
-    def _next_checks(signal: dict[str, Any], missing: list[dict[str, Any]]) -> list[str]:
+    def _next_checks(self, signal: dict[str, Any], missing: list[dict[str, Any]]) -> list[str]:
         if missing:
-            return [f"{item.get('item_code')} 데이터 확보 후 재평가" for item in missing[:5]]
+            return [f"{item.get('item_display_name') or self.display.resolve_indicator_display_name(item.get('item_type'), item.get('item_code'))} 데이터 확보 후 재평가" for item in missing[:5]]
         return [
-            f"{signal.get('signal_code')} 확인 조건의 지속성 점검",
-            "반대 증거와 무효화 조건 동시 점검",
+            f"{signal.get('signal_name') or '복합 현상'}의 지지 확인 조건 지속성 점검",
+            "반대 근거와 무효화 조건 동시 점검",
         ]
-
     def _upsert_episode(self, signal: dict[str, Any], item: dict[str, Any]) -> None:
         trigger_date = item.get("trigger_date") or item.get("observation_date")
         timeline = item.get("timeline") or []
@@ -2198,101 +3260,121 @@ class MarketSignalService:
             row[column.removesuffix("_json")] = json.loads(row.pop(column) or "{}")
         return row
 
-    def _evaluate_signal(self, signal: dict[str, Any], *, observation_date: str, save: bool, conditions_override: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    def _evaluate_signal(
+        self,
+        signal: dict[str, Any],
+        *,
+        observation_date: str,
+        save: bool,
+        conditions_override: list[dict[str, Any]] | None = None,
+        evaluation_type: str = "MANUAL",
+        collection_run_id: int | None = None,
+    ) -> dict[str, Any]:
         conditions = conditions_override if conditions_override is not None else self._condition_rows(signal["id"])
-        evidence = []
-        opposing = []
-        missing = []
-        required_total = 0
-        required_pass = 0
-        confirm_pass = 0
-        opposing_pass = 0
+        evidence: list[dict[str, Any]] = []
+        opposing: list[dict[str, Any]] = []
+        missing: list[dict[str, Any]] = []
+        required_total = required_pass = confirm_total = confirm_pass = opposing_pass = invalidation_pass = 0
         score = 0.0
         max_data = len(conditions) or 1
-        for condition in conditions:
-            condition = dict(condition)
+        for source in conditions:
+            condition = dict(source)
             role = str(condition["condition_role"]).upper()
             if role in {"REQUIRED", "TRIGGER"}:
                 required_total += 1
+            elif role == "CONFIRM":
+                confirm_total += 1
             result = self._evaluate_condition(condition, observation_date)
             if result["missing"]:
                 missing.append(result)
                 continue
-            passed = result["passed"]
             if role == "OPPOSING":
-                if passed:
+                if result["passed"]:
                     opposing_pass += 1
                     opposing.append(result)
                     score -= abs(float(condition["weight"]))
-                else:
-                    score += min(abs(float(condition["weight"])) * 0.25, 3)
                 continue
             if role == "INVALIDATION":
-                if passed:
-                    opposing_pass += 1
+                if result["passed"]:
+                    invalidation_pass += 1
                     opposing.append(result)
                     score -= abs(float(condition["weight"])) * 1.5
                 continue
-            if role == "CONTEXT":
-                if passed:
-                    evidence.append(result)
-                    score += float(condition["weight"]) * 0.5
-                continue
-            if passed:
+            if result["passed"]:
                 evidence.append(result)
-                score += float(condition["weight"])
+                score += float(condition["weight"]) * (0.5 if role == "CONTEXT" else 1.0)
                 if role in {"REQUIRED", "TRIGGER"}:
                     required_pass += 1
                 elif role == "CONFIRM":
                     confirm_pass += 1
+
         data_quality = round(((max_data - len(missing)) / max_data) * 100, 2)
+        minimum_confirm = int(signal.get("minimum_confirm_count") or (1 if confirm_total else 0))
         if missing and data_quality < float(signal.get("minimum_data_quality") or 60):
             state = "DATA_INSUFFICIENT"
+        elif invalidation_pass:
+            state = "INVALIDATED"
         elif required_total and required_pass < required_total:
-            state = "WATCH" if score >= 40 else "INACTIVE"
+            state = "WAITING"
+        elif opposing_pass and score <= 0:
+            state = "OPPOSED"
+        elif confirm_pass < min(minimum_confirm, confirm_total):
+            state = "CONFIRMING" if confirm_pass else "TRIGGERED"
         else:
-            state = self._state_from_score(score)
+            state = "CONFIRMED"
+
         previous = self._previous_evaluation(signal["id"], observation_date)
-        if previous and str(previous.get("state") or "") in {"ACTIVE", "STRENGTHENING", "WEAKENING"} and state in {"INACTIVE", "WATCH"}:
+        previous_state = str(previous.get("current_state") or previous.get("state") or "") if previous else ""
+        confirmed_states = {"CONFIRMED", "ACTIVE", "STRENGTHENING", "WEAKENING"}
+        if previous_state in confirmed_states and state in {"WAITING", "TRIGGERED", "CONFIRMING", "OPPOSED"}:
             state = "RELEASED"
-        elif state == "ACTIVE" and previous:
-            previous_state = str(previous.get("state") or "")
+        elif state == "CONFIRMED" and previous_state in confirmed_states:
             previous_score = float(previous.get("score") or 0)
-            if previous_state in {"ACTIVE", "STRENGTHENING", "WEAKENING"}:
-                if score > previous_score + 5:
-                    state = "STRENGTHENING"
-                elif score < previous_score - 5:
-                    state = "WEAKENING"
+            if score > previous_score + 5:
+                state = "STRENGTHENING"
+            elif score < previous_score - 5:
+                state = "WEAKENING"
+
+        eval_type = str(evaluation_type or "MANUAL").upper()
         item = {
             "signal_definition_id": signal["id"],
             "signal_code": signal.get("signal_code"),
             "signal_name": signal.get("signal_name"),
             "observation_date": observation_date,
+            "evaluation_type": eval_type,
+            "rule_version": int(signal.get("current_version") or 1),
             "state": state,
+            "current_state": state,
+            "previous_state": previous_state or None,
             "score": round(max(score, 0), 2),
             "previous_score": previous.get("score") if previous else None,
             "data_quality_score": data_quality,
+            "data_quality": "INSUFFICIENT" if state == "DATA_INSUFFICIENT" else "GOOD",
             "required_pass_count": required_pass,
             "required_total_count": required_total,
             "confirm_pass_count": confirm_pass,
+            "confirm_total_count": confirm_total,
             "opposing_pass_count": opposing_pass,
+            "invalidation_pass_count": invalidation_pass,
             "phenomenon_text": signal.get("phenomenon_template"),
             "process_text": signal.get("process_template"),
             "result_text": signal.get("result_template"),
+            "easy_explanation": self.display.evaluation_state_display_name(state),
+            "evaluation_reason": EVALUATION_TYPE_LABELS.get(eval_type, eval_type),
             "evidence": evidence,
             "opposing_evidence": opposing,
             "missing_data": missing,
+            "collection_run_id": collection_run_id,
         }
         if save:
             self._save_evaluation(item, previous)
         return item
-
     def _evaluate_condition(self, condition: dict[str, Any], observation_date: str) -> dict[str, Any]:
         series = self._series(condition["item_type"], condition["item_code"], observation_date, limit=max(int(condition["window_size"] or 20) + 260, 280))
         value = self._transform(condition["transform_type"], series, int(condition["window_size"] or 20))
         threshold = self._threshold(condition, series)
         passed = False if value is None or threshold is None else self._compare(value, str(condition["comparison_operator"]), threshold)
-        return {
+        result = {
             "condition_id": condition.get("id"),
             "role": condition["condition_role"],
             "item_type": condition["item_type"],
@@ -2307,7 +3389,7 @@ class MarketSignalService:
             "weight": condition["weight"],
             "missing": value is None or threshold is None,
         }
-
+        return self.display.decorate_condition(result)
     def _series(self, item_type: str, item_code: str, observation_date: str, *, limit: int) -> list[dict[str, Any]]:
         if item_type.upper() == "INDEX":
             sql = """
@@ -2560,22 +3642,36 @@ class MarketSignalService:
         return "INACTIVE"
 
     def _save_evaluation(self, item: dict[str, Any], previous: dict[str, Any] | None) -> None:
-        self.db.execute(
+        eval_type = str(item.get("evaluation_type") or "MANUAL").upper()
+        previous_state = str(previous.get("current_state") or previous.get("state") or "") if previous else None
+        current_state = str(item["state"])
+        is_baseline = eval_type in {"BASELINE", "REPAIR_BASELINE"}
+        transitioned = bool(previous and previous_state != current_state and not is_baseline)
+        inserted = self.db.execute(
             text(
                 """
                 INSERT INTO market_signal_evaluations
-                (signal_definition_id, observation_date, state, score, previous_score, data_quality_score,
-                 required_pass_count, required_total_count, confirm_pass_count, opposing_pass_count,
-                 phenomenon_text, process_text, result_text, evidence_json, opposing_evidence_json, missing_data_json)
-                VALUES (:signal_definition_id, :observation_date, :state, :score, :previous_score, :data_quality_score,
-                        :required_pass_count, :required_total_count, :confirm_pass_count, :opposing_pass_count,
-                        :phenomenon_text, :process_text, :result_text, :evidence_json, :opposing_evidence_json, :missing_data_json)
-                ON CONFLICT(signal_definition_id, observation_date) DO UPDATE SET
+                (signal_definition_id, observation_date, evaluation_type, rule_version,
+                 state, previous_state, current_state, score, previous_score,
+                 data_quality_score, data_quality, required_pass_count, required_total_count,
+                 confirm_pass_count, opposing_pass_count, phenomenon_text, process_text, result_text,
+                 easy_explanation, evaluation_reason, evidence_json, opposing_evidence_json,
+                 missing_data_json, collection_run_id, is_state_transition, is_live)
+                VALUES (:signal_definition_id, :observation_date, :evaluation_type, :rule_version,
+                        :state, :previous_state, :current_state, :score, :previous_score,
+                        :data_quality_score, :data_quality, :required_pass_count, :required_total_count,
+                        :confirm_pass_count, :opposing_pass_count, :phenomenon_text, :process_text, :result_text,
+                        :easy_explanation, :evaluation_reason, :evidence_json, :opposing_evidence_json,
+                        :missing_data_json, :collection_run_id, :is_state_transition, 1)
+                ON CONFLICT(signal_definition_id, rule_version, observation_date, evaluation_type) DO UPDATE SET
                     evaluated_at = CURRENT_TIMESTAMP,
                     state = excluded.state,
+                    previous_state = excluded.previous_state,
+                    current_state = excluded.current_state,
                     score = excluded.score,
                     previous_score = excluded.previous_score,
                     data_quality_score = excluded.data_quality_score,
+                    data_quality = excluded.data_quality,
                     required_pass_count = excluded.required_pass_count,
                     required_total_count = excluded.required_total_count,
                     confirm_pass_count = excluded.confirm_pass_count,
@@ -2583,56 +3679,81 @@ class MarketSignalService:
                     phenomenon_text = excluded.phenomenon_text,
                     process_text = excluded.process_text,
                     result_text = excluded.result_text,
+                    easy_explanation = excluded.easy_explanation,
+                    evaluation_reason = excluded.evaluation_reason,
                     evidence_json = excluded.evidence_json,
                     opposing_evidence_json = excluded.opposing_evidence_json,
-                    missing_data_json = excluded.missing_data_json
+                    missing_data_json = excluded.missing_data_json,
+                    collection_run_id = excluded.collection_run_id,
+                    is_state_transition = excluded.is_state_transition,
+                    is_live = 1
+                RETURNING id
                 """
             ),
             {
                 **item,
+                "previous_state": previous_state,
+                "current_state": current_state,
+                "evaluation_type": eval_type,
                 "evidence_json": json.dumps(item["evidence"], ensure_ascii=False, sort_keys=True),
                 "opposing_evidence_json": json.dumps(item["opposing_evidence"], ensure_ascii=False, sort_keys=True),
                 "missing_data_json": json.dumps(item["missing_data"], ensure_ascii=False, sort_keys=True),
+                "is_state_transition": int(transitioned),
             },
-        )
-        previous_state = previous.get("state") if previous else None
-        if previous_state != item["state"] and item["state"] != "DATA_INSUFFICIENT" and (previous or item["state"] in {"WATCH", "ACTIVE", "STRENGTHENING", "WEAKENING"}):
-            self._save_event(item, previous)
+        ).first()
+        evaluation_id = int(inserted[0])
+        item["id"] = evaluation_id
+        item["is_state_transition"] = transitioned
+        if transitioned:
+            self._save_event(item, previous, evaluation_id=evaluation_id)
+        signal = self.db.execute(
+            text("SELECT * FROM market_signal_definitions WHERE id = :id"),
+            {"id": item["signal_definition_id"]},
+        ).mappings().first()
+        if signal:
+            self._record_objective_phenomenon_evaluation(dict(signal), item)
         self.db.commit()
 
-    def _save_event(self, item: dict[str, Any], previous: dict[str, Any] | None) -> None:
-        prev_state = previous.get("state") if previous else None
-        event_type = "TRIGGERED"
-        if item["state"] == "RELEASED":
-            event_type = "RELEASED"
-        elif item["state"] == "STRENGTHENING":
-            event_type = "STRENGTHENED"
-        elif item["state"] == "WEAKENING":
-            event_type = "WEAKENED"
-        elif prev_state in {"ACTIVE", "WEAKENING", "STRENGTHENING"} and item["state"] in {"INACTIVE", "WATCH"}:
-            event_type = "RELEASED"
-        elif prev_state in {"INACTIVE", "WATCH"} and item["state"] in {"ACTIVE", "STRENGTHENING"}:
-            event_type = "TRIGGERED"
+    def _save_event(self, item: dict[str, Any], previous: dict[str, Any] | None, *, evaluation_id: int) -> None:
+        previous_state = str(previous.get("current_state") or previous.get("state") or "") if previous else None
+        current_state = str(item["state"])
+        event_type = {
+            "TRIGGERED": "TRIGGERED",
+            "CONFIRMING": "CONFIRMING",
+            "CONFIRMED": "CONFIRMED",
+            "STRENGTHENING": "STRENGTHENED",
+            "WEAKENING": "WEAKENED",
+            "RELEASED": "RELEASED",
+            "OPPOSED": "OPPOSED",
+            "INVALIDATED": "INVALIDATED",
+            "DATA_INSUFFICIENT": "DATA_INSUFFICIENT",
+            "ERROR": "ERROR",
+        }.get(current_state, "STATE_CHANGED")
         self.db.execute(
             text(
                 """
                 INSERT OR IGNORE INTO market_signal_events
-                (signal_definition_id, event_date, previous_state, new_state, previous_score, new_score, event_type, summary)
-                VALUES (:signal_definition_id, :event_date, :previous_state, :new_state, :previous_score, :new_score, :event_type, :summary)
+                (signal_definition_id, evaluation_id, event_date, observation_date,
+                 previous_state, new_state, previous_score, new_score, event_type,
+                 summary, rule_version, is_live)
+                VALUES (:signal_definition_id, :evaluation_id, :event_date, :event_date,
+                        :previous_state, :new_state, :previous_score, :new_score, :event_type,
+                        :summary, :rule_version, 1)
                 """
             ),
             {
                 "signal_definition_id": item["signal_definition_id"],
+                "evaluation_id": evaluation_id,
                 "event_date": item["observation_date"],
-                "previous_state": prev_state,
-                "new_state": item["state"],
+                "previous_state": previous_state,
+                "new_state": current_state,
                 "previous_score": previous.get("score") if previous else None,
                 "new_score": item["score"],
                 "event_type": event_type,
-                "summary": f"{item.get('signal_name')} {prev_state or '-'} -> {item['state']} ({item['score']})",
+                "summary": f"{item.get('signal_name')} · {self.display.evaluation_state_display_name(previous_state)} → {self.display.evaluation_state_display_name(current_state)}",
+                "rule_version": int(item.get("rule_version") or 1),
             },
         )
-
     def _definition_params(self, data: dict[str, Any]) -> dict[str, Any]:
         return {
             "signal_code": str(data.get("signal_code") or "").upper(),
@@ -2753,6 +3874,7 @@ class MarketSignalService:
 
     def _snapshot_version(self, signal_id: int, reason: str) -> None:
         signal = dict(self._definition_row(signal_id))
+        signal.pop("validation_summary_json", None)
         conditions = [dict(row) for row in self._condition_rows(signal_id)]
         version = int(signal.get("current_version") or 1)
         self.db.execute(
@@ -2774,26 +3896,29 @@ class MarketSignalService:
 
     def _definition_item(self, row: Any, *, include_conditions: bool) -> dict[str, Any]:
         item = dict(row)
+        # Raw validation JSON is internal durable state. List/detail APIs use
+        # dedicated aggregate fields and never transport simulation payloads.
+        item.pop("validation_summary_json", None)
         if include_conditions:
             item["conditions"] = [self._condition_item(condition) for condition in self._condition_rows(int(item["id"]))]
         else:
             item["conditions"] = []
         return item
 
-    @staticmethod
-    def _condition_item(row: Any) -> dict[str, Any]:
+    def _condition_item(self, row: Any) -> dict[str, Any]:
         item = dict(row)
         item["is_required"] = bool(item.get("is_required"))
-        return item
+        return self.display.decorate_condition(item)
 
-    @staticmethod
-    def _evaluation_item(row: Any) -> dict[str, Any]:
+    def _evaluation_item(self, row: Any) -> dict[str, Any]:
         item = dict(row)
-        item["evidence"] = json.loads(item.pop("evidence_json") or "[]")
-        item["opposing_evidence"] = json.loads(item.pop("opposing_evidence_json") or "[]")
-        item["missing_data"] = json.loads(item.pop("missing_data_json") or "[]")
+        for source, target in (("evidence_json", "evidence"), ("opposing_evidence_json", "opposing_evidence"), ("missing_data_json", "missing_data")):
+            values = json.loads(item.pop(source) or "[]")
+            item[target] = [self.display.decorate_condition(value) for value in values]
+        item["current_state"] = item.get("current_state") or item.get("state")
+        item["state_display_name"] = self.display.evaluation_state_display_name(item.get("current_state"))
+        item["evaluation_type_display_name"] = EVALUATION_TYPE_LABELS.get(str(item.get("evaluation_type") or ""), str(item.get("evaluation_type") or ""))
         return item
-
     def _indicator_catalog(self) -> list[dict[str, Any]]:
         rows = self.db.execute(
             text(
@@ -2955,7 +4080,7 @@ class MarketSignalService:
     def _persistence_runs(samples: list[dict[str, Any]]) -> list[int]:
         runs: list[int] = []
         current = 0
-        active_states = {"ACTIVE", "STRENGTHENING", "WEAKENING"}
+        active_states = {"CONFIRMED", "ACTIVE", "STRENGTHENING", "WEAKENING"}
         for sample in samples:
             if sample.get("state") in active_states:
                 current += 1
@@ -2977,7 +4102,7 @@ class MarketSignalService:
         return keys
 
     def _condition_contributions(self, samples: list[dict[str, Any]], conditions: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        active_states = {"ACTIVE", "STRENGTHENING", "WEAKENING"}
+        active_states = {"CONFIRMED", "ACTIVE", "STRENGTHENING", "WEAKENING"}
         summaries: list[dict[str, Any]] = []
         for condition in conditions:
             condition_id = condition.get("id")
@@ -3019,10 +4144,14 @@ class MarketSignalService:
         return [self._summarize_variant(key, label, [self._evaluate_signal(signal, observation_date=obs_date, save=False, conditions_override=variant_conditions) for obs_date in dates]) for key, label, variant_conditions in variants]
 
     def _summarize_variant(self, key: str, label: str, samples: list[dict[str, Any]]) -> dict[str, Any]:
-        active_states = {"ACTIVE", "STRENGTHENING", "WEAKENING"}
+        active_states = {"CONFIRMED", "ACTIVE", "STRENGTHENING", "WEAKENING"}
         active = [sample for sample in samples if sample.get("state") in active_states]
         watch = [sample for sample in samples if sample.get("state") == "WATCH"]
         scores = [float(sample.get("score") or 0) for sample in samples if sample.get("state") != "DATA_INSUFFICIENT"]
+        trigger_states = {"TRIGGERED", "CONFIRMING", "CONFIRMED", "STRENGTHENING", "WEAKENING", "RELEASED"}
+        confirmed_states = {"CONFIRMED", "STRENGTHENING", "WEAKENING"}
+        triggered_samples = [item for item in samples if item.get("state") in trigger_states]
+        confirmed_samples = [item for item in samples if item.get("state") in confirmed_states]
         runs = self._persistence_runs(samples)
         return {
             "variant": key,
@@ -3030,7 +4159,14 @@ class MarketSignalService:
             "sample_count": len(samples),
             "active_count": len(active),
             "watch_count": len(watch),
-            "triggered_count": len(active),
+            "triggered_count": len(triggered_samples),
+            "confirmed_count": len(confirmed_samples),
+            "confirmation_rate": round(len(confirmed_samples) / len(triggered_samples), 4) if triggered_samples else None,
+            "average_confirmation_periods": None,
+            "false_start_count": sum(1 for item in samples if item["state"] in {"TRIGGERED", "CONFIRMING"}),
+            "opposing_count": sum(1 for item in samples if item["state"] == "OPPOSED"),
+            "invalidation_count": sum(1 for item in samples if item["state"] == "INVALIDATED"),
+            "release_count": sum(1 for item in samples if item["state"] == "RELEASED"),
             "average_score": round(sum(scores) / len(scores), 2) if scores else None,
             "average_persistence": round(sum(runs) / len(runs), 2) if runs else None,
             "max_persistence": max(runs) if runs else 0,

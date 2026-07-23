@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { CSSProperties, DragEvent } from "react";
 import PageHeader from "@/components/common/PageHeader";
@@ -22,9 +22,9 @@ import type {
   MarketEventThemeLink,
   MonthlyThemeFlowCalendarTheme,
   MonthlyThemeFlowCalendarDay,
+  MonthlySupplySummary30d,
   MonthlyThemeFlowTrendPoint,
   MonthlyThemeFlowTrendResponse,
-  MonthlyThemeFlowTrendTheme,
 } from "@/types/marketTrend";
 import type { MarketTheme } from "@/types/marketTheme";
 import type { Stock } from "@/types/stock";
@@ -139,6 +139,60 @@ const fmtHeatmapPct = (value: number | null | undefined) => {
   return `${n > 0 ? "+" : ""}${n.toFixed(1)}`;
 };
 
+type MonthlySupplyHeatmapProps = {
+  rows: MonthlySupplyHeatmapRow[];
+  dates: string[];
+  onSelectDate: (date: string) => void;
+};
+
+const MonthlySupplyHeatmap = memo(function MonthlySupplyHeatmap({
+  rows,
+  dates,
+  onSelectDate,
+}: MonthlySupplyHeatmapProps) {
+  return (
+    <div className="monthly-supply-heatmap-wrap">
+      <div className="monthly-supply-heatmap-legend">
+        <span><i className="negative-strong" />-10% 이하</span>
+        <span><i className="negative-medium" />-5%</span>
+        <span><i className="neutral" />0%</span>
+        <span><i className="positive-medium" />+5%</span>
+        <span><i className="positive-strong" />+10% 이상</span>
+      </div>
+      <div className="monthly-supply-heatmap-scroll">
+        <div className="monthly-supply-heatmap" style={{ gridTemplateColumns: `minmax(130px, 180px) repeat(${Math.max(dates.length, 1)}, minmax(0, 1fr))` }}>
+          <div className="monthly-supply-heatmap-theme-cell monthly-supply-heatmap-header-cell">테마</div>
+          {dates.map((date) => (
+            <div key={`heat-date-${date}`} className="monthly-supply-heatmap-date-cell" title={date}>{date.slice(8, 10)}</div>
+          ))}
+          {rows.map((row) => (
+            <Fragment key={`heat-row-${row.marketThemeId}`}>
+              <div className="monthly-supply-heatmap-theme-cell" title={row.themeGroupName ? `${row.themeGroupName} / ${row.themeName}` : row.themeName}>
+                <strong>{row.themeName}</strong>
+                <span>출현 {row.dailyMap.size}일 · {row.stockCount}종목</span>
+              </div>
+              {dates.map((date) => {
+                const dayTheme = row.dailyMap.get(date);
+                const value = dayTheme?.avg_change_rate ?? null;
+                return (
+                  <button
+                    key={`heat-cell-${row.marketThemeId}-${date}`}
+                    type="button"
+                    className={`monthly-supply-heatmap-cell ${heatmapReturnClass(value)}`}
+                    title={dayTheme ? `${date} ${row.themeName} 평균 ${fmtSignedPct(value)} · ${dayTheme.stock_count}종목` : `${date} 데이터 없음`}
+                    onClick={() => onSelectDate(date)}
+                  >
+                    <span>{fmtHeatmapPct(value)}</span>
+                  </button>
+                );
+              })}
+            </Fragment>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+});
 const getResultRowKey = (row: KiwoomConditionResultItem) => `${row.stock_code || "NA"}|${row.stock_name || "NA"}|${row.detected_at || "NA"}|${row.source_api || "NA"}`;
 const escapeMarkdownCell = (value: string | number | null | undefined) => String(value ?? "-").replace(/\|/g, "\\|").replace(/\r?\n/g, " ").trim() || "-";
 const getConditionResultMarket = (row: KiwoomConditionResultItem) => {
@@ -322,7 +376,7 @@ function MarketTrendsPage() {
   const [zoomedChart, setZoomedChart] = useState<{ url: string; alt: string } | null>(null);
   const [monthlyBaseMonth, setMonthlyBaseMonth] = useState<string>(getMonthInput());
   const [monthlyCalendarDays, setMonthlyCalendarDays] = useState<MonthlyThemeFlowCalendarDay[]>([]);
-  const [monthlyTrendThemes, setMonthlyTrendThemes] = useState<MonthlyThemeFlowTrendTheme[]>([]);
+  const [monthlySummary30d, setMonthlySummary30d] = useState<MonthlySupplySummary30d | null>(null);
   const [monthlyTrendResponses, setMonthlyTrendResponses] = useState<MonthlyThemeFlowTrendResponse[]>([]);
   const [selectedMonthlyTreemapId, setSelectedMonthlyTreemapId] = useState<number | null>(null);
   const [monthlyTreemapTooltip, setMonthlyTreemapTooltip] = useState<{ x: number; y: number; item: MonthlyThemeTreemapItem; share: number } | null>(null);
@@ -333,6 +387,10 @@ function MarketTrendsPage() {
   const [selectedMonthlyDate, setSelectedMonthlyDate] = useState<string>("");
   const [selectedDayDetailTab, setSelectedDayDetailTab] = useState<SelectedDayDetailTab>("themes");
   const [monthlyLoading, setMonthlyLoading] = useState<boolean>(false);
+  const monthlyRequestIdRef = useRef(0);
+  const monthlyRecentTrendKeyRef = useRef("");
+  const monthlyBaseMonthRef = useRef(monthlyBaseMonth);
+  const monthlyApplyMonthRef = useRef<(nextMonth: string) => Promise<boolean>>(async () => false);
   const [eventNameSortOrder, setEventNameSortOrder] = useState<SortOrder>("asc");
   const [manualModalOpen, setManualModalOpen] = useState(false);
   const [manualStockKeyword, setManualStockKeyword] = useState("");
@@ -1054,49 +1112,85 @@ ${tableRows}
     await Promise.all([loadEvents(nextDate), loadFlow(nextDate)]);
   };
 
-  const loadMonthlyFlow = async (targetMonth = monthlyBaseMonth) => {
+  const loadMonthlyFlow = async (
+    targetMonth = monthlyBaseMonth,
+    options: { refreshCalendar?: boolean; refreshRecentTrend?: boolean } = {},
+  ): Promise<boolean> => {
     if (!targetMonth) {
-      setError("기준월(YYYY-MM)을 선택해 주세요.");
-      return;
+      setError("기준 월(YYYY-MM)을 선택해 주세요.");
+      return false;
     }
+    const requestId = monthlyRequestIdRef.current + 1;
+    monthlyRequestIdRef.current = requestId;
+    const refreshCalendar = options.refreshCalendar ?? true;
     setError("");
     setMessage("");
     setMonthlyLoading(true);
     try {
       const today = todayInKst();
       const treemapStartDate = subtractOneMonth(today);
-      const [calendarRes, trendRes, recentTrendRes] = await Promise.all([
-        repositories.marketTrends.getExternalMonthlyThemeFlowCalendar(targetMonth),
-        repositories.marketTrends.getExternalMonthlyThemeFlowTrend(targetMonth, { view_mode: monthlyTrendViewMode }),
-        repositories.marketTrends.getExternalMonthlyThemeFlowTrend(getMonthKey(today), {
-          view_mode: monthlyTrendViewMode,
-          start_date: treemapStartDate,
-          end_date: today,
-        }),
+      const recentTrendKey = `${monthlyTrendViewMode}:${treemapStartDate}:${today}`;
+      const refreshRecentTrend = options.refreshRecentTrend
+        || monthlyRecentTrendKeyRef.current !== recentTrendKey;
+      const [calendarRes, recentTrendRes] = await Promise.all([
+        refreshCalendar
+          ? repositories.marketTrends.getExternalMonthlyThemeFlowCalendar(targetMonth)
+          : Promise.resolve(null),
+        refreshRecentTrend
+          ? repositories.marketTrends.getExternalMonthlyThemeFlowTrend(getMonthKey(today), {
+            view_mode: monthlyTrendViewMode,
+            start_date: treemapStartDate,
+            end_date: today,
+          })
+          : Promise.resolve(null),
       ]);
-      setMonthlyCalendarDays(calendarRes.days ?? []);
-      setMonthlyTrendThemes(trendRes.themes ?? []);
-      setMonthlyTrendResponses([recentTrendRes]);
-      setSelectedMonthlyTreemapId(null);
-      setMonthlyStartDate(calendarRes.start_date);
-      setMonthlyEndDate(calendarRes.end_date);
-      setSelectedMonthlyDate(calendarRes.end_date);
+      if (requestId !== monthlyRequestIdRef.current) return false;
+      if (calendarRes) {
+        setMonthlyCalendarDays(calendarRes.days ?? []);
+        setMonthlySummary30d(calendarRes.summary_30d ?? null);
+        setMonthlyStartDate(calendarRes.start_date);
+        setMonthlyEndDate(calendarRes.end_date);
+        setSelectedMonthlyDate(calendarRes.end_date);
+      }
+      if (recentTrendRes) {
+        monthlyRecentTrendKeyRef.current = recentTrendKey;
+        setMonthlyTrendResponses([recentTrendRes]);
+        setSelectedMonthlyTreemapId(null);
+      }
+      return true;
     } catch (e) {
-      setMonthlyCalendarDays([]);
-      setMonthlyTrendThemes([]);
-      setMonthlyTrendResponses([]);
-      setSelectedMonthlyTreemapId(null);
+      if (requestId !== monthlyRequestIdRef.current) return false;
+      if (refreshCalendar) {
+        setMonthlyCalendarDays([]);
+        setMonthlySummary30d(null);
+      }
       setError(toErr(e, "월간 테마 수급 흐름 조회에 실패했습니다."));
+      return false;
     } finally {
-      setMonthlyLoading(false);
+      if (requestId === monthlyRequestIdRef.current) setMonthlyLoading(false);
     }
   };
-  const applyMonthlyFlowMonth = async (nextMonth: string) => {
-    if (!/^\d{4}-\d{2}$/.test(nextMonth)) return;
+  const applyMonthlyFlowMonth = async (nextMonth: string): Promise<boolean> => {
+    if (!/^\d{4}-\d{2}$/.test(nextMonth)) return false;
+    monthlyBaseMonthRef.current = nextMonth;
     setMonthlyBaseMonth(nextMonth);
-    await loadMonthlyFlow(nextMonth);
+    return loadMonthlyFlow(nextMonth);
   };
+  monthlyApplyMonthRef.current = applyMonthlyFlowMonth;
 
+  const selectMonthlyHeatmapDate = useCallback((date: string) => {
+    const dateMonth = getMonthKey(date);
+    if (dateMonth !== monthlyBaseMonthRef.current) {
+      void monthlyApplyMonthRef.current(dateMonth).then((loaded) => {
+        if (!loaded) return;
+        setSelectedMonthlyDate(date);
+        setSelectedDayDetailTab("themes");
+      });
+      return;
+    }
+    setSelectedMonthlyDate(date);
+    setSelectedDayDetailTab("themes");
+  }, []);
   const beginRankEdit = () => {
     if (flowSummaries.length === 0) return;
     setRankDraftItems(flowSummaries);
@@ -1200,7 +1294,7 @@ ${tableRows}
 
   useEffect(() => {
     if (activeTab === "monthly" && monthlyCalendarDays.length > 0 && !monthlyLoading) {
-      void loadMonthlyFlow();
+      void loadMonthlyFlow(monthlyBaseMonth, { refreshCalendar: false, refreshRecentTrend: true });
     }
   }, [monthlyTrendViewMode]);
 
@@ -1222,10 +1316,22 @@ ${tableRows}
   }, [tradeDate, activeTab]);
 
   const monthlyCells = useMemo(() => buildCalendarCells(monthlyBaseMonth, monthlyCalendarDays), [monthlyBaseMonth, monthlyCalendarDays]);
-  const monthlyTopThemes = useMemo(() => monthlyTrendThemes, [monthlyTrendThemes]);
+  const monthlyTopThemes = useMemo(() => {
+    const totals = new Map<number, { marketThemeId: number; themeName: string; score: number }>();
+    monthlyCalendarDays.forEach((day) => {
+      day.themes.forEach((theme) => {
+        const current = totals.get(theme.market_theme_id) ?? {
+          marketThemeId: theme.market_theme_id,
+          themeName: theme.theme_name,
+          score: 0,
+        };
+        current.score += Number(theme.rank_score ?? 0);
+        totals.set(theme.market_theme_id, current);
+      });
+    });
+    return Array.from(totals.values()).sort((a, b) => b.score - a.score || a.themeName.localeCompare(b.themeName, "ko"));
+  }, [monthlyCalendarDays]);
   const monthlyTrendEntityLabel = monthlyTrendViewMode === "THEME_GROUP" ? "테마그룹" : "테마";
-  const monthlyTrendName = (theme: MonthlyThemeFlowTrendTheme) =>
-    monthlyTrendViewMode === "THEME_GROUP" ? theme.theme_name : theme.theme_name;
   const monthlyMaxDayScore = useMemo(
     () => Math.max(1, ...monthlyCalendarDays.map((d) => d.themes.reduce((sum, t) => sum + (t.rank_score ?? 0), 0))),
     [monthlyCalendarDays],
@@ -1247,28 +1353,6 @@ ${tableRows}
         return (a.theme_name || "").localeCompare(b.theme_name || "", "ko");
       });
   }, [selectedMonthlyDay]);
-  const monthlySummary = useMemo(() => {
-    const uniqueThemes = new Set<number>();
-    let maxScore = -1;
-    let bestDate = "-";
-    for (const day of monthlyCalendarDays) {
-      let dayScore = 0;
-      for (const theme of day.themes) {
-        uniqueThemes.add(theme.market_theme_id);
-        dayScore += theme.rank_score ?? 0;
-      }
-      if (dayScore > maxScore) {
-        maxScore = dayScore;
-        bestDate = day.trade_date.slice(5);
-      }
-    }
-    return {
-      themeCount: uniqueThemes.size,
-      topTheme: monthlyTopThemes[0]?.theme_name ?? "없음",
-      bestDate,
-      unclassified: "-",
-    };
-  }, [monthlyCalendarDays, monthlyTopThemes]);
   const todayDate = useMemo(() => todayInKst(), []);
   const monthlyTreemapPeriodStart = useMemo(() => subtractOneMonth(todayDate), [todayDate]);
   const monthlyTreemapItems = useMemo(
@@ -1357,7 +1441,7 @@ ${tableRows}
         if (aValue !== bValue) return bValue - aValue;
         return a.themeName.localeCompare(b.themeName, "ko");
       })
-      .slice(0, 20);
+      ;
   }, [monthlyTrendResponses, monthlyTreemapPeriodStart, todayDate]);
 
   return (
@@ -2146,9 +2230,14 @@ ${tableRows}
       {activeTab === "monthly" ? (
         <div className="space-y-4">
           <SectionCard title="">
-            <div className="watchlist-card-title-wrap">
-              <h3 className="section-title m-0">월별 수급 테마(종목)</h3>
-              <span className="hint-icon" title="저장된 수급 이벤트 후보를 월 단위로 집계하여 날짜별·테마별 수급 흐름을 보여줍니다.">i</span>
+            <div className="monthly-flow-heading-row">
+              <div className="watchlist-card-title-wrap">
+                <h3 className="section-title m-0">월별 수급 테마(종목)</h3>
+                <span className="hint-icon" title="저장된 수급 이벤트 후보를 월 단위로 집계하여 날짜별·테마별 수급 흐름을 보여줍니다.">i</span>
+              </div>
+              {monthlySummary30d ? (
+                <span className="monthly-supply-period-badge">최근 30일 · 기간 {monthlySummary30d.period_start_date} ~ {monthlySummary30d.period_end_date}</span>
+              ) : null}
             </div>
             <div className="monthly-flow-toolbar">
               <div className="monthly-flow-controls calendar-period-nav">
@@ -2160,24 +2249,30 @@ ${tableRows}
 
               <div className="monthly-flow-compact-stats">
                 <div className="monthly-flow-stat-mini">
-                  <p className="monthly-flow-stat-label">등장 테마</p>
-                  <strong className="monthly-flow-stat-value">{monthlySummary.themeCount}개</strong>
+                  <p className="monthly-flow-stat-label">등장 테마 수</p>
+                  <strong className="monthly-flow-stat-value">{monthlySummary30d?.appeared_theme_count ?? 0}개</strong>
                 </div>
                 <div className="monthly-flow-stat-mini">
                   <p className="monthly-flow-stat-label">TOP 테마</p>
-                  <strong className="monthly-flow-stat-value" title={monthlySummary.topTheme}>{monthlySummary.topTheme}</strong>
+                  <strong
+                    className="monthly-flow-stat-value"
+                    title={monthlySummary30d?.top_theme ? `${monthlySummary30d.top_theme.theme_name} · ${monthlySummary30d.top_theme.appearance_count}회` : "-"}
+                  >
+                    {monthlySummary30d?.top_theme ? `${monthlySummary30d.top_theme.theme_name} · ${monthlySummary30d.top_theme.appearance_count}회` : "-"}
+                  </strong>
                 </div>
-                <div className="monthly-flow-stat-mini">
-                  <p className="monthly-flow-stat-label">최고 수급일</p>
-                  <strong className="monthly-flow-stat-value">{monthlySummary.bestDate}</strong>
-                </div>
-                <div className="monthly-flow-stat-mini">
-                  <p className="monthly-flow-stat-label">미분류 <span className="hint-icon" title="테마가 연결되지 않은 수급 이벤트 후보 수입니다.">i</span></p>
-                  <strong className="monthly-flow-stat-value">{monthlySummary.unclassified}</strong>
-                </div>
+                {[0, 1, 2].map((index) => {
+                  const stock = monthlySummary30d?.top_stocks[index];
+                  const value = stock ? `(${stock.appearance_count}회)${stock.stock_name}` : "-";
+                  return (
+                    <div key={`monthly-top-stock-${index + 1}`} className="monthly-flow-stat-mini">
+                      <p className="monthly-flow-stat-label">TOP{index + 1} 종목</p>
+                      <strong className="monthly-flow-stat-value" title={value}>{value}</strong>
+                    </div>
+                  );
+                })}
               </div>
             </div>
-
             {monthlyLoading ? <p className="text-sm text-muted">월별 테마 수급 흐름을 조회 중입니다.</p> : null}
             {!monthlyLoading && monthlyCalendarDays.length === 0 ? <p className="text-sm text-muted">저장된 수급 이벤트 후보가 없습니다.</p> : null}
 
@@ -2327,9 +2422,9 @@ ${tableRows}
                     <div className="monthly-flow-selected-fallback">
                       <p className="text-sm text-muted">월간 TOP 테마</p>
                       {monthlyTopThemes.slice(0, 3).map((theme) => (
-                        <div key={`month-top-${theme.market_theme_id}`} className="flex items-center justify-between text-sm gap-2">
-                          <span className="font-semibold text-slate-800">{theme.theme_name}</span>
-                          <span className="text-slate-600">+{theme.series[theme.series.length - 1]?.value ?? 0}</span>
+                        <div key={`month-top-${theme.marketThemeId}`} className="flex items-center justify-between text-sm gap-2">
+                          <span className="font-semibold text-slate-800">{theme.themeName}</span>
+                          <span className="text-slate-600">+{theme.score}</span>
                         </div>
                       ))}
                     </div>
@@ -2350,6 +2445,7 @@ ${tableRows}
                   <p className="monthly-theme-treemap-description">
                     <span>저장된 수급 이벤트 후보 종목의 등락률을 기준으로 월간 테마 흐름을 표시합니다.</span>
                     <span>히트맵은 날짜별 테마 출현 및 평균등락률, 트리맵은 누적 수급 점수 기준입니다.</span>
+                    <span>테마명·테마그룹·종목 연결은 조회 시점의 현재 활성 분류를 적용하며, 저장된 과거 수급 이벤트는 변경하지 않습니다.</span>
                   </p>
                 </div>
               </div>
@@ -2399,57 +2495,11 @@ ${tableRows}
                   최근 1개월 기준으로 표시할 수급 테마(종목) 히트맵 데이터가 없습니다.
                 </div>
               ) : (
-                <div className="monthly-supply-heatmap-wrap">
-                  <div className="monthly-supply-heatmap-legend">
-                    <span><i className="negative-strong" />-10% 이하</span>
-                    <span><i className="negative-medium" />-5%</span>
-                    <span><i className="neutral" />0%</span>
-                    <span><i className="positive-medium" />+5%</span>
-                    <span><i className="positive-strong" />+10% 이상</span>
-                  </div>
-                  <div className="monthly-supply-heatmap-scroll">
-                    <div className="monthly-supply-heatmap" style={{ gridTemplateColumns: `minmax(130px, 180px) repeat(${Math.max(monthlyHeatmapDates.length, 1)}, minmax(0, 1fr))` }}>
-                      <div className="monthly-supply-heatmap-theme-cell monthly-supply-heatmap-header-cell">테마</div>
-                      {monthlyHeatmapDates.map((date) => (
-                        <div key={`heat-date-${date}`} className="monthly-supply-heatmap-date-cell" title={date}>{date.slice(8, 10)}</div>
-                      ))}
-                      {monthlySupplyHeatmapRows.map((row) => (
-                        <Fragment key={`heat-row-${row.marketThemeId}`}>
-                          <div className="monthly-supply-heatmap-theme-cell" title={row.themeGroupName ? `${row.themeGroupName} / ${row.themeName}` : row.themeName}>
-                            <strong>{row.themeName}</strong>
-                            <span>출현 {row.dailyMap.size}회 · {row.stockCount}종목</span>
-                          </div>
-                          {monthlyHeatmapDates.map((date) => {
-                            const dayTheme = row.dailyMap.get(date);
-                            const value = dayTheme?.avg_change_rate ?? null;
-                            return (
-                              <button
-                                key={`heat-cell-${row.marketThemeId}-${date}`}
-                                type="button"
-                                className={`monthly-supply-heatmap-cell ${heatmapReturnClass(value)}`}
-                                title={dayTheme ? `${date} ${row.themeName} 평균 ${fmtSignedPct(value)} · ${dayTheme.stock_count}종목` : `${date} 데이터 없음`}
-                                onClick={() => {
-                                  const dateMonth = getMonthKey(date);
-                                  if (dateMonth !== monthlyBaseMonth) {
-                                    void applyMonthlyFlowMonth(dateMonth).then(() => {
-                                      setSelectedMonthlyDate(date);
-                                      setSelectedDayDetailTab("themes");
-                                    });
-                                    return;
-                                  }
-                                  setSelectedMonthlyDate(date);
-                                  setSelectedDayDetailTab("themes");
-                                }}
-                              >
-                                <span>{fmtHeatmapPct(value)}</span>
-                              </button>
-                            );
-                          })}
-                        </Fragment>
-                      ))}
-                    </div>
-                  </div>
-                </div>
+                <MonthlySupplyHeatmap
+                  rows={monthlySupplyHeatmapRows}
+                  dates={monthlyHeatmapDates}
+                  onSelectDate={selectMonthlyHeatmapDate}
+                />
               )
             ) : monthlyTreemapItems.length === 0 ? (
               <div className="monthly-theme-treemap-empty">

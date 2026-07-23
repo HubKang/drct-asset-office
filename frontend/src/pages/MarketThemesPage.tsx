@@ -12,6 +12,7 @@ import {
   type NaverTraderChartType,
   type NaverStockCandlePeriod,
 } from "@/utils/naverChart";
+import { compareThemeStocksBySupplyCount, type SupplyCountSort } from "@/utils/marketThemeStockSort";
 import type {
   MarketTheme,
   MarketThemeCandidate,
@@ -30,8 +31,8 @@ import type { Stock } from "@/types/stock";
 type ActiveTab = "themes" | "mapping" | "candidates";
 type ThemeViewMode = "group" | "theme" | "trend";
 type ThemeReturnSort = "default" | "desc" | "asc";
-type SupplyCountSort = "default" | "desc" | "asc";
 type ThemeReturnTrendViewMode = "heatmap" | "line";
+type TrendSortMode = "CURRENT_STRENGTH" | "ROLLING_30D_RETURN";
 const THEME_PAGE_SIZE = 20;
 const THEME_RETURN_LINE_COLORS = [
   "#2563eb",
@@ -491,6 +492,8 @@ function MarketThemesPage() {
   const [trendKeyword, setTrendKeyword] = useState("");
   const [trendLimit, setTrendLimit] = useState<"all" | string>("20");
   const [trendViewMode, setTrendViewMode] = useState<ThemeReturnTrendViewMode>("heatmap");
+  const [trendSortMode, setTrendSortMode] = useState<TrendSortMode>("CURRENT_STRENGTH");
+  const [trendStrengthInfoOpen, setTrendStrengthInfoOpen] = useState(false);
   const [hoveredTrendThemeId, setHoveredTrendThemeId] = useState<number | null>(null);
   const [trendLoading, setTrendLoading] = useState(false);
   const [trendData, setTrendData] = useState<MarketThemeMonthlyReturnResponse | null>(null);
@@ -512,6 +515,7 @@ function MarketThemesPage() {
   const [updatingPrimaryMappingId, setUpdatingPrimaryMappingId] = useState<number | null>(null);
   const mappingThemePickerRef = useRef<HTMLDivElement | null>(null);
   const supplyCountInfoRef = useRef<HTMLDivElement | null>(null);
+  const trendStrengthInfoRef = useRef<HTMLDivElement | null>(null);
 
   const [themeModalOpen, setThemeModalOpen] = useState(false);
   const [formThemeId, setFormThemeId] = useState<number | null>(null);
@@ -586,10 +590,10 @@ function MarketThemesPage() {
   const trendSummaryCards = useMemo(() => {
     const summary = trendData?.summary;
     return [
-      { label: "30일 상승 1위", item: summary?.top_rising_theme, value: summary?.top_rising_theme?.period_compound_return ?? summary?.top_rising_theme?.monthly_compound_return },
-      { label: "30일 하락 1위", item: summary?.top_falling_theme, value: summary?.top_falling_theme?.period_compound_return ?? summary?.top_falling_theme?.monthly_compound_return },
-      { label: "거래대금 1위", item: summary?.top_trading_value_theme, value: summary?.top_trading_value_theme?.total_trading_value_100m, suffix: "억" },
-      { label: "상승 지속 1위", item: summary?.top_continuous_rising_theme ?? summary?.rising_day_theme, value: summary?.top_continuous_rising_theme?.continuous_rising_days ?? summary?.rising_day_theme?.continuous_rising_days, suffix: "일" },
+      { label: "현재 강도 1위", item: summary?.current_strength_top, value: summary?.current_strength_top?.theme_strength_score, format: "score" },
+      { label: "30일 누적 1위", item: summary?.rolling_30d_top ?? summary?.top_rising_theme, value: summary?.rolling_30d_top?.rolling_30d_change_rate ?? summary?.top_rising_theme?.period_compound_return, format: "percent" },
+      { label: "거래대금 1위", item: summary?.trading_value_top ?? summary?.top_trading_value_theme, value: summary?.trading_value_top?.total_trading_value_100m ?? summary?.top_trading_value_theme?.total_trading_value_100m, format: "trading" },
+      { label: "상승 지속 1위", item: summary?.persistence_top, value: summary?.persistence_top?.persistence_10d, format: "persistence" },
     ];
   }, [trendData]);  const selectedTheme = useMemo(() => sortedThemes.find((x) => x.id === selectedThemeId) ?? null, [sortedThemes, selectedThemeId]);
   const mappingSelectableThemes = useMemo(
@@ -624,11 +628,7 @@ function MarketThemesPage() {
   const activeThemeStocks = useMemo(() => themeStocks.filter((x) => x.is_active === 1), [themeStocks]);
   const displayedThemeStocks = useMemo(() => {
     if (supplyCountSort === "default") return activeThemeStocks;
-    return [...activeThemeStocks].sort((a, b) => {
-      const difference = a.supply_day_count - b.supply_day_count;
-      if (difference !== 0) return supplyCountSort === "desc" ? -difference : difference;
-      return a.stock_name.localeCompare(b.stock_name, "ko-KR");
-    });
+    return [...activeThemeStocks].sort((a, b) => compareThemeStocksBySupplyCount(a, b, supplyCountSort));
   }, [activeThemeStocks, supplyCountSort]);
   const isMappingAllThemesSelected = mappingAllThemesSelected && !selectedThemeId && mappingThemeGroupId === "all";
   const chartSidcode = useMemo(() => createNaverChartSidcode(), [selectedThemeId, activeThemeStocks.length]);
@@ -768,6 +768,7 @@ function MarketThemesPage() {
         theme_group_id: trendThemeGroupId === "all" ? undefined : Number(trendThemeGroupId),
         keyword: trendKeyword.trim() || undefined,
         limit: trendLimit === "all" ? undefined : Number(trendLimit),
+        sort_by: trendSortMode,
       });
       setTrendData(rows);
     } catch (e) {
@@ -898,6 +899,22 @@ function MarketThemesPage() {
   }, [supplyCountInfoOpen]);
 
   useEffect(() => {
+    if (!trendStrengthInfoOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (!trendStrengthInfoRef.current?.contains(event.target as Node)) setTrendStrengthInfoOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setTrendStrengthInfoOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [trendStrengthInfoOpen]);
+
+  useEffect(() => {
     setSupplyCountSort("default");
     setSupplyCountInfoOpen(false);
   }, [selectedThemeId, mappingAllThemesSelected]);
@@ -926,7 +943,7 @@ function MarketThemesPage() {
     if (activeTab === "themes" && themeViewMode === "trend") {
       void loadThemeReturnTrend();
     }
-  }, [activeTab, themeViewMode, trendEndDate, trendThemeGroupId, trendLimit]);
+  }, [activeTab, themeViewMode, trendEndDate, trendThemeGroupId, trendLimit, trendSortMode]);
   useEffect(() => {
     if (themePage > themeTotalPages) {
       setThemePage(themeTotalPages);
@@ -1309,14 +1326,65 @@ function MarketThemesPage() {
                   <button type="button" className={trendViewMode === "line" ? "active" : ""} onClick={() => setTrendViewMode("line")}>선그래프</button>
                 </div>
               </div>
+              <div className="theme-return-summary-row">
               <div className="theme-return-summary-grid">
                 {trendSummaryCards.map((card) => (
                   <div key={card.label} className="theme-return-summary-card">
                     <span>{card.label}</span>
                     <strong>{card.item?.theme_name ?? "-"}</strong>
-                    <em>{card.value == null ? "-" : card.suffix === "억" ? `${fmtEok(card.value)}억` : fmtPct(card.value)}</em>
+                    <em>{card.value == null ? "-" : card.format === "score" ? `${Math.round(card.value)}점` : card.format === "trading" ? `${fmtEok(card.value)}억` : card.format === "persistence" ? `${Math.round(card.value)}%` : fmtPct(card.value)}</em>
                   </div>
                 ))}
+              </div>
+              <div className="theme-strength-sort-row" aria-label="테마등락추이 정렬 기준">
+                <div className="theme-strength-sort-control" ref={trendStrengthInfoRef}>
+                  <button
+                    type="button"
+                    className={`theme-strength-sort-button ${trendSortMode === "CURRENT_STRENGTH" ? "active" : ""}`}
+                    aria-pressed={trendSortMode === "CURRENT_STRENGTH"}
+                    onClick={() => setTrendSortMode("CURRENT_STRENGTH")}
+                  >
+                    현재강도
+                  </button>
+                  <button
+                    type="button"
+                    className="theme-strength-info-button"
+                    aria-label="현재 강도 산정 기준"
+                    aria-expanded={trendStrengthInfoOpen}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setTrendStrengthInfoOpen((prev) => !prev);
+                    }}
+                  >
+                    <Info size={13} />
+                  </button>
+                  {trendStrengthInfoOpen ? (
+                    <div className="theme-strength-popover" role="dialog" aria-label="현재 강도 산정 기준 설명">
+                      <strong>현재 강도 산정 기준</strong>
+                      <p className="theme-strength-popover__formula">현재 강도 점수 = 최근 10일 가중 수익 강도 45% + 상승 지속성 25% + 최근 모멘텀 20% + 상승 신선도 10% - 소멸 위험 감점 최대 20점</p>
+                      <dl>
+                        <dt>최근 10일 가중 수익 강도</dt><dd>최근 날짜일수록 높은 가중치를 적용해 최근 흐름을 더 중요하게 평가합니다.</dd>
+                        <dt>상승 지속성</dt><dd>최근 10일 중 테마 평균 등락률이 상승한 날짜 비율입니다.</dd>
+                        <dt>최근 모멘텀</dt><dd>최근 5일 누적과 직전 5일 누적 등락률의 차이입니다.</dd>
+                        <dt>상승 신선도</dt><dd>최근 +3% 이상 상승이 얼마나 최근에 나타났는지 평가합니다.</dd>
+                        <dt>소멸 위험 감점</dt><dd>30일 성과는 높지만 최근 수익률·지속성·모멘텀이 약해진 경우 감점합니다.</dd>
+                      </dl>
+                      <div className="theme-strength-popover__statuses">
+                        <span><b>점화</b> 최근 상승이 새롭게 강화</span><span><b>지속</b> 상승과 지속성이 함께 유지</span><span><b>둔화</b> 30일 성과는 양수지만 최근 힘이 약화</span><span><b>소멸</b> 최근 수익·지속성이 모두 약함</span><span><b>중립</b> 명확한 방향이 없는 상태</span>
+                      </div>
+                      <small>현재 강도는 투자 추천 점수가 아니라, 연결 종목의 최근 가격 흐름이 얼마나 살아 있는지를 비교하기 위한 상대 점수입니다.</small>
+                    </div>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  className={`theme-strength-sort-button ${trendSortMode === "ROLLING_30D_RETURN" ? "active" : ""}`}
+                  aria-pressed={trendSortMode === "ROLLING_30D_RETURN"}
+                  onClick={() => setTrendSortMode("ROLLING_30D_RETURN")}
+                >
+                  30일 누적
+                </button>
+              </div>
               </div>
               {trendViewMode === "heatmap" ? (
                 <div className="theme-return-legend">
@@ -1328,7 +1396,7 @@ function MarketThemesPage() {
               ) : null}
               {trendViewMode === "heatmap" ? (
               <div className="theme-return-heatmap-wrap">
-                <div className="theme-return-heatmap" style={{ gridTemplateColumns: `minmax(130px, 150px) repeat(${Math.max(trendDates.length, 1)}, minmax(0, 1fr))` }}>
+                <div className="theme-return-heatmap" style={{ gridTemplateColumns: `minmax(200px, 220px) repeat(${Math.max(trendDates.length, 1)}, minmax(0, 1fr))` }}>
                   <div className="theme-return-heatmap__theme-cell theme-return-heatmap__header-cell">테마</div>
                   {trendDates.map((day) => <div key={day} className="theme-return-heatmap__date-cell" title={day}>{formatHeatmapDayLabel(day)}</div>)}
                   {trendLoading ? <div className="theme-return-heatmap__empty-row">테마등락추이를 조회 중입니다.</div> : null}
@@ -1337,9 +1405,15 @@ function MarketThemesPage() {
                     const dailyMap = new Map(theme.daily_returns.map((item) => [item.return_date, item]));
                     return (
                       <Fragment key={theme.theme_id}>
-                        <div className="theme-return-heatmap__theme-cell" title={`${theme.theme_group_name ?? "미지정"} / ${theme.theme_name}`}>
+                        <div className="theme-return-heatmap__theme-cell" title={`${theme.theme_group_name ?? "미지정"} / ${theme.theme_name} / 거래대금 ${fmtEok(theme.total_trading_value_100m)}억`}>
                           <strong>{theme.theme_name}</strong>
-                          <span>{fmtPct(theme.period_compound_return ?? theme.monthly_compound_return)} · {fmtEok(theme.total_trading_value_100m)}억</span>
+                          <span className="theme-strength-row-meta">
+                            <b className="theme-strength-score">강도 {theme.theme_strength_score == null ? "-" : Math.round(theme.theme_strength_score)}점</b>
+                            <i>·</i>
+                            <b className="theme-rolling-return">30일 {fmtPct(theme.rolling_30d_change_rate)}</b>
+                            <i>·</i>
+                            <em className={`theme-strength-status status-${String(theme.strength_status_code ?? "INSUFFICIENT").toLowerCase()}`}>{theme.strength_status_name ?? "데이터 부족"}</em>
+                          </span>
                         </div>
                         {trendDates.map((day) => {
                           const item = dailyMap.get(day);
@@ -1671,8 +1745,8 @@ function MarketThemesPage() {
                       type="button"
                       className="theme-supply-count-sort"
                       onClick={toggleSupplyCountSort}
-                      aria-label={`수급횟수 정렬${supplyCountSort === "desc" ? ": 내림차순" : supplyCountSort === "asc" ? ": 오름차순" : ": 기본순"}`}
-                      title="수급횟수 정렬"
+                      aria-label={`최근 30일 수급횟수 ${supplyCountSort === "desc" ? "내림차순" : supplyCountSort === "asc" ? "오름차순" : "기본순"}`}
+                      title="최근 30일 수급횟수 정렬"
                     >
                       <span>수급횟수</span>
                       {supplyCountSort === "desc" ? <ArrowDown size={13} /> : supplyCountSort === "asc" ? <ArrowUp size={13} /> : <ArrowUpDown size={13} />}
@@ -1687,8 +1761,12 @@ function MarketThemesPage() {
                       <Info size={13} />
                     </button>
                     {supplyCountInfoOpen ? (
-                      <div className="theme-supply-count-popover" role="dialog">
-                        선택한 테마와 종목에 연결된 수급 기록을 날짜 기준으로 집계합니다. 같은 날 기록이 여러 건이어도 1회로 계산합니다.
+                      <div className="theme-supply-count-popover" role="dialog" aria-label="수급횟수 집계 기준 설명">
+                        <strong>수급횟수</strong>
+                        <p>최근 30일 수급일수 / 전체 수급일수 순으로 표시합니다.</p>
+                        <p>최근 30일 수급일수는 오늘을 포함한 최근 30개 달력일 동안 현재 테마의 일별 수급 종목으로 등록된 고유 일수입니다.</p>
+                        <p>전체 수급일수는 전체 기간 동안 현재 테마의 일별 수급 종목으로 등록된 고유 일수입니다.</p>
+                        <p>같은 날짜의 중복 등록은 1회로 계산하며, 종목 연결을 해제하더라도 과거 수급 이력은 유지됩니다.</p>
                       </div>
                     ) : null}
                   </div>
@@ -1712,7 +1790,13 @@ function MarketThemesPage() {
                         <td>{row.market ?? "-"}</td>
                         <td><label className="theme-linked-stock-primary"><input type="checkbox" checked={row.is_primary === 1} disabled={updatingPrimaryMappingId === row.mapping_id} onChange={(e) => void onTogglePrimary(row.mapping_id, e.target.checked)} /><span>{row.is_primary === 1 ? "대표" : "일반"}</span></label></td>
                         <td><span className={`badge ${row.is_active === 1 ? "badge-emerald" : "badge-slate"}`}>{row.is_active === 1 ? "활성" : "비활성"}</span></td>
-                        <td><span className="theme-supply-count-value" title={`최초 ${row.first_supply_date ?? "-"} · 최근 ${row.last_supply_date ?? "-"}`}>{row.supply_day_count}회</span></td>
+                        <td>
+                          <span className="theme-supply-count-value" title={`최근 30일 ${row.recent_30d_supply_day_count}일 · 전체 ${row.supply_day_count}일 · 최초 ${row.first_supply_date ?? "-"} · 최근 ${row.last_supply_date ?? "-"}`}>
+                            <strong>{row.recent_30d_supply_day_count}</strong>
+                            <span aria-hidden="true"> / </span>
+                            <span>{row.supply_day_count}</span>
+                          </span>
+                        </td>
                         <td><ThemeLinkedStockChart stockCode={stockCode} stockName={row.stock_name} period="day" label="일봉" sidcode={chartSidcode} onOpen={setZoomedChart} /></td>
                         <td><ThemeLinkedStockChart stockCode={stockCode} stockName={row.stock_name} period="week" label="주봉" sidcode={chartSidcode} onOpen={setZoomedChart} /></td>
                         <td><ThemeLinkedStockChart stockCode={stockCode} stockName={row.stock_name} period="month" label="월봉" sidcode={chartSidcode} onOpen={setZoomedChart} /></td>

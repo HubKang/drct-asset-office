@@ -509,11 +509,47 @@ export type MonthlyThemeFlowCalendarDay = {
   memo_items?: MonthlyThemeFlowMemoItem[];
 };
 
+export type MonthlySupplySummaryStock = {
+  rank: number;
+  stock_id: number | null;
+  stock_code: string | null;
+  stock_name: string;
+  appearance_count: number;
+  latest_detected_date: string | null;
+};
+
+export type MonthlySupplySummaryTheme = {
+  theme_id: number;
+  theme_name: string;
+  appearance_count: number;
+  latest_appearance_date: string | null;
+  unique_stock_count: number;
+};
+
+export type MonthlySupplySummary30d = {
+  period_start_date: string;
+  period_end_date: string;
+  appeared_theme_count: number;
+  top_theme: MonthlySupplySummaryTheme | null;
+  top_stocks: MonthlySupplySummaryStock[];
+};
+export type MonthlySupplyClassificationDiagnostics = {
+  classification_basis: "CURRENT_ACTIVE_THEME_MAPPING";
+  event_count: number;
+  unique_stock_count: number;
+  active_theme_count: number;
+  reclassified_event_stock_count: number;
+  unclassified_stock_count: number;
+  period_start_date: string;
+  period_end_date: string;
+};
 export type MonthlyThemeFlowCalendarResponse = {
   success: boolean;
   month: string;
   start_date: string;
   end_date: string;
+  summary_30d: MonthlySupplySummary30d;
+  diagnostics: MonthlySupplyClassificationDiagnostics;
   days: MonthlyThemeFlowCalendarDay[];
 };
 
@@ -547,6 +583,7 @@ export type MonthlyThemeFlowTrendResponse = {
   month: string;
   start_date: string;
   end_date: string;
+  diagnostics: MonthlySupplyClassificationDiagnostics;
   themes: MonthlyThemeFlowTrendTheme[];
 };
 

@@ -186,6 +186,7 @@ def get_market_theme_range_returns(
     theme_group_id: int | None = Query(None),
     keyword: str | None = Query(None),
     limit: int | None = Query(None),
+    sort_by: str = Query("CURRENT_STRENGTH"),
     db: Session = Depends(get_db),
 ) -> MarketThemeMonthlyReturnResponse:
     return ExternalKiwoomService(db).get_market_theme_range_returns(
@@ -195,6 +196,7 @@ def get_market_theme_range_returns(
         theme_group_id=theme_group_id,
         keyword=keyword,
         limit=limit,
+        sort_by=sort_by,
     )
 @router.get("/external/kiwoom/market-themes/{theme_id}/returns/daily", response_model=MarketThemeLatestReturnResponse)
 def get_market_theme_daily_return(

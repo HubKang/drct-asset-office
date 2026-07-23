@@ -102,6 +102,28 @@ export type MarketThemeMonthlyReturnThemeItem = {
   falling_days: number;
   flat_days: number;
   data_days: number;
+  rolling_30d_change_rate?: number | null;
+  weighted_return_10d?: number | null;
+  weighted_return_score?: number | null;
+  positive_days_10d?: number;
+  observed_days_10d?: number;
+  persistence_10d?: number | null;
+  recent_5d_return?: number | null;
+  previous_5d_return?: number | null;
+  momentum_delta?: number | null;
+  momentum_score?: number | null;
+  last_positive_impulse_date?: string | null;
+  days_since_positive_impulse?: number | null;
+  freshness_score?: number | null;
+  rolling_30d_peak?: number | null;
+  rolling_30d_peak_gap?: number | null;
+  stale_penalty?: number;
+  theme_strength_score?: number | null;
+  strength_status_code?: "IGNITION" | "PERSISTENT" | "SLOWDOWN" | "FADING" | "NEUTRAL" | "INSUFFICIENT";
+  strength_status_name?: string;
+  persistence_rank?: number | null;
+  current_strength_rank?: number | null;
+  rolling_30d_rank?: number | null;
   daily_returns: MarketThemeMonthlyReturnDailyItem[];
 };
 
@@ -112,6 +134,11 @@ export type MarketThemeMonthlyReturnSummaryTopItem = {
   period_compound_return?: number | null;
   total_trading_value_100m: number | null;
   continuous_rising_days?: number | null;
+  rolling_30d_change_rate?: number | null;
+  theme_strength_score?: number | null;
+  persistence_10d?: number | null;
+  strength_status_code?: string | null;
+  strength_status_name?: string | null;
 };
 
 export type MarketThemeMonthlyReturnResponse = {
@@ -121,6 +148,7 @@ export type MarketThemeMonthlyReturnResponse = {
   active_only: boolean;
   display_start_date: string;
   display_end_date: string;
+  sort_by?: "CURRENT_STRENGTH" | "ROLLING_30D_RETURN" | null;
   themes: MarketThemeMonthlyReturnThemeItem[];
   summary: {
     top_rising_theme: MarketThemeMonthlyReturnSummaryTopItem | null;
@@ -128,6 +156,10 @@ export type MarketThemeMonthlyReturnResponse = {
     top_trading_value_theme: MarketThemeMonthlyReturnSummaryTopItem | null;
     rising_day_theme: MarketThemeMonthlyReturnSummaryTopItem | null;
     top_continuous_rising_theme?: MarketThemeMonthlyReturnSummaryTopItem | null;
+    current_strength_top?: MarketThemeMonthlyReturnSummaryTopItem | null;
+    rolling_30d_top?: MarketThemeMonthlyReturnSummaryTopItem | null;
+    trading_value_top?: MarketThemeMonthlyReturnSummaryTopItem | null;
+    persistence_top?: MarketThemeMonthlyReturnSummaryTopItem | null;
   };
 };
 
@@ -147,6 +179,7 @@ export type MarketThemeRangeReturnParams = {
   theme_group_id?: number;
   keyword?: string;
   limit?: number;
+  sort_by?: "CURRENT_STRENGTH" | "ROLLING_30D_RETURN";
 };
 export type MarketThemeType = "industry" | "theme" | "custom" | "telegram";
 export type MarketThemeLevel = "THEME_GROUP" | "THEME";

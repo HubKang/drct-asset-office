@@ -154,3 +154,16 @@ The target pipeline is:
 source collection -> derived recalculation -> changed item detection -> ACTIVE single signal evaluation -> composite signal evaluation -> phenomenon evaluation.
 
 This pass adds activation-time evaluation and status metadata. Full changed-indicator-triggered automatic evaluation after market data refresh remains a follow-up backend job.
+
+
+## 운영 평가 이력
+
+운영 활성화 이후 BASELINE·PERIODIC·MANUAL 평가와 상태 전환 이벤트 정책은 [운영 시그널 평가 이력](./market-signal-evaluation-history.md)을 따른다. 사용자 표시는 FALSE_BREAK를 ‘일시 이탈 후 복귀’로 통일한다.
+
+## 2026-07-22 복합 시그널 운영 자동화 반영
+
+- 복합 시그널 운영 상태와 현재 판정을 별도 필드·배지로 분리했다.
+- 검증된 DRAFT만 활성화하며, 활성화 시 이벤트 없는 BASELINE 평가를 저장한다.
+- 활성 단일 지표 평가 뒤 관련 ACTIVE 복합 규칙을 관측일별 PERIODIC 평가로 자동 연결한다.
+- 지표·모델·조건 역할·조건 문장은 공통 한글 표시 서비스에서 생성한다.
+- 상세 설계와 감사 절차는 `docs/market-composite-signal-operation.md`를 따른다.

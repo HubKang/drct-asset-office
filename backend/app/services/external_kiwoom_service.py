@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 import time
 from collections import defaultdict
@@ -33,6 +34,10 @@ from backend.app.schemas.external_kiwoom_schema import (
     MarketThemeReturnRefreshRequest,
     MarketThemeReturnRefreshResponse,
     MarketThemeReturnStockItem,
+    MonthlySupplyClassificationDiagnostics,
+    MonthlySupplySummary30d,
+    MonthlySupplySummaryStockItem,
+    MonthlySupplySummaryThemeItem,
     MonthlyThemeFlowCalendarDayItem,
     MonthlyThemeFlowMemoItem,
     MonthlyThemeFlowCalendarResponse,
@@ -67,6 +72,8 @@ from backend.app.schemas.external_kiwoom_schema import (
     KiwoomMarketEventSaveResponse,
 )
 from backend.app.utils.stock_code import normalize_stock_code
+
+logger = logging.getLogger(__name__)
 
 
 class ExternalKiwoomService:
@@ -696,31 +703,42 @@ class ExternalKiwoomService:
             return 2
         return 1
 
-    def _apply_rank_overrides(self, trade_date: str, items: list[DailyThemeFlowSummaryItem]) -> list[DailyThemeFlowSummaryItem]:
+    def _load_manual_rank_maps(self, start_date: str, end_date: str) -> dict[str, dict[int, int]]:
+        rank_rows = self.db.execute(
+            text(
+                """
+                SELECT trade_date, market_theme_id, manual_rank
+                FROM daily_theme_flow_ranks
+                WHERE trade_date BETWEEN :start_date AND :end_date
+                """
+            ),
+            {"start_date": start_date, "end_date": end_date},
+        ).mappings().all()
+        rank_maps: dict[str, dict[int, int]] = {}
+        for row in rank_rows:
+            manual_rank = row.get("manual_rank")
+            if manual_rank is None:
+                continue
+            value = int(manual_rank)
+            if value <= 0:
+                continue
+            trade_date = str(row["trade_date"])
+            rank_maps.setdefault(trade_date, {})[int(row["market_theme_id"])] = value
+        return rank_maps
+
+    def _apply_rank_overrides(
+        self,
+        trade_date: str,
+        items: list[DailyThemeFlowSummaryItem],
+        manual_map: dict[int, int] | None = None,
+    ) -> list[DailyThemeFlowSummaryItem]:
         if not items:
             return []
         scored_items = self._with_theme_strength_scores(items)
         sorted_auto = sorted(scored_items, key=self._auto_theme_rank_sort_key)
         auto_rank_map = {item.market_theme_id: idx + 1 for idx, item in enumerate(sorted_auto)}
-        rank_rows = self.db.execute(
-            text(
-                """
-                SELECT market_theme_id, manual_rank
-                FROM daily_theme_flow_ranks
-                WHERE trade_date=:trade_date
-                """
-            ),
-            {"trade_date": trade_date},
-        ).mappings().all()
-        manual_map: dict[int, int] = {}
-        for row in rank_rows:
-            mr = row.get("manual_rank")
-            if mr is None:
-                continue
-            value = int(mr)
-            if value > 0:
-                manual_map[int(row["market_theme_id"])] = value
-
+        if manual_map is None:
+            manual_map = self._load_manual_rank_maps(trade_date, trade_date).get(trade_date, {})
         ranked = []
         for item in scored_items:
             auto_rank = auto_rank_map.get(item.market_theme_id)
@@ -990,203 +1008,320 @@ class ExternalKiwoomService:
             items=items,
         )
 
-    def get_monthly_theme_flow_calendar(self, month: str) -> MonthlyThemeFlowCalendarResponse:
-        month_start, month_end = self._resolve_month_window(month)
-        rows = self.db.execute(
+    def _build_supply_theme_aggregation(self, start_date: date, end_date: date) -> dict[str, object]:
+        """Resolve saved supply events through the current active stock-theme classification."""
+        started_at = time.perf_counter()
+        params = {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()}
+        base_rows = self.db.execute(
             text(
                 """
                 SELECT
+                    mte.id AS event_id,
                     mte.trade_date AS trade_date,
-                    CASE WHEN mt.theme_level = 'THEME_GROUP' THEN mt.id ELSE parent_mt.id END AS theme_group_id,
-                    COALESCE(
-                      CASE WHEN mt.theme_level = 'THEME_GROUP' THEN mt.theme_name ELSE parent_mt.theme_name END,
-                      '미지정 테마그룹'
-                    ) AS theme_group_name,
+                    COALESCE(mte.stock_id, stock_by_code.id) AS stock_id,
+                    COALESCE(mte.stock_code, stock_by_code.stock_code) AS stock_code,
+                    COALESCE(mte.stock_name, stock_by_code.stock_name, mte.stock_code, '-') AS stock_name,
+                    mte.change_rate AS change_rate,
+                    mte.trading_value AS trading_value,
+                    mte.user_memo AS user_memo,
+                    mte.theme_id AS legacy_theme_id
+                FROM market_trend_events mte
+                LEFT JOIN stocks stock_by_code ON stock_by_code.stock_code = mte.stock_code
+                WHERE mte.trade_date BETWEEN :start_date AND :end_date
+                  AND mte.detection_source IN ('kiwoom_condition', 'kiwoom_rest', 'manual')
+                  AND COALESCE(mte.is_active, 1) = 1
+                  AND COALESCE(mte.deleted_at, '') = ''
+                ORDER BY mte.trade_date, mte.id
+                """
+            ),
+            params,
+        ).mappings().all()
+        current_rows = self.db.execute(
+            text(
+                """
+                SELECT
+                    mte.id AS event_id,
+                    mte.trade_date AS trade_date,
+                    COALESCE(mte.stock_id, stock_by_code.id) AS stock_id,
+                    COALESCE(mte.stock_code, stock_by_code.stock_code) AS stock_code,
+                    COALESCE(mte.stock_name, stock_by_code.stock_name, mte.stock_code, '-') AS stock_name,
+                    mte.change_rate AS change_rate,
+                    mte.trading_value AS trading_value,
+                    mte.user_memo AS user_memo,
                     mt.id AS market_theme_id,
                     mt.theme_name AS theme_name,
-                    COUNT(*) AS event_count,
-                    COUNT(DISTINCT mte.stock_code) AS stock_count,
-                    AVG(mte.change_rate) AS avg_change_rate,
-                    MAX(mte.change_rate) AS max_change_rate,
-                    SUM(
-                      COALESCE(
-                        mte.trading_value,
-                        0
-                      )
-                    ) AS estimated_trading_value_sum
+                    CASE WHEN mt.theme_level = 'THEME_GROUP' THEN mt.id ELSE parent_mt.id END AS theme_group_id,
+                    COALESCE(
+                        CASE WHEN mt.theme_level = 'THEME_GROUP' THEN mt.theme_name ELSE parent_mt.theme_name END,
+                        '미지정 테마그룹'
+                    ) AS theme_group_name
                 FROM market_trend_events mte
-                JOIN market_trend_event_theme_links l ON l.event_id = mte.id
-                JOIN market_themes mt ON mt.id = l.market_theme_id
+                LEFT JOIN stocks stock_by_code ON stock_by_code.stock_code = mte.stock_code
+                JOIN market_theme_stocks mts
+                  ON mts.stock_id = COALESCE(mte.stock_id, stock_by_code.id)
+                 AND COALESCE(mts.is_active, 1) = 1
+                JOIN market_themes mt
+                  ON mt.id = mts.theme_id
+                 AND COALESCE(mt.is_active, 1) = 1
                 LEFT JOIN market_themes parent_mt ON parent_mt.id = mt.parent_theme_id
                 WHERE mte.trade_date BETWEEN :start_date AND :end_date
                   AND mte.detection_source IN ('kiwoom_condition', 'kiwoom_rest', 'manual')
                   AND COALESCE(mte.is_active, 1) = 1
-                  AND COALESCE(l.is_active, 1) = 1
-                  AND COALESCE(mt.is_active, 1) = 1
                   AND COALESCE(mte.deleted_at, '') = ''
-                  AND COALESCE(l.deleted_at, '') = ''
-                GROUP BY mte.trade_date, theme_group_id, theme_group_name, mt.id, mt.theme_name
-                ORDER BY mte.trade_date ASC, stock_count DESC, event_count DESC, estimated_trading_value_sum DESC, avg_change_rate DESC, mt.theme_name ASC
+                  AND (mt.parent_theme_id IS NULL OR COALESCE(parent_mt.is_active, 1) = 1)
+                ORDER BY mte.trade_date, mt.id, mte.id
                 """
             ),
-            {"start_date": month_start.isoformat(), "end_date": month_end.isoformat()},
+            params,
         ).mappings().all()
-
-        stock_rows = self.db.execute(
+        historical_rows = self.db.execute(
             text(
                 """
-                SELECT DISTINCT
-                    mte.trade_date AS trade_date,
-                    mt.id AS market_theme_id,
-                    mte.stock_id AS stock_id,
-                    mte.stock_code AS stock_code,
-                    COALESCE(mte.stock_name, s.stock_name, mte.stock_code, '-') AS stock_name,
-                    mte.change_rate AS change_rate
-                FROM market_trend_events mte
-                JOIN market_trend_event_theme_links l ON l.event_id = mte.id
-                JOIN market_themes mt ON mt.id = l.market_theme_id
-                LEFT JOIN stocks s ON s.id = mte.stock_id
+                WITH event_theme_pairs AS (
+                    SELECT l.event_id, l.market_theme_id
+                    FROM market_trend_event_theme_links l
+                    WHERE COALESCE(l.is_active, 1) = 1
+                      AND COALESCE(l.deleted_at, '') = ''
+                    UNION
+                    SELECT id AS event_id, theme_id AS market_theme_id
+                    FROM market_trend_events
+                    WHERE theme_id IS NOT NULL
+                )
+                SELECT etp.event_id, etp.market_theme_id
+                FROM event_theme_pairs etp
+                JOIN market_trend_events mte ON mte.id = etp.event_id
                 WHERE mte.trade_date BETWEEN :start_date AND :end_date
                   AND mte.detection_source IN ('kiwoom_condition', 'kiwoom_rest', 'manual')
                   AND COALESCE(mte.is_active, 1) = 1
-                  AND COALESCE(l.is_active, 1) = 1
-                  AND COALESCE(mt.is_active, 1) = 1
                   AND COALESCE(mte.deleted_at, '') = ''
-                  AND COALESCE(l.deleted_at, '') = ''
-                ORDER BY mte.trade_date ASC, mt.id ASC, stock_name ASC, stock_code ASC
                 """
             ),
-            {"start_date": month_start.isoformat(), "end_date": month_end.isoformat()},
+            params,
         ).mappings().all()
-        stocks_by_date_theme: dict[tuple[str, int], list[MonthlyThemeFlowStockItem]] = {}
-        seen_stocks: set[tuple[str, int, str]] = set()
-        for row in stock_rows:
+
+        base_by_event: dict[int, dict[str, object]] = {int(row["event_id"]): dict(row) for row in base_rows}
+        current_theme_ids: dict[int, set[int]] = defaultdict(set)
+        historical_theme_ids: dict[int, set[int]] = defaultdict(set)
+        mapped_stock_keys: set[str] = set()
+        active_theme_ids: set[int] = set()
+        buckets: dict[tuple[str, int, str], dict[str, object]] = {}
+
+        for row in historical_rows:
+            historical_theme_ids[int(row["event_id"])].add(int(row["market_theme_id"]))
+        for row in current_rows:
+            event_id = int(row["event_id"])
             trade_date = str(row["trade_date"])
             theme_id = int(row["market_theme_id"])
+            stock_id = int(row["stock_id"]) if row["stock_id"] is not None else None
+            stock_code = normalize_stock_code(row["stock_code"])
+            stock_name = str(row["stock_name"] or stock_code or "-")
+            stock_key = f"id:{stock_id}" if stock_id is not None else f"code:{stock_code}" if stock_code else f"name:{stock_name}"
+            current_theme_ids[event_id].add(theme_id)
+            active_theme_ids.add(theme_id)
+            mapped_stock_keys.add(stock_key)
+            key = (trade_date, theme_id, stock_key)
+            bucket = buckets.setdefault(
+                key,
+                {
+                    "trade_date": trade_date,
+                    "market_theme_id": theme_id,
+                    "theme_name": str(row["theme_name"]),
+                    "theme_group_id": int(row["theme_group_id"]) if row["theme_group_id"] is not None else None,
+                    "theme_group_name": str(row["theme_group_name"] or "미지정 테마그룹"),
+                    "stock_id": stock_id,
+                    "stock_code": stock_code or None,
+                    "stock_name": stock_name,
+                    "event_ids": set(),
+                    "change_rates": [],
+                    "trading_values": [],
+                    "memos": set(),
+                },
+            )
+            bucket["event_ids"].add(event_id)
+            if row["change_rate"] is not None:
+                bucket["change_rates"].append(float(row["change_rate"]))
+            if row["trading_value"] is not None:
+                bucket["trading_values"].append(int(row["trading_value"]))
+            memo = str(row["user_memo"] or "").strip()
+            if memo:
+                bucket["memos"].add(memo)
+
+        records: list[dict[str, object]] = []
+        for bucket in buckets.values():
+            rates = list(bucket.pop("change_rates"))
+            trading_values = list(bucket.pop("trading_values"))
+            event_ids = set(bucket["event_ids"])
+            records.append(
+                {
+                    **bucket,
+                    "event_ids": event_ids,
+                    "event_count": 1,
+                    "change_rate": sum(rates) / len(rates) if rates else None,
+                    "trading_value": max(trading_values) if trading_values else 0,
+                    "memos": sorted(bucket["memos"]),
+                }
+            )
+        records.sort(key=lambda row: (str(row["trade_date"]), int(row["market_theme_id"]), str(row["stock_name"])))
+
+        all_stock_keys: set[str] = set()
+        reclassified_event_stock_keys: set[tuple[str, str]] = set()
+        for event_id, row in base_by_event.items():
+            stock_id = int(row["stock_id"]) if row["stock_id"] is not None else None
+            stock_code = normalize_stock_code(row["stock_code"])
+            stock_name = str(row["stock_name"] or stock_code or "-")
+            stock_key = f"id:{stock_id}" if stock_id is not None else f"code:{stock_code}" if stock_code else f"name:{stock_name}"
+            all_stock_keys.add(stock_key)
+            current_ids = current_theme_ids.get(event_id, set())
+            if current_ids and current_ids != historical_theme_ids.get(event_id, set()):
+                reclassified_event_stock_keys.add((str(row["trade_date"]), stock_key))
+
+        diagnostics = MonthlySupplyClassificationDiagnostics(
+            classification_basis="CURRENT_ACTIVE_THEME_MAPPING",
+            event_count=len(base_by_event),
+            unique_stock_count=len(all_stock_keys),
+            active_theme_count=len(active_theme_ids),
+            reclassified_event_stock_count=len(reclassified_event_stock_keys),
+            unclassified_stock_count=len(all_stock_keys - mapped_stock_keys),
+            period_start_date=start_date.isoformat(),
+            period_end_date=end_date.isoformat(),
+        )
+        logger.info(
+            "[monthly-supply-current-classification] period=%s~%s events=%s stocks=%s themes=%s reclassified=%s unclassified=%s rows=%s total_ms=%s",
+            start_date.isoformat(), end_date.isoformat(), diagnostics.event_count,
+            diagnostics.unique_stock_count, diagnostics.active_theme_count,
+            diagnostics.reclassified_event_stock_count, diagnostics.unclassified_stock_count,
+            len(records), int((time.perf_counter() - started_at) * 1000),
+        )
+        return {"records": records, "diagnostics": diagnostics}
+
+    def _build_monthly_supply_summary_30d(self) -> MonthlySupplySummary30d:
+        period_end = date.fromisoformat(now_kst()[:10])
+        period_start = period_end - timedelta(days=30)
+        aggregation = self._build_supply_theme_aggregation(period_start, period_end)
+        records = list(aggregation["records"])
+
+        stock_stats: dict[str, dict[str, object]] = {}
+        theme_stats: dict[int, dict[str, object]] = {}
+        for row in records:
+            stock_id = row["stock_id"]
             stock_code = str(row["stock_code"] or "")
-            stock_key = stock_code or str(row["stock_id"] or row["stock_name"] or "")
-            seen_key = (trade_date, theme_id, stock_key)
-            if seen_key in seen_stocks:
-                continue
-            seen_stocks.add(seen_key)
-            stocks_by_date_theme.setdefault((trade_date, theme_id), []).append(
+            stock_name = str(row["stock_name"])
+            stock_key = f"id:{stock_id}" if stock_id is not None else f"code:{stock_code}" if stock_code else f"name:{stock_name}"
+            stock_stat = stock_stats.setdefault(stock_key, {
+                "stock_id": stock_id, "stock_code": stock_code or None, "stock_name": stock_name, "dates": set(),
+            })
+            stock_stat["dates"].add(str(row["trade_date"]))
+            theme_id = int(row["market_theme_id"])
+            theme_stat = theme_stats.setdefault(theme_id, {
+                "theme_id": theme_id, "theme_name": str(row["theme_name"]), "dates": set(), "stocks": set(),
+            })
+            theme_stat["dates"].add(str(row["trade_date"]))
+            theme_stat["stocks"].add(stock_key)
+
+        ranked_stocks = sorted(
+            stock_stats.values(),
+            key=lambda item: (-len(item["dates"]), -date.fromisoformat(max(item["dates"])).toordinal(), str(item["stock_name"])),
+        )
+        top_stocks = [
+            MonthlySupplySummaryStockItem(
+                rank=index, stock_id=item["stock_id"], stock_code=item["stock_code"], stock_name=str(item["stock_name"]),
+                appearance_count=len(item["dates"]), latest_detected_date=max(item["dates"]),
+            )
+            for index, item in enumerate(ranked_stocks[:3], start=1)
+        ]
+        ranked_themes = sorted(
+            theme_stats.values(),
+            key=lambda item: (-len(item["dates"]), -date.fromisoformat(max(item["dates"])).toordinal(), -len(item["stocks"]), str(item["theme_name"])),
+        )
+        top_theme = None
+        if ranked_themes:
+            winner = ranked_themes[0]
+            top_theme = MonthlySupplySummaryThemeItem(
+                theme_id=int(winner["theme_id"]), theme_name=str(winner["theme_name"]),
+                appearance_count=len(winner["dates"]), latest_appearance_date=max(winner["dates"]),
+                unique_stock_count=len(winner["stocks"]),
+            )
+        return MonthlySupplySummary30d(
+            period_start_date=period_start.isoformat(), period_end_date=period_end.isoformat(),
+            appeared_theme_count=len(theme_stats), top_theme=top_theme, top_stocks=top_stocks,
+        )
+    def get_monthly_theme_flow_calendar(self, month: str) -> MonthlyThemeFlowCalendarResponse:
+        month_start, month_end = self._resolve_month_window(month)
+        summary_30d = self._build_monthly_supply_summary_30d()
+        aggregation = self._build_supply_theme_aggregation(month_start, month_end)
+        records = list(aggregation["records"])
+
+        grouped_records: dict[tuple[str, int], list[dict[str, object]]] = defaultdict(list)
+        day_event_ids: dict[str, set[int]] = defaultdict(set)
+        day_stock_keys: dict[str, set[str]] = defaultdict(set)
+        memo_items_by_date: dict[str, list[MonthlyThemeFlowMemoItem]] = defaultdict(list)
+        seen_memos: set[tuple[str, int, str, str]] = set()
+        for row in records:
+            trade_date = str(row["trade_date"])
+            theme_id = int(row["market_theme_id"])
+            grouped_records[(trade_date, theme_id)].append(row)
+            day_event_ids[trade_date].update(set(row["event_ids"]))
+            stock_key = str(row["stock_code"] or row["stock_id"] or row["stock_name"])
+            day_stock_keys[trade_date].add(stock_key)
+            for memo in row["memos"]:
+                memo_key = (trade_date, theme_id, stock_key, str(memo))
+                if memo_key in seen_memos:
+                    continue
+                seen_memos.add(memo_key)
+                memo_items_by_date[trade_date].append(
+                    MonthlyThemeFlowMemoItem(
+                        theme_id=theme_id,
+                        theme_name=str(row["theme_name"]),
+                        stock_code=str(row["stock_code"]) if row["stock_code"] else None,
+                        stock_name=str(row["stock_name"]),
+                        memo=str(memo),
+                    )
+                )
+
+        grouped: dict[str, list[DailyThemeFlowSummaryItem]] = defaultdict(list)
+        theme_group_meta: dict[tuple[str, int], dict[str, object]] = {}
+        stocks_by_date_theme: dict[tuple[str, int], list[MonthlyThemeFlowStockItem]] = {}
+        for (trade_date, theme_id), theme_records in grouped_records.items():
+            valid_rates = [float(row["change_rate"]) for row in theme_records if row["change_rate"] is not None]
+            theme_group_meta[(trade_date, theme_id)] = {
+                "theme_group_id": theme_records[0]["theme_group_id"],
+                "theme_group_name": theme_records[0]["theme_group_name"],
+            }
+            stocks_by_date_theme[(trade_date, theme_id)] = [
                 MonthlyThemeFlowStockItem(
                     stock_id=int(row["stock_id"]) if row["stock_id"] is not None else None,
-                    stock_code=stock_code or None,
-                    stock_name=str(row["stock_name"] or stock_code or "-"),
+                    stock_code=str(row["stock_code"]) if row["stock_code"] else None,
+                    stock_name=str(row["stock_name"]),
                     change_rate=float(row["change_rate"]) if row["change_rate"] is not None else None,
                 )
-            )
-
-        memo_rows = self.db.execute(
-            text(
-                """
-                SELECT
-                    mte.trade_date AS trade_date,
-                    mt.id AS market_theme_id,
-                    mt.theme_name AS theme_name,
-                    mte.stock_code AS stock_code,
-                    COALESCE(mte.stock_name, s.stock_name, mte.stock_code, '-') AS stock_name,
-                    mte.user_memo AS user_memo
-                FROM market_trend_events mte
-                JOIN market_trend_event_theme_links l ON l.event_id = mte.id
-                JOIN market_themes mt ON mt.id = l.market_theme_id
-                LEFT JOIN stocks s ON s.id = mte.stock_id
-                WHERE mte.trade_date BETWEEN :start_date AND :end_date
-                  AND mte.detection_source IN ('kiwoom_condition', 'kiwoom_rest', 'manual')
-                  AND COALESCE(mte.is_active, 1) = 1
-                  AND COALESCE(l.is_active, 1) = 1
-                  AND COALESCE(mt.is_active, 1) = 1
-                  AND COALESCE(mte.deleted_at, '') = ''
-                  AND COALESCE(l.deleted_at, '') = ''
-                  AND TRIM(COALESCE(mte.user_memo, '')) <> ''
-                ORDER BY mte.trade_date ASC, mt.theme_name ASC, stock_name ASC, mte.stock_code ASC
-                """
-            ),
-            {"start_date": month_start.isoformat(), "end_date": month_end.isoformat()},
-        ).mappings().all()
-        memo_items_by_date: dict[str, list[MonthlyThemeFlowMemoItem]] = {}
-        seen_memos: set[tuple[str, int, str, str]] = set()
-        for row in memo_rows:
-            trade_date = str(row["trade_date"])
-            theme_id = int(row["market_theme_id"]) if row["market_theme_id"] is not None else 0
-            stock_code = str(row["stock_code"] or "")
-            memo = str(row["user_memo"] or "").strip()
-            seen_key = (trade_date, theme_id, stock_code or str(row["stock_name"] or ""), memo)
-            if seen_key in seen_memos:
-                continue
-            seen_memos.add(seen_key)
-            memo_items_by_date.setdefault(trade_date, []).append(
-                MonthlyThemeFlowMemoItem(
-                    theme_id=theme_id or None,
-                    theme_name=str(row["theme_name"] or "미지정 테마"),
-                    stock_code=stock_code or None,
-                    stock_name=str(row["stock_name"] or stock_code or "-"),
-                    memo=memo,
-                )
-            )
-
-        grouped: dict[str, list[DailyThemeFlowSummaryItem]] = {}
-        theme_group_meta: dict[tuple[str, int], dict[str, object]] = {}
-        for row in rows:
-            trade_date = str(row["trade_date"])
-            theme_id = int(row["market_theme_id"])
-            theme_group_meta[(trade_date, theme_id)] = {
-                "theme_group_id": int(row["theme_group_id"]) if row["theme_group_id"] is not None else None,
-                "theme_group_name": str(row["theme_group_name"] or "미지정 테마그룹"),
-            }
-            grouped.setdefault(trade_date, []).append(
+                for row in theme_records
+            ]
+            grouped[trade_date].append(
                 DailyThemeFlowSummaryItem(
                     market_theme_id=theme_id,
-                    theme_name=str(row["theme_name"]),
-                    stock_count=int(row["stock_count"] or 0),
-                    event_count=int(row["event_count"] or 0),
-                    avg_change_rate=float(row["avg_change_rate"]) if row["avg_change_rate"] is not None else None,
-                    max_change_rate=float(row["max_change_rate"]) if row["max_change_rate"] is not None else None,
-                    estimated_trading_value_sum=int(row["estimated_trading_value_sum"] or 0),
+                    theme_name=str(theme_records[0]["theme_name"]),
+                    stock_count=len(theme_records),
+                    event_count=len(theme_records),
+                    avg_change_rate=sum(valid_rates) / len(valid_rates) if valid_rates else None,
+                    max_change_rate=max(valid_rates) if valid_rates else None,
+                    estimated_trading_value_sum=sum(int(row["trading_value"] or 0) for row in theme_records),
                     representative_stocks=[],
                 )
             )
 
-        day_total_rows = self.db.execute(
-            text(
-                """
-                SELECT
-                    mte.trade_date AS trade_date,
-                    COUNT(DISTINCT mte.id) AS event_count,
-                    COUNT(DISTINCT mte.stock_code) AS related_stock_count
-                FROM market_trend_events mte
-                JOIN market_trend_event_theme_links l ON l.event_id = mte.id
-                JOIN market_themes mt ON mt.id = l.market_theme_id
-                WHERE mte.trade_date BETWEEN :start_date AND :end_date
-                  AND mte.detection_source IN ('kiwoom_condition', 'kiwoom_rest', 'manual')
-                  AND COALESCE(mte.is_active, 1) = 1
-                  AND COALESCE(l.is_active, 1) = 1
-                  AND COALESCE(mt.is_active, 1) = 1
-                  AND COALESCE(mte.deleted_at, '') = ''
-                  AND COALESCE(l.deleted_at, '') = ''
-                GROUP BY mte.trade_date
-                """
-            ),
-            {"start_date": month_start.isoformat(), "end_date": month_end.isoformat()},
-        ).mappings().all()
-        day_totals = {
-            str(row["trade_date"]): {
-                "event_count": int(row["event_count"] or 0),
-                "related_stock_count": int(row["related_stock_count"] or 0),
-            }
-            for row in day_total_rows
-        }
-
+        manual_rank_maps = self._load_manual_rank_maps(month_start.isoformat(), month_end.isoformat())
         days: list[MonthlyThemeFlowCalendarDayItem] = []
         cursor = month_start
         while cursor <= month_end:
             key = cursor.isoformat()
-            day_themes = grouped.get(key, [])
-            ranked_day = self._apply_rank_overrides(trade_date=key, items=day_themes)
-            ranked = [
+            ranked_day = self._apply_rank_overrides(
+                trade_date=key,
+                items=grouped.get(key, []),
+                manual_map=manual_rank_maps.get(key, {}),
+            )
+            themes = [
                 MonthlyThemeFlowCalendarThemeItem(
-                    rank=int(item.final_rank or (idx + 1)),
+                    rank=int(item.final_rank or (index + 1)),
                     market_theme_id=item.market_theme_id,
                     theme_name=item.theme_name,
                     stock_count=item.stock_count,
@@ -1207,15 +1342,14 @@ class ExternalKiwoomService:
                     theme_group_name=str(theme_group_meta.get((key, item.market_theme_id), {}).get("theme_group_name") or "미지정 테마그룹"),
                     stocks=stocks_by_date_theme.get((key, item.market_theme_id), []),
                 )
-                for idx, item in enumerate(ranked_day)
+                for index, item in enumerate(ranked_day)
             ]
-            totals = day_totals.get(key, {"event_count": 0, "related_stock_count": 0})
             days.append(
                 MonthlyThemeFlowCalendarDayItem(
                     trade_date=key,
-                    event_count=totals["event_count"],
-                    related_stock_count=totals["related_stock_count"],
-                    themes=ranked,
+                    event_count=len(day_event_ids.get(key, set())),
+                    related_stock_count=len(day_stock_keys.get(key, set())),
+                    themes=themes,
                     memo_items=memo_items_by_date.get(key, []),
                 )
             )
@@ -1226,9 +1360,10 @@ class ExternalKiwoomService:
             month=month,
             start_date=month_start.isoformat(),
             end_date=month_end.isoformat(),
+            summary_30d=summary_30d,
+            diagnostics=aggregation["diagnostics"],
             days=days,
         )
-
     def get_monthly_theme_flow_trend(
         self,
         month: str,
@@ -1243,238 +1378,168 @@ class ExternalKiwoomService:
         if normalized_view_mode not in {"THEME_GROUP", "THEME"}:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="view_mode는 THEME_GROUP 또는 THEME이어야 합니다.")
         normalized_limit = max(1, min(int(limit), 500)) if limit is not None else None
-        theme_filter_sql = ""
-        params: dict[str, object] = {"start_date": month_start.isoformat(), "end_date": month_end.isoformat()}
-        if theme_group_id is not None:
-            params["theme_group_id"] = theme_group_id
-            if normalized_view_mode == "THEME":
-                theme_filter_sql = "AND mt.parent_theme_id = :theme_group_id"
-            else:
-                theme_filter_sql = "AND COALESCE(parent_mt.id, mt.id) = :theme_group_id"
+        aggregation = self._build_supply_theme_aggregation(month_start, month_end)
+        source_records = list(aggregation["records"])
 
-        id_sql = "COALESCE(parent_mt.id, mt.id)" if normalized_view_mode == "THEME_GROUP" else "mt.id"
-        name_sql = "COALESCE(parent_mt.theme_name, mt.theme_name)" if normalized_view_mode == "THEME_GROUP" else "mt.theme_name"
-        rows = self.db.execute(
-            text(
-                f"""
-                SELECT
-                    mte.trade_date AS trade_date,
-                    {id_sql} AS market_theme_id,
-                    {name_sql} AS theme_name,
-                    CASE WHEN mt.theme_level = 'THEME_GROUP' THEN mt.id ELSE parent_mt.id END AS theme_group_id,
-                    COALESCE(
-                      CASE WHEN mt.theme_level = 'THEME_GROUP' THEN mt.theme_name ELSE parent_mt.theme_name END,
-                      '미지정 테마그룹'
-                    ) AS theme_group_name,
-                    COUNT(*) AS event_count,
-                    COUNT(DISTINCT mte.stock_code) AS stock_count,
-                    AVG(mte.change_rate) AS avg_change_rate,
-                    MAX(mte.change_rate) AS max_change_rate,
-                    SUM(
-                      COALESCE(
-                        mte.trading_value,
-                        0
-                      )
-                    ) AS estimated_trading_value_sum
-                FROM market_trend_events mte
-                JOIN market_trend_event_theme_links l ON l.event_id = mte.id
-                JOIN market_themes mt ON mt.id = l.market_theme_id
-                LEFT JOIN market_themes parent_mt ON parent_mt.id = mt.parent_theme_id
-                WHERE mte.trade_date BETWEEN :start_date AND :end_date
-                  AND mte.detection_source IN ('kiwoom_condition', 'kiwoom_rest', 'manual')
-                  AND COALESCE(mte.is_active, 1) = 1
-                  AND COALESCE(l.is_active, 1) = 1
-                  AND COALESCE(mt.is_active, 1) = 1
-                  AND COALESCE(mte.deleted_at, '') = ''
-                  AND COALESCE(l.deleted_at, '') = ''
-                  {theme_filter_sql}
-                GROUP BY mte.trade_date, {id_sql}, {name_sql}, theme_group_id, theme_group_name
-                """
-            ),
-            params,
-        ).mappings().all()
+        records: list[dict[str, object]] = []
+        for row in source_records:
+            current_group_id = int(row["theme_group_id"]) if row["theme_group_id"] is not None else None
+            if theme_group_id is not None and current_group_id != theme_group_id:
+                continue
+            entity_id = (
+                current_group_id or int(row["market_theme_id"])
+                if normalized_view_mode == "THEME_GROUP"
+                else int(row["market_theme_id"])
+            )
+            entity_name = (
+                str(row["theme_group_name"] if current_group_id is not None else row["theme_name"])
+                if normalized_view_mode == "THEME_GROUP"
+                else str(row["theme_name"])
+            )
+            records.append({**row, "entity_id": entity_id, "entity_name": entity_name})
 
-        child_rows = self.db.execute(
-            text(
-                f"""
-                SELECT
-                    CASE WHEN mt.theme_level = 'THEME_GROUP' THEN mt.id ELSE parent_mt.id END AS theme_group_id,
-                    COALESCE(
-                      CASE WHEN mt.theme_level = 'THEME_GROUP' THEN mt.theme_name ELSE parent_mt.theme_name END,
-                      '미지정 테마그룹'
-                    ) AS theme_group_name,
-                    mt.id AS market_theme_id,
-                    mt.theme_name AS theme_name,
-                    COUNT(*) AS event_count,
-                    COUNT(DISTINCT mte.stock_code) AS stock_count
-                FROM market_trend_events mte
-                JOIN market_trend_event_theme_links l ON l.event_id = mte.id
-                JOIN market_themes mt ON mt.id = l.market_theme_id
-                LEFT JOIN market_themes parent_mt ON parent_mt.id = mt.parent_theme_id
-                WHERE mte.trade_date BETWEEN :start_date AND :end_date
-                  AND mte.detection_source IN ('kiwoom_condition', 'kiwoom_rest', 'manual')
-                  AND COALESCE(mte.is_active, 1) = 1
-                  AND COALESCE(l.is_active, 1) = 1
-                  AND COALESCE(mt.is_active, 1) = 1
-                  AND COALESCE(mte.deleted_at, '') = ''
-                  AND COALESCE(l.deleted_at, '') = ''
-                  {theme_filter_sql}
-                GROUP BY theme_group_id, theme_group_name, mt.id, mt.theme_name
-                """
-            ),
-            params,
-        ).mappings().all()
-        child_theme_map: dict[int, list[dict[str, object]]] = {}
-        for row in child_rows:
-            group_id = int(row["theme_group_id"]) if row["theme_group_id"] is not None else int(row["market_theme_id"])
-            child_theme_map.setdefault(group_id, []).append(
+        entity_daily: dict[tuple[str, int, str], dict[str, object]] = {}
+        child_stats: dict[int, dict[int, dict[str, object]]] = defaultdict(dict)
+        related_stats: dict[int, dict[str, str]] = defaultdict(dict)
+        entity_meta: dict[int, dict[str, object]] = {}
+        for row in records:
+            trade_date = str(row["trade_date"])
+            entity_id = int(row["entity_id"])
+            stock_key = str(row["stock_code"] or row["stock_id"] or row["stock_name"])
+            key = (trade_date, entity_id, stock_key)
+            bucket = entity_daily.setdefault(
+                key,
                 {
-                    "theme_name": str(row["theme_name"]),
-                    "event_count": int(row["event_count"] or 0),
-                    "stock_count": int(row["stock_count"] or 0),
+                    "trade_date": trade_date,
+                    "entity_id": entity_id,
+                    "entity_name": str(row["entity_name"]),
+                    "stock_name": str(row["stock_name"]),
+                    "change_rates": [],
+                    "trading_values": [],
+                },
+            )
+            if row["change_rate"] is not None:
+                bucket["change_rates"].append(float(row["change_rate"]))
+            bucket["trading_values"].append(int(row["trading_value"] or 0))
+            related_stats[entity_id][str(row["stock_name"])] = max(
+                trade_date,
+                related_stats[entity_id].get(str(row["stock_name"]), ""),
+            )
+            entity_meta[entity_id] = {
+                "theme_name": str(row["entity_name"]),
+                "theme_group_id": entity_id if normalized_view_mode == "THEME_GROUP" else row["theme_group_id"],
+                "theme_group_name": str(row["entity_name"] if normalized_view_mode == "THEME_GROUP" else row["theme_group_name"]),
+            }
+            group_id = current_group_id = int(row["theme_group_id"]) if row["theme_group_id"] is not None else int(row["market_theme_id"])
+            child_id = int(row["market_theme_id"])
+            child = child_stats[group_id].setdefault(
+                child_id,
+                {"theme_name": str(row["theme_name"]), "dates_stocks": set(), "stocks": set()},
+            )
+            child["dates_stocks"].add((trade_date, stock_key))
+            child["stocks"].add(stock_key)
+
+        daily_groups: dict[tuple[str, int], list[dict[str, object]]] = defaultdict(list)
+        for bucket in entity_daily.values():
+            rates = list(bucket["change_rates"])
+            daily_groups[(str(bucket["trade_date"]), int(bucket["entity_id"]))].append(
+                {
+                    **bucket,
+                    "change_rate": sum(rates) / len(rates) if rates else None,
+                    "trading_value": max(bucket["trading_values"]) if bucket["trading_values"] else 0,
                 }
             )
-
-        stock_rows = self.db.execute(
-            text(
-                f"""
-                SELECT
-                    {id_sql} AS market_theme_id,
-                    COALESCE(mte.stock_name, s.stock_name, mte.stock_code, '-') AS stock_display_name,
-                    MAX(mte.trade_date) AS latest_date
-                FROM market_trend_events mte
-                JOIN market_trend_event_theme_links l ON l.event_id = mte.id
-                JOIN market_themes mt ON mt.id = l.market_theme_id
-                LEFT JOIN market_themes parent_mt ON parent_mt.id = mt.parent_theme_id
-                LEFT JOIN stocks s ON s.id = mte.stock_id
-                WHERE mte.trade_date BETWEEN :start_date AND :end_date
-                  AND mte.detection_source IN ('kiwoom_condition', 'kiwoom_rest', 'manual')
-                  AND COALESCE(mte.is_active, 1) = 1
-                  AND COALESCE(l.is_active, 1) = 1
-                  AND COALESCE(mt.is_active, 1) = 1
-                  AND COALESCE(mte.deleted_at, '') = ''
-                  AND COALESCE(l.deleted_at, '') = ''
-                  {theme_filter_sql}
-                GROUP BY {id_sql}, COALESCE(mte.stock_name, s.stock_name, mte.stock_code, '-')
-                ORDER BY latest_date DESC, stock_display_name ASC
-                """
-            ),
-            params,
-        ).mappings().all()
-        related_stock_map: dict[int, list[str]] = {}
-        for row in stock_rows:
-            entity_id = int(row["market_theme_id"])
-            stock_name = str(row["stock_display_name"] or "").strip()
-            if not stock_name or stock_name == "-":
-                continue
-            current = related_stock_map.setdefault(entity_id, [])
-            if stock_name not in current and len(current) < 8:
-                current.append(stock_name)
 
         date_keys: list[str] = []
         cursor = month_start
         while cursor <= month_end:
             date_keys.append(cursor.isoformat())
             cursor += timedelta(days=1)
-
-        by_date: dict[str, list[DailyThemeFlowSummaryItem]] = {}
-        for row in rows:
-            key = str(row["trade_date"])
-            by_date.setdefault(key, []).append(
+        by_date: dict[str, list[DailyThemeFlowSummaryItem]] = defaultdict(list)
+        for (trade_date, entity_id), daily_records in daily_groups.items():
+            valid_rates = [float(row["change_rate"]) for row in daily_records if row["change_rate"] is not None]
+            by_date[trade_date].append(
                 DailyThemeFlowSummaryItem(
-                    market_theme_id=int(row["market_theme_id"]),
-                    theme_name=str(row["theme_name"]),
-                    event_count=int(row["event_count"] or 0),
-                    stock_count=int(row["stock_count"] or 0),
-                    avg_change_rate=float(row["avg_change_rate"]) if row["avg_change_rate"] is not None else None,
-                    max_change_rate=float(row["max_change_rate"]) if row["max_change_rate"] is not None else None,
-                    estimated_trading_value_sum=int(row["estimated_trading_value_sum"] or 0),
+                    market_theme_id=entity_id,
+                    theme_name=str(daily_records[0]["entity_name"]),
+                    event_count=len(daily_records),
+                    stock_count=len(daily_records),
+                    avg_change_rate=sum(valid_rates) / len(valid_rates) if valid_rates else None,
+                    max_change_rate=max(valid_rates) if valid_rates else None,
+                    estimated_trading_value_sum=sum(int(row["trading_value"] or 0) for row in daily_records),
                     representative_stocks=[],
                 )
             )
+
+        manual_rank_maps = self._load_manual_rank_maps(month_start.isoformat(), month_end.isoformat())
         day_ranked: dict[str, list[DailyThemeFlowSummaryItem]] = {}
         total_score_map: dict[int, int] = {}
-        theme_name_map: dict[int, str] = {}
-        theme_group_meta_map: dict[int, dict[str, object]] = {}
         for key in date_keys:
-            ranked = self._apply_rank_overrides(trade_date=key, items=by_date.get(key, []))
+            ranked = self._apply_rank_overrides(
+                trade_date=key,
+                items=by_date.get(key, []),
+                manual_map=manual_rank_maps.get(key, {}),
+            )
             day_ranked[key] = ranked
             for item in ranked:
-                score = int(item.rank_score or 0)
-                total_score_map[item.market_theme_id] = total_score_map.get(item.market_theme_id, 0) + score
-                theme_name_map[item.market_theme_id] = item.theme_name
-        for row in rows:
-            entity_id = int(row["market_theme_id"])
-            if normalized_view_mode == "THEME_GROUP":
-                group_id = entity_id
-                group_name = str(row["theme_name"])
-            else:
-                group_id = int(row["theme_group_id"]) if row["theme_group_id"] is not None else None
-                group_name = str(row["theme_group_name"] or "미지정 테마그룹")
-            theme_group_meta_map[entity_id] = {
-                "theme_group_id": group_id,
-                "theme_group_name": group_name,
-            }
+                total_score_map[item.market_theme_id] = total_score_map.get(item.market_theme_id, 0) + int(item.rank_score or 0)
 
-        sorted_theme_ids = sorted(total_score_map.keys(), key=lambda tid: (total_score_map.get(tid, 0), theme_name_map.get(tid, "")), reverse=True)
-
+        sorted_ids = sorted(
+            total_score_map,
+            key=lambda entity_id: (total_score_map[entity_id], str(entity_meta.get(entity_id, {}).get("theme_name", ""))),
+            reverse=True,
+        )
+        target_ids = sorted_ids[:normalized_limit] if normalized_limit is not None else sorted_ids
         themes: list[MonthlyThemeFlowTrendTheme] = []
-        target_theme_ids = sorted_theme_ids[:normalized_limit] if normalized_limit is not None else sorted_theme_ids
-        for theme_id in target_theme_ids:
+        for entity_id in target_ids:
             cumulative = 0
             series: list[MonthlyThemeFlowTrendPoint] = []
             for key in date_keys:
-                ranked_day = day_ranked.get(key, [])
-                day_item = next((x for x in ranked_day if x.market_theme_id == theme_id), None)
-                if day_item is not None:
-                    daily_score = int(day_item.rank_score or 0)
-                    cumulative += daily_score
+                item = next((candidate for candidate in day_ranked.get(key, []) if candidate.market_theme_id == entity_id), None)
+                if item is None:
                     series.append(
                         MonthlyThemeFlowTrendPoint(
-                            trade_date=key,
-                            value=cumulative,
-                            daily_score=daily_score,
-                            final_rank=day_item.final_rank,
-                            rank_basis=day_item.rank_basis,
-                            stock_count=day_item.stock_count,
-                            event_count=day_item.event_count,
-                            avg_change_rate=day_item.avg_change_rate,
-                            max_change_rate=day_item.max_change_rate,
-                            estimated_trading_value_sum=day_item.estimated_trading_value_sum,
-                        )
-                    )
-                else:
-                    series.append(
-                        MonthlyThemeFlowTrendPoint(
-                            trade_date=key,
-                            value=cumulative,
-                            daily_score=0,
-                            final_rank=None,
-                            rank_basis="auto",
-                            stock_count=0,
-                            event_count=0,
-                            avg_change_rate=None,
-                            max_change_rate=None,
+                            trade_date=key, value=cumulative, daily_score=0, final_rank=None, rank_basis="auto",
+                            stock_count=0, event_count=0, avg_change_rate=None, max_change_rate=None,
                             estimated_trading_value_sum=0,
                         )
                     )
-            group_meta = theme_group_meta_map.get(theme_id, {})
-            group_id = group_meta.get("theme_group_id")
-            child_themes = child_theme_map.get(int(group_id), []) if group_id is not None else []
-            child_theme_names = [
-                str(row["theme_name"])
-                for row in sorted(child_themes, key=lambda x: (int(x["event_count"]), int(x["stock_count"]), str(x["theme_name"])), reverse=True)
+                    continue
+                daily_score = int(item.rank_score or 0)
+                cumulative += daily_score
+                series.append(
+                    MonthlyThemeFlowTrendPoint(
+                        trade_date=key, value=cumulative, daily_score=daily_score,
+                        final_rank=item.final_rank, rank_basis=item.rank_basis,
+                        stock_count=item.stock_count, event_count=item.event_count,
+                        avg_change_rate=item.avg_change_rate, max_change_rate=item.max_change_rate,
+                        estimated_trading_value_sum=item.estimated_trading_value_sum,
+                    )
+                )
+            meta = entity_meta.get(entity_id, {})
+            group_id = int(meta["theme_group_id"]) if meta.get("theme_group_id") is not None else None
+            children = child_stats.get(group_id or entity_id, {})
+            child_names = [
+                str(item["theme_name"])
+                for item in sorted(
+                    children.values(),
+                    key=lambda item: (len(item["dates_stocks"]), len(item["stocks"]), str(item["theme_name"])),
+                    reverse=True,
+                )
+            ]
+            related_stocks = [
+                name for name, _ in sorted(related_stats.get(entity_id, {}).items(), key=lambda item: (item[1], item[0]), reverse=True)
             ]
             themes.append(
                 MonthlyThemeFlowTrendTheme(
-                    market_theme_id=theme_id,
-                    theme_name=theme_name_map.get(theme_id, str(theme_id)),
+                    market_theme_id=entity_id,
+                    theme_name=str(meta.get("theme_name") or entity_id),
                     view_mode=normalized_view_mode,
-                    theme_group_id=int(group_id) if group_id is not None else None,
-                    theme_group_name=str(group_meta.get("theme_group_name") or ""),
-                    child_theme_count=len(child_theme_names) if normalized_view_mode == "THEME_GROUP" else 0,
-                    top_child_themes=child_theme_names[:3] if normalized_view_mode == "THEME_GROUP" else [],
-                    related_stocks=related_stock_map.get(theme_id, []),
+                    theme_group_id=group_id,
+                    theme_group_name=str(meta.get("theme_group_name") or ""),
+                    child_theme_count=len(child_names) if normalized_view_mode == "THEME_GROUP" else 0,
+                    top_child_themes=child_names[:3] if normalized_view_mode == "THEME_GROUP" else [],
+                    related_stocks=related_stocks[:8],
                     series=series,
                 )
             )
@@ -1484,9 +1549,9 @@ class ExternalKiwoomService:
             month=month,
             start_date=month_start.isoformat(),
             end_date=month_end.isoformat(),
+            diagnostics=aggregation["diagnostics"],
             themes=themes,
         )
-
     def _resolve_theme_flow_trend_window(
         self,
         month: str,
@@ -2340,16 +2405,19 @@ class ExternalKiwoomService:
         theme_group_id: int | None = None,
         keyword: str | None = None,
         limit: int | None = None,
+        sort_by: str = "CURRENT_STRENGTH",
     ) -> MarketThemeMonthlyReturnResponse:
         try:
             end = date.fromisoformat(end_date)
         except Exception:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="end_date는 YYYY-MM-DD 형식이어야 합니다.")
+        normalized_sort = str(sort_by or "CURRENT_STRENGTH").upper()
+        if normalized_sort not in {"CURRENT_STRENGTH", "ROLLING_30D_RETURN"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="sort_by는 CURRENT_STRENGTH 또는 ROLLING_30D_RETURN이어야 합니다.")
         normalized_days = max(1, min(int(days or 30), 120))
         start = end - timedelta(days=normalized_days - 1)
-        calc_start = start - timedelta(days=29)
+        calc_start = start - timedelta(days=59)
         params: dict[str, object] = {
-            "start_date": start.isoformat(),
             "calc_start_date": calc_start.isoformat(),
             "end_date": end.isoformat(),
         }
@@ -2374,7 +2442,8 @@ class ExternalKiwoomService:
                 LEFT JOIN market_theme_daily_returns d
                   ON d.theme_id=t.id AND d.return_date BETWEEN :calc_start_date AND :end_date
                 WHERE {sql_where}
-                ORDER BY t.is_supply_theme DESC, COALESCE(p.theme_name, '미지정') ASC, t.sort_order ASC, t.theme_name ASC, d.return_date ASC
+                ORDER BY t.is_supply_theme DESC, COALESCE(p.theme_name, '미지정') ASC,
+                         t.sort_order ASC, t.theme_name ASC, d.return_date ASC
                 """
             ),
             params,
@@ -2388,87 +2457,216 @@ class ExternalKiwoomService:
                 "theme_name": str(row["theme_name"]),
                 "theme_group_id": row["theme_group_id"],
                 "theme_group_name": row["theme_group_name"],
-                "daily_returns": [],
+                "observations": [],
             })
-            if row["return_date"]:
-                item["daily_returns"].append(MarketThemeMonthlyReturnDailyItem(
-                    return_date=str(row["return_date"]),
-                    avg_change_rate=row["avg_change_rate"],
-                    total_trading_value_100m=row["total_trading_value_100m"],
-                    rising_stock_count=int(row["rising_stock_count"] or 0),
-                    falling_stock_count=int(row["falling_stock_count"] or 0),
-                    flat_stock_count=int(row["flat_stock_count"] or 0),
-                ))
+            if row["return_date"] and row["avg_change_rate"] is not None:
+                item["observations"].append({
+                    "return_date": str(row["return_date"]),
+                    "avg_change_rate": float(row["avg_change_rate"]),
+                    "total_trading_value_100m": row["total_trading_value_100m"],
+                    "rising_stock_count": int(row["rising_stock_count"] or 0),
+                    "falling_stock_count": int(row["falling_stock_count"] or 0),
+                    "flat_stock_count": int(row["flat_stock_count"] or 0),
+                })
 
-        themes: list[MarketThemeMonthlyReturnThemeItem] = []
-        continuous_rising_by_theme: dict[int, int] = {}
+        candidates: list[dict[str, object]] = []
         for item in grouped.values():
-            all_daily_returns = item["daily_returns"]
-            all_rate_by_date = {
-                date.fromisoformat(day.return_date): float(day.avg_change_rate)
-                for day in all_daily_returns
-                if day.avg_change_rate is not None
+            observations = sorted(item["observations"], key=lambda row: str(row["return_date"]))
+            rate_by_date = {
+                date.fromisoformat(str(row["return_date"])): float(row["avg_change_rate"])
+                for row in observations
             }
-            daily_returns: list[MarketThemeMonthlyReturnDailyItem] = []
-            for day in all_daily_returns:
-                day_date = date.fromisoformat(day.return_date)
-                if day_date < start or day_date > end:
-                    continue
-                window_start = day_date - timedelta(days=29)
-                window_rates = [
-                    rate
-                    for rate_date, rate in all_rate_by_date.items()
-                    if window_start <= rate_date <= day_date
-                ]
-                daily_returns.append(
-                    day.model_copy(
-                        update={
-                            "rolling_30d_change_rate": round(sum(window_rates), 4) if window_rates else None,
-                        }
-                    )
+            rolling_by_date: dict[date, float] = {}
+            for observation_date in rate_by_date:
+                window_start = observation_date - timedelta(days=29)
+                rolling_by_date[observation_date] = round(sum(
+                    rate for rate_date, rate in rate_by_date.items()
+                    if window_start <= rate_date <= observation_date
+                ), 4)
+
+            display_observations = [
+                row for row in observations
+                if start <= date.fromisoformat(str(row["return_date"])) <= end
+            ]
+            daily_returns = [
+                MarketThemeMonthlyReturnDailyItem(
+                    return_date=str(row["return_date"]),
+                    avg_change_rate=float(row["avg_change_rate"]),
+                    rolling_30d_change_rate=rolling_by_date.get(date.fromisoformat(str(row["return_date"]))),
+                    total_trading_value_100m=row["total_trading_value_100m"],
+                    rising_stock_count=int(row["rising_stock_count"]),
+                    falling_stock_count=int(row["falling_stock_count"]),
+                    flat_stock_count=int(row["flat_stock_count"]),
                 )
-            rates = [float(day.avg_change_rate) for day in daily_returns if day.avg_change_rate is not None]
+                for row in display_observations
+            ]
+            display_rates = [float(row["avg_change_rate"]) for row in display_observations]
             compound: float | None = None
-            if rates:
-                acc = 1.0
-                for rate in rates:
-                    acc *= 1 + (rate / 100)
-                compound = round((acc - 1) * 100, 4)
-            sum_return = round(sum(rates), 4) if rates else None
-            trading_value = sum(float(day.total_trading_value_100m or 0) for day in daily_returns)
+            if display_rates:
+                accumulator = 1.0
+                for rate in display_rates:
+                    accumulator *= 1 + (rate / 100)
+                compound = round((accumulator - 1) * 100, 4)
+            sum_return = round(sum(display_rates), 4) if display_rates else None
+            trading_value = round(sum(float(row["total_trading_value_100m"] or 0) for row in display_observations), 4)
             continuous_rising = 0
-            for day in reversed(daily_returns):
-                if day.avg_change_rate is not None and float(day.avg_change_rate) > 0:
+            for row in reversed(display_observations):
+                if float(row["avg_change_rate"]) > 0:
                     continuous_rising += 1
                 else:
                     break
-            theme_id = int(item["theme_id"])
-            continuous_rising_by_theme[theme_id] = continuous_rising
-            themes.append(MarketThemeMonthlyReturnThemeItem(
-                theme_id=theme_id,
-                theme_name=str(item["theme_name"]),
-                theme_group_id=item["theme_group_id"],
-                theme_group_name=item["theme_group_name"],
-                monthly_compound_return=compound,
-                monthly_sum_return=sum_return,
-                period_compound_return=compound,
-                period_sum_return=sum_return,
-                total_trading_value_100m=round(trading_value, 4),
-                rising_days=sum(1 for rate in rates if rate > 0),
-                falling_days=sum(1 for rate in rates if rate < 0),
-                flat_days=sum(1 for rate in rates if rate == 0),
-                data_days=len(rates),
-                daily_returns=daily_returns,
-            ))
 
-        themes.sort(key=lambda row: (row.monthly_compound_return is None, -(row.monthly_compound_return or -999999), row.theme_name))
-        if limit and limit > 0:
-            themes = themes[:limit]
+            recent_observations = observations[-10:]
+            observed_days = len(recent_observations)
+            positive_days = sum(1 for row in recent_observations if float(row["avg_change_rate"]) > 0)
+            weighted_return: float | None = None
+            persistence: float | None = None
+            recent_5d: float | None = None
+            previous_5d: float | None = None
+            momentum_delta: float | None = None
+            last_impulse_date: str | None = None
+            days_since_impulse: int | None = None
+            freshness: float | None = None
+            if observed_days >= 5:
+                weights = list(range(1, observed_days + 1))
+                weighted_return = round(sum(float(row["avg_change_rate"]) * weight for row, weight in zip(recent_observations, weights)) / sum(weights), 4)
+                persistence = round((positive_days / observed_days) * 100, 2)
+                recent_5d = round(sum(float(row["avg_change_rate"]) for row in recent_observations[-5:]), 4)
+                previous_rows = recent_observations[-10:-5]
+                previous_5d = round(sum(float(row["avg_change_rate"]) for row in previous_rows), 4)
+                momentum_delta = round(recent_5d - previous_5d, 4)
+                impulse_window = observations[-30:]
+                for index in range(len(impulse_window) - 1, -1, -1):
+                    if float(impulse_window[index]["avg_change_rate"]) >= 3:
+                        last_impulse_date = str(impulse_window[index]["return_date"])
+                        days_since_impulse = len(impulse_window) - 1 - index
+                        break
+                freshness = float(max(0, 100 - (days_since_impulse * 10))) if days_since_impulse is not None else 0.0
+
+            latest_observation_date = max(rate_by_date) if rate_by_date else None
+            rolling_30d = rolling_by_date.get(latest_observation_date) if latest_observation_date else None
+            display_rolling_values = [
+                value for rolling_date, value in rolling_by_date.items()
+                if start <= rolling_date <= end
+            ]
+            rolling_peak = round(max(display_rolling_values), 4) if display_rolling_values else rolling_30d
+            rolling_peak_gap = round(rolling_30d - rolling_peak, 4) if rolling_30d is not None and rolling_peak is not None else None
+            candidates.append({
+                **item,
+                "daily_returns": daily_returns,
+                "monthly_compound_return": compound,
+                "monthly_sum_return": sum_return,
+                "period_compound_return": compound,
+                "period_sum_return": sum_return,
+                "total_trading_value_100m": trading_value,
+                "rising_days": sum(1 for rate in display_rates if rate > 0),
+                "falling_days": sum(1 for rate in display_rates if rate < 0),
+                "flat_days": sum(1 for rate in display_rates if rate == 0),
+                "data_days": len(display_rates),
+                "continuous_rising_days": continuous_rising,
+                "rolling_30d_change_rate": rolling_30d,
+                "weighted_return_10d": weighted_return,
+                "positive_days_10d": positive_days,
+                "observed_days_10d": observed_days,
+                "persistence_10d": persistence,
+                "recent_5d_return": recent_5d,
+                "previous_5d_return": previous_5d,
+                "momentum_delta": momentum_delta,
+                "last_positive_impulse_date": last_impulse_date,
+                "days_since_positive_impulse": days_since_impulse,
+                "freshness_score": freshness,
+                "rolling_30d_peak": rolling_peak,
+                "rolling_30d_peak_gap": rolling_peak_gap,
+            })
+
+        def percentile_scores(field: str) -> dict[int, float]:
+            values = [(int(row["theme_id"]), float(row[field])) for row in candidates if row.get(field) is not None]
+            if not values:
+                return {}
+            ordered = sorted(value for _, value in values)
+            if len(ordered) == 1:
+                return {values[0][0]: 100.0}
+            scores: dict[int, float] = {}
+            for theme_id, value in values:
+                lower = sum(1 for candidate in ordered if candidate < value)
+                equal = sum(1 for candidate in ordered if candidate == value)
+                average_index = lower + ((equal - 1) / 2)
+                scores[theme_id] = round((average_index / (len(ordered) - 1)) * 100, 2)
+            return scores
+
+        weighted_scores = percentile_scores("weighted_return_10d")
+        momentum_scores = percentile_scores("momentum_delta")
+        for row in candidates:
+            theme_id = int(row["theme_id"])
+            weighted_score = weighted_scores.get(theme_id)
+            momentum_score = momentum_scores.get(theme_id)
+            persistence = row.get("persistence_10d")
+            recent_5d = row.get("recent_5d_return")
+            momentum_delta = row.get("momentum_delta")
+            rolling_30d = row.get("rolling_30d_change_rate")
+            peak_gap = row.get("rolling_30d_peak_gap")
+            stale_penalty = 0.0
+            if rolling_30d is not None and float(rolling_30d) > 0 and recent_5d is not None and float(recent_5d) < 0:
+                stale_penalty += 5
+            if persistence is not None and float(persistence) < 40:
+                stale_penalty += 5
+            if momentum_delta is not None and float(momentum_delta) < 0:
+                stale_penalty += 5
+            if peak_gap is not None and float(peak_gap) <= -8:
+                stale_penalty += 5
+            score: float | None = None
+            status_code = "INSUFFICIENT"
+            status_name = "데이터 부족"
+            if weighted_score is not None and momentum_score is not None and persistence is not None:
+                raw_score = weighted_score * 0.45 + float(persistence) * 0.25 + momentum_score * 0.20 + float(row.get("freshness_score") or 0) * 0.10 - stale_penalty
+                score = round(min(100, max(0, raw_score)), 2)
+                if score < 30 and float(recent_5d or 0) < 0 and float(persistence) < 40:
+                    status_code, status_name = "FADING", "소멸"
+                elif float(rolling_30d or 0) > 0 and (float(recent_5d or 0) < 0 or float(momentum_delta or 0) < 0 or float(persistence) < 50):
+                    status_code, status_name = "SLOWDOWN", "둔화"
+                elif float(recent_5d or 0) > 0 and float(momentum_delta or 0) > 0 and float(row.get("previous_5d_return") or 0) <= 0:
+                    status_code, status_name = "IGNITION", "점화"
+                elif score >= 60 and float(recent_5d or 0) >= 0 and float(persistence) >= 60:
+                    status_code, status_name = "PERSISTENT", "지속"
+                else:
+                    status_code, status_name = "NEUTRAL", "중립"
+            row.update({
+                "weighted_return_score": weighted_score,
+                "momentum_score": momentum_score,
+                "stale_penalty": stale_penalty,
+                "theme_strength_score": score,
+                "strength_status_code": status_code,
+                "strength_status_name": status_name,
+            })
+            logger.debug(
+                "[theme-strength] reference_date=%s theme_id=%s theme_name=%s weighted_return_10d=%s weighted_return_score=%s persistence_10d=%s recent_5d_return=%s previous_5d_return=%s momentum_delta=%s momentum_score=%s freshness_score=%s stale_penalty=%s final_score=%s status=%s",
+                end.isoformat(), theme_id, row["theme_name"], row.get("weighted_return_10d"), weighted_score,
+                persistence, recent_5d, row.get("previous_5d_return"), momentum_delta, momentum_score,
+                row.get("freshness_score"), stale_penalty, score, status_code,
+            )
+
+        def assign_rank(value_field: str, rank_field: str) -> None:
+            ranked = sorted(
+                [row for row in candidates if row.get(value_field) is not None],
+                key=lambda row: (-float(row[value_field]), str(row["theme_name"])),
+            )
+            previous_value: float | None = None
+            previous_rank = 0
+            for index, row in enumerate(ranked, start=1):
+                value = float(row[value_field])
+                rank = previous_rank if previous_value is not None and value == previous_value else index
+                row[rank_field] = rank
+                previous_value, previous_rank = value, rank
+
+        assign_rank("theme_strength_score", "current_strength_rank")
+        assign_rank("rolling_30d_change_rate", "rolling_30d_rank")
+        assign_rank("persistence_10d", "persistence_rank")
+        theme_items = [MarketThemeMonthlyReturnThemeItem(**row) for row in candidates]
 
         def to_top(theme: MarketThemeMonthlyReturnThemeItem | None) -> MarketThemeMonthlyReturnSummaryTopItem | None:
             if theme is None:
                 return None
-            continuous_rising = continuous_rising_by_theme.get(theme.theme_id, 0)
+            continuous_rising = next((int(row.get("continuous_rising_days") or 0) for row in candidates if int(row["theme_id"]) == theme.theme_id), 0)
             return MarketThemeMonthlyReturnSummaryTopItem(
                 theme_id=theme.theme_id,
                 theme_name=theme.theme_name,
@@ -2476,18 +2674,41 @@ class ExternalKiwoomService:
                 period_compound_return=theme.period_compound_return,
                 total_trading_value_100m=theme.total_trading_value_100m,
                 continuous_rising_days=continuous_rising,
+                rolling_30d_change_rate=theme.rolling_30d_change_rate,
+                theme_strength_score=theme.theme_strength_score,
+                persistence_10d=theme.persistence_10d,
+                strength_status_code=theme.strength_status_code,
+                strength_status_name=theme.strength_status_name,
             )
 
-        with_return = [theme for theme in themes if theme.monthly_compound_return is not None]
-        continuous_candidates = [theme for theme in themes if continuous_rising_by_theme.get(theme.theme_id, 0) > 0]
-        top_continuous = max(continuous_candidates, key=lambda x: continuous_rising_by_theme.get(x.theme_id, 0)) if continuous_candidates else None
+        with_rolling = [theme for theme in theme_items if theme.rolling_30d_change_rate is not None]
+        with_strength = [theme for theme in theme_items if theme.theme_strength_score is not None]
+        with_persistence = [theme for theme in theme_items if theme.persistence_10d is not None]
+        current_top = max(with_strength, key=lambda theme: theme.theme_strength_score or 0) if with_strength else None
+        rolling_top = max(with_rolling, key=lambda theme: theme.rolling_30d_change_rate or 0) if with_rolling else None
+        trading_top = max(theme_items, key=lambda theme: theme.total_trading_value_100m or 0) if theme_items else None
+        persistence_top = max(with_persistence, key=lambda theme: theme.persistence_10d or 0) if with_persistence else None
+        with_return = [theme for theme in theme_items if theme.monthly_compound_return is not None]
+        continuous_candidates = [theme for theme in theme_items if next((int(row.get("continuous_rising_days") or 0) for row in candidates if int(row["theme_id"]) == theme.theme_id), 0) > 0]
+        top_continuous = max(continuous_candidates, key=lambda theme: next((int(row.get("continuous_rising_days") or 0) for row in candidates if int(row["theme_id"]) == theme.theme_id), 0)) if continuous_candidates else None
         summary = MarketThemeMonthlyReturnSummary(
-            top_rising_theme=to_top(max(with_return, key=lambda x: x.monthly_compound_return or 0) if with_return else None),
-            top_falling_theme=to_top(min(with_return, key=lambda x: x.monthly_compound_return or 0) if with_return else None),
-            top_trading_value_theme=to_top(max(themes, key=lambda x: x.total_trading_value_100m or 0) if themes else None),
-            rising_day_theme=to_top(max(themes, key=lambda x: x.rising_days) if themes else None),
+            top_rising_theme=to_top(max(with_return, key=lambda theme: theme.monthly_compound_return or 0) if with_return else None),
+            top_falling_theme=to_top(min(with_return, key=lambda theme: theme.monthly_compound_return or 0) if with_return else None),
+            top_trading_value_theme=to_top(trading_top),
+            rising_day_theme=to_top(max(theme_items, key=lambda theme: theme.rising_days) if theme_items else None),
             top_continuous_rising_theme=to_top(top_continuous),
+            current_strength_top=to_top(current_top),
+            rolling_30d_top=to_top(rolling_top),
+            trading_value_top=to_top(trading_top),
+            persistence_top=to_top(persistence_top),
         )
+
+        if normalized_sort == "ROLLING_30D_RETURN":
+            theme_items.sort(key=lambda theme: (theme.rolling_30d_change_rate is None, -(theme.rolling_30d_change_rate or 0), theme.theme_name))
+        else:
+            theme_items.sort(key=lambda theme: (theme.theme_strength_score is None, -(theme.theme_strength_score or 0), theme.theme_name))
+        if limit and limit > 0:
+            theme_items = theme_items[:limit]
         return MarketThemeMonthlyReturnResponse(
             month=end.isoformat()[:7],
             end_date=end.isoformat(),
@@ -2495,7 +2716,8 @@ class ExternalKiwoomService:
             active_only=active_only,
             display_start_date=start.isoformat(),
             display_end_date=end.isoformat(),
-            themes=themes,
+            sort_by=normalized_sort,
+            themes=theme_items,
             summary=summary,
         )
     def get_market_theme_daily_return(self, theme_id: int, return_date: str) -> MarketThemeLatestReturnResponse:

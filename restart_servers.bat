@@ -27,7 +27,7 @@ if errorlevel 1 (
 )
 
 echo [3/5] Starting backend server (.venv + .env)...
-start "DrCT Backend" cmd /k "cd /d "%ROOT%" && call "%VENV_ACTIVATE%" && "%VENV_PY%" scripts\init_db.py && "%VENV_PY%" -m uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000 --env-file .env"
+start "DrCT Backend" cmd /k "cd /d "%ROOT%" && call "%VENV_ACTIVATE%" && "%VENV_PY%" scripts\init_db.py && "%VENV_PY%" -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --env-file .env"
 if errorlevel 1 (
   echo [ERROR] Failed to start backend command window.
   exit /b 1

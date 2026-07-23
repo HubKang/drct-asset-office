@@ -65,6 +65,53 @@ export type MarketSignalEvaluation = {
   missing_data: Record<string, unknown>[];
 };
 
+export type MarketSignalOperationEvaluation = MarketSignalEvaluation & {
+  trend_model_id?: number | null;
+  evaluation_type: "BASELINE" | "PERIODIC" | "MANUAL" | "REPAIR_BASELINE" | "LEGACY";
+  evaluation_type_display_name: string;
+  rule_version: number;
+  previous_state?: string | null;
+  current_state: string;
+  display_name: string;
+  previous_display_name?: string | null;
+  direction_state?: string | null;
+  current_value?: number | null;
+  trend_strength?: number | null;
+  channel_position?: number | null;
+  duration_count?: number | null;
+  normalized_slope?: number | null;
+  r_squared?: number | null;
+  data_quality?: string | null;
+  easy_explanation?: string | null;
+  evaluation_reason?: string | null;
+  collection_run_id?: number | null;
+  is_state_transition: boolean;
+  is_live: boolean;
+  error_message?: string | null;
+  event_id?: number | null;
+  event_type?: string | null;
+  event_summary?: string | null;
+};
+
+export type MarketSignalEvaluationHistory = {
+  signal: { id: number; signal_code: string; signal_name: string; status: string; rule_version: number; display_name: string };
+  operation_summary: { activated_at?: string | null; last_evaluated_at?: string | null; current_rule_version: number };
+  live_statistics: {
+    total_evaluation_count: number;
+    transition_count: number;
+    break_candidate_count: number;
+    break_confirmed_count: number;
+    false_break_count: number;
+    reversal_confirmed_count: number;
+    error_count: number;
+  };
+  validation_statistics: { period_years?: number | null; false_break_count: number; state_counts: Record<string, number> };
+  baseline_status: { exists: boolean; evaluation_type?: string | null; observation_date?: string | null; repair_available: boolean };
+  evaluations: MarketSignalOperationEvaluation[];
+  chart: Record<string, unknown>[];
+  pagination: { page: number; page_size: number; total: number; has_more: boolean };
+};
+
 export type MarketSignalEvent = {
   id: number;
   signal_definition_id: number;
@@ -223,27 +270,44 @@ export type CompositeSignalItem = MarketSignalDefinition & {
 export type ObjectivePhenomenonItem = {
   id: number;
   phenomenon_code: string;
-  phenomenon_name?: string | null;
-  signal_level: "PHENOMENON";
-  user_label: string;
-  rule_status?: string | null;
+  source_composite_signal_id: number;
+  source_rule_version: number;
+  source_title: string;
+  display_title: string;
+  phenomenon_name: string;
+  category?: string | null;
+  tags: string[];
+  description?: string | null;
+  operation_grade: "OFFICIAL" | "REFERENCE";
+  operation_grade_label: string;
+  source_operation_status: string;
+  source_operation_status_label: string;
+  current_state: string;
+  current_state_label: string;
   evaluation_status: string;
-  fulfillment_score?: number | null;
+  phenomenon_score: number;
+  easy_explanation: string;
   observation_date?: string | null;
-  trigger_date?: string | null;
-  first_confirm_date?: string | null;
+  observed_evidence: Record<string, unknown>[];
   trigger_evidence: Record<string, unknown>[];
   confirm_evidence: Record<string, unknown>[];
-  context_evidence: Record<string, unknown>[];
   opposing_evidence: Record<string, unknown>[];
-  invalidation_evidence: Record<string, unknown>[];
   missing_conditions: Record<string, unknown>[];
+  invalidation_evidence: Record<string, unknown>[];
   next_checks: string[];
-  data_quality_score?: number | null;
-  applied_rule_version?: number;
-  cards?: Record<string, unknown>;
+  evidence_count: number;
+  opposing_count: number;
+  missing_count: number;
+  next_check_count: number;
+  recent_change: string;
+  is_flow_candidate: boolean;
+  flow_candidate_status?: string | null;
+  can_add_flow_candidate: boolean;
+  user_note?: string | null;
+  importance: string;
+  user_confirmed_title: boolean;
+  source_evaluation_id?: number | null;
 };
-
 export type MarketSignalRuleTemplate = {
   id: number;
   template_code: string;

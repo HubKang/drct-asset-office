@@ -9,6 +9,7 @@ import type {
   MarketSignalCondition,
   MarketSignalDefinition,
   MarketSignalIndicatorCatalogItem,
+  MarketSignalEvaluationHistory,
   MarketSignalModelProfile,
   MarketSignalOverview,
   MarketSignalRuleTemplate,
@@ -19,6 +20,7 @@ type SignalSubTab = "single" | "composite";
 type StudioSubTab = "simple" | "templates" | "gpt" | "advanced";
 type OperationStatus = "ALL" | "NOT_REGISTERED" | "DRAFT" | "ACTIVE" | "INACTIVE" | "DATA_INSUFFICIENT";
 type ValidationFilter = "ALL" | "UNVALIDATED" | "NEEDS_REVISION" | "VALIDATED" | "ACTIVATION_READY";
+type HistoryFilter = "ALL" | "TRANSITION" | "TREND_WEAKENING" | "BREAK_CANDIDATE" | "BREAK_CONFIRMED" | "FALSE_BREAK" | "REVERSAL_CONFIRMED" | "ERROR";
 
 const STATUS_LABELS: Record<string, string> = {
   DRAFT: "초안",
@@ -35,10 +37,21 @@ const STATUS_LABELS: Record<string, string> = {
   BREAK_CONFIRMED: "추세 이탈 확인",
   REVERSAL_CONFIRMED: "반전 확인",
   FALSE_BREAK: "일시 이탈 후 복귀",
-  TREND_RESUMED: "추세 재개",
+  TREND_RESUMED: "기존 추세 재개",
+  SIDEWAYS: "횡보",
+  ERROR: "평가 오류",
+  UP_TREND: "상승 추세",
+  DOWN_TREND: "하락 추세",
+  UNSTABLE: "불안정",
+  INSUFFICIENT_DATA: "데이터 부족",
   DATA_INSUFFICIENT: "데이터 부족",
   NOT_EVALUATED: "미평가",
-  CANDIDATE: "시작 조건",
+  CANDIDATE: "확인 진행",
+  OBSERVED: "징후 관찰",
+  CONFIRMING: "확인 진행",
+  RELEASED: "현상 해제",
+  OPPOSED: "반대 근거 우세",
+  INVALIDATED: "무효화",
   SIGNAL_AVAILABLE: "생성 가능",
   SIGNAL_NOT_REGISTERED: "미등록",
   SIGNAL_DRAFT: "초안",
@@ -77,11 +90,12 @@ const PREVIEW_SETTING_FIELDS = [
   ["trend_window", "추세 분석 기간"],
   ["channel_multiplier", "채널 배수"],
   ["minimum_break_persistence", "추세 이탈 확인 기간"],
-  ["false_break_window", "False Break 확인 기간"],
+  ["false_break_window", "일시 이탈 후 복귀 확인 기간"],
   ["reversal_persistence", "반전 확인 기간"],
 ] as const;
 
 const ROLES: MarketSignalCondition["condition_role"][] = ["TRIGGER", "REQUIRED", "CONFIRM", "CONTEXT", "OPPOSING", "INVALIDATION"];
+const ROLE_LABELS: Record<string, string> = { TRIGGER: "시작 조건", REQUIRED: "시작 조건", CONFIRM: "지지 확인", CONTEXT: "배경 조건", OPPOSING: "반대 근거", INVALIDATION: "무효화 조건" };
 const TRANSFORMS = ["RAW_VALUE", "SLOPE", "TURN_UP", "TURN_DOWN", "TREND_STATE", "TREND_STRENGTH", "CHANNEL_POSITION", "BREAK_CONFIRMED_UP", "BREAK_CONFIRMED_DOWN", "FALSE_BREAK_UP", "FALSE_BREAK_DOWN"];
 const OPERATORS = [">", ">=", "<", "<=", "=", "!=", "=="];
 
@@ -114,7 +128,7 @@ function Sparkline({ points, markers }: { points?: Record<string, unknown>[]; ma
   );
 }
 
-function TrendPreviewChart({ rows, period }: { rows?: Record<string, unknown>[]; period?: Record<string, unknown> }) {
+function TrendPreviewChart({ rows, period, eventRows }: { rows?: Record<string, unknown>[]; period?: Record<string, unknown>; eventRows?: Record<string, unknown>[] }) {
   const data = (rows ?? []).filter((row) => typeof row.value === "number");
   if (!data.length) return <div className="market-signal-drawer-empty">차트 데이터가 없습니다.</div>;
   const values = data.flatMap((row) => [row.value, row.center, row.upper, row.lower].filter((value): value is number => typeof value === "number"));
@@ -159,6 +173,16 @@ function TrendPreviewChart({ rows, period }: { rows?: Record<string, unknown>[];
         <path className="channel lower" d={linePath("lower")} vectorEffect="non-scaling-stroke" />
         <path className="trend" d={linePath("center")} vectorEffect="non-scaling-stroke" />
         <path className="raw" d={linePath("value")} vectorEffect="non-scaling-stroke" />
+        {(eventRows ?? []).filter((event) => event.is_state_transition).map((event, markerIndex) => {
+          const pointIndex = data.findIndex((row) => String(row.date) === String(event.observation_date));
+          if (pointIndex < 0) return null;
+          const markerX = x(pointIndex);
+          const markerY = y(data[pointIndex].value) ?? 50;
+          const state = String(event.current_state ?? "").toLowerCase();
+          if (state === "break_candidate") return <polygon key={`${String(event.id)}-${markerIndex}`} className={`history-marker ${state}`} points={`${markerX},${markerY - 2.2} ${markerX - 1.9},${markerY + 1.8} ${markerX + 1.9},${markerY + 1.8}`} vectorEffect="non-scaling-stroke"><title>{String(event.display_name)}</title></polygon>;
+          if (state === "reversal_confirmed") return <polygon key={`${String(event.id)}-${markerIndex}`} className={`history-marker ${state}`} points={`${markerX},${markerY - 2.2} ${markerX - 2.2},${markerY} ${markerX},${markerY + 2.2} ${markerX + 2.2},${markerY}`} vectorEffect="non-scaling-stroke"><title>{String(event.display_name)}</title></polygon>;
+          return <circle key={`${String(event.id)}-${markerIndex}`} className={`history-marker ${state}`} cx={markerX} cy={markerY} r="1.8" vectorEffect="non-scaling-stroke"><title>{String(event.display_name)}</title></circle>;
+        })}
         <circle className="current-marker" cx={x(data.length - 1)} cy={y(latest.value) ?? 50} r="1.4" vectorEffect="non-scaling-stroke">
           <title>현재값 {latestDate} · {latestValue}</title>
         </circle>
@@ -180,6 +204,29 @@ function TrendPreviewChart({ rows, period }: { rows?: Record<string, unknown>[];
   );
 }
 
+function PreviewPeriodInfo({ period }: { period?: Record<string, unknown> }) {
+  const displayStart = String(period?.display_range_start ?? period?.range_start ?? "-");
+  const displayEnd = String(period?.display_range_end ?? period?.range_end ?? "-");
+  const analysisStart = String(period?.trend_analysis_start ?? "-");
+  const analysisEnd = String(period?.trend_analysis_end ?? "-");
+  const analysisCount = Number(period?.trend_analysis_observation_count ?? 0);
+
+  return (
+    <div className="market-signal-period-info">
+      <div>
+        <span>표시 구간</span>
+        <strong>{String(period?.actual_period_description ?? "-")}</strong>
+        <strong className="market-signal-period-dates">{displayStart} ~ {displayEnd}</strong>
+      </div>
+      <div>
+        <span>회귀·채널 분석 구간</span>
+        <strong>{analysisCount > 0 ? "최근 " + analysisCount + "개 관측값" : "회귀·채널 분석 데이터 부족"}</strong>
+        <strong className="market-signal-period-dates">{analysisStart} ~ {analysisEnd}</strong>
+      </div>
+    </div>
+  );
+}
+
 function StatusPair({ rule, evalStatus }: { rule?: unknown; evalStatus?: unknown }) {
   return (
     <div className="market-signal-status-pair">
@@ -189,6 +236,40 @@ function StatusPair({ rule, evalStatus }: { rule?: unknown; evalStatus?: unknown
   );
 }
 
+type SignalMoreAction = {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+  title?: string;
+};
+
+function SignalMoreMenu({ actions, label: menuLabel = "기타 관리" }: { actions: SignalMoreAction[]; label?: string }) {
+  if (!actions.length) return null;
+  return (
+    <details className="market-signal-more-menu">
+      <summary aria-label={menuLabel} aria-haspopup="menu" title={menuLabel}>•••</summary>
+      <div role="menu">
+        {actions.map((action) => (
+          <button
+            key={action.label}
+            className={action.danger ? "danger" : ""}
+            type="button"
+            role="menuitem"
+            disabled={action.disabled}
+            title={action.title}
+            onClick={(event) => {
+              action.onClick();
+              event.currentTarget.closest("details")?.removeAttribute("open");
+            }}
+          >
+            {action.label}
+          </button>
+        ))}
+      </div>
+    </details>
+  );
+}
 function EvidenceSummary({ title, count, items }: { title: string; count?: string; items?: Record<string, unknown>[] }) {
   return (
     <div className="market-signal-evidence-block">
@@ -197,7 +278,7 @@ function EvidenceSummary({ title, count, items }: { title: string; count?: strin
         <ul>
           {items.slice(0, 3).map((item, idx) => (
             <li key={`${String(item.item_code)}-${idx}`} title={`${String(item.item_code ?? "")} ${String(item.transform_type ?? "")}`}>
-              {String(item.item_code ?? "-")}
+              {String(item.fact_text ?? item.display_text ?? item.item_display_name ?? item.item_code ?? "-")}
             </li>
           ))}
         </ul>
@@ -278,7 +359,7 @@ function validatePreviewConfig(config: Record<string, number>, dataCount: number
   if (dataCount > 0 && (config.trend_window ?? 0) > dataCount) return "추세 분석 기간은 현재 관측값 수보다 클 수 없습니다.";
   if ((config.channel_multiplier ?? 0) < 0.5 || (config.channel_multiplier ?? 0) > 5) return "채널 배수는 0.5 이상 5.0 이하로 입력해 주세요.";
   if ((config.minimum_break_persistence ?? 0) < 1 || (config.minimum_break_persistence ?? 0) > (config.trend_window ?? 0)) return "추세 이탈 확인 기간은 1 이상, 추세 분석 기간 이하이어야 합니다.";
-  if ((config.false_break_window ?? 0) < 1) return "False Break 확인 기간은 1 이상이어야 합니다.";
+  if ((config.false_break_window ?? 0) < 1) return "일시 이탈 후 복귀 확인 기간은 1 이상이어야 합니다.";
   if ((config.reversal_persistence ?? 0) < 1) return "반전 확인 기간은 1 이상이어야 합니다.";
   return "";
 }
@@ -305,10 +386,13 @@ function MarketSignalsPage() {
   const [studioTab, setStudioTab] = useState<StudioSubTab>("simple");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [singleGroupFilter, setSingleGroupFilter] = useState<MarketIndicatorGroupCode>("ALL");
-  const [singleReadinessFilter, setSingleReadinessFilter] = useState<OperationStatus>("ALL");
+  const [singleReadinessFilter, setSingleReadinessFilter] = useState<OperationStatus>("ACTIVE");
   const [validationFilter, setValidationFilter] = useState<ValidationFilter>("ALL");
   const [singleProfileFilter, setSingleProfileFilter] = useState("ALL");
   const [singleSearch, setSingleSearch] = useState("");
+  const [compositeStatusFilter, setCompositeStatusFilter] = useState<OperationStatus>("ALL");
+  const [compositeValidationFilter, setCompositeValidationFilter] = useState<ValidationFilter>("ALL");
+  const [compositeDetail, setCompositeDetail] = useState<Record<string, unknown> | null>(null);
   const [selectedDraftKeys, setSelectedDraftKeys] = useState<string[]>([]);
   const [draftPreview, setDraftPreview] = useState<Record<string, unknown> | null>(null);
   const [previewPeriod, setPreviewPeriod] = useState<string>("3M");
@@ -320,14 +404,32 @@ function MarketSignalsPage() {
   const [draftConfirmItem, setDraftConfirmItem] = useState<MarketSignalCatalogItem | null>(null);
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
   const [validationResult, setValidationResult] = useState<Record<string, unknown> | null>(null);
+  const [validationDialog, setValidationDialog] = useState<{ item: Record<string, unknown>; kind: SignalSubTab } | null>(null);
   const [activationItem, setActivationItem] = useState<Record<string, unknown> | null>(null);
   const [deactivationItem, setDeactivationItem] = useState<Record<string, unknown> | null>(null);
   const [versionItem, setVersionItem] = useState<Record<string, unknown> | null>(null);
   const [modalReason, setModalReason] = useState("");
+  const [modalPurpose, setModalPurpose] = useState("");
+  const [modalMemo, setModalMemo] = useState("");
+  const [modalError, setModalError] = useState("");
+  const [modalBusy, setModalBusy] = useState(false);
   const [gptGoal, setGptGoal] = useState("미국 금리 상승이 성장주 상대강도 약화로 이어지는 시점을 찾고 싶다.");
   const [gptPrompt, setGptPrompt] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
+  const [historyTarget, setHistoryTarget] = useState<Record<string, unknown> | null>(null);
+  const [historyData, setHistoryData] = useState<MarketSignalEvaluationHistory | null>(null);
+  const [historyFilter, setHistoryFilter] = useState<HistoryFilter>("ALL");
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
+  const [phenomenonFilter, setPhenomenonFilter] = useState<"ALL" | "OFFICIAL" | "REFERENCE" | "FLOW" | "DATA_INSUFFICIENT">("ALL");
+  const [phenomenonDetail, setPhenomenonDetail] = useState<Record<string, unknown> | null>(null);
+  const [phenomenonHistory, setPhenomenonHistory] = useState<Record<string, unknown>[] | null>(null);
+  const [phenomenonHistoryOpen, setPhenomenonHistoryOpen] = useState(false);
+  const [phenomenonHistorySummary, setPhenomenonHistorySummary] = useState<Record<string, unknown> | null>(null);
+  const [phenomenonFlowItem, setPhenomenonFlowItem] = useState<Record<string, unknown> | null>(null);
+  const [phenomenonFlowForm, setPhenomenonFlowForm] = useState({ candidate_title: "", category: "", importance: "NORMAL", user_note: "", auto_update: true });
+  const [phenomenonGptPrompt, setPhenomenonGptPrompt] = useState("");
 
   const catalogByCode = useMemo(() => new Map(catalog.map((item) => [item.code, item])), [catalog]);
   const filteredSignals = useMemo(() => statusFilter === "ALL" ? signals : signals.filter((item) => item.status === statusFilter), [signals, statusFilter]);
@@ -411,21 +513,25 @@ function MarketSignalsPage() {
   };
 
   const previewSingleDraft = async (item: MarketSignalCatalogItem) => {
-    const nextPeriod = defaultPreviewPeriod(item.frequency);
-    setPreviewPeriod(nextPeriod);
-    const result = await repositories.marketSignals.previewSingleIndicatorDraft({
-      item_type: item.item_type,
-      item_code: item.item_code,
-      profile_code: item.recommended_profile_code,
-      period: nextPeriod,
-    });
-    setDraftPreview(result.item);
-    const config = previewConfigFrom(result.item.applied_configuration);
-    setPreviewConfig(config);
-    setPreviewDefaultConfig(config);
-    setPreviewConfigError("");
-    setIsPreviewEditing(false);
-    setHasPreviewUnsavedChanges(false);
+    try {
+      const nextPeriod = defaultPreviewPeriod(item.frequency);
+      setPreviewPeriod(nextPeriod);
+      const result = await repositories.marketSignals.previewSingleIndicatorDraft({
+        item_type: item.item_type,
+        item_code: item.item_code,
+        profile_code: item.recommended_profile_code,
+        period: nextPeriod,
+      });
+      setDraftPreview(result.item);
+      const config = previewConfigFrom(result.item.applied_configuration);
+      setPreviewConfig(config);
+      setPreviewDefaultConfig(config);
+      setPreviewConfigError("");
+      setIsPreviewEditing(false);
+      setHasPreviewUnsavedChanges(false);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "운영 상세를 불러오지 못했습니다.");
+    }
   };
 
   const createSingleDraft = async (item: MarketSignalCatalogItem) => {
@@ -469,6 +575,65 @@ function MarketSignalsPage() {
     setPreviewConfigError("");
   };
 
+  const fetchEvaluationHistory = async (target: Record<string, unknown>, filter: HistoryFilter = historyFilter) => {
+    const signalId = Number(target.signal_definition_id ?? target.id);
+    if (!signalId) return;
+    setHistoryLoading(true);
+    setHistoryError("");
+    try {
+      const data = await repositories.marketSignals.evaluationHistory(signalId, {
+        event_only: filter === "TRANSITION",
+        state: !["ALL", "TRANSITION"].includes(filter) ? filter : undefined,
+        page_size: 50,
+      });
+      setHistoryData(data);
+    } catch (error) {
+      setHistoryError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const openEvaluationHistory = (target: Record<string, unknown>) => {
+    setHistoryTarget(target);
+    setHistoryData(null);
+    setHistoryFilter("ALL");
+    void fetchEvaluationHistory(target, "ALL");
+  };
+
+  const changeHistoryFilter = (filter: HistoryFilter) => {
+    setHistoryFilter(filter);
+    if (historyTarget) void fetchEvaluationHistory(historyTarget, filter);
+  };
+
+  const runManualEvaluation = async () => {
+    if (!historyTarget) return;
+    setHistoryLoading(true);
+    try {
+      if (String(historyTarget.card_type ?? historyTarget.signal_level).toUpperCase().includes("COMPOSITE")) {
+        await repositories.marketSignals.evaluateComposite(Number(historyTarget.id), { save: true });
+      } else {
+        await repositories.marketSignals.evaluateNow(Number(historyTarget.signal_definition_id ?? historyTarget.id));
+      }
+      await fetchEvaluationHistory(historyTarget, historyFilter);
+      await load();
+    } catch (error) {
+      setHistoryError(error instanceof Error ? error.message : String(error));
+      setHistoryLoading(false);
+    }
+  };
+
+  const repairHistoryBaseline = async () => {
+    if (!historyTarget) return;
+    setHistoryLoading(true);
+    try {
+      await repositories.marketSignals.repairBaseline(Number(historyTarget.signal_definition_id), true);
+      await fetchEvaluationHistory(historyTarget, historyFilter);
+    } catch (error) {
+      setHistoryError(error instanceof Error ? error.message : String(error));
+      setHistoryLoading(false);
+    }
+  };
   const toggleDraftCandidate = (item: MarketSignalCatalogItem) => {
     const key = signalItemKey(item);
     setSelectedDraftKeys((current) => current.includes(key) ? current.filter((value) => value !== key) : [...current, key]);
@@ -497,31 +662,166 @@ function MarketSignalsPage() {
     await load();
   };
 
+  const runCompositeValidation = async (item: Record<string, unknown>, years = 3) => {
+    const signalId = Number(item.id ?? item.signal_definition_id);
+    setLoading(true);
+    try {
+      const simulation = await repositories.marketSignals.simulateComposite(signalId, years);
+      await repositories.marketSignals.markValidationComplete(signalId, { validation_period_years: years, validation_summary: simulation });
+      setValidationResult({ signal: item, years, item_name: item.signal_name, message: `${years}년 과거 검증을 완료했습니다. 검증 결과를 확인한 뒤 운영을 활성화할 수 있습니다.` });
+      setNotice(`${String(item.signal_name ?? item.signal_code)} 과거 검증을 완료했습니다.`);
+      await load();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const openPhenomenonDetail = async (item: Record<string, unknown>) => {
+    try {
+      const result = await repositories.marketSignals.phenomenon(Number(item.id));
+      setPhenomenonGptPrompt("");
+      setPhenomenonHistoryOpen(false);
+      setPhenomenonDetail(result.item as unknown as Record<string, unknown>);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "현상 상세를 불러오지 못했습니다.");
+    }
+  };
+
+  const openPhenomenonHistory = async (item: Record<string, unknown>) => {
+    setPhenomenonDetail(item);
+    setPhenomenonHistoryOpen(true);
+    setPhenomenonHistory(null);
+    setPhenomenonHistorySummary(null);
+    try {
+      const [history, summary] = await Promise.all([
+        repositories.marketSignals.phenomenonEpisodes(Number(item.id)),
+        repositories.marketSignals.phenomenonHistorySummary(Number(item.id)),
+      ]);
+      setPhenomenonHistory(history.items);
+      setPhenomenonHistorySummary(summary.item);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "현상 평가 이력을 불러오지 못했습니다.");
+    }
+  };
+
+  const preparePhenomenonFlowCandidate = (item: Record<string, unknown>) => {
+    setPhenomenonFlowItem(item);
+    setPhenomenonFlowForm({
+      candidate_title: String(item.display_title ?? item.phenomenon_name ?? ""),
+      category: String(item.category ?? ""),
+      importance: String(item.importance ?? "NORMAL"),
+      user_note: String(item.user_note ?? ""),
+      auto_update: true,
+    });
+  };
+
+  const savePhenomenonFlowCandidate = async () => {
+    if (!phenomenonFlowItem) return;
+    try {
+      await repositories.marketSignals.addPhenomenonFlowCandidate(Number(phenomenonFlowItem.id), phenomenonFlowForm);
+      setPhenomenonFlowItem(null);
+      setNotice("경제 흐름 후보로 추가했습니다. 그래프는 생성하지 않았습니다.");
+      await load();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "경제 흐름 후보로 추가하지 못했습니다.");
+    }
+  };
+
+  const removePhenomenonFlowCandidate = async (item: Record<string, unknown>) => {
+    try {
+      await repositories.marketSignals.removePhenomenonFlowCandidate(Number(item.id));
+      setNotice("경제 흐름 후보에서 제거했습니다. 기존 이력은 유지됩니다.");
+      await load();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "경제 흐름 후보에서 제거하지 못했습니다.");
+    }
+  };
+
+  const editPhenomenonMetadata = async (item: Record<string, unknown>) => {
+    const displayTitle = window.prompt("현상 표시 제목", String(item.display_title ?? item.phenomenon_name ?? ""));
+    if (displayTitle === null) return;
+    const category = window.prompt("현상 분류", String(item.category ?? ""));
+    if (category === null) return;
+    try {
+      await repositories.marketSignals.updatePhenomenon(Number(item.id), { display_title: displayTitle.trim(), category: category.trim() });
+      setNotice("현상 표시 제목과 분류를 수정했습니다. 정량 상태와 근거는 변경하지 않았습니다.");
+      await load();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "현상 정보를 수정하지 못했습니다.");
+    }
+  };
+
+  const createPhenomenonGptPrompt = async (item: Record<string, unknown>) => {
+    try {
+      const result = await repositories.marketSignals.gptPhenomenonDiagnosis(Number(item.id));
+      setPhenomenonGptPrompt(String(result.item.prompt ?? ""));
+      setPhenomenonHistoryOpen(false);
+      setPhenomenonDetail(item);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "GPT 보조 진단 프롬프트를 만들지 못했습니다.");
+    }
+  };
+  const openCompositeDetail = async (item: Record<string, unknown>) => {
+    try {
+      const detail = await repositories.marketSignals.compositeSignal(Number(item.id));
+      setCompositeDetail({ ...item, ...detail.item });
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const runCompositeEvaluation = async (item: Record<string, unknown>) => {
+    try {
+      await repositories.marketSignals.evaluateComposite(Number(item.id), { save: true });
+      setNotice(`${String(item.signal_name ?? item.signal_code)} 복합 시그널을 재평가했습니다.`);
+      await load();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   const activateSignal = async () => {
     if (!activationItem) return;
-    await repositories.marketSignals.activateWithApproval(Number(activationItem.signal_definition_id), { reason: modalReason });
+    await repositories.marketSignals.activateWithApproval(Number(activationItem.signal_definition_id ?? activationItem.id), { reason: modalReason, purpose: modalPurpose, memo: modalMemo });
     setActivationItem(null);
     setModalReason("");
-    setNotice(`${String(activationItem.item_name ?? activationItem.item_code)} 시그널을 운영 활성화했습니다.`);
+    setModalPurpose("");
+    setModalMemo("");
+    setNotice(`${String(activationItem.item_name ?? activationItem.signal_name ?? activationItem.item_code ?? activationItem.signal_code)} 시그널을 운영 활성화했습니다.`);
     await load();
   };
 
   const deactivateSignal = async () => {
     if (!deactivationItem) return;
-    await repositories.marketSignals.deactivateWithReason(Number(deactivationItem.signal_definition_id), { reason: modalReason });
+    await repositories.marketSignals.deactivateWithReason(Number(deactivationItem.signal_definition_id ?? deactivationItem.id), { reason: modalReason });
     setDeactivationItem(null);
     setModalReason("");
-    setNotice(`${String(deactivationItem.item_name ?? deactivationItem.item_code)} 시그널을 중지했습니다.`);
+    setNotice(`${String(deactivationItem.item_name ?? deactivationItem.signal_name ?? deactivationItem.item_code ?? deactivationItem.signal_code)} 시그널을 중지했습니다.`);
     await load();
   };
 
   const cloneVersion = async () => {
-    if (!versionItem) return;
-    await repositories.marketSignals.cloneVersion(Number(versionItem.signal_definition_id), { reason: modalReason || "새 버전 초안 생성" });
-    setVersionItem(null);
-    setModalReason("");
-    setNotice(`${String(versionItem.item_name ?? versionItem.item_code)} 새 버전 초안을 생성했습니다.`);
-    await load();
+    if (!versionItem || modalBusy) return;
+    setModalBusy(true);
+    setModalError("");
+    try {
+      const result = await repositories.marketSignals.cloneVersion(Number(versionItem.signal_definition_id ?? versionItem.id), { reason: modalReason || "새 버전 초안 생성" });
+      const alreadyExists = Boolean(result.item.already_exists);
+      const createdSignal = result.item.signal as Record<string, unknown> | undefined;
+      const version = String(createdSignal?.current_version ?? "-");
+      setVersionItem(null);
+      setModalReason("");
+      setNotice(alreadyExists
+        ? `${String(versionItem.item_name ?? versionItem.item_code)} v${version} 초안이 이미 있어 해당 초안을 표시합니다.`
+        : `${String(versionItem.item_name ?? versionItem.item_code)} v${version} 새 버전 초안을 생성했습니다.`);
+      await load();
+    } catch (error) {
+      setModalError(error instanceof Error ? error.message : "새 버전 초안을 생성하지 못했습니다.");
+    } finally {
+      setModalBusy(false);
+    }
   };
 
   const createGptDesignPrompt = async () => {
@@ -533,6 +833,34 @@ function MarketSignalsPage() {
   const singleCards = overview?.single_indicator_signals ?? [];
   const compositeCards = overview?.composite_indicator_signals ?? [];
   const phenomenonCards = overview?.objective_phenomena ?? [];
+  const filteredPhenomenonCards = useMemo(() => phenomenonCards.filter((item) => {
+    if (phenomenonFilter === "OFFICIAL") return item.operation_grade === "OFFICIAL";
+    if (phenomenonFilter === "REFERENCE") return item.operation_grade === "REFERENCE";
+    if (phenomenonFilter === "FLOW") return Boolean(item.is_flow_candidate);
+    if (phenomenonFilter === "DATA_INSUFFICIENT") return item.current_state === "DATA_INSUFFICIENT" || Number(item.missing_count ?? 0) > 0;
+    return true;
+  }), [phenomenonCards, phenomenonFilter]);
+  const compositeOperationStatus = (item: Record<string, unknown>): OperationStatus => {
+    const status = String(item.operation_status ?? item.rule_status ?? "DRAFT").toUpperCase();
+    if (status === "ACTIVE") return "ACTIVE";
+    if (status === "INACTIVE" || status === "ARCHIVED") return "INACTIVE";
+    if (String(item.current_evaluation_state ?? item.evaluation_status).toUpperCase() === "DATA_INSUFFICIENT") return "DATA_INSUFFICIENT";
+    return "DRAFT";
+  };
+  const compositeStatusCounts = useMemo(() => {
+    const counts: Record<OperationStatus, number> = { ALL: compositeCards.length, NOT_REGISTERED: 0, DRAFT: 0, ACTIVE: 0, INACTIVE: 0, DATA_INSUFFICIENT: 0 };
+    compositeCards.forEach((item) => { counts[compositeOperationStatus(item)] += 1; });
+    return counts;
+  }, [compositeCards]);
+  const filteredCompositeCards = useMemo(() => compositeCards.filter((item) => {
+    const operation = compositeOperationStatus(item);
+    if (compositeStatusFilter !== "ALL" && operation !== compositeStatusFilter) return false;
+    if (compositeStatusFilter === "DRAFT" && compositeValidationFilter !== "ALL") {
+      const validation = Boolean(item.activation_ready) ? "ACTIVATION_READY" : String(item.validation_status ?? "UNVALIDATED").toUpperCase();
+      return validation === compositeValidationFilter;
+    }
+    return true;
+  }), [compositeCards, compositeStatusFilter, compositeValidationFilter]);
   const singleCardByItem = useMemo(() => {
     const map = new Map<string, Record<string, unknown>>();
     singleCards.forEach((item) => {
@@ -595,21 +923,6 @@ function MarketSignalsPage() {
 
       {notice ? <div className="inline-result inline-success">{notice}</div> : null}
 
-      <section className="market-signal-stage-guide" aria-label="단일 지표 시그널 운영 단계">
-        {STAGE_STEPS.map((step, idx) => (
-          <span key={step} className={draftPreview ? (idx === 0 ? "active" : "") : ""}>
-            <b>{idx + 1}</b>{step.replace(/^\d차\s*/, "")}
-          </span>
-        ))}
-      </section>
-
-      <section className="market-signal-summary-grid">
-        <div><span>추세 이탈 후보</span><strong>{overview?.summary.trend_break_candidate ?? 0}</strong></div>
-        <div><span>추세 이탈 확인</span><strong>{overview?.summary.trend_break_confirmed ?? 0}</strong></div>
-        <div><span>반전 확인</span><strong>{overview?.summary.reversal_confirmed ?? 0}</strong></div>
-        <div><span>False Break</span><strong>{overview?.summary.false_break ?? 0}</strong></div>
-        <div><span>데이터 부족</span><strong>{overview?.summary.data_insufficient ?? 0}</strong></div>
-      </section>
 
       <div className="market-signal-tabs" role="tablist">
         {[
@@ -619,7 +932,7 @@ function MarketSignalsPage() {
           ["studio", "룰 스튜디오"],
           ["learning", "평가·학습"],
         ].map(([key, text]) => (
-          <button key={key} className={mainTab === key ? "active" : ""} type="button" onClick={() => setMainTab(key as MainTab)}>{text}</button>
+          <button key={key} className={mainTab === key ? "active" : ""} type="button" role="tab" aria-selected={mainTab === key} onClick={() => setMainTab(key as MainTab)}>{text}</button>
         ))}
       </div>
 
@@ -640,16 +953,32 @@ function MarketSignalsPage() {
 
       {mainTab === "signals" ? (
         <>
-          <div className="market-signal-subtabs">
-            <button className={signalTab === "single" ? "active" : ""} type="button" onClick={() => setSignalTab("single")}>단일 지표 시그널</button>
-            <button className={signalTab === "composite" ? "active" : ""} type="button" onClick={() => setSignalTab("composite")}>복합 지표 시그널</button>
+          <div className="theme-view-mode-tabs market-theme-view-toggle" role="tablist" aria-label="지표 시그널 유형">
+            <button className={`theme-view-mode-tab ${signalTab === "single" ? "active" : ""}`} type="button" role="tab" aria-selected={signalTab === "single"} onClick={() => setSignalTab("single")}>단일 지표 시그널</button>
+            <button className={`theme-view-mode-tab ${signalTab === "composite" ? "active" : ""}`} type="button" role="tab" aria-selected={signalTab === "composite"} onClick={() => setSignalTab("composite")}>복합 지표 시그널</button>
+          </div>
+          <div className="market-signal-supporting-overview">
+            <section className="market-signal-stage-guide" aria-label="시그널 운영 단계">
+              {STAGE_STEPS.map((step, idx) => (
+                <span key={step} className={draftPreview ? (idx === 0 ? "active" : "") : ""}>
+                  <b>{idx + 1}</b>{step.replace(/^\d차\s*/, "")}
+                </span>
+              ))}
+            </section>
+            <section className="market-signal-summary-grid" aria-label="시그널 현황 요약">
+              <div><span>추세 이탈 후보</span><strong>{overview?.summary.trend_break_candidate ?? 0}</strong></div>
+              <div><span>추세 이탈 확인</span><strong>{overview?.summary.trend_break_confirmed ?? 0}</strong></div>
+              <div><span>반전 확인</span><strong>{overview?.summary.reversal_confirmed ?? 0}</strong></div>
+              <div><span>일시 이탈 후 복귀</span><strong>{overview?.summary.false_break ?? 0}</strong></div>
+              <div><span>데이터 부족</span><strong>{overview?.summary.data_insufficient ?? 0}</strong></div>
+            </section>
           </div>
           {signalTab === "single" ? (
             <>
               <section className="market-signal-filter-row">
                 <div className="market-signal-filter-summary">
-                  <strong>{filteredSignalCatalog.length} / {signalCatalog.total_count}개</strong>
-                  <span>선택 {selectedDraftKeys.length}개</span>
+                  <strong>단일 지표 시그널 {filteredSignalCatalog.length}개</strong>
+                  <span>운영 {statusCounts.ACTIVE} · 초안 {statusCounts.DRAFT} · 중지 {statusCounts.INACTIVE} · 선택 {selectedDraftKeys.length}</span>
                 </div>
                 <div className="market-index-filter-pills market-signal-group-tabs" role="tablist" aria-label="지표 그룹">
                   {MARKET_INDICATOR_GROUPS.map((group) => (
@@ -668,7 +997,7 @@ function MarketSignalsPage() {
                 <div className="market-signal-status-tabs" role="tablist" aria-label="운영 상태">
                   <span>상태</span>
                   {SIGNAL_READINESS_FILTERS.map(([value, text]) => (
-                    <button key={value} className={singleReadinessFilter === value ? "active" : ""} type="button" role="tab" aria-selected={singleReadinessFilter === value} onClick={() => {
+                    <button key={value} className={singleReadinessFilter === value ? "active" : ""} type="button" aria-pressed={singleReadinessFilter === value} onClick={() => {
                       setSingleReadinessFilter(value);
                       if (value !== "DRAFT") setValidationFilter("ALL");
                     }}>
@@ -726,9 +1055,9 @@ function MarketSignalsPage() {
                           <small>{catalogItem.item_code} · {catalogItem.recommended_profile_code}</small>
                         </div>
                         <div className="market-signal-card-badges">
-                          <span title={opStatus === "NOT_REGISTERED" ? "단일 지표 시그널 미등록" : undefined}>{operationLabel(opStatus)}</span>
-                          {opStatus === "DRAFT" ? <span>{validationLabel(validationStatus)}</span> : null}
-                          <strong>{existing ? `현재 판정: ${String(existing.status_label ?? label(existing.evaluation_status))}` : label(catalogItem.readiness)}</strong>
+                          <span className="market-signal-operation-badge" title={opStatus === "NOT_REGISTERED" ? "단일 지표 시그널 미등록" : undefined}>{operationLabel(opStatus)}</span>
+                          {opStatus === "DRAFT" ? <span className="market-signal-validation-badge">{validationLabel(validationStatus)}</span> : null}
+                          <strong className="market-signal-assessment-badge">{existing ? `현재 판정: ${String(existing.status_label ?? label(existing.evaluation_status))}` : label(catalogItem.readiness)}</strong>
                         </div>
                       </header>
                       <div className="market-signal-card-body">
@@ -746,74 +1075,200 @@ function MarketSignalsPage() {
                       <div className="market-signal-card-actions">
                         {opStatus === "NOT_REGISTERED" || opStatus === "DATA_INSUFFICIENT" ? (
                           <>
-                            <button className="btn btn-secondary" type="button" onClick={() => previewSingleDraft(catalogItem)}>1차 추세 확인</button>
-                            <button className="btn btn-primary" type="button" disabled={!canCreate} onClick={() => setDraftConfirmItem(catalogItem)}>2차 시그널 초안 생성</button>
+                            <button className="btn btn-secondary market-signal-action-secondary" type="button" onClick={() => previewSingleDraft(catalogItem)}>1차 추세 확인</button>
+                            <button className="btn btn-primary market-signal-action-primary" type="button" disabled={!canCreate} title={!canCreate ? "분석에 필요한 데이터가 부족합니다." : undefined} onClick={() => setDraftConfirmItem(catalogItem)}>2차 시그널 초안 생성</button>
                           </>
                         ) : null}
                         {opStatus === "DRAFT" && existing ? (
                           <>
-                            <button className="btn btn-secondary" type="button" onClick={() => previewSingleDraft(catalogItem)}>상세 분석</button>
-                            <button className="btn btn-secondary" type="button" onClick={() => runValidation(existing, 3)}>3차 과거 검증</button>
-                            <button className="btn btn-primary" type="button" disabled={!["VALIDATED", "ACTIVATION_READY"].includes(validationStatus) && !existing.activation_ready} onClick={() => { setActivationItem(existing); setModalReason(""); }}>4차 운영 활성화</button>
+                            <button className="btn btn-secondary market-signal-action-secondary" type="button" onClick={() => previewSingleDraft(catalogItem)}>상세 분석</button>
+                            {["VALIDATED", "ACTIVATION_READY"].includes(validationStatus) || existing.activation_ready ? (
+                              <button className="btn btn-primary market-signal-action-primary" type="button" onClick={() => { setActivationItem(existing); setModalReason(""); }}>4차 운영 활성화</button>
+                            ) : (
+                              <button className="btn btn-primary market-signal-action-primary" type="button" onClick={() => setValidationDialog({ item: existing, kind: "single" })}>3차 과거 검증</button>
+                            )}
+                            <SignalMoreMenu actions={["VALIDATED", "ACTIVATION_READY"].includes(validationStatus) || existing.activation_ready
+                              ? [{ label: "과거 재검증", onClick: () => setValidationDialog({ item: existing, kind: "single" }) }]
+                              : [{ label: "운영 활성화", disabled: true, title: "과거 검증을 완료해야 활성화할 수 있습니다.", onClick: () => undefined }]}
+                            />
                           </>
                         ) : null}
                         {opStatus === "ACTIVE" && existing ? (
                           <>
-                            <button className="btn btn-secondary" type="button" onClick={() => previewSingleDraft(catalogItem)}>운영 상세</button>
-                            <button className="btn btn-secondary" type="button" onClick={() => setNotice("평가 이력은 상세 API로 조회 가능합니다.")}>평가 이력</button>
-                            <button className="btn btn-secondary" type="button" onClick={() => { setVersionItem(existing); setModalReason(""); }}>새 버전 초안</button>
-                            <button className="btn btn-secondary" type="button" onClick={() => { setDeactivationItem(existing); setModalReason(""); }}>운영 중지</button>
+                            <button className="btn btn-primary market-signal-action-primary" type="button" onClick={() => openEvaluationHistory(existing)}>평가 이력</button>
+                            <button className="btn btn-secondary market-signal-action-secondary" type="button" onClick={() => previewSingleDraft(catalogItem)}>운영 상세</button>
+                            <SignalMoreMenu actions={[
+                              { label: "새 버전 초안", onClick: () => { setVersionItem(existing); setModalReason(""); setModalError(""); } },
+                              { label: "운영 중지", danger: true, onClick: () => { setDeactivationItem(existing); setModalReason(""); } },
+                            ]} />
                           </>
                         ) : null}
                         {opStatus === "INACTIVE" && existing ? (
                           <>
-                            <button className="btn btn-secondary" type="button" onClick={() => setNotice("평가 이력은 상세 API로 조회 가능합니다.")}>평가 이력</button>
-                            <button className="btn btn-secondary" type="button" onClick={() => { setVersionItem(existing); setModalReason(""); }}>새 버전 초안</button>
+                            <button className="btn btn-primary market-signal-action-primary" type="button" onClick={() => openEvaluationHistory(existing)}>평가 이력</button>
+                            <button className="btn btn-secondary market-signal-action-secondary" type="button" onClick={() => { setVersionItem(existing); setModalReason(""); setModalError(""); }}>새 버전 초안</button>
                           </>
                         ) : null}
                       </div>
-                      <p className="market-signal-next-check">{opStatus === "NOT_REGISTERED" ? "그래프와 추천 분석 기준을 확인한 뒤 시그널 초안 생성 여부를 결정하세요." : opStatus === "DRAFT" ? "과거 데이터에서 추세 이탈과 False Break 판정이 적절한지 확인하세요." : opStatus === "ACTIVE" ? "지표 갱신 후 자동으로 평가되고 있습니다." : existing ? ((existing.next_checks as string[]) ?? [])[0] : catalogItem.recommended_profile_reason}</p>
+                      {opStatus === "ACTIVE" && existing ? (
+                        <div className="market-signal-operation-glance">
+                          <span>최근 자동 평가 <b>{String(existing.latest_operation_evaluation_at ?? "기록 대기")}</b></span>
+                          <span>{existing.latest_transition
+                            ? <>최근 변화 <b>{label((existing.latest_transition as Record<string, unknown>).previous_state)} → {label((existing.latest_transition as Record<string, unknown>).new_state)}</b></>
+                            : <>최근 변화 없음 <b>{label(existing.latest_operation_state ?? existing.evaluation_status)}</b></>}</span>
+                          <span>상태 전환 {String(existing.live_transition_count ?? 0)}회 · 일시 이탈 후 복귀 {String(existing.live_false_break_count ?? 0)}회</span>
+                        </div>
+                      ) : null}
+                      <p className="market-signal-next-check">{opStatus === "NOT_REGISTERED" ? "그래프와 추천 분석 기준을 확인한 뒤 시그널 초안 생성 여부를 결정하세요." : opStatus === "DRAFT" ? "과거 데이터에서 추세 이탈과 일시 이탈 후 복귀 판정이 적절한지 확인하세요." : opStatus === "ACTIVE" ? "지표 갱신 후 자동으로 평가되고 있습니다." : existing ? ((existing.next_checks as string[]) ?? [])[0] : catalogItem.recommended_profile_reason}</p>
                     </article>
                   );
                 })}
               </section>
             </>
           ) : (
-            <section className="market-signal-card-grid">
-              {compositeCards.map((item) => (
-                <article key={String(item.id)} className={cardClass(item.evaluation_status)}>
-                  <header><div><strong>{String(item.signal_name)}</strong><small>{String(item.signal_code)}</small></div><StatusPair rule={item.rule_status_label} evalStatus={item.status_label} /></header>
-                  <div className="market-signal-card-body">
-                    <div className="market-signal-card-reading"><b>{String(item.number_label ?? "-")}</b><span>{String(item.trigger_summary)} · {String(item.confirm_summary)}</span></div>
-                    <Sparkline points={item.sparkline as Record<string, unknown>[]} />
+            <>
+              <section className="market-signal-filter-row market-signal-composite-filter">
+                <div className="market-signal-filter-summary"><strong>복합 지표 시그널 {filteredCompositeCards.length}개</strong><span>운영 {compositeStatusCounts.ACTIVE} · 초안 {compositeStatusCounts.DRAFT} · 중지 {compositeStatusCounts.INACTIVE}</span></div>
+                <div className="market-signal-status-tabs" role="tablist" aria-label="복합 시그널 운영 상태">
+                  <span>운영 상태</span>
+                  {(["ALL", "DRAFT", "ACTIVE", "INACTIVE", "DATA_INSUFFICIENT"] as OperationStatus[]).map((value) => (
+                    <button key={value} className={compositeStatusFilter === value ? "active" : ""} type="button" aria-pressed={compositeStatusFilter === value} onClick={() => {
+                      setCompositeStatusFilter(value);
+                      if (value !== "DRAFT") setCompositeValidationFilter("ALL");
+                    }}>{operationLabel(value)} <em>{compositeStatusCounts[value]}</em></button>
+                  ))}
+                </div>
+                {compositeStatusFilter === "DRAFT" ? (
+                  <div className="market-signal-validation-panel">
+                    <strong>초안 검증 단계</strong>
+                    <div className="market-signal-validation-options">
+                      {VALIDATION_FILTERS.map(([value, text]) => (
+                        <button key={value} className={`market-signal-validation-option state-${value.toLowerCase()} ${compositeValidationFilter === value ? "active" : ""}`} type="button" aria-pressed={compositeValidationFilter === value} onClick={() => setCompositeValidationFilter(value)}>
+                          <span className="dot" aria-hidden="true" /><span>{text}</span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                  <footer><span>{String(item.trigger_summary)}</span><span>{String(item.confirm_summary)}</span><span>{String(item.opposing_summary)}</span></footer>
-                  <div className="market-signal-mini-timeline">{((item.timeline as Record<string, unknown>[]) ?? []).slice(0, 4).map((row, idx) => <span key={idx}>{String(row.label)} {String(row.item_code ?? "")}</span>)}</div>
-                </article>
-              ))}
-            </section>
+                ) : null}
+              </section>
+              <section className="market-signal-card-grid">
+                {filteredCompositeCards.map((item) => {
+                  const operation = compositeOperationStatus(item);
+                  const validation = Boolean(item.activation_ready) ? "ACTIVATION_READY" : String(item.validation_status ?? "UNVALIDATED").toUpperCase();
+                  const groups = (item.condition_groups ?? {}) as Record<string, Record<string, unknown>[]>;
+                  return (
+                    <article key={String(item.id)} className={`${cardClass(item.evaluation_status)} op-${operation.toLowerCase()}`}>
+                      <header>
+                        <div><strong title={String(item.signal_name)}>{String(item.signal_name)}</strong><small title={String(item.signal_code)}>{String(item.model_display_name ?? "조건 결합형")} · 룰 v{String(item.rule_version ?? 1)}</small></div>
+                        <div className="market-signal-card-badges"><span className="market-signal-operation-badge">{String(item.operation_status_display_name ?? operationLabel(operation))}</span><strong className="market-signal-assessment-badge">현재 판정: {String(item.current_evaluation_display_name ?? item.status_label ?? label(item.evaluation_status))}</strong></div>
+                      </header>
+                      <div className="market-signal-card-body">
+                        <div className="market-signal-card-reading"><b>{String(item.number_label ?? "-")}</b><span>{String(item.trigger_summary)} · {String(item.confirm_summary)}</span></div>
+                        <Sparkline points={item.sparkline as Record<string, unknown>[]} />
+                      </div>
+                      <footer><span>{String(item.trigger_summary)}</span><span>{String(item.confirm_summary)}</span><span>{String(item.opposing_summary)}</span><span>{String(item.data_summary ?? "데이터 부족 0개")}</span></footer>
+                      <div className="market-signal-mini-timeline">
+                        {[...(groups.TRIGGER ?? []), ...(groups.CONFIRM ?? [])].slice(0, 3).map((row, idx) => <span key={idx} title={String(row.technical_text ?? "")}>{String(row.display_text ?? row.item_display_name ?? row.item_code ?? "-")}</span>)}
+                        {[...(groups.TRIGGER ?? []), ...(groups.CONFIRM ?? [])].length > 3 ? <button type="button" onClick={() => openCompositeDetail(item)}>+{[...(groups.TRIGGER ?? []), ...(groups.CONFIRM ?? [])].length - 3}개 더 보기</button> : null}
+                      </div>
+                      <div className="market-signal-card-actions">
+                        {operation === "DRAFT" ? (
+                          <>
+                            <button className="btn btn-secondary market-signal-action-secondary" type="button" onClick={() => openCompositeDetail(item)}>조건 상세</button>
+                            {Boolean(item.activation_ready) || ["VALIDATED", "ACTIVATION_READY"].includes(validation) ? (
+                              <button className="btn btn-primary market-signal-action-primary" type="button" onClick={() => { setActivationItem(item); setModalReason(""); }}>4차 운영 활성화</button>
+                            ) : (
+                              <button className="btn btn-primary market-signal-action-primary" type="button" onClick={() => setValidationDialog({ item, kind: "composite" })}>3차 과거 검증</button>
+                            )}
+                            <SignalMoreMenu actions={Boolean(item.activation_ready) || ["VALIDATED", "ACTIVATION_READY"].includes(validation)
+                              ? [{ label: "과거 재검증", onClick: () => setValidationDialog({ item, kind: "composite" }) }]
+                              : [{ label: "운영 활성화", disabled: true, title: "과거 검증을 완료해야 활성화할 수 있습니다.", onClick: () => undefined }]}
+                            />
+                          </>
+                        ) : null}
+                        {operation === "ACTIVE" ? (
+                          <>
+                            <button className="btn btn-primary market-signal-action-primary" type="button" onClick={() => openEvaluationHistory(item)}>평가 이력</button>
+                            <button className="btn btn-secondary market-signal-action-secondary" type="button" onClick={() => openCompositeDetail(item)}>운영 상세</button>
+                            <SignalMoreMenu actions={[
+                              { label: "지금 재평가", onClick: () => runCompositeEvaluation(item) },
+                              { label: "새 버전 초안", onClick: () => { setVersionItem(item); setModalReason(""); setModalError(""); } },
+                              { label: "운영 중지", danger: true, onClick: () => { setDeactivationItem(item); setModalReason(""); } },
+                            ]} />
+                          </>
+                        ) : null}
+                        {operation === "INACTIVE" ? (
+                          <>
+                            <button className="btn btn-primary market-signal-action-primary" type="button" onClick={() => openEvaluationHistory(item)}>평가 이력</button>
+                            <button className="btn btn-secondary market-signal-action-secondary" type="button" onClick={() => openCompositeDetail(item)}>운영 상세</button>
+                            <SignalMoreMenu actions={[{ label: "새 버전 초안", onClick: () => { setVersionItem(item); setModalReason(""); setModalError(""); } }]} />
+                          </>
+                        ) : null}
+                      </div>                      <p className="market-signal-next-check">{operation === "DRAFT" ? "과거 검증을 완료한 뒤 명시적으로 운영을 활성화하세요." : operation === "ACTIVE" ? "관련 단일 지표가 갱신되면 관측일별로 자동 평가됩니다." : "평가 이력은 유지되며 자동 평가 대상에서는 제외됩니다."}</p>
+                    </article>
+                  );
+                })}
+              </section>
+            </>
           )}
         </>
       ) : null}
 
       {mainTab === "phenomena" ? (
-        <section className="market-signal-card-grid">
-          {phenomenonCards.map((item) => (
-            <article key={String(item.id)} className={cardClass(item.evaluation_status)}>
-              <header><div><strong>{String(item.phenomenon_name ?? item.phenomenon_code)}</strong><small>{String(item.phenomenon_code)}</small></div><StatusPair rule={item.rule_status_label} evalStatus={item.status_label} /></header>
-              <div className="market-signal-phenomenon-reading"><b>{String(item.number_label ?? "-")}</b><p>{String(item.plain_judgement ?? "")}</p></div>
-              <div className="market-signal-evidence-grid">
-                <EvidenceSummary title="시작 조건" count={String(item.start_condition_summary ?? "")} items={item.trigger_evidence as Record<string, unknown>[]} />
-                <EvidenceSummary title="지속 확인" count={String(item.confirm_condition_summary ?? "")} items={item.confirm_evidence as Record<string, unknown>[]} />
-                <EvidenceSummary title="반대 근거" items={item.opposing_evidence as Record<string, unknown>[]} />
-                <EvidenceSummary title="데이터 부족" items={item.missing_conditions as Record<string, unknown>[]} />
-              </div>
-              <p className="market-signal-next-check">{((item.next_checks as string[]) ?? [])[0]}</p>
-            </article>
-          ))}
+        <section className="market-phenomena-workspace">
+          <div className="market-phenomena-toolbar">
+            <div><strong>현재 시장에서 관찰되는 현상</strong><span>복합 시그널의 조건 편집이 아니라 실제 관찰 결과를 해석합니다.</span></div>
+            <div role="group" aria-label="객관적 현상 필터">
+              {([
+                ["ALL", "전체"], ["OFFICIAL", "정식 현상"], ["REFERENCE", "참고 현상"],
+                ["FLOW", "흐름 후보"], ["DATA_INSUFFICIENT", "데이터 부족"],
+              ] as const).map(([value, text]) => <button key={value} className={phenomenonFilter === value ? "active" : ""} type="button" onClick={() => setPhenomenonFilter(value)}>{text}</button>)}
+            </div>
+          </div>
+          {!filteredPhenomenonCards.length ? <div className="market-signal-history-empty"><strong>조건에 맞는 객관적 현상이 없습니다.</strong><p>원천 복합 룰의 운영 상태 또는 데이터 준비도를 확인해 주세요.</p></div> : null}
+          <div className="market-phenomena-grid">
+            {filteredPhenomenonCards.map((item) => {
+              const evidence = (item.observed_evidence as Record<string, unknown>[] | undefined) ?? [];
+              const opposing = (item.opposing_evidence as Record<string, unknown>[] | undefined) ?? [];
+              const missing = (item.missing_conditions as Record<string, unknown>[] | undefined) ?? [];
+              const checks = (item.next_checks as string[] | undefined) ?? [];
+              const isOfficial = item.operation_grade === "OFFICIAL";
+              return (
+                <article key={String(item.id)} className={`${cardClass(item.current_state)} market-phenomenon-card`}>
+                  <header>
+                    <div><small>객관적 현상</small><strong>{String(item.display_title ?? item.phenomenon_name ?? item.phenomenon_code)}</strong><span>원천 복합 시그널 · {String(item.source_title ?? "-")}</span></div>
+                    <div className="market-phenomenon-badges"><span className={isOfficial ? "official" : "reference"}>{String(item.operation_grade_label ?? (isOfficial ? "정식 현상" : "참고 현상"))}</span><strong>{String(item.current_state_label ?? label(item.current_state))}</strong>{item.is_flow_candidate ? <em>경제 흐름 후보</em> : null}</div>
+                  </header>
+                  {!isOfficial ? <p className="market-phenomenon-reference-note">아직 운영 승인되지 않은 복합 시그널의 참고 결과입니다. 정식 전환 집계와 운영 흐름 입력에는 사용하지 않습니다.</p> : null}
+                  <div className="market-phenomenon-reading">
+                    <p>{String(item.easy_explanation ?? "")}</p>
+                    <span title="현재 관찰 근거·지속 확인·반대 근거를 종합한 정량 점수입니다.">현상 확인도 <b>{String(item.phenomenon_score ?? 0)}점</b></span>
+                  </div>
+                  <div className="market-phenomenon-evidence-row">
+                    <EvidenceSummary title="관찰 근거" count={`${evidence.length}개`} items={evidence} />
+                    <EvidenceSummary title="반대 근거" count={`${opposing.length}개`} items={opposing} />
+                    <EvidenceSummary title="데이터 부족" count={`${missing.length}개`} items={missing} />
+                  </div>
+                  <div className="market-phenomenon-next-checks"><strong>다음 확인</strong>{checks.length ? <ul>{checks.slice(0, 3).map((check) => <li key={check}>{check}</li>)}</ul> : <p>다음 평가에서 지속 여부를 확인합니다.</p>}</div>
+                  <footer>
+                    <span>최근 변화 · {String(item.recent_change ?? "-")}</span>
+                    <div>
+                      <button className="btn btn-secondary" type="button" onClick={() => openPhenomenonDetail(item)}>근거 상세</button>
+                      <button className="btn btn-secondary" type="button" onClick={() => openPhenomenonHistory(item)}>평가 이력</button>
+                      {Boolean(item.can_add_flow_candidate) ? <button className="btn btn-primary" type="button" onClick={() => preparePhenomenonFlowCandidate(item)}>경제 흐름에 추가</button> : null}
+                      <SignalMoreMenu actions={[
+                        { label: "GPT 보조 진단", onClick: () => void createPhenomenonGptPrompt(item) },
+                        { label: "제목·분류 수정", onClick: () => void editPhenomenonMetadata(item) },
+                        ...(item.is_flow_candidate ? [{ label: "흐름 후보에서 제거", onClick: () => void removePhenomenonFlowCandidate(item), danger: true }] : []),
+                      ]} />
+                    </div>
+                  </footer>
+                </article>
+              );
+            })}
+          </div>
         </section>
       ) : null}
-
       {mainTab === "studio" ? (
         <section className="market-signal-rule-layout">
           <aside className="market-signal-rule-list">
@@ -910,6 +1365,200 @@ function MarketSignalsPage() {
         </section>
       ) : null}
 
+      {phenomenonDetail && !phenomenonHistoryOpen ? (
+        <div className="market-signal-drawer-backdrop" role="presentation" onClick={() => setPhenomenonDetail(null)}>
+          <aside className="market-signal-history-drawer market-phenomenon-drawer" role="dialog" aria-modal="true" aria-label="객관적 현상 근거 상세" onClick={(event) => event.stopPropagation()}>
+            <header>
+              <div><span>객관적 현상 · 근거 상세</span><strong>{String(phenomenonDetail.display_title ?? phenomenonDetail.phenomenon_name ?? "-")}</strong><small>{String(phenomenonDetail.operation_grade_label ?? "-")} · {String(phenomenonDetail.current_state_label ?? "-")}</small></div>
+              <button className="btn btn-secondary" type="button" onClick={() => setPhenomenonDetail(null)}>닫기</button>
+            </header>
+            <div className="market-signal-history-body">
+              <section className="market-signal-history-summary">
+                <div><span>노출 등급</span><strong>{String(phenomenonDetail.operation_grade_label ?? "-")}</strong></div>
+                <div><span>현재 상태</span><strong>{String(phenomenonDetail.current_state_label ?? "-")}</strong></div>
+                <div><span>현상 확인도</span><strong>{String(phenomenonDetail.phenomenon_score ?? 0)}점</strong></div>
+                <div><span>기준일</span><strong>{String(phenomenonDetail.observation_date ?? "-")}</strong></div>
+              </section>
+              <section className="market-phenomenon-drawer-reading"><h3>쉬운 설명</h3><p>{String(phenomenonDetail.easy_explanation ?? "-")}</p></section>
+              <section className="market-phenomenon-source"><span>원천 복합 시그널</span><strong>{String(phenomenonDetail.source_title ?? "-")}</strong><small>{String(phenomenonDetail.source_operation_status_label ?? "-")} · 룰 v{String(phenomenonDetail.source_rule_version ?? 1)}</small></section>
+              {([
+                ["관찰 근거", phenomenonDetail.observed_evidence],
+                ["반대 근거", phenomenonDetail.opposing_evidence],
+                ["데이터 부족", phenomenonDetail.missing_conditions],
+                ["무효화 조건", phenomenonDetail.invalidation_evidence],
+              ] as [string, unknown][]).map(([title, value]) => {
+                const rows = (value as Record<string, unknown>[] | undefined) ?? [];
+                return <section className="market-phenomenon-detail-section" key={title}><h3>{title} <span>{rows.length}개</span></h3>{rows.length ? rows.map((row, idx) => <article key={`${String(row.condition_id)}-${idx}`}><header><strong>{String(row.fact_text ?? row.item_display_name ?? row.item_code ?? "-")}</strong><span>{String(row.latest_judgement ?? (row.missing ? "데이터 부족" : "충족"))}</span></header><dl><dt>지표</dt><dd>{String(row.item_display_name ?? row.item_code ?? "-")}</dd><dt>조건 역할</dt><dd>{String(row.condition_role_label ?? "-")}</dd><dt>데이터 품질</dt><dd>{String(row.data_quality ?? "-")}</dd><dt>기준일</dt><dd>{String(row.base_date ?? phenomenonDetail.observation_date ?? "-")}</dd></dl>{row.missing_reason ? <p>{String(row.missing_reason)}</p> : null}<details><summary>기술 조건</summary><code>{String(row.item_code ?? "-")} · {String(row.transform_type ?? "-")} {String(row.operator ?? "")} {String(row.threshold_value ?? "")}</code></details></article>) : <p>없음</p>}</section>;
+              })}
+              <section className="market-phenomenon-detail-section"><h3>다음 확인</h3><ul>{((phenomenonDetail.next_checks as string[] | undefined) ?? []).map((check) => <li key={check}>{check}</li>)}</ul></section>
+              {phenomenonGptPrompt ? <section className="market-phenomenon-detail-section"><h3>GPT 보조 진단 프롬프트</h3><p>이 프롬프트는 DrCT 상태와 점수를 변경하지 않으며 사용자가 외부 결과를 검토하기 위한 용도입니다.</p><pre>{phenomenonGptPrompt}</pre></section> : null}
+            </div>
+            <footer><button className="btn btn-secondary" type="button" onClick={() => void createPhenomenonGptPrompt(phenomenonDetail)}>GPT 보조 진단</button><button className="btn btn-secondary" type="button" onClick={() => setPhenomenonDetail(null)}>닫기</button></footer>
+          </aside>
+        </div>
+      ) : null}
+
+      {phenomenonDetail && phenomenonHistoryOpen ? (
+        <div className="market-signal-drawer-backdrop" role="presentation" onClick={() => { setPhenomenonDetail(null); setPhenomenonHistoryOpen(false); }}>
+          <aside className="market-signal-history-drawer market-phenomenon-history-drawer" role="dialog" aria-modal="true" aria-label="객관적 현상 평가 이력" onClick={(event) => event.stopPropagation()}>
+            <header><div><span>객관적 현상 · 평가 이력</span><strong>{String(phenomenonDetail.display_title ?? phenomenonDetail.phenomenon_name ?? "-")}</strong><small>원천 복합 평가 ID를 참조한 집계 이력</small></div><button className="btn btn-secondary" type="button" onClick={() => { setPhenomenonDetail(null); setPhenomenonHistoryOpen(false); }}>닫기</button></header>
+            <div className="market-signal-history-body">
+              <section className="market-signal-history-summary">
+                <div><span>최초 평가</span><strong>{String(phenomenonHistorySummary?.first_evaluation_date ?? "-")}</strong></div>
+                <div><span>마지막 평가</span><strong>{String(phenomenonHistorySummary?.last_evaluation_date ?? "-")}</strong></div>
+                <div><span>누적 평가</span><strong>{String(phenomenonHistorySummary?.evaluation_count ?? 0)}회</strong></div>
+                <div><span>상태 전환</span><strong>{String(phenomenonHistorySummary?.transition_count ?? 0)}회</strong></div>
+                <div><span>현상 확인</span><strong>{String(phenomenonHistorySummary?.confirmed_count ?? 0)}회</strong></div>
+                <div><span>현상 해제</span><strong>{String(phenomenonHistorySummary?.released_count ?? 0)}회</strong></div>
+                <div><span>반대 우세</span><strong>{String(phenomenonHistorySummary?.opposed_count ?? 0)}회</strong></div>
+                <div><span>데이터 부족</span><strong>{String(phenomenonHistorySummary?.data_insufficient_count ?? 0)}회</strong></div>
+              </section>
+              {phenomenonHistory === null ? <div className="market-signal-history-status">평가 이력을 불러오는 중입니다.</div> : phenomenonHistory.length ? <section className="market-signal-history-timeline">{phenomenonHistory.map((row) => <details key={String(row.id)} open={Boolean(row.is_state_transition)}><summary><div><strong>{String(row.observation_date ?? "-")}</strong><span>{String(row.evaluation_type ?? "-")} · 원천 평가 #{String(row.source_composite_evaluation_id ?? "-")}</span></div><div>{row.is_state_transition ? <><span>{label(row.previous_state)}</span><b>→</b></> : <span>상태 변화 없음</span>}<strong>{label(row.current_state)}</strong></div></summary><div className="market-signal-history-detail"><p>{String(row.easy_explanation ?? "-")}</p><dl><dt>관찰 근거</dt><dd>{String(row.evidence_count ?? 0)}개</dd><dt>반대 근거</dt><dd>{String(row.opposing_count ?? 0)}개</dd><dt>데이터 부족</dt><dd>{String(row.missing_count ?? 0)}개</dd><dt>현상 확인도</dt><dd>{String(row.phenomenon_score ?? 0)}점</dd></dl></div></details>)}</section> : <section className="market-signal-history-empty"><strong>저장된 LIVE 현상 평가 이력이 없습니다.</strong><p>참고 현상은 정식 이력을 생성하지 않습니다. 원천 복합 룰이 운영 활성화된 뒤 LIVE 평가가 생성되면 기록됩니다.</p></section>}
+            </div>
+            <footer><button className="btn btn-secondary" type="button" onClick={() => { setPhenomenonDetail(null); setPhenomenonHistoryOpen(false); }}>닫기</button></footer>
+          </aside>
+        </div>
+      ) : null}
+      {compositeDetail ? (
+        <div className="market-signal-drawer-backdrop" role="presentation" onClick={() => setCompositeDetail(null)}>
+          <aside className="market-signal-history-drawer market-signal-composite-drawer" role="dialog" aria-modal="true" aria-label="복합 시그널 운영 상세" onClick={(event) => event.stopPropagation()}>
+            <header>
+              <div><span>복합 시그널 운영 상세</span><strong>{String(compositeDetail.signal_name ?? "-")}</strong><small title={String(compositeDetail.signal_code ?? "")}>{String(compositeDetail.model_display_name ?? "조건 결합형")} · 룰 v{String(compositeDetail.current_version ?? compositeDetail.rule_version ?? 1)}</small></div>
+              <button className="btn btn-secondary" type="button" onClick={() => setCompositeDetail(null)}>닫기</button>
+            </header>
+            <div className="market-signal-history-body">
+              <section className="market-signal-history-summary">
+                <div><span>운영 상태</span><strong>{String(compositeDetail.operation_status_display_name ?? label(compositeDetail.status))}</strong></div>
+                <div><span>현재 판정</span><strong>{String(compositeDetail.current_evaluation_display_name ?? label(compositeDetail.current_evaluation_state))}</strong></div>
+                <div><span>검증 상태</span><strong>{validationLabel(compositeDetail.validation_status)}</strong></div>
+                <div><span>최근 평가</span><strong>{String((compositeDetail.latest_evaluation as Record<string, unknown> | undefined)?.observation_date ?? "기록 대기")}</strong></div>
+              </section>
+              {Object.entries(ROLE_LABELS).filter(([role]) => role !== "REQUIRED").map(([role, roleName]) => {
+                const conditions = ((compositeDetail.conditions as Record<string, unknown>[] | undefined) ?? []).filter((condition) => {
+                  const conditionRole = String(condition.condition_role ?? condition.role).toUpperCase();
+                  return role === "TRIGGER" ? ["TRIGGER", "REQUIRED"].includes(conditionRole) : conditionRole === role;
+                });
+                if (!conditions.length) return null;
+                return <section className="market-signal-drawer-section" key={role}><h3>{roleName}</h3><ul className="market-signal-condition-list">{conditions.map((condition, index) => <li key={`${role}-${index}`} title={String(condition.technical_text ?? "")}><strong>{String(condition.display_text ?? condition.item_display_name ?? condition.item_code)}</strong><span>{condition.passed === true ? "충족" : condition.missing === true ? "데이터 부족" : condition.passed === false ? "미충족" : "설정됨"}</span></li>)}</ul></section>;
+              })}
+            </div>
+            <footer><button className="btn btn-secondary" type="button" onClick={() => setCompositeDetail(null)}>닫기</button></footer>
+          </aside>
+        </div>
+      ) : null}
+
+      {historyTarget ? (
+        <div className="market-signal-drawer-backdrop" role="presentation" onClick={() => setHistoryTarget(null)}>
+          <aside className="market-signal-history-drawer" role="dialog" aria-modal="true" aria-label="평가 이력" onClick={(event) => event.stopPropagation()}>
+            <header>
+              <div>
+                <span>평가 이력</span>
+                <strong>{String(historyTarget.item_name ?? historyTarget.signal_name ?? historyTarget.item_code ?? historyTarget.signal_code ?? "-")}</strong>
+                <small><b>운영</b> · 룰 v{String(historyData?.signal.rule_version ?? historyTarget.current_version ?? 1)}</small>
+              </div>
+              <button className="btn btn-secondary" type="button" onClick={() => setHistoryTarget(null)}>닫기</button>
+            </header>
+            <div className="market-signal-history-body">
+              {historyLoading && !historyData ? <div className="market-signal-history-status">평가 이력을 불러오는 중입니다.</div> : null}
+              {historyError ? (
+                <div className="market-signal-history-status error"><strong>평가 이력을 불러오지 못했습니다.</strong><p>{historyError}</p><button className="btn btn-secondary" type="button" onClick={() => fetchEvaluationHistory(historyTarget, historyFilter)}>다시 시도</button></div>
+              ) : null}
+              {historyData ? (
+                <>
+                  <section className="market-signal-history-summary">
+                    {[
+                      ["운영 시작일", String(historyData.operation_summary.activated_at ?? "-").slice(0, 10)],
+                      ["마지막 평가", String(historyData.operation_summary.last_evaluated_at ?? "-")],
+                      ["누적 평가", `${historyData.live_statistics.total_evaluation_count}회`],
+                      ["상태 전환", `${historyData.live_statistics.transition_count}회`],
+                      ["추세 이탈 후보", `${historyData.live_statistics.break_candidate_count}회`],
+                      ["추세 이탈 확인", `${historyData.live_statistics.break_confirmed_count}회`],
+                      ["일시 이탈 후 복귀", `${historyData.live_statistics.false_break_count}회`],
+                      ["반전 확인", `${historyData.live_statistics.reversal_confirmed_count}회`],
+                      ["평가 오류", `${historyData.live_statistics.error_count}회`],
+                    ].map(([title, value]) => <div key={title}><span>{title}</span><strong>{value}</strong></div>)}
+                  </section>
+
+                  <section className="market-signal-history-compare">
+                    <div><span>과거 검증 결과</span><strong>최근 {historyData.validation_statistics.period_years ?? "-"}년</strong><p>일시 이탈 후 복귀 {historyData.validation_statistics.false_break_count}회</p></div>
+                    <div><span>운영 이후</span><strong>{String(historyData.operation_summary.activated_at ?? "-").slice(0, 10)} 이후</strong><p>일시 이탈 후 복귀 {historyData.live_statistics.false_break_count}회</p></div>
+                  </section>
+
+                  {historyData.chart.length ? (
+                    <section className="market-signal-history-panel">
+                      <div className="market-signal-history-heading"><h3>운영 이후 추세</h3><span>LIVE 평가 기준</span></div>
+                      <TrendPreviewChart rows={historyData.chart} eventRows={historyData.evaluations} />
+                    </section>
+                  ) : null}
+
+                  <section className="market-signal-history-toolbar">
+                    <label><span>평가 필터</span><select className="input-control" value={historyFilter} onChange={(event) => changeHistoryFilter(event.target.value as HistoryFilter)}>
+                      <option value="ALL">전체 평가</option>
+                      <option value="TRANSITION">상태 전환만</option>
+                      <option value="TREND_WEAKENING">추세 약화</option>
+                      <option value="BREAK_CANDIDATE">추세 이탈 후보</option>
+                      <option value="BREAK_CONFIRMED">추세 이탈 확인</option>
+                      <option value="FALSE_BREAK">일시 이탈 후 복귀</option>
+                      <option value="REVERSAL_CONFIRMED">반전 확인</option>
+                      <option value="ERROR">평가 오류</option>
+                    </select></label>
+                    <span>{historyData.pagination.total}건</span>
+                  </section>
+
+                  {!historyData.evaluations.length ? (
+                    <section className="market-signal-history-empty">
+                      <h3>평가 이력</h3>
+                      <strong>{historyData.baseline_status.exists ? "조건에 맞는 평가 이력이 없습니다." : "운영 시작 기준 평가가 아직 저장되지 않았습니다."}</strong>
+                      <p>{historyData.live_statistics.total_evaluation_count === 0 ? "운영 활성화 이후 저장된 자동 평가 이력이 없습니다." : "선택한 필터에 해당하는 평가 이력이 없습니다."}</p>
+                      <dl><dt>운영 시작일</dt><dd>{String(historyData.operation_summary.activated_at ?? "-").slice(0, 10)}</dd><dt>현재 기준 상태</dt><dd>{label(historyTarget.evaluation_status)}</dd></dl>
+                      <p>다음 지표 갱신 후 자동 평가 결과가 기록됩니다.</p>
+                      {historyData.baseline_status.repair_available ? <button className="btn btn-secondary" type="button" onClick={repairHistoryBaseline}>기준 평가 생성</button> : null}
+                    </section>
+                  ) : (
+                    <section className="market-signal-history-timeline">
+                      {historyData.evaluations.map((item) => (
+                        <details key={item.id ?? `${item.observation_date}-${item.evaluation_type}`} className={`state-${item.current_state.toLowerCase()}`} open={item.is_state_transition || item.evaluation_type.includes("BASELINE")}>
+                          <summary>
+                            <div><strong>{item.observation_date}</strong><span>{item.evaluation_type_display_name} · {item.evaluated_at ?? "-"}</span></div>
+                            <div>{item.is_state_transition ? <><span>{item.previous_display_name ?? "-"}</span><b>→</b></> : <span>상태 변화 없음</span>}<strong>{item.display_name}</strong></div>
+                          </summary>
+                          <div className="market-signal-history-detail">
+                            <p>{item.easy_explanation ?? "판정 근거가 기록되지 않았습니다."}</p>
+                            <dl>
+                              <dt>현재 방향</dt><dd>{label(item.direction_state)}</dd>
+                              <dt>현재값</dt><dd>{num(item.current_value)}</dd>
+                              <dt>추세 강도</dt><dd>{num(item.trend_strength)}</dd>
+                              <dt>채널 위치</dt><dd>{num(item.channel_position)}</dd>
+                              <dt>지속기간</dt><dd>{item.duration_count ?? "-"}</dd>
+                              <dt>R²</dt><dd>{num(item.r_squared)}</dd>
+                              <dt>정규화 기울기</dt><dd>{num(item.normalized_slope)}</dd>
+                              <dt>데이터 품질</dt><dd>{item.data_quality ?? "-"}</dd>
+                              <dt>룰 버전</dt><dd>v{item.rule_version}</dd>
+                              <dt>수집 실행</dt><dd>{item.collection_run_id ? `#${item.collection_run_id}` : "-"}</dd>
+                            </dl>
+                            {item.event_summary ? <p className="market-signal-history-event">연결 이벤트 · {item.event_summary}</p> : null}
+                          </div>
+                        </details>
+                      ))}
+                    </section>
+                  )}
+
+                  <section className="market-signal-history-help">
+                    <h3>평가 이력이란?</h3><p>운영 활성화 이후 새로운 지표 데이터가 들어올 때마다 DrCT가 현재 추세 상태를 평가한 기록입니다.</p>
+                    <h3>상태 전환이란?</h3><p>이전 평가와 현재 평가의 판정이 달라진 경우입니다.</p>
+                    <h3>일시 이탈 후 복귀란?</h3><p>추세 채널을 벗어났지만 설정된 확인 기간 안에 기존 채널로 다시 들어온 상태입니다.</p>
+                    <h3>과거 검증과 평가 이력의 차이</h3><p>과거 검증은 운영 전 시뮬레이션이며, 평가 이력은 운영 활성화 이후 실제 데이터로 수행한 기록입니다.</p>
+                  </section>
+                </>
+              ) : null}
+            </div>
+            <footer>
+              <button className="btn btn-secondary" type="button" disabled={String(historyTarget.rule_status).toUpperCase() !== "ACTIVE" || historyLoading} onClick={runManualEvaluation}>수동 재평가</button>
+              <button className="btn btn-secondary" type="button" onClick={() => setHistoryTarget(null)}>닫기</button>
+            </footer>
+          </aside>
+        </div>
+      ) : null}
       {draftPreview ? (
         <div className="market-signal-drawer-backdrop" role="presentation" onClick={closePreviewDrawer}>
           <aside className="market-signal-analysis-drawer" role="dialog" aria-modal="true" aria-label="1차 추세 확인" onClick={(event) => event.stopPropagation()}>
@@ -918,22 +1567,7 @@ function MarketSignalsPage() {
               <button className="btn btn-secondary" type="button" onClick={closePreviewDrawer}>닫기</button>
             </header>
             <section className="market-signal-period-bar">
-              <div className="market-signal-period-info">
-                <div>
-                  <span>표시 구간</span>
-                  <strong>
-                    {String((draftPreview.period as Record<string, unknown> | undefined)?.actual_period_description ?? "-")}
-                    {" · "}
-                    {String((draftPreview.period as Record<string, unknown> | undefined)?.display_range_start ?? (draftPreview.period as Record<string, unknown> | undefined)?.range_start ?? "-")}
-                    {" ~ "}
-                    {String((draftPreview.period as Record<string, unknown> | undefined)?.display_range_end ?? (draftPreview.period as Record<string, unknown> | undefined)?.range_end ?? "-")}
-                  </strong>
-                </div>
-                <div>
-                  <span>회귀·채널 분석 구간</span>
-                  <strong>{String((draftPreview.period as Record<string, unknown> | undefined)?.trend_analysis_period_description ?? "회귀·채널 분석 데이터 부족")}</strong>
-                </div>
-              </div>
+              <PreviewPeriodInfo period={draftPreview.period as Record<string, unknown> | undefined} />
               <div className="market-signal-period-buttons" role="group" aria-label="차트 기간">
                 {PREVIEW_PERIODS.map((period) => (
                   <button key={period} className={previewPeriod === period ? "active" : ""} type="button" onClick={async () => {
@@ -1013,6 +1647,21 @@ function MarketSignalsPage() {
         </div>
       ) : null}
 
+      {phenomenonFlowItem ? (
+        <div className="market-signal-modal-backdrop" role="presentation" onClick={() => setPhenomenonFlowItem(null)}>
+          <section className="market-signal-confirm-modal market-phenomenon-flow-modal" role="dialog" aria-modal="true" aria-label="경제 흐름 후보 추가" onClick={(event) => event.stopPropagation()}>
+            <h3>경제 흐름 후보로 추가</h3>
+            <dl><dt>현상</dt><dd>{String(phenomenonFlowItem.display_title ?? phenomenonFlowItem.phenomenon_name ?? "-")}</dd><dt>현재 상태</dt><dd>{String(phenomenonFlowItem.current_state_label ?? "-")}</dd><dt>용도</dt><dd>향후 경제 흐름 관리 화면에서 원인·과정·결과 노드와 연결할 수 있습니다.</dd></dl>
+            <label><span>표시 제목</span><input className="input-control" value={phenomenonFlowForm.candidate_title} onChange={(event) => setPhenomenonFlowForm((current) => ({ ...current, candidate_title: event.target.value }))} /></label>
+            <label><span>분류</span><input className="input-control" value={phenomenonFlowForm.category} onChange={(event) => setPhenomenonFlowForm((current) => ({ ...current, category: event.target.value }))} /></label>
+            <label><span>중요도</span><select className="input-control" value={phenomenonFlowForm.importance} onChange={(event) => setPhenomenonFlowForm((current) => ({ ...current, importance: event.target.value }))}><option value="LOW">낮음</option><option value="NORMAL">보통</option><option value="HIGH">높음</option><option value="CORE">핵심</option></select></label>
+            <label><span>메모</span><textarea className="input-control" value={phenomenonFlowForm.user_note} onChange={(event) => setPhenomenonFlowForm((current) => ({ ...current, user_note: event.target.value }))} /></label>
+            <label className="market-phenomenon-checkbox"><input type="checkbox" checked={phenomenonFlowForm.auto_update} onChange={(event) => setPhenomenonFlowForm((current) => ({ ...current, auto_update: event.target.checked }))} /><span>후속 현상 평가로 후보 상태 자동 갱신</span></label>
+            <p>이번 단계에서는 후보만 저장하며 경제 흐름 그래프를 생성하거나 확정하지 않습니다.</p>
+            <footer><button className="btn btn-secondary" type="button" onClick={() => setPhenomenonFlowItem(null)}>취소</button><button className="btn btn-primary" type="button" disabled={!phenomenonFlowForm.candidate_title.trim()} onClick={savePhenomenonFlowCandidate}>후보로 추가</button></footer>
+          </section>
+        </div>
+      ) : null}
       {draftConfirmItem ? (
         <div className="market-signal-modal-backdrop" role="presentation">
           <section className="market-signal-confirm-modal" role="dialog" aria-modal="true" aria-label="시그널 초안 생성 확인">
@@ -1034,16 +1683,38 @@ function MarketSignalsPage() {
         </div>
       ) : null}
 
+      {validationDialog ? (
+        <div className="market-signal-modal-backdrop" role="presentation" onClick={() => setValidationDialog(null)}>
+          <section className="market-signal-confirm-modal market-signal-validation-modal" role="dialog" aria-modal="true" aria-label="과거 검증 기간 선택" onClick={(event) => event.stopPropagation()}>
+            <h3>과거 검증</h3>
+            <p><strong>{String(validationDialog.item.item_name ?? validationDialog.item.signal_name ?? validationDialog.item.item_code ?? validationDialog.item.signal_code ?? "시그널")}</strong>의 검증 기간을 선택하세요.</p>
+            <div className="market-signal-validation-years" role="group" aria-label="검증 기간">
+              {[1, 3, 5].map((years) => (
+                <button className={years === 3 ? "btn btn-primary" : "btn btn-secondary"} key={years} type="button" onClick={() => {
+                  const target = validationDialog;
+                  setValidationDialog(null);
+                  if (target.kind === "single") void runValidation(target.item, years);
+                  else void runCompositeValidation(target.item, years);
+                }}>{years}년 검증</button>
+              ))}
+            </div>
+            <p>검증 상세 표본은 실행 응답에서만 사용하며 운영에는 집계 결과만 저장됩니다.</p>
+            <footer><button className="btn btn-secondary" type="button" onClick={() => setValidationDialog(null)}>닫기</button></footer>
+          </section>
+        </div>
+      ) : null}
       {activationItem || deactivationItem || versionItem ? (
         <div className="market-signal-modal-backdrop" role="presentation">
           <section className="market-signal-confirm-modal" role="dialog" aria-modal="true" aria-label="운영 상태 변경">
             <h3>{activationItem ? "운영 활성화" : deactivationItem ? "운영 중지" : "새 버전 초안"}</h3>
             <p>{String((activationItem ?? deactivationItem ?? versionItem)?.item_name ?? "-")}</p>
             <label><span>사유</span><textarea className="input-control" value={modalReason} onChange={(event) => setModalReason(event.target.value)} /></label>
+            {activationItem ? <><label><span>운영 목적</span><input className="input-control" value={modalPurpose} onChange={(event) => setModalPurpose(event.target.value)} /></label><label><span>메모</span><textarea className="input-control" value={modalMemo} onChange={(event) => setModalMemo(event.target.value)} /></label></> : null}
             <p>{activationItem ? "운영 활성화 후 지표 데이터가 갱신될 때마다 이 룰이 자동 평가됩니다." : deactivationItem ? "중지 후 과거 평가와 이벤트는 유지되며 운영 입력에서는 제외됩니다." : "현재 운영 설정을 직접 덮어쓰지 않고 새 DRAFT 버전으로 복제합니다."}</p>
+            {modalError ? <p className="inline-result inline-error" role="alert">{modalError}</p> : null}
             <footer>
-              <button className="btn btn-secondary" type="button" onClick={() => { setActivationItem(null); setDeactivationItem(null); setVersionItem(null); setModalReason(""); }}>취소</button>
-              <button className="btn btn-primary" type="button" onClick={activationItem ? activateSignal : deactivationItem ? deactivateSignal : cloneVersion}>{activationItem ? "운영 활성화" : deactivationItem ? "운영 중지" : "새 버전 초안 생성"}</button>
+              <button className="btn btn-secondary" type="button" disabled={modalBusy} onClick={() => { setActivationItem(null); setDeactivationItem(null); setVersionItem(null); setModalReason(""); setModalPurpose(""); setModalMemo(""); setModalError(""); }}>취소</button>
+              <button className="btn btn-primary" type="button" disabled={modalBusy} onClick={activationItem ? activateSignal : deactivationItem ? deactivateSignal : cloneVersion}>{modalBusy && versionItem ? "생성 중..." : activationItem ? "운영 활성화" : deactivationItem ? "운영 중지" : "새 버전 초안 생성"}</button>
             </footer>
           </section>
         </div>

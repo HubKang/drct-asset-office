@@ -66,6 +66,7 @@ export const marketThemeApiRepository = {
     if (params.theme_group_id !== undefined) search.set("theme_group_id", String(params.theme_group_id));
     if (params.keyword) search.set("keyword", params.keyword);
     if (params.limit !== undefined) search.set("limit", String(params.limit));
+    if (params.sort_by) search.set("sort_by", params.sort_by);
     return apiRequest<MarketThemeMonthlyReturnResponse>(`/external/kiwoom/market-themes/returns/range?${search.toString()}`);
   },
   listThemeStocks: (themeId: number) => apiRequest<MarketThemeStock[]>(`/market-themes/${themeId}/stocks`),
