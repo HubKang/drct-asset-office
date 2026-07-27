@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+import logging
 
 from fastapi import HTTPException, status
 from sqlalchemy import text
@@ -22,6 +23,8 @@ from backend.app.schemas.market_theme_stock_schema import (
     MarketThemeStockUpdateRequest,
 )
 from backend.app.utils.stock_code import normalize_stock_code
+
+logger = logging.getLogger(__name__)
 
 
 class MarketThemeStockService:
@@ -86,7 +89,17 @@ class MarketThemeStockService:
         )
         if not row:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="market theme or stock not found")
-        return MarketThemeStockSupplySummaryResponse(**row)
+        response = MarketThemeStockSupplySummaryResponse(**row)
+        logger.info(
+            "[THEME CONTEXT SUPPLY HISTORY] stock_code=%s current_theme=%s linked_themes=%s current_theme_dates=%s overall_stock_dates=%s memo_count=%s",
+            response.stock_code,
+            response.current_theme.theme_name,
+            ",".join(f"{item.theme_name}:{item.supply_count}" for item in response.linked_theme_supply_summaries),
+            response.current_theme_supply_dates,
+            response.overall_stock_supply_dates,
+            len(response.stock_memos),
+        )
+        return response
 
     def create_theme_stock(self, theme_id: int, payload: MarketThemeStockCreateRequest) -> MarketThemeStockResponse:
         theme = self.theme_repo.get_by_id(theme_id)

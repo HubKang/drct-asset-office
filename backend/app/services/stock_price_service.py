@@ -85,6 +85,7 @@ class StockPriceService:
         *,
         mode: str | None = None,
         stop_at_start_date: bool = True,
+        max_pages: int | None = None,
     ) -> tuple[str, list[dict], dict[str, object]]:
         if source == "mock":
             rows = self.mock_collector.collect_daily(stock.id, stock.stock_code, start_date, end_date)
@@ -132,6 +133,7 @@ class StockPriceService:
                 end_date=end_date.isoformat(),
                 mode=mode,
                 stop_at_start_date=stop_at_start_date,
+                max_pages=max_pages,
             )
             payload = [
                 {
@@ -238,6 +240,8 @@ class StockPriceService:
         *,
         mode: str | None = None,
         stop_at_start_date: bool = True,
+        recalculate_derived: bool = True,
+        max_pages: int | None = None,
     ) -> dict[str, object]:
         normalized, payload, diagnostics = self._collect_rows_by_source(
             stock,
@@ -246,12 +250,12 @@ class StockPriceService:
             source,
             mode=mode,
             stop_at_start_date=stop_at_start_date,
+            max_pages=max_pages,
         )
         collected_count = len(payload)
         saved = self.price_repo.upsert_daily_rows(stock.id, source, payload)
-        if payload:
+        if payload and recalculate_derived:
             self.price_repo.recalculate_change_rate_for_stock(stock.id, source=source, digits=2)
-        if payload:
             self.recalculate_moving_averages(stock.id)
         logger.info(
             "일봉 수집 저장 완료: stock_id=%s stock_code=%s normalized=%s source=%s collected=%s saved=%s start=%s end=%s",
@@ -270,6 +274,82 @@ class StockPriceService:
             "saved_count": saved,
             **diagnostics,
         }
+
+    def refresh_price_ranges_only(
+        self,
+        *,
+        stock_ids: list[int],
+        end_date: date,
+        initial_lookback_days: int = 30,
+        source: str = "kiwoom_rest",
+        mode: str = "supply_top20_incremental_refresh",
+    ) -> list[dict[str, object]]:
+        """Refresh each stock once, from its latest stored date or a short initial window."""
+        unique_ids = list(dict.fromkeys(stock_ids))
+        stocks_by_id = {stock.id: stock for stock in self.stock_repo.get_by_ids(unique_ids)}
+        latest_dates = self.price_repo.get_latest_trade_dates(unique_ids)
+        initial_start_date = end_date - timedelta(days=max(1, initial_lookback_days))
+        results: list[dict[str, object]] = []
+
+        for stock_id in unique_ids:
+            stock = stocks_by_id.get(stock_id)
+            if stock is None:
+                results.append({
+                    "stock_id": stock_id, "stock_code": "", "stock_name": "", "status": "FAILED",
+                    "collection_mode": "INITIAL", "collect_start_date": initial_start_date.isoformat(),
+                    "collect_end_date": end_date.isoformat(), "pages_fetched": 0,
+                    "collected_count": 0, "saved_count": 0, "error_message": "stock not found",
+                })
+                continue
+
+            latest_date_text = latest_dates.get(stock_id)
+            if latest_date_text:
+                latest_date = date.fromisoformat(latest_date_text)
+                collect_start_date = min(latest_date, end_date)
+                collection_mode = "INCREMENTAL"
+            else:
+                collect_start_date = initial_start_date
+                collection_mode = "INITIAL"
+
+            try:
+                stats = self._collect_and_upsert_with_stats(
+                    stock,
+                    source,
+                    collect_start_date,
+                    end_date,
+                    mode=mode,
+                    stop_at_start_date=True,
+                    recalculate_derived=False,
+                    max_pages=1,
+                )
+                collected_count = int(stats.get("collected_count") or 0)
+                results.append({
+                    "stock_id": stock.id,
+                    "stock_code": stock.stock_code,
+                    "stock_name": stock.stock_name,
+                    "status": "SUCCESS" if collected_count > 0 else "FAILED",
+                    "collection_mode": collection_mode,
+                    "collect_start_date": collect_start_date.isoformat(),
+                    "collect_end_date": end_date.isoformat(),
+                    "pages_fetched": int(stats.get("pages_fetched") or 0),
+                    "collected_count": collected_count,
+                    "saved_count": int(stats.get("saved_count") or 0),
+                    "error_message": None if collected_count > 0 else "요청 범위의 일봉 가격 응답이 비어 있습니다.",
+                })
+            except Exception as exc:
+                self.db.rollback()
+                logger.exception(
+                    "incremental price-only refresh failed: stock_id=%s stock_code=%s mode=%s",
+                    stock.id, stock.stock_code, mode,
+                )
+                results.append({
+                    "stock_id": stock.id, "stock_code": stock.stock_code, "stock_name": stock.stock_name,
+                    "status": "FAILED", "collection_mode": collection_mode,
+                    "collect_start_date": collect_start_date.isoformat(), "collect_end_date": end_date.isoformat(),
+                    "pages_fetched": 0, "collected_count": 0, "saved_count": 0,
+                    "error_message": self._truncate_message(str(exc)),
+                })
+        return results
 
     def _collect_and_upsert(self, stock, source: str, start_date: date, end_date: date) -> tuple[str, int, int]:
         result = self._collect_and_upsert_with_stats(stock, source, start_date, end_date)

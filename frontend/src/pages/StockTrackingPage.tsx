@@ -1,10 +1,11 @@
-﻿import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import { repositories } from "@/services";
 import { appConfig } from "@/services/config/appConfig";
 import type { AppImage } from "@/types/image";
+import type { Stock } from "@/types/stock";
 import type {
   CollectStockTrackingPricesResponse,
   StockTrackingChartPrice,
@@ -51,6 +52,14 @@ const ITEM_PAGE_SIZE = 20;
 type TrackingCollectionScope = "all" | "checked" | "detail";
 type TrackingCollectionMode = "recent" | "full";
 type TrackingFullRefreshTarget = Exclude<TrackingCollectionScope, "detail">;
+type StockTrackingFilters = { group_id: string; status: string; price_status: string; keyword: string };
+const DEFAULT_ITEM_FILTERS: StockTrackingFilters = { group_id: "", status: "TRACKING", price_status: "", keyword: "" };
+const todayInKst = () => new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Seoul",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+}).format(new Date());
 
 const emptyImageForm: { image_type: StockTrackingImageType; caption: string; file: File | null } = {
   image_type: "BASE_DATE",
@@ -627,7 +636,7 @@ function StockTrackingPage() {
   const [editingGroup, setEditingGroup] = useState<StockTrackingGroup | null>(null);
   const [groupModalOpen, setGroupModalOpen] = useState(false);
   const [groupForm, setGroupForm] = useState(emptyGroupForm);
-  const [filters, setFilters] = useState({ group_id: "", status: "", price_status: "", keyword: "" });
+  const [filters, setFilters] = useState<StockTrackingFilters>(() => ({ ...DEFAULT_ITEM_FILTERS }));
   const [reviewStatus, setReviewStatus] = useState<StockTrackingStatus>("TRACKING");
   const [reviewNote, setReviewNote] = useState("");
   const [message, setMessage] = useState("");
@@ -649,6 +658,15 @@ function StockTrackingPage() {
   const [analysisRows, setAnalysisRows] = useState<StockTrackingGroupAnalysis[]>([]);
   const [selectedAnalysis, setSelectedAnalysis] = useState<StockTrackingGroupAnalysis | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
+  const itemRequestIdRef = useRef(0);
+  const [registerModalOpen, setRegisterModalOpen] = useState(false);
+  const [registerKeyword, setRegisterKeyword] = useState("");
+  const [registerStocks, setRegisterStocks] = useState<Stock[]>([]);
+  const [selectedRegisterStockIds, setSelectedRegisterStockIds] = useState<Set<number>>(() => new Set());
+  const [registerGroupId, setRegisterGroupId] = useState("");
+  const [registerSearching, setRegisterSearching] = useState(false);
+  const [registerSaving, setRegisterSaving] = useState(false);
+  const [registerError, setRegisterError] = useState("");
 
   const activeGroups = useMemo(() => groups.filter((group) => group.is_active === 1), [groups]);
   const trackingCount = useMemo(() => items.filter((item) => item.status === "TRACKING").length, [items]);
@@ -729,16 +747,19 @@ function StockTrackingPage() {
     }
   };
 
-  const loadItems = async (page = itemPage) => {
+  const loadItems = async (page = itemPage, appliedFilters: StockTrackingFilters = filters) => {
+    const requestId = itemRequestIdRef.current + 1;
+    itemRequestIdRef.current = requestId;
     const nextPage = Math.max(1, page);
     const response = await repositories.stockTracking.listItems({
-      group_id: filters.group_id ? Number(filters.group_id) : undefined,
-      status: filters.status as StockTrackingStatus | "",
-      price_status: filters.price_status as StockTrackingPriceStatus | "",
-      keyword: filters.keyword.trim() || undefined,
+      group_id: appliedFilters.group_id ? Number(appliedFilters.group_id) : undefined,
+      status: appliedFilters.status as StockTrackingStatus | "",
+      price_status: appliedFilters.price_status as StockTrackingPriceStatus | "",
+      keyword: appliedFilters.keyword.trim() || undefined,
       limit: ITEM_PAGE_SIZE,
       offset: (nextPage - 1) * ITEM_PAGE_SIZE,
     });
+    if (requestId !== itemRequestIdRef.current) return;
     setItemPage(nextPage);
     setItemTotal(response.total);
     setItems(response.items);
@@ -945,6 +966,101 @@ function StockTrackingPage() {
     });
   };
 
+  const applySelectFilter = async (key: "group_id" | "status" | "price_status", value: string) => {
+    const nextFilters = { ...filters, [key]: value };
+    setFilters(nextFilters);
+    setCheckedItemIds(new Set());
+    setLoading(true);
+    setError("");
+    try {
+      await loadItems(1, nextFilters);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const openRegisterModal = () => {
+    const selectedGroup = activeGroups.find((group) => String(group.id) === filters.group_id) ?? activeGroups[0];
+    setRegisterGroupId(selectedGroup ? String(selectedGroup.id) : "");
+    setRegisterKeyword("");
+    setRegisterStocks([]);
+    setSelectedRegisterStockIds(new Set());
+    setRegisterError("");
+    setRegisterModalOpen(true);
+  };
+
+  const searchRegisterStocks = async () => {
+    const keyword = registerKeyword.trim();
+    if (!keyword) {
+      setRegisterError("검색할 종목명 또는 종목코드를 입력해 주세요.");
+      return;
+    }
+    setRegisterSearching(true);
+    setRegisterError("");
+    try {
+      const rows = await repositories.stocks.list({
+        keyword,
+        is_active: 1,
+        limit: 50,
+        offset: 0,
+      });
+      setRegisterStocks(rows);
+      setSelectedRegisterStockIds(new Set());
+      if (rows.length === 0) setRegisterError("검색 조건에 맞는 종목이 없습니다.");
+    } catch (err) {
+      setRegisterError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRegisterSearching(false);
+    }
+  };
+
+  const toggleRegisterStock = (stockId: number) => {
+    setSelectedRegisterStockIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(stockId)) next.delete(stockId);
+      else next.add(stockId);
+      return next;
+    });
+  };
+
+  const registerSelectedStocks = async () => {
+    const groupId = Number(registerGroupId);
+    const selectedStocks = registerStocks.filter((stock) => selectedRegisterStockIds.has(stock.id));
+    if (!groupId) {
+      setRegisterError("등록할 종목트래킹 그룹을 선택해 주세요.");
+      return;
+    }
+    if (selectedStocks.length === 0) {
+      setRegisterError("등록할 종목을 선택해 주세요.");
+      return;
+    }
+    setRegisterSaving(true);
+    setRegisterError("");
+    try {
+      const response = await repositories.stockTracking.registerFromConditionResults({
+        group_id: groupId,
+        condition_no: null,
+        condition_name: "종목트래킹 직접등록",
+        detected_date: todayInKst(),
+        items: selectedStocks.map((stock) => ({
+          stock_code: stock.stock_code,
+          stock_name: stock.stock_name,
+          market: stock.market,
+        })),
+      });
+      const nextFilters: StockTrackingFilters = { ...filters, group_id: String(groupId), status: "TRACKING" };
+      setFilters(nextFilters);
+      setMessage(response.message || `종목트래킹 등록 완료: 신규 ${response.created_count}건, 중복 제외 ${response.skipped_count}건`);
+      setRegisterModalOpen(false);
+      await Promise.all([loadItems(1, nextFilters), loadGroups()]);
+    } catch (err) {
+      setRegisterError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRegisterSaving(false);
+    }
+  };
   const runItemSearch = async () => {
     setCheckedItemIds(new Set());
     await loadItems(1);
@@ -1220,6 +1336,7 @@ function StockTrackingPage() {
             <div className="stock-tracking-list-head">
               <h3 className="section-title m-0">트래킹 목록</h3>
               <div className="stock-tracking-list-actions">
+                <button type="button" className="btn btn-secondary stock-tracking-register-button" onClick={openRegisterModal}>+ 종목트래킹 등록</button>
                 <button type="button" className="btn stock-tracking-collect-button stock-tracking-primary-collect-button" disabled={collecting} onClick={() => void collectPrices("all", "recent")}>{collecting ? "수집 중..." : "목록 최근7일수집"}</button>
                 <button type="button" className="btn stock-tracking-collect-button" disabled={checkedCollectableItems.length === 0 || collecting} title={checkedCollectableItems.length === 0 ? "체크박스로 수집할 종목을 선택해 주세요." : "체크한 종목만 최근 7일 기준으로 수집합니다."} onClick={() => void collectPrices("checked", "recent")}>{collecting ? "수집 중..." : checkedCollectableItems.length > 0 ? `선택 ${checkedCollectableItems.length}건 최근7일수집` : "선택 최근7일수집"}</button>
                 <div className="stock-tracking-full-refresh-menu" ref={fullRefreshMenuRef}>
@@ -1234,9 +1351,9 @@ function StockTrackingPage() {
               </div>
             </div>
             <div className="stock-tracking-filter-row">
-              <select className="select-control" value={filters.group_id} onChange={(event) => setFilters((prev) => ({ ...prev, group_id: event.target.value }))}><option value="">그룹 전체</option>{activeGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select>
-              <select className="select-control" value={filters.status} onChange={(event) => setFilters((prev) => ({ ...prev, status: event.target.value }))}><option value="">상태 전체</option>{Object.entries(STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-              <select className="select-control" value={filters.price_status} onChange={(event) => setFilters((prev) => ({ ...prev, price_status: event.target.value }))}><option value="">가격상태 전체</option>{Object.entries(PRICE_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+              <select className="select-control" value={filters.group_id} onChange={(event) => void applySelectFilter("group_id", event.target.value)}><option value="">그룹 전체</option>{activeGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select>
+              <select className="select-control" value={filters.status} onChange={(event) => void applySelectFilter("status", event.target.value)}><option value="">상태 전체</option>{Object.entries(STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+              <select className="select-control" value={filters.price_status} onChange={(event) => void applySelectFilter("price_status", event.target.value)}><option value="">가격상태 전체</option>{Object.entries(PRICE_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
               <input className="input-control" placeholder="종목명/코드 검색" value={filters.keyword} onChange={(event) => setFilters((prev) => ({ ...prev, keyword: event.target.value }))} />
               <button type="button" className="btn btn-secondary" onClick={() => void runItemSearch()}>조회</button>
             </div>
@@ -1407,6 +1524,71 @@ function StockTrackingPage() {
       )}
 
 
+      {registerModalOpen ? (
+        <div className="modal-backdrop stock-tracking-register-backdrop" onClick={() => { if (!registerSaving) setRegisterModalOpen(false); }}>
+          <div className="modal-card stock-tracking-direct-register-modal" role="dialog" aria-modal="true" aria-labelledby="stock-tracking-register-title" onClick={(event) => event.stopPropagation()}>
+            <div className="trade-journal-detail-header">
+              <div>
+                <h3 id="stock-tracking-register-title">종목트래킹 등록</h3>
+                <p>종목을 검색하고 등록할 그룹을 선택하세요.</p>
+              </div>
+              <button type="button" className="btn btn-secondary btn-table-sm" disabled={registerSaving} onClick={() => setRegisterModalOpen(false)}>닫기</button>
+            </div>
+
+            <div className="stock-tracking-register-search-row">
+              <input
+                className="input-control"
+                autoFocus
+                placeholder="종목명 또는 종목코드 검색"
+                value={registerKeyword}
+                onChange={(event) => setRegisterKeyword(event.target.value)}
+                onKeyDown={(event) => { if (event.key === "Enter") void searchRegisterStocks(); }}
+              />
+              <button type="button" className="btn btn-secondary" disabled={registerSearching} onClick={() => void searchRegisterStocks()}>{registerSearching ? "검색 중..." : "검색"}</button>
+            </div>
+
+            <div className="stock-tracking-register-results">
+              <div className="stock-tracking-register-results-head">
+                <strong>검색 결과 {registerStocks.length}건</strong>
+                <span>선택 {selectedRegisterStockIds.size}건</span>
+              </div>
+              {registerStocks.length > 0 ? (
+                <div className="table-shell stock-tracking-register-table-shell">
+                  <table className="data-table compact-table stock-tracking-register-table">
+                    <thead><tr><th>선택</th><th>종목</th><th>시장</th></tr></thead>
+                    <tbody>
+                      {registerStocks.map((stock) => (
+                        <tr key={stock.id} className={selectedRegisterStockIds.has(stock.id) ? "selected" : ""} onClick={() => toggleRegisterStock(stock.id)}>
+                          <td><input type="checkbox" checked={selectedRegisterStockIds.has(stock.id)} onChange={() => toggleRegisterStock(stock.id)} onClick={(event) => event.stopPropagation()} aria-label={`${stock.stock_name} 선택`} /></td>
+                          <td><strong>{stock.stock_name}</strong><small>{stock.stock_code}</small></td>
+                          <td>{stock.market || "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="stock-tracking-register-empty">종목명이나 종목코드를 입력해 검색해 주세요.</div>
+              )}
+            </div>
+
+            <label className="stock-tracking-register-group-field">
+              <span>종목트래킹 그룹</span>
+              <select className="input-control" value={registerGroupId} onChange={(event) => setRegisterGroupId(event.target.value)}>
+                <option value="">그룹 선택</option>
+                {activeGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+              </select>
+            </label>
+            {activeGroups.length === 0 ? <p className="stock-tracking-register-error">활성 종목트래킹 그룹이 없습니다. 먼저 그룹을 등록해 주세요.</p> : null}
+            {registerError ? <p className="stock-tracking-register-error">{registerError}</p> : null}
+
+            <div className="modal-actions stock-tracking-register-actions">
+              <button type="button" className="btn btn-secondary" disabled={registerSaving} onClick={() => setRegisterModalOpen(false)}>취소</button>
+              <button type="button" className="btn btn-primary" disabled={registerSaving || activeGroups.length === 0 || selectedRegisterStockIds.size === 0} onClick={() => void registerSelectedStocks()}>{registerSaving ? "등록 중..." : `선택 ${selectedRegisterStockIds.size}건 등록`}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {fullRefreshTarget ? (
         <div className="modal-backdrop stock-tracking-refresh-confirm-backdrop" onClick={() => setFullRefreshTarget(null)}>
           <div className="modal-card stock-tracking-refresh-confirm-modal" onClick={(event) => event.stopPropagation()}>

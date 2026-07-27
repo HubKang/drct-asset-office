@@ -22,7 +22,7 @@ import type {
   MarketThemeCandidateStatus,
   MarketThemeLevel,
   MarketThemeStock,
-  MarketThemeStockMemo,
+  MarketThemeStockSupplyMemo,
   MarketThemeStockSupplySummary,
   MarketThemeType,
 } from "@/types/marketTheme";
@@ -504,12 +504,13 @@ function MarketThemesPage() {
   const [stockDrawerOpen, setStockDrawerOpen] = useState(false);
   const [selectedLinkedStock, setSelectedLinkedStock] = useState<MarketThemeStock | null>(null);
   const [zoomedChart, setZoomedChart] = useState<{ url: string; alt: string; title?: string } | null>(null);
-  const [stockMemos, setStockMemos] = useState<MarketThemeStockMemo[]>([]);
+  const [stockMemos, setStockMemos] = useState<MarketThemeStockSupplyMemo[]>([]);
   const [stockMemoLoading, setStockMemoLoading] = useState(false);
   const [stockMemoError, setStockMemoError] = useState("");
   const [stockSupplySummary, setStockSupplySummary] = useState<MarketThemeStockSupplySummary | null>(null);
   const [stockSupplyLoading, setStockSupplyLoading] = useState(false);
   const [stockSupplyError, setStockSupplyError] = useState("");
+  const [showAllSupplyDates, setShowAllSupplyDates] = useState(false);
   const [supplyCountSort, setSupplyCountSort] = useState<SupplyCountSort>("default");
   const [supplyCountInfoOpen, setSupplyCountInfoOpen] = useState(false);
   const [updatingPrimaryMappingId, setUpdatingPrimaryMappingId] = useState<number | null>(null);
@@ -817,33 +818,29 @@ function MarketThemesPage() {
     setStockSupplyLoading(true);
     setStockSupplyError("");
     setStockSupplySummary(null);
-    try {
-      const summary = await repositories.marketThemes.getThemeStockSupplySummary(row.theme_id, row.stock_id);
-      setStockSupplySummary(summary);
-    } catch (e) {
-      setStockSupplyError(toErrorMessage(e, "수급 이력을 불러오지 못했습니다."));
-    } finally {
-      setStockSupplyLoading(false);
-    }
-  };
-
-  const openLinkedStockDrawer = async (row: MarketThemeStock) => {
-    setSelectedLinkedStock(row);
-    setStockDrawerOpen(true);
     setStockMemoLoading(true);
     setStockMemoError("");
     setStockMemos([]);
-    void loadStockSupplySummary(row);
     try {
-      const res = await repositories.marketThemes.listStockMemos(row.stock_code);
-      setStockMemos(res.items ?? []);
+      const summary = await repositories.marketThemes.getThemeStockSupplySummary(row.theme_id, row.stock_id);
+      setStockSupplySummary(summary);
+      setStockMemos(summary.stock_memos ?? []);
     } catch (e) {
-      setStockMemoError(toErrorMessage(e, "종목 메모를 불러오지 못했습니다."));
+      const message = toErrorMessage(e, "수급 이력을 불러오지 못했습니다.");
+      setStockSupplyError(message);
+      setStockMemoError(message);
     } finally {
+      setStockSupplyLoading(false);
       setStockMemoLoading(false);
     }
   };
 
+  const openLinkedStockDrawer = (row: MarketThemeStock) => {
+    setSelectedLinkedStock(row);
+    setStockDrawerOpen(true);
+    setShowAllSupplyDates(false);
+    void loadStockSupplySummary(row);
+  };
   const toggleThemeReturnSort = () => {
     setThemeReturnSort((prev) => (prev === "default" ? "desc" : prev === "desc" ? "asc" : "default"));
   };
@@ -1911,11 +1908,14 @@ function MarketThemesPage() {
                 )}
               </section>
 
-              <section className="market-theme-stock-supply-section">
+              <section
+                className="market-theme-stock-supply-section"
+                style={{ "--theme-context-color": stockSupplySummary?.current_theme.color ?? "#dc2626" } as CSSProperties}
+              >
                 <div className="market-theme-stock-section-heading">
                   <div>
                     <h4 className="market-theme-stock-section-title">수급 이력</h4>
-                    <p>{stockSupplySummary ? `${stockSupplySummary.theme_name} · ${stockSupplySummary.stock_name}` : "테마별 수급 기록"}</p>
+                    <p>{stockSupplySummary ? `${stockSupplySummary.current_theme.theme_name} · ${stockSupplySummary.stock_name}` : "테마별 수급 기록"}</p>
                   </div>
                   {stockSupplyError ? (
                     <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => void loadStockSupplySummary(selectedLinkedStock)}>
@@ -1931,37 +1931,98 @@ function MarketThemesPage() {
                 {stockSupplyError ? <p className="market-theme-stock-section-error">{stockSupplyError}</p> : null}
                 {!stockSupplyLoading && !stockSupplyError && stockSupplySummary ? (
                   <>
-                    <div className="market-theme-stock-supply-grid">
-                      <div><span>테마 수급일</span><strong>{stockSupplySummary.supply_day_count}일</strong></div>
-                      <div><span>최근 30일</span><strong>{stockSupplySummary.recent_30d_supply_day_count}일</strong></div>
-                      <div><span>최근 수급일</span><strong>{stockSupplySummary.last_supply_date ?? "-"}</strong></div>
-                      <div><span>최초 수급일</span><strong>{stockSupplySummary.first_supply_date ?? "-"}</strong></div>
-                      <div><span>전체 테마 고유일</span><strong>{stockSupplySummary.all_theme_supply_day_count}일</strong></div>
+                    <div className="theme-context-supply-head">
+                      <div>
+                        <strong>{stockSupplySummary.stock_name}에 속한 테마</strong>
+                        <span>테마별 고유 수급일 수</span>
+                      </div>
+                      <span
+                        className="theme-context-supply-info"
+                        title="현재 테마 수급횟수는 현재 조회 중인 테마로 등록된 고유 수급일 수입니다. 전체테마 수급횟수는 테마 중복을 제거한 종목 전체 고유 수급일 수입니다. 종목 메모는 모두 표시하며 현재 테마 수급일만 강조합니다."
+                      >
+                        <Info size={13} /> 집계 기준
+                      </span>
                     </div>
-                    {stockSupplySummary.recent_supply_dates.length > 0 ? (
+                    <div className="theme-context-chip-list">
+                      {stockSupplySummary.linked_theme_supply_summaries.map((theme) => (
+                        <span
+                          key={theme.theme_id}
+                          className={`theme-context-chip${theme.is_current_theme ? " is-current" : ""}`}
+                          title={theme.supply_dates.length > 0 ? theme.supply_dates.join(", ") : "수급 이력 없음"}
+                        >
+                          {theme.theme_name} <strong>{theme.supply_count}회</strong>
+                          {theme.is_current_theme ? <small>현재 테마</small> : null}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="market-theme-stock-supply-grid">
+                      <div className="stock-supply-summary-card is-theme-context">
+                        <span>최근30일 수급횟수</span>
+                        <strong>{stockSupplySummary.recent_30d_theme_supply_count}회</strong>
+                      </div>
+                      <div className="stock-supply-summary-card is-theme-context">
+                        <span>해당테마 수급횟수</span>
+                        <strong>{stockSupplySummary.current_theme_supply_count}회</strong>
+                      </div>
+                      <div className="stock-supply-summary-card is-overall">
+                        <span>전체테마 수급횟수</span>
+                        <strong>{stockSupplySummary.overall_stock_supply_count}회</strong>
+                      </div>
+                      <div className="stock-supply-summary-card is-theme-context">
+                        <span>최근수급일</span>
+                        <strong>{stockSupplySummary.latest_current_theme_supply_date ?? "-"}</strong>
+                      </div>
+                      <div className="stock-supply-summary-card is-theme-context">
+                        <span>최초수급일</span>
+                        <strong>{stockSupplySummary.first_current_theme_supply_date ?? "-"}</strong>
+                      </div>
+                    </div>
+                    <p className="theme-context-period">최근 30일 기준 {stockSupplySummary.period_start_date} ~ {stockSupplySummary.period_end_date} · 날짜는 현재 테마 기준</p>
+                    {stockSupplySummary.current_theme_supply_dates.length > 0 ? (
                       <div className="market-theme-stock-recent-supply">
-                        <span>최근 수급일 5건</span>
-                        <div>{stockSupplySummary.recent_supply_dates.map((date) => <em key={date}>{date}</em>)}</div>
+                        <span>최근 수급일 {stockSupplySummary.current_theme_supply_dates.length}건</span>
+                        <div>
+                          {(showAllSupplyDates ? stockSupplySummary.current_theme_supply_dates : stockSupplySummary.current_theme_supply_dates.slice(0, 10)).map((date) => (
+                            <em key={date} className="current-theme-supply-date-chip">{date}</em>
+                          ))}
+                          {stockSupplySummary.current_theme_supply_dates.length > 10 ? (
+                            <button type="button" className="theme-context-date-toggle" onClick={() => setShowAllSupplyDates((value) => !value)}>
+                              {showAllSupplyDates ? "접기" : `전체 보기 (${stockSupplySummary.current_theme_supply_dates.length})`}
+                            </button>
+                          ) : null}
+                        </div>
                       </div>
                     ) : (
-                      <p className="selected-empty-message">등록된 수급 이력이 없습니다.</p>
+                      <p className="selected-empty-message">현재 테마로 등록된 수급 이력이 없습니다.</p>
                     )}
                   </>
                 ) : null}
               </section>
 
-              <section className="market-theme-stock-memo-section">
-                <h4 className="market-theme-stock-section-title">종목 메모</h4>
+              <section
+                className="market-theme-stock-memo-section"
+                style={{ "--theme-context-color": stockSupplySummary?.current_theme.color ?? "#dc2626" } as CSSProperties}
+              >
+                <div className="market-theme-stock-memo-heading">
+                  <h4 className="market-theme-stock-section-title">종목 메모</h4>
+                  <span>전체 테마 메모 · 현재 테마 수급일 강조</span>
+                </div>
                 {stockMemoLoading ? <p className="selected-empty-message">메모를 불러오는 중입니다.</p> : null}
-                {stockMemoError ? <p className="text-sm text-red-600">{stockMemoError}</p> : null}
+                {stockMemoError && !stockSupplyError ? <p className="text-sm text-red-600">{stockMemoError}</p> : null}
                 {!stockMemoLoading && !stockMemoError && stockMemos.length === 0 ? (
                   <p className="selected-empty-message">등록된 종목 메모가 없습니다.</p>
                 ) : null}
                 {!stockMemoLoading && !stockMemoError && stockMemos.length > 0 ? (
                   <div className="market-theme-stock-memo-list">
                     {stockMemos.map((memo, index) => (
-                      <div key={`${memo.memo_date}-${index}`} className="market-theme-stock-memo-row">
-                        <span className="market-theme-stock-memo-date">{memo.memo_date}</span>
+                      <div
+                        key={`${memo.detected_date}-${memo.memo}-${index}`}
+                        className={`market-theme-stock-memo-row${memo.is_current_theme_supply_date ? " is-current-theme-date" : ""}`}
+                      >
+                        <div className="market-theme-stock-memo-meta">
+                          <span className="market-theme-stock-memo-date">{memo.detected_date}</span>
+                          {memo.is_current_theme_supply_date ? <small>현재 테마 수급일</small> : null}
+                        </div>
                         <span className="market-theme-stock-memo-text">{memo.memo}</span>
                       </div>
                     ))}

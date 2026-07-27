@@ -146,7 +146,21 @@ class MarketThemeStockRepository:
         if not base:
             return None
 
-        dates = self.db.execute(
+        linked_themes = self.db.execute(
+            text(
+                """
+                SELECT theme.id AS theme_id, theme.theme_name
+                FROM market_theme_stocks mapping
+                JOIN market_themes theme ON theme.id = mapping.theme_id
+                WHERE mapping.stock_id = :stock_id
+                  AND COALESCE(mapping.is_active, 1) = 1
+                  AND COALESCE(theme.is_active, 1) = 1
+                ORDER BY theme.theme_name ASC
+                """
+            ),
+            {"stock_id": stock_id},
+        ).mappings().all()
+        date_rows = self.db.execute(
             text(
                 """
                 WITH event_theme_pairs AS (
@@ -162,35 +176,119 @@ class MarketThemeStockRepository:
                           SELECT 1 FROM market_trend_event_theme_links links
                           WHERE links.event_id = events.id
                       )
-                ),
-                supply_days AS (
-                    SELECT DISTINCT pairs.market_theme_id AS theme_id, events.trade_date AS supply_date
-                    FROM event_theme_pairs pairs
-                    JOIN market_trend_events events ON events.id = pairs.event_id
-                    WHERE events.stock_id = :stock_id
-                      AND COALESCE(events.is_active, 1) = 1
-                      AND COALESCE(events.deleted_at, '') = ''
-                      AND events.trade_date <= :as_of_date
                 )
-                SELECT theme_id, supply_date
-                FROM supply_days
-                ORDER BY supply_date DESC
+                SELECT DISTINCT pairs.market_theme_id AS theme_id, events.trade_date AS supply_date
+                FROM event_theme_pairs pairs
+                JOIN market_trend_events events ON events.id = pairs.event_id
+                WHERE events.stock_id = :stock_id
+                  AND COALESCE(events.is_active, 1) = 1
+                  AND COALESCE(events.deleted_at, '') = ''
+                  AND events.trade_date <= :as_of_date
+                ORDER BY events.trade_date DESC
                 """
             ),
             {"stock_id": stock_id, "as_of_date": as_of_date},
         ).mappings().all()
-        theme_dates = [str(row["supply_date"]) for row in dates if int(row["theme_id"]) == theme_id]
-        all_dates = {str(row["supply_date"]) for row in dates}
+        overall_date_rows = self.db.execute(
+            text(
+                """
+                SELECT DISTINCT trade_date AS supply_date
+                FROM market_trend_events
+                WHERE stock_id = :stock_id
+                  AND COALESCE(is_active, 1) = 1
+                  AND COALESCE(deleted_at, '') = ''
+                  AND trade_date <= :as_of_date
+                ORDER BY trade_date DESC
+                """
+            ),
+            {"stock_id": stock_id, "as_of_date": as_of_date},
+        ).mappings().all()
+        memo_rows = self.db.execute(
+            text(
+                """
+                SELECT trade_date AS detected_date,
+                       TRIM(user_memo) AS memo,
+                       COALESCE(detection_source, 'market_trend_event') AS source
+                FROM market_trend_events
+                WHERE stock_id = :stock_id
+                  AND TRIM(COALESCE(user_memo, '')) <> ''
+                  AND COALESCE(is_active, 1) = 1
+                  AND COALESCE(deleted_at, '') = ''
+                  AND trade_date <= :as_of_date
+                ORDER BY trade_date DESC, updated_at DESC, id DESC
+                """
+            ),
+            {"stock_id": stock_id, "as_of_date": as_of_date},
+        ).mappings().all()
+
+        dates_by_theme: dict[int, list[str]] = {}
+        for row in date_rows:
+            linked_theme_id = int(row["theme_id"])
+            supply_date = str(row["supply_date"])
+            dates_by_theme.setdefault(linked_theme_id, []).append(supply_date)
+        current_theme_dates = dates_by_theme.get(theme_id, [])
+        overall_stock_dates = [str(row["supply_date"]) for row in overall_date_rows]
+        linked_theme_supply_summaries = [
+            {
+                "theme_id": int(row["theme_id"]),
+                "theme_name": str(row["theme_name"]),
+                "supply_count": len(dates_by_theme.get(int(row["theme_id"]), [])),
+                "supply_dates": dates_by_theme.get(int(row["theme_id"]), []),
+                "is_current_theme": int(row["theme_id"]) == theme_id,
+            }
+            for row in linked_themes
+        ]
+        linked_theme_supply_summaries.sort(
+            key=lambda item: (
+                not bool(item["is_current_theme"]),
+                -int(item["supply_count"]),
+                str(item["theme_name"]),
+            )
+        )
+        current_theme_date_set = set(current_theme_dates)
+        seen_memos: set[tuple[str, str]] = set()
+        stock_memos: list[dict[str, object]] = []
+        for row in memo_rows:
+            detected_date = str(row["detected_date"] or "")[:10]
+            memo = str(row["memo"] or "").strip()
+            key = (detected_date, memo)
+            if not detected_date or not memo or key in seen_memos:
+                continue
+            seen_memos.add(key)
+            stock_memos.append(
+                {
+                    "detected_date": detected_date,
+                    "memo": memo,
+                    "source": str(row["source"] or "market_trend_event"),
+                    "is_current_theme_supply_date": detected_date in current_theme_date_set,
+                }
+            )
+
         return {
             **dict(base),
-            "supply_day_count": len(theme_dates),
-            "recent_30d_supply_day_count": sum(day >= recent_start_date for day in theme_dates),
-            "first_supply_date": theme_dates[-1] if theme_dates else None,
-            "last_supply_date": theme_dates[0] if theme_dates else None,
-            "all_theme_supply_day_count": len(all_dates),
-            "recent_supply_dates": theme_dates[:5],
+            "supply_day_count": len(current_theme_dates),
+            "recent_30d_supply_day_count": sum(day >= recent_start_date for day in current_theme_dates),
+            "first_supply_date": current_theme_dates[-1] if current_theme_dates else None,
+            "last_supply_date": current_theme_dates[0] if current_theme_dates else None,
+            "all_theme_supply_day_count": len(overall_stock_dates),
+            "recent_supply_dates": current_theme_dates,
+            "current_theme": {
+                "theme_id": theme_id,
+                "theme_name": str(base["theme_name"]),
+                "color": "#dc2626",
+            },
+            "linked_theme_supply_summaries": linked_theme_supply_summaries,
+            "period_start_date": recent_start_date,
+            "period_end_date": as_of_date,
+            "recent_30d_theme_supply_count": sum(day >= recent_start_date for day in current_theme_dates),
+            "current_theme_supply_count": len(current_theme_dates),
+            "overall_stock_supply_count": len(overall_stock_dates),
+            "latest_current_theme_supply_date": current_theme_dates[0] if current_theme_dates else None,
+            "first_current_theme_supply_date": current_theme_dates[-1] if current_theme_dates else None,
+            "current_theme_supply_dates": current_theme_dates,
+            "overall_stock_supply_dates": overall_stock_dates,
+            "stock_memos": stock_memos,
         }
-
     def list_themes_by_stock_code(self, stock_code: str) -> list[tuple[MarketThemeStock, MarketTheme, Stock]]:
         normalized = (stock_code or "").strip()
         if not normalized:

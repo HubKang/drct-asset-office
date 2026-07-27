@@ -34,6 +34,9 @@ from backend.app.schemas.external_kiwoom_schema import (
     MarketThemeReturnRefreshResponse,
     MonthlyThemeFlowCalendarResponse,
     MonthlyThemeFlowTrendResponse,
+    SupplyTopStockReturnTrendResponse,
+    SupplyTopStockPriceCollectRequest,
+    SupplyTopStockPriceCollectResponse,
 )
 from backend.app.services.external_kiwoom_service import ExternalKiwoomService
 
@@ -237,6 +240,37 @@ def get_monthly_theme_flow_calendar(
 ) -> MonthlyThemeFlowCalendarResponse:
     return ExternalKiwoomService(db).get_monthly_theme_flow_calendar(month=month)
 
+
+@router.get(
+    "/external/kiwoom/theme-flow/monthly/top-stock-return-trend",
+    response_model=SupplyTopStockReturnTrendResponse,
+)
+def get_supply_top_stock_return_trend(
+    period_start_date: str = Query(..., description="YYYY-MM-DD"),
+    period_end_date: str = Query(..., description="YYYY-MM-DD"),
+    limit: int = Query(default=20, ge=1, le=20),
+    db: Session = Depends(get_db),
+) -> SupplyTopStockReturnTrendResponse:
+    return ExternalKiwoomService(db).get_supply_top_stock_return_trend(
+        period_start_date=period_start_date,
+        period_end_date=period_end_date,
+        limit=limit,
+    )
+
+@router.post(
+    "/external/kiwoom/theme-flow/monthly/top-stock-return-trend/collect-missing-prices",
+    response_model=SupplyTopStockPriceCollectResponse,
+    include_in_schema=False,
+)
+@router.post(
+    "/external/kiwoom/theme-flow/monthly/top-stock-return-trend/refresh-prices",
+    response_model=SupplyTopStockPriceCollectResponse,
+)
+def refresh_supply_top_stock_prices(
+    payload: SupplyTopStockPriceCollectRequest,
+    db: Session = Depends(get_db),
+) -> SupplyTopStockPriceCollectResponse:
+    return ExternalKiwoomService(db).refresh_supply_top_stock_prices(payload)
 
 @router.get("/external/kiwoom/theme-flow/monthly/trend", response_model=MonthlyThemeFlowTrendResponse)
 def get_monthly_theme_flow_trend(

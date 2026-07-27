@@ -29,7 +29,11 @@ def _session() -> Session:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 trade_date TEXT NOT NULL,
                 stock_id INTEGER NOT NULL,
+                stock_code TEXT,
                 theme_id INTEGER,
+                user_memo TEXT,
+                detection_source TEXT,
+                updated_at TEXT,
                 is_active INTEGER NOT NULL DEFAULT 1,
                 deleted_at TEXT
             )
@@ -49,15 +53,17 @@ def _session() -> Session:
     return Session(engine)
 
 
-def _add_event(db: Session, trade_date: str, stock_id: int, theme_id: int, *, active: int = 1) -> None:
+def _add_event(db: Session, trade_date: str, stock_id: int, theme_id: int, *, active: int = 1, memo: str = "") -> None:
     result = db.execute(
         text(
             """
-            INSERT INTO market_trend_events (trade_date, stock_id, theme_id, is_active)
-            VALUES (:trade_date, :stock_id, :theme_id, :active)
+            INSERT INTO market_trend_events
+                (trade_date, stock_id, stock_code, theme_id, user_memo, detection_source, updated_at, is_active)
+            VALUES
+                (:trade_date, :stock_id, NULL, :theme_id, :memo, 'kiwoom_condition', :trade_date, :active)
             """
         ),
-        {"trade_date": trade_date, "stock_id": stock_id, "theme_id": theme_id, "active": active},
+        {"trade_date": trade_date, "stock_id": stock_id, "theme_id": theme_id, "active": active, "memo": memo},
     )
     db.execute(
         text(
@@ -128,12 +134,12 @@ def test_supply_summary_counts_distinct_dates_and_survives_reconnect() -> None:
     db.add_all([mapping, empty_mapping])
     db.flush()
 
-    _add_event(db, "2026-06-01", stock.id, theme.id)
-    _add_event(db, "2026-06-21", stock.id, theme.id)
+    _add_event(db, "2026-06-01", stock.id, theme.id, memo="반도체 최초 메모")
+    _add_event(db, "2026-06-21", stock.id, theme.id, memo="반도체 메모")
     _add_event(db, "2026-07-20", stock.id, theme.id)
     _add_event(db, "2026-07-20", stock.id, theme.id)
     _add_event(db, "2026-07-20", stock.id, other_theme.id)
-    _add_event(db, "2026-07-01", stock.id, other_theme.id)
+    _add_event(db, "2026-07-01", stock.id, other_theme.id, memo="AI 메모")
     _add_event(db, "2026-07-10", stock.id, theme.id, active=0)
     db.commit()
 
@@ -165,4 +171,38 @@ def test_supply_summary_counts_distinct_dates_and_survives_reconnect() -> None:
     reconnected = service.list_theme_stocks(theme.id, as_of_date=date(2026, 7, 20))
     assert next(row for row in reconnected if row.stock_id == stock.id).supply_day_count == 3
 
+
+    assert summary.current_theme.theme_id == theme.id
+    assert summary.current_theme_supply_count == 3
+    assert summary.overall_stock_supply_count == 4
+    assert summary.current_theme_supply_dates == ["2026-07-20", "2026-06-21", "2026-06-01"]
+    assert [(item.theme_id, item.supply_count) for item in summary.linked_theme_supply_summaries] == [
+        (theme.id, 3),
+    ]
+    assert all(item.is_current_theme_supply_date for item in summary.stock_memos if item.detected_date in {"2026-06-01", "2026-06-21"})
+
+    other_mapping = MarketThemeStock(
+        theme_id=other_theme.id,
+        stock_id=stock.id,
+        mapping_source="manual",
+        confidence_score=1.0,
+        is_primary=0,
+        is_active=1,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(other_mapping)
+    db.commit()
+    other_summary = service.get_supply_summary(other_theme.id, stock.id, as_of_date=date(2026, 7, 20))
+    assert other_summary.current_theme_supply_count == 2
+    assert other_summary.current_theme_supply_dates == ["2026-07-20", "2026-07-01"]
+    assert other_summary.overall_stock_supply_count == 4
+    assert [(item.theme_id, item.supply_count, item.is_current_theme) for item in other_summary.linked_theme_supply_summaries] == [
+        (other_theme.id, 2, True),
+        (theme.id, 3, False),
+    ]
+    ai_memo = next(item for item in other_summary.stock_memos if item.detected_date == "2026-07-01")
+    semiconductor_memo = next(item for item in other_summary.stock_memos if item.detected_date == "2026-06-21")
+    assert ai_memo.is_current_theme_supply_date is True
+    assert semiconductor_memo.is_current_theme_supply_date is False
     db.close()

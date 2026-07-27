@@ -6,6 +6,7 @@ import time
 from collections import defaultdict
 from calendar import monthrange
 from datetime import date, datetime, timedelta
+from threading import Lock
 
 from fastapi import HTTPException, status
 from sqlalchemy import text
@@ -38,6 +39,13 @@ from backend.app.schemas.external_kiwoom_schema import (
     MonthlySupplySummary30d,
     MonthlySupplySummaryStockItem,
     MonthlySupplySummaryThemeItem,
+    SupplyTopStockReturnPoint,
+    SupplyTopStockReturnTrendItem,
+    SupplyTopStockReturnTrendResponse,
+    SupplyTopStockPriceReadiness,
+    SupplyTopStockPriceCollectRequest,
+    SupplyTopStockPriceCollectItem,
+    SupplyTopStockPriceCollectResponse,
     MonthlyThemeFlowCalendarDayItem,
     MonthlyThemeFlowMemoItem,
     MonthlyThemeFlowCalendarResponse,
@@ -71,12 +79,14 @@ from backend.app.schemas.external_kiwoom_schema import (
     KiwoomMarketEventSaveRequest,
     KiwoomMarketEventSaveResponse,
 )
+from backend.app.services.stock_price_service import StockPriceService
 from backend.app.utils.stock_code import normalize_stock_code
 
 logger = logging.getLogger(__name__)
 
 
 class ExternalKiwoomService:
+    _supply_price_collection_lock = Lock()
     def __init__(self, db: Session) -> None:
         self.db = db
         self._condition_provider = KiwoomRestConditionProvider()
@@ -1245,6 +1255,286 @@ class ExternalKiwoomService:
             period_start_date=period_start.isoformat(), period_end_date=period_end.isoformat(),
             appeared_theme_count=len(theme_stats), top_theme=top_theme, top_stocks=top_stocks,
         )
+    def get_supply_top_stock_return_trend(
+        self,
+        *,
+        period_start_date: str,
+        period_end_date: str,
+        limit: int = 20,
+    ) -> SupplyTopStockReturnTrendResponse:
+        started_at = time.perf_counter()
+        try:
+            period_start = date.fromisoformat(period_start_date)
+            period_end = date.fromisoformat(period_end_date)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="기간은 YYYY-MM-DD 형식이어야 합니다.") from exc
+        if period_start > period_end:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="기간 시작일은 종료일보다 늦을 수 없습니다.")
+        normalized_limit = max(1, min(int(limit), 20))
+        aggregation = self._build_supply_theme_aggregation(period_start, period_end)
+        source_records = list(aggregation["records"])
+
+        stock_stats: dict[int, dict[str, object]] = {}
+        for row in source_records:
+            if row["stock_id"] is None:
+                continue
+            stock_id = int(row["stock_id"])
+            stat = stock_stats.setdefault(stock_id, {
+                "stock_id": stock_id,
+                "stock_code": str(row["stock_code"] or ""),
+                "stock_name": str(row["stock_name"] or row["stock_code"] or stock_id),
+                "dates": set(),
+            })
+            stat["dates"].add(str(row["trade_date"]))
+        ranked = sorted(
+            stock_stats.values(),
+            key=lambda item: (-len(item["dates"]), -date.fromisoformat(max(item["dates"])).toordinal(), str(item["stock_name"])),
+        )[:normalized_limit]
+        selected_ids = [int(item["stock_id"]) for item in ranked]
+        price_rows: list[dict[str, object]] = []
+        if selected_ids:
+            id_params = {f"stock_id_{index}": stock_id for index, stock_id in enumerate(selected_ids)}
+            id_sql = ", ".join(f":stock_id_{index}" for index in range(len(selected_ids)))
+            price_rows = [dict(row) for row in self.db.execute(
+                text(f"""
+                    SELECT price.stock_id, price.trade_date, price.close_price, price.change_rate, price.updated_at
+                    FROM stock_daily_prices price
+                    WHERE price.stock_id IN ({id_sql})
+                      AND price.close_price IS NOT NULL AND price.close_price > 0
+                      AND price.trade_date <= :period_end_date
+                      AND (price.trade_date >= :period_start_date OR price.trade_date = (
+                        SELECT MAX(base.trade_date) FROM stock_daily_prices base
+                        WHERE base.stock_id = price.stock_id
+                          AND base.trade_date < :period_start_date
+                          AND base.close_price IS NOT NULL AND base.close_price > 0
+                      ))
+                    ORDER BY price.stock_id, price.trade_date
+                """),
+                {**id_params, "period_start_date": period_start_date, "period_end_date": period_end_date},
+            ).mappings().all()]
+
+        market_trade_dates = [str(value) for value in self.db.execute(
+            text("""
+                SELECT DISTINCT trade_date FROM stock_daily_prices
+                WHERE trade_date BETWEEN :start_date AND :end_date
+                  AND close_price IS NOT NULL AND close_price > 0
+                ORDER BY trade_date
+            """),
+            {"start_date": period_start_date, "end_date": period_end_date},
+        ).scalars().all()]
+        prices_by_stock: dict[int, list[dict[str, object]]] = defaultdict(list)
+        for row in price_rows:
+            prices_by_stock[int(row["stock_id"])].append(row)
+        selected_trade_dates = sorted({
+            str(row["trade_date"]) for row in price_rows
+            if period_start_date <= str(row["trade_date"]) <= period_end_date
+        })
+        trade_dates = market_trade_dates or selected_trade_dates
+        expected_trade_date_count = len(trade_dates)
+        price_data_end_date = max(selected_trade_dates) if selected_trade_dates else None
+        latest_updates_by_stock: dict[int, str] = {}
+        for row in price_rows:
+            stock_id = int(row["stock_id"])
+            updated_at = str(row.get("updated_at") or "")
+            if updated_at and updated_at > latest_updates_by_stock.get(stock_id, ""):
+                latest_updates_by_stock[stock_id] = updated_at
+        last_price_collection_date = None
+        if selected_ids and all(stock_id in latest_updates_by_stock for stock_id in selected_ids):
+            last_price_collection_date = min(latest_updates_by_stock.values())[:10]
+        items: list[SupplyTopStockReturnTrendItem] = []
+        status_counts: dict[str, int] = defaultdict(int)
+        missing_ids: list[int] = []
+        missing_codes: list[str] = []
+
+        for rank, stat in enumerate(ranked, start=1):
+            stock_id = int(stat["stock_id"])
+            rows = prices_by_stock.get(stock_id, [])
+            base_row = next((row for row in rows if str(row["trade_date"]) < period_start_date), None)
+            period_rows = [row for row in rows if period_start_date <= str(row["trade_date"]) <= period_end_date]
+            fallback_row = period_rows[0] if period_rows else None
+            effective_base_row = base_row or fallback_row
+            base_close = float(effective_base_row["close_price"]) if effective_base_row else None
+            observation_count = len(period_rows)
+            coverage_rate = round((observation_count / expected_trade_date_count) * 100, 1) if expected_trade_date_count else 0.0
+            if observation_count == 0:
+                price_status, status_name = "NO_PRICE_DATA", "가격 없음"
+                reason = "최근 30일 범위에 저장된 일봉 가격이 없습니다."
+            elif observation_count == 1:
+                price_status, status_name = "INSUFFICIENT_OBSERVATIONS", "관측 부족"
+                reason = "기간 내 유효 종가가 1개뿐이라 누적등락률 선을 만들 수 없습니다."
+            elif base_row is None:
+                price_status, status_name = "READY_WITH_FALLBACK", "기간 첫 종가 기준"
+                reason = "시작일 이전 종가가 없어 기간 내 첫 거래일 종가를 0% 기준으로 사용합니다."
+            elif expected_trade_date_count and coverage_rate < 50:
+                price_status, status_name = "PARTIAL", "일부 가격만 있음"
+                reason = "기준 종가와 유효 가격은 있으나 전체 거래일의 50% 미만만 저장되어 있습니다."
+            else:
+                price_status, status_name = "READY", "준비 완료"
+                reason = "기준 종가와 누적등락률 계산에 필요한 가격이 준비되었습니다."
+            graphable = price_status in {"READY", "READY_WITH_FALLBACK", "PARTIAL"}
+            status_counts[price_status] += 1
+            if not graphable:
+                missing_ids.append(stock_id)
+                missing_codes.append(str(stat["stock_code"]))
+
+            supply_dates = sorted(set(stat["dates"]), reverse=True)
+            supply_date_set = set(supply_dates)
+            points: list[SupplyTopStockReturnPoint] = []
+            previous_close = float(base_row["close_price"]) if base_row else None
+            for row in period_rows:
+                close = float(row["close_price"])
+                daily_return = float(row["change_rate"]) if row["change_rate"] is not None else (((close / previous_close) - 1) * 100 if previous_close else None)
+                cumulative_return = ((close / base_close) - 1) * 100 if base_close else None
+                points.append(SupplyTopStockReturnPoint(
+                    trade_date=str(row["trade_date"]), close=close,
+                    daily_return=round(daily_return, 4) if daily_return is not None else None,
+                    cumulative_return=round(cumulative_return, 4) if cumulative_return is not None else None,
+                    is_supply_date=str(row["trade_date"]) in supply_date_set,
+                ))
+                previous_close = close
+            latest_point = points[-1] if points else None
+            items.append(SupplyTopStockReturnTrendItem(
+                rank=rank, stock_id=stock_id, stock_code=str(stat["stock_code"]), stock_name=str(stat["stock_name"]),
+                appearance_count=len(supply_dates), appearance_dates=supply_dates,
+                latest_detected_date=supply_dates[0] if supply_dates else None,
+                price_data_status=price_status, price_data_status_name=status_name, price_data_reason=reason,
+                price_observation_count=observation_count, expected_trade_date_count=expected_trade_date_count,
+                price_coverage_rate=coverage_rate,
+                base_price_date=str(effective_base_row["trade_date"]) if effective_base_row else None,
+                base_close=base_close, latest_price_date=latest_point.trade_date if latest_point else None,
+                latest_close=latest_point.close if latest_point else None,
+                latest_daily_return=latest_point.daily_return if latest_point else None,
+                latest_cumulative_return=latest_point.cumulative_return if latest_point else None,
+                has_sufficient_price_data=graphable, points=points,
+            ))
+
+        ready_count = sum(status_counts[key] for key in ("READY", "READY_WITH_FALLBACK", "PARTIAL"))
+        readiness = SupplyTopStockPriceReadiness(
+            total_stock_count=len(items), ready_stock_count=ready_count,
+            fallback_ready_stock_count=status_counts["READY_WITH_FALLBACK"], partial_stock_count=status_counts["PARTIAL"],
+            missing_stock_count=len(missing_ids),
+            readiness_rate=round((ready_count / len(items)) * 100, 1) if items else 0,
+            missing_stock_ids=missing_ids, missing_stock_codes=missing_codes,
+            no_price_data_count=status_counts["NO_PRICE_DATA"], no_base_price_count=status_counts["NO_BASE_PRICE"],
+            insufficient_observation_count=status_counts["INSUFFICIENT_OBSERVATIONS"],
+        )
+        logger.info(
+            "[SUPPLY TOP STOCK TREND] period=%s~%s selected=%s ready=%s missing=%s price_rows=%s expected_dates=%s total_ms=%s",
+            period_start_date, period_end_date, len(items), ready_count, len(missing_ids), len(price_rows),
+            expected_trade_date_count, int((time.perf_counter() - started_at) * 1000),
+        )
+        return SupplyTopStockReturnTrendResponse(
+            period_start_date=period_start_date, period_end_date=period_end_date,
+            price_data_end_date=price_data_end_date, last_price_collection_date=last_price_collection_date,
+            ranking_basis="UNIQUE_STOCK_SUPPLY_DAYS",
+            limit=normalized_limit, trade_dates=trade_dates, price_readiness=readiness, stocks=items,
+        )
+
+    def refresh_supply_top_stock_prices(
+        self,
+        payload: SupplyTopStockPriceCollectRequest,
+    ) -> SupplyTopStockPriceCollectResponse:
+        if not self._supply_price_collection_lock.acquire(blocking=False):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="TOP20 가격 갱신이 이미 실행 중입니다.",
+            )
+        started_at = time.perf_counter()
+        try:
+            try:
+                period_start = date.fromisoformat(payload.period_start_date)
+                period_end = date.fromisoformat(payload.period_end_date)
+                if period_start > period_end:
+                    raise ValueError
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="올바른 가격 조회 기간을 입력해 주세요.",
+                ) from exc
+
+            before = self.get_supply_top_stock_return_trend(
+                period_start_date=payload.period_start_date,
+                period_end_date=payload.period_end_date,
+                limit=payload.limit,
+            )
+            target_ids = [item.stock_id for item in before.stocks]
+            collection_date = date.fromisoformat(now_kst()[:10])
+            initial_collect_start = collection_date - timedelta(days=30)
+            logger.info(
+                "[SUPPLY TOP20 PRICE REFRESH] graph_period=%s~%s collection_date=%s top_stock_count=%s mode=incremental",
+                period_start, period_end, collection_date, len(target_ids),
+            )
+            raw_results = StockPriceService(self.db).refresh_price_ranges_only(
+                stock_ids=target_ids,
+                end_date=collection_date,
+                initial_lookback_days=30,
+                source="kiwoom_rest",
+                mode="supply_top20_incremental_refresh",
+            ) if target_ids else []
+
+            after = self.get_supply_top_stock_return_trend(
+                period_start_date=payload.period_start_date,
+                period_end_date=payload.period_end_date,
+                limit=payload.limit,
+            )
+            before_by_id = {item.stock_id: item for item in before.stocks}
+            after_by_id = {item.stock_id: item for item in after.stocks}
+            results: list[SupplyTopStockPriceCollectItem] = []
+            for raw in raw_results:
+                stock_id = int(raw["stock_id"])
+                before_item = before_by_id[stock_id]
+                after_item = after_by_id.get(stock_id)
+                results.append(SupplyTopStockPriceCollectItem(
+                    stock_id=stock_id,
+                    stock_code=str(raw.get("stock_code") or ""),
+                    stock_name=str(raw.get("stock_name") or ""),
+                    status="SUCCESS" if raw.get("status") == "SUCCESS" else "FAILED",
+                    collection_mode=str(raw.get("collection_mode") or "INITIAL"),
+                    collect_start_date=str(raw.get("collect_start_date") or initial_collect_start.isoformat()),
+                    collect_end_date=str(raw.get("collect_end_date") or collection_date.isoformat()),
+                    pages_fetched=int(raw.get("pages_fetched") or 0),
+                    collected_count=int(raw.get("collected_count") or 0),
+                    saved_count=int(raw.get("saved_count") or 0),
+                    price_data_status_before=before_item.price_data_status,
+                    price_data_status_after=after_item.price_data_status if after_item else "NO_PRICE_DATA",
+                    error_message=str(raw.get("error_message")) if raw.get("error_message") else None,
+                ))
+
+            success_count = sum(1 for item in results if item.status == "SUCCESS")
+            failed_count = sum(1 for item in results if item.status == "FAILED")
+            total_ms = int((time.perf_counter() - started_at) * 1000)
+            saved_price_count = sum(item.saved_count for item in results)
+            total_pages = sum(item.pages_fetched for item in results)
+            collect_start_date = min(
+                (item.collect_start_date for item in results),
+                default=initial_collect_start.isoformat(),
+            )
+            logger.info(
+                "[SUPPLY TOP20 PRICE REFRESH DONE] target=%s success=%s failed=%s saved=%s pages=%s total_ms=%s",
+                len(target_ids), success_count, failed_count, saved_price_count, total_pages, total_ms,
+            )
+            return SupplyTopStockPriceCollectResponse(
+                period_start_date=payload.period_start_date,
+                period_end_date=payload.period_end_date,
+                collect_start_date=collect_start_date,
+                collect_end_date=collection_date.isoformat(),
+                last_price_collection_date=after.last_price_collection_date,
+                top_stock_count=len(before.stocks),
+                target_stock_count=len(target_ids),
+                success_count=success_count,
+                partial_count=0,
+                failed_count=failed_count,
+                skipped_count=0,
+                saved_price_count=saved_price_count,
+                total_api_calls=total_pages,
+                total_pages=total_pages,
+                total_ms=total_ms,
+                before_readiness=before.price_readiness,
+                after_readiness=after.price_readiness,
+                results=results,
+            )
+        finally:
+            self._supply_price_collection_lock.release()
     def get_monthly_theme_flow_calendar(self, month: str) -> MonthlyThemeFlowCalendarResponse:
         month_start, month_end = self._resolve_month_window(month)
         summary_30d = self._build_monthly_supply_summary_30d()

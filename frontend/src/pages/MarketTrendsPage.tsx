@@ -23,6 +23,7 @@ import type {
   MonthlyThemeFlowCalendarTheme,
   MonthlyThemeFlowCalendarDay,
   MonthlySupplySummary30d,
+  SupplyTopStockReturnTrendResponse,
   MonthlyThemeFlowTrendPoint,
   MonthlyThemeFlowTrendResponse,
 } from "@/types/marketTrend";
@@ -191,6 +192,172 @@ const MonthlySupplyHeatmap = memo(function MonthlySupplyHeatmap({
         </div>
       </div>
     </div>
+  );
+});
+const STOCK_RETURN_COLORS = [
+  "#dc2626", "#2563eb", "#16a34a", "#ea580c", "#7c3aed",
+  "#0891b2", "#db2777", "#4f46e5", "#65a30d", "#d97706",
+  "#0f766e", "#9333ea", "#be123c", "#0284c7", "#15803d",
+  "#c2410c", "#6d28d9", "#0369a1", "#a16207", "#475569",
+];
+
+type SupplyTopStockReturnChartProps = {
+  data: SupplyTopStockReturnTrendResponse | null;
+  loading: boolean;
+  error: string;
+  collecting: boolean;
+  collectionMessage: string;
+  onRetry: () => void;
+  onRefreshPrices: () => void;
+};
+
+const SupplyTopStockReturnChart = memo(function SupplyTopStockReturnChart({
+  data,
+  loading,
+  error,
+  collecting,
+  collectionMessage,
+  onRetry,
+  onRefreshPrices,
+}: SupplyTopStockReturnChartProps) {
+  const [hoveredStockId, setHoveredStockId] = useState<number | null>(null);
+  const [chartWidth, setChartWidth] = useState(860);
+  const chartContainerRef = useRef<HTMLDivElement | null>(null);
+ useEffect(() => {
+    const element = chartContainerRef.current;
+    if (!element) return undefined;
+    const updateWidth = () => setChartWidth(Math.max(620, Math.round(element.clientWidth)));
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [data, loading]);
+  const width = chartWidth;
+  const height = 430;
+  const margin = { top: 24, right: 16, bottom: 42, left: 54 };
+  const plotWidth = width - margin.left - margin.right;
+  const plotHeight = height - margin.top - margin.bottom;
+  const dates = data?.trade_dates ?? [];
+  const stocks = data?.stocks ?? [];
+  const plottedStocks = stocks.filter((stock) => stock.has_sufficient_price_data);
+  const values = plottedStocks.flatMap((stock) => stock.points.map((point) => point.cumulative_return).filter((value): value is number => value != null));
+  const rawMin = Math.min(0, ...(values.length ? values : [0]));
+  const rawMax = Math.max(0, ...(values.length ? values : [0]));
+  const span = Math.max(rawMax - rawMin, 10);
+  const yMin = rawMin - span * 0.08;
+  const yMax = rawMax + span * 0.08;
+  const xOf = (index: number) => margin.left + (dates.length <= 1 ? plotWidth / 2 : (index / (dates.length - 1)) * plotWidth);
+  const yOf = (value: number) => margin.top + ((yMax - value) / Math.max(yMax - yMin, 1)) * plotHeight;
+  const colorByStock = new Map(stocks.map((stock, index) => [stock.stock_id, STOCK_RETURN_COLORS[index % STOCK_RETURN_COLORS.length]]));
+  const yTicks = Array.from({ length: 6 }, (_, index) => yMax - ((yMax - yMin) * index) / 5);
+  const xTickIndexes = Array.from(new Set([0, Math.floor((dates.length - 1) / 2), dates.length - 1])).filter((index) => index >= 0);
+
+  const segmentsFor = (stock: (typeof stocks)[number]) => {
+    const pointMap = new Map(stock.points.map((point) => [point.trade_date, point.cumulative_return]));
+    const segments: Array<Array<{ index: number; value: number; date: string }>> = [];
+    let current: Array<{ index: number; value: number; date: string }> = [];
+    dates.forEach((date, index) => {
+      const value = pointMap.get(date);
+      if (value == null) {
+        if (current.length) segments.push(current);
+        current = [];
+      } else {
+        current.push({ index, value, date });
+      }
+    });
+    if (current.length) segments.push(current);
+    return segments;
+  };
+
+  return (
+    <section className="monthly-supply-stock-return-card" aria-labelledby="monthly-supply-stock-return-title">
+      <div className="monthly-supply-stock-return-header">
+        <div>
+          <h3 id="monthly-supply-stock-return-title">최근 30일 수급 TOP20 종목 누적등락률</h3>
+          <p>수급 출현일 수 기준 상위 종목의 기간 시작 전 종가 대비 누적등락률입니다. 가격이 없는 거래일은 선을 연결하지 않습니다.</p>
+        </div>
+                {data ? (
+          <div className="monthly-supply-stock-return-actions">
+            <span className="monthly-supply-stock-return-badge">최근 가격 수집일 {data.last_price_collection_date ?? "-"}</span>
+            <button
+              type="button"
+              className="monthly-supply-price-collect-button"
+              disabled={collecting || stocks.length === 0}
+              onClick={onRefreshPrices}
+            >
+              {collecting ? "TOP20 가격 갱신 중..." : "TOP20 가격 갱신"}
+            </button>
+
+          </div>
+        ) : null}
+      </div>
+      {loading ? (
+        <div className="monthly-supply-stock-return-state">누적등락률을 불러오는 중입니다.</div>
+      ) : error ? (
+        <div className="monthly-supply-stock-return-state error"><span>{error}</span><button type="button" onClick={onRetry}>다시 시도</button></div>
+      ) : !data || stocks.length === 0 ? (
+        <div className="monthly-supply-stock-return-state">최근 30일 수급 종목 데이터가 없습니다.</div>
+      ) : (
+        <div className="monthly-supply-stock-return-body">
+          <div className="monthly-supply-stock-return-plot" ref={chartContainerRef}>
+            {plottedStocks.length === 0 ? (
+              <div className="monthly-supply-stock-return-empty">누적등락률을 계산할 수 있는 가격 데이터가 없습니다.</div>
+            ) : (
+              <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="수급 TOP20 종목 누적등락률 선그래프" onMouseLeave={() => setHoveredStockId(null)}>
+                {yTicks.map((tick) => (
+                  <g key={`y-${tick}`}>
+                    <line x1={margin.left} x2={width - margin.right} y1={yOf(tick)} y2={yOf(tick)} className={Math.abs(tick) < span / 50 ? "zero" : ""} />
+                    <text x={margin.left - 10} y={yOf(tick) + 4} textAnchor="end">{tick.toFixed(0)}%</text>
+                  </g>
+                ))}
+                {xTickIndexes.map((index) => <text key={`x-${index}`} x={xOf(index)} y={height - 13} textAnchor={index === 0 ? "start" : index === dates.length - 1 ? "end" : "middle"}>{dates[index]?.slice(5).replace("-", ".")}</text>)}
+                {plottedStocks.map((stock) => {
+                  const color = colorByStock.get(stock.stock_id) ?? "#475569";
+                  const isDimmed = hoveredStockId != null && hoveredStockId !== stock.stock_id;
+                  return (
+                    <g key={`stock-line-${stock.stock_id}`} className={isDimmed ? "dimmed" : ""} onMouseEnter={() => setHoveredStockId(stock.stock_id)}>
+                      {segmentsFor(stock).map((segment, segmentIndex) => {
+                        const d = segment.map((point, index) => `${index ? "L" : "M"}${xOf(point.index)},${yOf(point.value)}`).join(" ");
+                        return <path key={`${stock.stock_id}-${segmentIndex}`} d={d} fill="none" stroke={color} className={hoveredStockId === stock.stock_id ? "active" : ""}><title>{stock.rank}위 {stock.stock_name} · 수급 {stock.appearance_count}회 · 최신 누적 {fmtSignedPct(stock.latest_cumulative_return)}</title></path>;
+                      })}
+                      {stock.points.filter((point) => point.cumulative_return != null && dates.includes(point.trade_date)).map((point) => {
+                        const dateIndex = dates.indexOf(point.trade_date);
+                        return <circle key={`${stock.stock_id}-${point.trade_date}`} cx={xOf(dateIndex)} cy={yOf(point.cumulative_return as number)} r="5" fill="transparent"><title>{point.trade_date} · {stock.stock_name} · 종가 {fmtNumber(point.close)}원 · 일간 {fmtSignedPct(point.daily_return)} · 누적 {fmtSignedPct(point.cumulative_return)}{point.is_supply_date ? " · 수급 출현일" : ""}</title></circle>;
+                      })}
+                    </g>
+                  );
+                })}
+              </svg>
+            )}
+          </div>
+          <ol className="monthly-supply-stock-return-legend" aria-label="수급 TOP20 종목 범례">
+            {stocks.map((stock) => {
+              const color = colorByStock.get(stock.stock_id) ?? "#475569";
+              const isDimmed = hoveredStockId != null && hoveredStockId !== stock.stock_id;
+              return (
+                <li
+                  key={`stock-legend-${stock.stock_id}`}
+                  className={`${isDimmed ? "dimmed" : ""} ${hoveredStockId === stock.stock_id ? "active" : ""}`}
+                  title={`${stock.price_data_status_name} · 관측 ${stock.price_observation_count}/${stock.expected_trade_date_count}일 · 기준 종가일 ${stock.base_price_date ?? "-"} · 최근 가격일 ${stock.latest_price_date ?? "-"} · 커버리지 ${stock.price_coverage_rate}% · ${stock.has_sufficient_price_data ? "그래프 표시 가능" : "가격 관측 부족"} · ${stock.price_data_reason}`}
+                  onMouseEnter={() => setHoveredStockId(stock.stock_id)}
+                  onMouseLeave={() => setHoveredStockId(null)}
+                >
+                  <span className="monthly-supply-stock-return-rank">{stock.rank}</span>
+                  <i style={{ backgroundColor: stock.has_sufficient_price_data ? color : "#cbd5e1" }} />
+                  <span className="monthly-supply-stock-return-name" title={`${stock.stock_name} (${stock.stock_code})`}>{stock.stock_name}</span>
+                  <span className="monthly-supply-stock-return-count">출현 {stock.appearance_count}회{stock.price_data_status === "READY_WITH_FALLBACK" ? " · 첫 종가 기준" : ""}</span>
+                  <strong className={!stock.has_sufficient_price_data ? "insufficient" : (stock.latest_cumulative_return ?? 0) >= 0 ? "positive" : "negative"}>
+                    {stock.has_sufficient_price_data ? fmtSignedPct(stock.latest_cumulative_return) : stock.price_data_status_name}
+                  </strong>
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      )}
+      {collectionMessage ? <p className="monthly-supply-price-collect-message">{collectionMessage}</p> : null}
+      {data?.price_data_end_date ? <p className="monthly-supply-stock-return-footnote">가격 기준일 {data.price_data_end_date} · 기준 종가: 기간 시작 전 최근 거래일(없으면 기간 내 첫 종가)</p> : null}
+    </section>
   );
 });
 const getResultRowKey = (row: KiwoomConditionResultItem) => `${row.stock_code || "NA"}|${row.stock_name || "NA"}|${row.detected_at || "NA"}|${row.source_api || "NA"}`;
@@ -377,6 +544,11 @@ function MarketTrendsPage() {
   const [monthlyBaseMonth, setMonthlyBaseMonth] = useState<string>(getMonthInput());
   const [monthlyCalendarDays, setMonthlyCalendarDays] = useState<MonthlyThemeFlowCalendarDay[]>([]);
   const [monthlySummary30d, setMonthlySummary30d] = useState<MonthlySupplySummary30d | null>(null);
+  const [topStockReturnTrend, setTopStockReturnTrend] = useState<SupplyTopStockReturnTrendResponse | null>(null);
+  const [topStockReturnLoading, setTopStockReturnLoading] = useState(false);
+  const [topStockReturnError, setTopStockReturnError] = useState("");
+  const [topStockPriceCollecting, setTopStockPriceCollecting] = useState(false);
+  const [topStockPriceCollectionMessage, setTopStockPriceCollectionMessage] = useState("");
   const [monthlyTrendResponses, setMonthlyTrendResponses] = useState<MonthlyThemeFlowTrendResponse[]>([]);
   const [selectedMonthlyTreemapId, setSelectedMonthlyTreemapId] = useState<number | null>(null);
   const [monthlyTreemapTooltip, setMonthlyTreemapTooltip] = useState<{ x: number; y: number; item: MonthlyThemeTreemapItem; share: number } | null>(null);
@@ -389,6 +561,8 @@ function MarketTrendsPage() {
   const [monthlyLoading, setMonthlyLoading] = useState<boolean>(false);
   const monthlyRequestIdRef = useRef(0);
   const monthlyRecentTrendKeyRef = useRef("");
+  const topStockReturnPeriodKeyRef = useRef("");
+  const topStockReturnRequestIdRef = useRef(0);
   const monthlyBaseMonthRef = useRef(monthlyBaseMonth);
   const monthlyApplyMonthRef = useRef<(nextMonth: string) => Promise<boolean>>(async () => false);
   const [eventNameSortOrder, setEventNameSortOrder] = useState<SortOrder>("asc");
@@ -1112,6 +1286,46 @@ ${tableRows}
     await Promise.all([loadEvents(nextDate), loadFlow(nextDate)]);
   };
 
+  const loadTopStockReturnTrend = async (periodStartDate: string, periodEndDate: string, force = false) => {
+    const periodKey = `${periodStartDate}:${periodEndDate}`;
+    if (!force && topStockReturnPeriodKeyRef.current === periodKey && topStockReturnTrend) return;
+    const requestId = topStockReturnRequestIdRef.current + 1;
+    topStockReturnRequestIdRef.current = requestId;
+    setTopStockReturnLoading(true);
+    setTopStockReturnError("");
+    try {
+      const response = await repositories.marketTrends.getSupplyTopStockReturnTrend(periodStartDate, periodEndDate, 20);
+      if (requestId !== topStockReturnRequestIdRef.current) return;
+      topStockReturnPeriodKeyRef.current = periodKey;
+      setTopStockReturnTrend(response);
+    } catch (e) {
+      if (requestId !== topStockReturnRequestIdRef.current) return;
+      setTopStockReturnError(toErr(e, "TOP20 종목 누적등락률 조회에 실패했습니다."));
+    } finally {
+      if (requestId === topStockReturnRequestIdRef.current) setTopStockReturnLoading(false);
+    }
+  };
+  const refreshTopStockPrices = async () => {
+    if (!topStockReturnTrend || topStockPriceCollecting) return;
+    setTopStockPriceCollecting(true);
+    setTopStockPriceCollectionMessage("");
+    try {
+      const result = await repositories.marketTrends.refreshSupplyTopStockPrices({
+        period_start_date: topStockReturnTrend.period_start_date,
+        period_end_date: topStockReturnTrend.period_end_date,
+        limit: 20,
+      });
+      const summary = result.failed_count === 0
+        ? `TOP20 가격 갱신이 완료되었습니다. 성공 ${result.success_count}종목`
+        : `TOP20 가격 갱신 일부 완료: 성공 ${result.success_count}종목, 실패 ${result.failed_count}종목`;
+      setTopStockPriceCollectionMessage(summary);
+      await loadTopStockReturnTrend(result.period_start_date, result.period_end_date, true);
+    } catch (e) {
+      setTopStockPriceCollectionMessage(toErr(e, "TOP20 가격 갱신에 실패했습니다."));
+    } finally {
+      setTopStockPriceCollecting(false);
+    }
+  };
   const loadMonthlyFlow = async (
     targetMonth = monthlyBaseMonth,
     options: { refreshCalendar?: boolean; refreshRecentTrend?: boolean } = {},
@@ -1151,6 +1365,8 @@ ${tableRows}
         setMonthlyStartDate(calendarRes.start_date);
         setMonthlyEndDate(calendarRes.end_date);
         setSelectedMonthlyDate(calendarRes.end_date);
+        const summaryPeriod = calendarRes.summary_30d;
+        void loadTopStockReturnTrend(summaryPeriod.period_start_date, summaryPeriod.period_end_date);
       }
       if (recentTrendRes) {
         monthlyRecentTrendKeyRef.current = recentTrendKey;
@@ -2614,6 +2830,18 @@ ${tableRows}
                 </div>
               </div>
             )}
+            <SupplyTopStockReturnChart
+              data={topStockReturnTrend}
+              loading={topStockReturnLoading}
+              error={topStockReturnError}
+              collecting={topStockPriceCollecting}
+              collectionMessage={topStockPriceCollectionMessage}
+              onRefreshPrices={() => void refreshTopStockPrices()}
+              onRetry={() => {
+                if (!monthlySummary30d) return;
+                void loadTopStockReturnTrend(monthlySummary30d.period_start_date, monthlySummary30d.period_end_date, true);
+              }}
+            />
           </SectionCard>
         </div>
       ) : null}

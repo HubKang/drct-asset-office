@@ -246,6 +246,24 @@ class StockPriceRepository:
             stmt = stmt.where(StockDailyPrice.source == source)
         return self.db.scalar(stmt)
 
+    def get_latest_trade_dates(self, stock_ids: list[int]) -> dict[int, str]:
+        """Return each stock's latest stored date in one grouped query."""
+        if not stock_ids:
+            return {}
+        stmt = (
+            select(
+                StockDailyPrice.stock_id,
+                func.max(StockDailyPrice.trade_date).label("latest_trade_date"),
+            )
+            .where(StockDailyPrice.stock_id.in_(stock_ids))
+            .group_by(StockDailyPrice.stock_id)
+        )
+        return {
+            int(row.stock_id): str(row.latest_trade_date)
+            for row in self.db.execute(stmt)
+            if row.latest_trade_date
+        }
+
     def get_stock_summary_window(self, stock_id: int, source: str = "pykrx") -> dict | None:
         stmt = (
             select(

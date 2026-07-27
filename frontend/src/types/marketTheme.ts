@@ -1,4 +1,4 @@
-export type MarketThemeLatestReturn = {
+﻿export type MarketThemeLatestReturn = {
   return_date: string | null;
   avg_change_rate: number | null;
   last_refreshed_at: string | null;
@@ -262,6 +262,26 @@ export type MarketThemeStock = {
   updated_at: string;
 };
 
+export type MarketThemeStockSupplyCurrentTheme = {
+  theme_id: number;
+  theme_name: string;
+  color: string;
+};
+
+export type MarketThemeStockLinkedThemeSupplySummary = {
+  theme_id: number;
+  theme_name: string;
+  supply_count: number;
+  supply_dates: string[];
+  is_current_theme: boolean;
+};
+
+export type MarketThemeStockSupplyMemo = {
+  detected_date: string;
+  memo: string;
+  source?: string | null;
+  is_current_theme_supply_date: boolean;
+};
 export type MarketThemeStockSupplySummary = {
   theme_id: number;
   theme_name: string;
@@ -274,6 +294,18 @@ export type MarketThemeStockSupplySummary = {
   last_supply_date: string | null;
   all_theme_supply_day_count: number;
   recent_supply_dates: string[];
+  current_theme: MarketThemeStockSupplyCurrentTheme;
+  linked_theme_supply_summaries: MarketThemeStockLinkedThemeSupplySummary[];
+  period_start_date: string;
+  period_end_date: string;
+  recent_30d_theme_supply_count: number;
+  current_theme_supply_count: number;
+  overall_stock_supply_count: number;
+  latest_current_theme_supply_date: string | null;
+  first_current_theme_supply_date: string | null;
+  current_theme_supply_dates: string[];
+  overall_stock_supply_dates: string[];
+  stock_memos: MarketThemeStockSupplyMemo[];
 };
 
 export type MarketThemeStockMemo = {

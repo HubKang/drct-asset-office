@@ -671,14 +671,16 @@ function StockPricesPage() {
                   {summaryLoading ? <p className="text-sm text-muted">가격 요약을 불러오는 중입니다.</p> : null}
                   {!summaryLoading && summaryError ? <p className="text-sm text-rose-600">{summaryError}</p> : null}
                   {!summaryLoading && !summaryError && selectedSummary ? (
-                    <div className="price-meta-grid">
+                    <div className="price-meta-grid price-summary-key-metrics">
                       <div className="price-meta-card"><p className="price-meta-label">최근 종가</p><strong>{fmtPrice(selectedSummary.latest_close_price)}</strong></div>
                       <div className="price-meta-card"><p className="price-meta-label">{`\uCD5C\uADFC 5\uAC70\uB798\uC77C \uB4F1\uB77D\uB960`}</p><strong className={selectedSummary.recent_5d_change_rate == null ? "" : selectedSummary.recent_5d_change_rate > 0 ? "price-metric-positive" : selectedSummary.recent_5d_change_rate < 0 ? "price-metric-negative" : "price-metric-neutral"}>{fmtPercent(selectedSummary.recent_5d_change_rate)}</strong></div>
-                      <div className="price-meta-card"><p className="price-meta-label">최근 20거래일 평균 거래량</p><strong>{fmtNumber(selectedSummary.avg_volume_20d)}</strong></div>
                       <div className="price-meta-card"><p className="price-meta-label">52주 고점 대비 위치</p><strong>{fmtPercent(selectedSummary.price_position_vs_52w_high)}</strong></div>
                       <div className="price-meta-card"><p className="price-meta-label">최근 거래일</p><strong>{selectedSummary.latest_trade_date || "-"}</strong></div>
-                      <div className="price-meta-card"><p className="price-meta-label">52주 고점</p><strong>{fmtPrice(selectedSummary.high_52w)}</strong></div>
-                      <div className="price-meta-card"><p className="price-meta-label">52주 고점일</p><strong>{selectedSummary.high_52w_date || "-"}</strong></div>
+                      <div className="price-meta-card">
+                        <p className="price-meta-label">52주 고점</p>
+                        <strong>{fmtPrice(selectedSummary.high_52w)}</strong>
+                        <span className="price-meta-supporting">{`고점일 ${selectedSummary.high_52w_date || "-"}`}</span>
+                      </div>
                     </div>
                   ) : null}
                 </section> : null}

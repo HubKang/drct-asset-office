@@ -1,4 +1,4 @@
-﻿export type MarketScope = "ALL" | "KOSPI" | "KOSDAQ";
+export type MarketScope = "ALL" | "KOSPI" | "KOSDAQ";
 export type ThemeStatus =
   | "unassigned"
   | "manual_assigned"
@@ -532,6 +532,108 @@ export type MonthlySupplySummary30d = {
   appeared_theme_count: number;
   top_theme: MonthlySupplySummaryTheme | null;
   top_stocks: MonthlySupplySummaryStock[];
+};
+export type SupplyTopStockReturnPoint = {
+  trade_date: string;
+  close: number | null;
+  daily_return: number | null;
+  cumulative_return: number | null;
+  is_supply_date: boolean;
+};
+
+export type SupplyTopStockPriceStatus = "READY" | "READY_WITH_FALLBACK" | "NO_PRICE_DATA" | "NO_BASE_PRICE" | "INSUFFICIENT_OBSERVATIONS" | "PARTIAL";
+
+export type SupplyTopStockPriceReadiness = {
+  total_stock_count: number;
+  ready_stock_count: number;
+  fallback_ready_stock_count: number;
+  partial_stock_count: number;
+  missing_stock_count: number;
+  readiness_rate: number;
+  missing_stock_ids: number[];
+  missing_stock_codes: string[];
+  no_price_data_count: number;
+  no_base_price_count: number;
+  insufficient_observation_count: number;
+};
+
+export type SupplyTopStockReturnTrendItem = {
+  rank: number;
+  stock_id: number;
+  stock_code: string;
+  stock_name: string;
+  appearance_count: number;
+  appearance_dates: string[];
+  latest_detected_date: string | null;
+  price_data_status: SupplyTopStockPriceStatus;
+  price_data_status_name: string;
+  price_data_reason: string;
+  price_observation_count: number;
+  expected_trade_date_count: number;
+  price_coverage_rate: number;
+  base_price_date: string | null;
+  base_close: number | null;
+  latest_price_date: string | null;
+  latest_close: number | null;
+  latest_daily_return: number | null;
+  latest_cumulative_return: number | null;
+  has_sufficient_price_data: boolean;
+  points: SupplyTopStockReturnPoint[];
+};
+
+export type SupplyTopStockReturnTrendResponse = {
+  period_start_date: string;
+  period_end_date: string;
+  price_data_end_date: string | null;
+  last_price_collection_date: string | null;
+  ranking_basis: "UNIQUE_STOCK_SUPPLY_DAYS";
+  limit: number;
+  trade_dates: string[];
+  price_readiness: SupplyTopStockPriceReadiness;
+  stocks: SupplyTopStockReturnTrendItem[];
+};
+
+export type SupplyTopStockPriceCollectRequest = {
+  period_start_date: string;
+  period_end_date: string;
+  limit?: number;
+};
+
+export type SupplyTopStockPriceCollectItem = {
+  stock_id: number;
+  stock_code: string;
+  stock_name: string;
+  status: "SUCCESS" | "FAILED";
+  pages_fetched: number;
+  collected_count: number;
+  saved_count: number;
+  collection_mode: "INITIAL" | "INCREMENTAL";
+  collect_start_date: string;
+  collect_end_date: string;
+  price_data_status_before: SupplyTopStockPriceStatus;
+  price_data_status_after: SupplyTopStockPriceStatus;
+  error_message: string | null;
+};
+
+export type SupplyTopStockPriceCollectResponse = {
+  period_start_date: string;
+  period_end_date: string;
+  collect_start_date: string;
+  collect_end_date: string;
+  last_price_collection_date: string | null;
+  top_stock_count: number;
+  target_stock_count: number;
+  success_count: number;
+  partial_count: number;
+  failed_count: number;
+  skipped_count: number;
+  saved_price_count: number;
+  total_api_calls: number;
+  total_pages: number;
+  total_ms: number;
+  before_readiness: SupplyTopStockPriceReadiness;
+  after_readiness: SupplyTopStockPriceReadiness;
+  results: SupplyTopStockPriceCollectItem[];
 };
 export type MonthlySupplyClassificationDiagnostics = {
   classification_basis: "CURRENT_ACTIVE_THEME_MAPPING";

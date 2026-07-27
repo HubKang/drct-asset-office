@@ -509,6 +509,106 @@ class MonthlySupplySummary30d(BaseModel):
     top_theme: MonthlySupplySummaryThemeItem | None = None
     top_stocks: list[MonthlySupplySummaryStockItem] = Field(default_factory=list)
 
+class SupplyTopStockReturnPoint(BaseModel):
+    trade_date: str
+    close: float | None = None
+    daily_return: float | None = None
+    cumulative_return: float | None = None
+    is_supply_date: bool = False
+
+
+class SupplyTopStockPriceReadiness(BaseModel):
+    total_stock_count: int = 0
+    ready_stock_count: int = 0
+    fallback_ready_stock_count: int = 0
+    partial_stock_count: int = 0
+    missing_stock_count: int = 0
+    readiness_rate: float = 0
+    missing_stock_ids: list[int] = Field(default_factory=list)
+    missing_stock_codes: list[str] = Field(default_factory=list)
+    no_price_data_count: int = 0
+    no_base_price_count: int = 0
+    insufficient_observation_count: int = 0
+
+
+class SupplyTopStockReturnTrendItem(BaseModel):
+    rank: int
+    stock_id: int
+    stock_code: str
+    stock_name: str
+    appearance_count: int
+    appearance_dates: list[str] = Field(default_factory=list)
+    latest_detected_date: str | None = None
+    price_data_status: str = "NO_PRICE_DATA"
+    price_data_status_name: str = "가격 없음"
+    price_data_reason: str = ""
+    price_observation_count: int = 0
+    expected_trade_date_count: int = 0
+    price_coverage_rate: float = 0
+    base_price_date: str | None = None
+    base_close: float | None = None
+    latest_price_date: str | None = None
+    latest_close: float | None = None
+    latest_daily_return: float | None = None
+    latest_cumulative_return: float | None = None
+    has_sufficient_price_data: bool = False
+    points: list[SupplyTopStockReturnPoint] = Field(default_factory=list)
+
+
+class SupplyTopStockReturnTrendResponse(BaseModel):
+    period_start_date: str
+    period_end_date: str
+    price_data_end_date: str | None = None
+    last_price_collection_date: str | None = None
+    ranking_basis: str = "UNIQUE_STOCK_SUPPLY_DAYS"
+    limit: int = 20
+    trade_dates: list[str] = Field(default_factory=list)
+    price_readiness: SupplyTopStockPriceReadiness
+    stocks: list[SupplyTopStockReturnTrendItem] = Field(default_factory=list)
+
+
+class SupplyTopStockPriceCollectRequest(BaseModel):
+    period_start_date: str
+    period_end_date: str
+    limit: int = Field(default=20, ge=1, le=20)
+
+
+class SupplyTopStockPriceCollectItem(BaseModel):
+    stock_id: int
+    stock_code: str
+    stock_name: str
+    status: str
+    pages_fetched: int = 0
+    collected_count: int = 0
+    saved_count: int = 0
+    collection_mode: str
+    collect_start_date: str
+    collect_end_date: str
+    price_data_status_before: str
+    price_data_status_after: str
+    error_message: str | None = None
+
+
+class SupplyTopStockPriceCollectResponse(BaseModel):
+    period_start_date: str
+    period_end_date: str
+    collect_start_date: str
+    collect_end_date: str
+    last_price_collection_date: str | None = None
+    top_stock_count: int = 0
+    target_stock_count: int = 0
+    success_count: int = 0
+    partial_count: int = 0
+    failed_count: int = 0
+    skipped_count: int = 0
+    saved_price_count: int = 0
+    total_api_calls: int = 0
+    total_pages: int = 0
+    total_ms: int = 0
+    before_readiness: SupplyTopStockPriceReadiness
+    after_readiness: SupplyTopStockPriceReadiness
+    results: list[SupplyTopStockPriceCollectItem] = Field(default_factory=list)
+
 class MonthlySupplyClassificationDiagnostics(BaseModel):
     classification_basis: str = "CURRENT_ACTIVE_THEME_MAPPING"
     event_count: int = 0

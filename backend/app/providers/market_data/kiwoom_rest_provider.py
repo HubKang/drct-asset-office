@@ -125,7 +125,7 @@ class KiwoomRestMarketDataProvider:
                 "stop": stop_after_page,
                 "reason": page_stop_reason,
             })
-            logger.info(
+            logger.debug(
                 "[PRICE PAGE] stock_code=%s mode=%s page=%s rows=%s newest=%s oldest=%s matched=%s stop=%s reason=%s",
                 normalized,
                 mode_label,
@@ -136,12 +136,6 @@ class KiwoomRestMarketDataProvider:
                 matched_count,
                 stop_after_page,
                 page_stop_reason or "continue",
-            )
-            print(
-                "[PRICE PAGE] "
-                f"stock_code={normalized} mode={mode_label} page={page_index} rows={len(extracted)} "
-                f"newest={newest_date} oldest={oldest_date} matched={matched_count} "
-                f"stop={stop_after_page} reason={page_stop_reason or 'continue'}"
             )
             if stop_after_page:
                 break

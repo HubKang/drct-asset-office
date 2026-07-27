@@ -19,6 +19,11 @@ class StockRepository:
     def get_by_id(self, stock_id: int) -> Stock | None:
         return self.db.get(Stock, stock_id)
 
+    def get_by_ids(self, stock_ids: list[int]) -> list[Stock]:
+        if not stock_ids:
+            return []
+        return list(self.db.scalars(select(Stock).where(Stock.id.in_(stock_ids))).all())
+
     def get_by_code(self, stock_code: str) -> Stock | None:
         return self.db.scalar(select(Stock).where(Stock.stock_code == stock_code))
 

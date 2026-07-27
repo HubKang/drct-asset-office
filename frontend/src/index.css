@@ -16233,6 +16233,167 @@ a:focus-visible {
   font-weight: 700;
 }
 
+.theme-context-supply-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 2px 0 8px;
+}
+
+.theme-context-supply-head > div {
+  display: grid;
+  gap: 2px;
+}
+
+.theme-context-supply-head strong {
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.theme-context-supply-head > div > span,
+.market-theme-stock-memo-heading > span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.theme-context-supply-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: help;
+}
+
+.theme-context-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 12px;
+}
+
+.theme-context-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 9px;
+  border: 1px solid #dbe3ef;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.theme-context-chip strong {
+  color: #0f172a;
+  font-weight: 850;
+}
+
+.theme-context-chip small {
+  padding-left: 5px;
+  border-left: 1px solid rgba(220, 38, 38, 0.24);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.theme-context-chip.is-current {
+  color: var(--theme-context-color, #b91c1c);
+  border-color: rgba(220, 38, 38, 0.28);
+  background: rgba(220, 38, 38, 0.08);
+  font-weight: 800;
+}
+
+.theme-context-chip.is-current strong {
+  color: var(--theme-context-color, #b91c1c);
+}
+
+.stock-supply-summary-card.is-theme-context {
+  border-color: rgba(220, 38, 38, 0.24);
+  background: rgba(220, 38, 38, 0.055);
+}
+
+.stock-supply-summary-card.is-theme-context strong {
+  color: var(--theme-context-color, #b91c1c);
+}
+
+.stock-supply-summary-card.is-overall {
+  background: #f8fafc;
+}
+
+.theme-context-period {
+  margin: 8px 0 0;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.market-theme-stock-recent-supply em.current-theme-supply-date-chip {
+  color: var(--theme-context-color, #b91c1c);
+  border-color: rgba(220, 38, 38, 0.28);
+  background: rgba(220, 38, 38, 0.08);
+}
+
+.theme-context-date-toggle {
+  padding: 4px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 5px;
+  background: #fff;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.market-theme-stock-memo-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 9px;
+}
+
+.market-theme-stock-memo-heading .market-theme-stock-section-title {
+  margin: 0;
+}
+
+.market-theme-stock-memo-meta {
+  display: grid;
+  gap: 5px;
+}
+
+.market-theme-stock-memo-meta small {
+  width: fit-content;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: rgba(220, 38, 38, 0.1);
+  color: var(--theme-context-color, #b91c1c);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.market-theme-stock-memo-row.is-current-theme-date {
+  position: relative;
+  overflow: hidden;
+  border-color: rgba(220, 38, 38, 0.28);
+  background: rgba(220, 38, 38, 0.055);
+}
+
+.market-theme-stock-memo-row.is-current-theme-date::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--theme-context-color, #dc2626);
+}
+
+.market-theme-stock-memo-row.is-current-theme-date .market-theme-stock-memo-date {
+  color: var(--theme-context-color, #b91c1c);
+}
 .market-theme-stock-section-error {
   margin: 0;
   color: #dc2626;
@@ -29031,6 +29192,9 @@ button.chip-light {
   gap: 10px;
   margin-bottom: 10px;
 }
+.stock-data-analysis-page .price-meta-grid.price-summary-key-metrics {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
 
 .stock-data-analysis-page .price-meta-card {
   display: flex;
@@ -29074,6 +29238,16 @@ button.chip-light {
 .stock-data-analysis-page .price-meta-card strong.price-metric-neutral {
   color: #111827;
 }
+.stock-data-analysis-page .price-meta-supporting {
+  margin-top: 3px;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .stock-data-analysis-page .price-detail-stack {
   gap: 12px;
@@ -29081,6 +29255,17 @@ button.chip-light {
 
 .stock-data-analysis-page .price-detail-section {
   gap: 10px;
+}
+@media (max-width: 900px) {
+  .stock-data-analysis-page .price-meta-grid.price-summary-key-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .stock-data-analysis-page .price-meta-grid.price-summary-key-metrics {
+    grid-template-columns: 1fr;
+  }
 }
 
 
@@ -35293,4 +35478,100 @@ button.chip-light {
   .market-phenomenon-card > footer > div { width: 100%; flex-wrap: wrap; }
   .market-phenomenon-source { grid-template-columns: 1fr; gap: 4px; }
   .market-phenomenon-detail-section dl { grid-template-columns: auto 1fr; }
+}
+
+/* Monthly supply TOP20 cumulative return chart */
+.monthly-supply-stock-return-card { margin-top: 28px; padding-top: 24px; border-top: 1px solid #e2e8f0; }
+.monthly-supply-stock-return-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.monthly-supply-stock-return-header h3 { margin: 0; color: #0f172a; font-size: 17px; font-weight: 800; }
+.monthly-supply-stock-return-header p { margin: 7px 0 0; color: #64748b; font-size: 12px; line-height: 1.55; }
+.monthly-supply-stock-return-header > span { flex: 0 0 auto; padding: 7px 11px; border: 1px solid #dbe4ee; border-radius: 999px; background: #f8fafc; color: #475569; font-size: 11px; font-weight: 700; }
+.monthly-supply-stock-return-body { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 18px; align-items: stretch; }
+.monthly-supply-stock-return-plot { position: relative; min-height: 430px; overflow: hidden; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; }
+.monthly-supply-stock-return-plot svg { display: block; width: 100%; min-width: 620px; height: 430px; }
+.monthly-supply-stock-return-plot svg line { stroke: #e8edf3; stroke-width: 1; }
+.monthly-supply-stock-return-plot svg line.zero { stroke: #94a3b8; stroke-width: 1.3; }
+.monthly-supply-stock-return-plot svg text { fill: #64748b; font-size: 11px; font-weight: 600; }
+.monthly-supply-stock-return-plot svg path { stroke-width: 2.1; vector-effect: non-scaling-stroke; pointer-events: stroke; transition: opacity 120ms ease, stroke-width 120ms ease; }
+.monthly-supply-stock-return-plot svg path.active { stroke-width: 3.4; }
+.monthly-supply-stock-return-plot svg g.dimmed { opacity: .13; }
+.monthly-supply-stock-return-plot svg circle { cursor: crosshair; pointer-events: all; }
+.monthly-supply-stock-return-empty,
+.monthly-supply-stock-return-state { display: flex; min-height: 180px; align-items: center; justify-content: center; gap: 10px; border: 1px dashed #cbd5e1; border-radius: 12px; color: #64748b; font-size: 13px; }
+.monthly-supply-stock-return-state.error { color: #b91c1c; background: #fff7f7; }
+.monthly-supply-stock-return-state button { padding: 7px 10px; border: 1px solid #fecaca; border-radius: 8px; background: #fff; color: #991b1b; font-weight: 700; }
+.monthly-supply-stock-return-legend { max-height: 430px; overflow: auto; margin: 0; padding: 7px; border: 1px solid #e2e8f0; border-radius: 12px; background: #f8fafc; list-style: none; }
+.monthly-supply-stock-return-legend li { display: grid; grid-template-columns: 22px 8px minmax(0, 1fr) 34px 72px; align-items: center; gap: 7px; min-height: 38px; padding: 5px 6px; border-bottom: 1px solid #e8edf3; border-radius: 7px; transition: opacity 120ms ease, background 120ms ease; }
+.monthly-supply-stock-return-legend li:last-child { border-bottom: 0; }
+.monthly-supply-stock-return-legend li.active { background: #fff; box-shadow: 0 1px 4px rgba(15, 23, 42, .08); }
+.monthly-supply-stock-return-legend li.dimmed { opacity: .28; }
+.monthly-supply-stock-return-legend li > i { width: 8px; height: 8px; border-radius: 999px; }
+.monthly-supply-stock-return-rank { color: #94a3b8; font-size: 11px; font-weight: 800; text-align: right; }
+.monthly-supply-stock-return-name { overflow: hidden; color: #1e293b; font-size: 12px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+.monthly-supply-stock-return-count { color: #64748b; font-size: 11px; text-align: right; }
+.monthly-supply-stock-return-legend strong { color: #334155; font-size: 11px; text-align: right; white-space: nowrap; }
+.monthly-supply-stock-return-legend strong.positive { color: #dc2626; }
+.monthly-supply-stock-return-legend strong.negative { color: #2563eb; }
+.monthly-supply-stock-return-legend strong.insufficient { color: #94a3b8; font-size: 10px; }
+.monthly-supply-stock-return-footnote { margin: 9px 0 0; color: #94a3b8; font-size: 10px; text-align: right; }
+@media (max-width: 1200px) {
+  .monthly-supply-stock-return-body { grid-template-columns: 1fr; }
+  .monthly-supply-stock-return-legend { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: 330px; }
+}
+@media (max-width: 720px) {
+  .monthly-supply-stock-return-header { flex-direction: column; }
+  .monthly-supply-stock-return-plot { overflow-x: auto; }
+  .monthly-supply-stock-return-legend { grid-template-columns: 1fr; }
+}
+/* Monthly supply TOP20 price readiness */
+.monthly-supply-stock-return-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 7px; }
+.monthly-supply-stock-return-badge { flex: 0 0 auto; padding: 7px 10px; border: 1px solid #dbe4ee; border-radius: 999px; background: #f8fafc; color: #475569; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.monthly-supply-price-collect-button { min-height: 32px; padding: 6px 11px; border: 1px solid #0f172a; border-radius: 8px; background: #0f172a; color: #fff; font-size: 11px; font-weight: 800; white-space: nowrap; }
+.monthly-supply-price-collect-button:disabled { cursor: not-allowed; border-color: #dbe4ee; background: #f1f5f9; color: #94a3b8; }
+.monthly-supply-price-collect-message { margin: 10px 0 0; padding: 9px 11px; border-radius: 8px; background: #f0f9ff; color: #0369a1; font-size: 11px; font-weight: 700; }
+.monthly-supply-stock-return-legend li { grid-template-columns: 22px 8px minmax(0, 1fr) minmax(58px, auto) 86px; }
+.monthly-supply-stock-return-count { white-space: nowrap; }
+@media (max-width: 720px) {
+  .monthly-supply-stock-return-actions { justify-content: flex-start; }
+}
+
+/* Stock tracking direct registration */
+.stock-tracking-register-button {
+  border-color: #cbd5e1;
+  background: #fff;
+  color: #0f172a;
+}
+.stock-tracking-direct-register-modal {
+  width: min(720px, calc(100vw - 32px));
+  max-height: min(780px, calc(100vh - 32px));
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.stock-tracking-direct-register-modal .trade-journal-detail-header { align-items: flex-start; }
+.stock-tracking-direct-register-modal .trade-journal-detail-header h3 { margin: 0; }
+.stock-tracking-direct-register-modal .trade-journal-detail-header p { margin: 5px 0 0; color: #64748b; font-size: 13px; }
+.stock-tracking-register-search-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.stock-tracking-register-results { min-height: 190px; display: flex; flex-direction: column; gap: 8px; }
+.stock-tracking-register-results-head { display: flex; align-items: center; justify-content: space-between; color: #475569; font-size: 13px; }
+.stock-tracking-register-results-head strong { color: #0f172a; }
+.stock-tracking-register-table-shell { max-height: 320px; overflow: auto; }
+.stock-tracking-register-table tbody tr { cursor: pointer; }
+.stock-tracking-register-table tbody tr.selected { background: #eff6ff; }
+.stock-tracking-register-table td:first-child,
+.stock-tracking-register-table th:first-child { width: 58px; text-align: center; }
+.stock-tracking-register-table td:last-child,
+.stock-tracking-register-table th:last-child { width: 110px; }
+.stock-tracking-register-table td strong,
+.stock-tracking-register-table td small { display: block; }
+.stock-tracking-register-table td small { margin-top: 2px; color: #64748b; }
+.stock-tracking-register-empty { display: grid; min-height: 180px; place-items: center; border: 1px dashed #cbd5e1; border-radius: 10px; color: #64748b; font-size: 13px; }
+.stock-tracking-register-group-field { display: grid; gap: 7px; }
+.stock-tracking-register-group-field > span { color: #334155; font-size: 13px; font-weight: 800; }
+.stock-tracking-register-error { margin: -6px 0 0; color: #dc2626; font-size: 12px; }
+.stock-tracking-register-actions { margin-top: 0; }
+@media (max-width: 640px) {
+  .stock-tracking-register-search-row { grid-template-columns: 1fr; }
+  .stock-tracking-direct-register-modal { width: calc(100vw - 20px); max-height: calc(100vh - 20px); }
 }

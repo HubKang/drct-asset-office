@@ -142,6 +142,22 @@ export const marketThemeMockRepository = {
       last_supply_date: row?.last_supply_date ?? null,
       all_theme_supply_day_count: row?.supply_day_count ?? 0,
       recent_supply_dates: [],
+      current_theme: {
+        theme_id: themeId,
+        theme_name: themes.find((theme) => theme.id === themeId)?.theme_name ?? "-",
+        color: "#dc2626",
+      },
+      linked_theme_supply_summaries: [],
+      period_start_date: "",
+      period_end_date: "",
+      recent_30d_theme_supply_count: row?.recent_30d_supply_day_count ?? 0,
+      current_theme_supply_count: row?.supply_day_count ?? 0,
+      overall_stock_supply_count: row?.supply_day_count ?? 0,
+      latest_current_theme_supply_date: row?.last_supply_date ?? null,
+      first_current_theme_supply_date: row?.first_supply_date ?? null,
+      current_theme_supply_dates: [],
+      overall_stock_supply_dates: [],
+      stock_memos: [],
     };
   },
   async createThemeStock(_themeId: number, _payload: MarketThemeStockCreateInput): Promise<MarketThemeStock> {
