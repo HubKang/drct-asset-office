@@ -35,6 +35,8 @@ import type {
   TradeTrainingAccountSummary,
   TradeTrainingClosedTrade,
   TradeTrainingPerformancePoint,
+  TradeTrainingPriceCollectionMode,
+  TradeTrainingPriceCollectionResult,
 } from "@/types/tradeTraining";
 
 type OrderMode = "BUY" | "SELL";
@@ -3061,7 +3063,10 @@ function SettingsModal({
   endDate,
   setEndDate,
   loading,
+  priceCollectingMode,
+  priceCollectionNotice,
   onSearch,
+  onCollectPrices,
   onStart,
   onClose,
 }: {
@@ -3092,7 +3097,10 @@ function SettingsModal({
   endDate: string;
   setEndDate: (value: string) => void;
   loading: boolean;
+  priceCollectingMode: TradeTrainingPriceCollectionMode | null;
+  priceCollectionNotice: { tone: "success" | "error" | "info"; text: string } | null;
   onSearch: () => Promise<void>;
+  onCollectPrices: (mode: TradeTrainingPriceCollectionMode) => Promise<void>;
   onStart: () => Promise<void>;
   onClose: () => void;
 }) {
@@ -3107,6 +3115,7 @@ function SettingsModal({
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (priceCollectingMode) return;
     await onStart();
   };
   const searchStocks = async () => {
@@ -3149,7 +3158,7 @@ function SettingsModal({
             }}
             placeholder="종목명 또는 코드 검색"
           />
-          <button className="btn btn-secondary" type="button" disabled={loading} onClick={() => void searchStocks()}>
+          <button className="btn btn-secondary" type="button" disabled={loading || Boolean(priceCollectingMode)} onClick={() => void searchStocks()}>
             <Search size={16} /> 검색
           </button>
           <select
@@ -3175,10 +3184,11 @@ function SettingsModal({
               type="button"
               className={`training-stock-item ${selectedStock?.stock_id === stock.stock_id ? "selected" : ""}`}
               key={stock.stock_id}
+              disabled={Boolean(priceCollectingMode)}
               onClick={() => setSelectedStock(stock)}
             >
               <strong>{stock.stock_name}</strong>
-              <span>{stock.stock_code} · {stock.market || "-"} · {fmtNumber(stock.price_count)}개 · {stock.first_date}~{stock.last_date}</span>
+              <span>{stock.stock_code} · {stock.market || "-"} · 일봉 {fmtNumber(stock.price_count)}개 · 가격 범위 {stock.first_date || "-"}~{stock.last_date || "-"}</span>
             </button>
           ))}
         </div>
@@ -3194,6 +3204,39 @@ function SettingsModal({
           </div>
         ) : null}
 
+        <section className="training-price-collection-panel" aria-labelledby="training-price-collection-title">
+          <div className="training-price-collection-copy">
+            <strong id="training-price-collection-title">선택 종목 가격 데이터</strong>
+            {selectedStock ? (
+              <>
+                <span>{selectedStock.stock_name} · {selectedStock.stock_code}</span>
+                <small>
+                  일봉 {fmtNumber(selectedStock.price_count)}개 · 가격 범위 {selectedStock.first_date || "-"} ~ {selectedStock.last_date || "-"}
+                  {selectedStock.last_date ? ` · ${Date.now() - new Date(`${selectedStock.last_date}T00:00:00`).getTime() <= 4 * 86400000 ? "최신" : "갱신 필요"}` : ""}
+                </small>
+              </>
+            ) : <span>가격을 수집할 종목을 먼저 선택해 주세요.</span>}
+          </div>
+          <div className="training-price-collection-actions">
+            <button type="button" className="btn btn-secondary" disabled={!selectedStock || loading || Boolean(priceCollectingMode)} title="선택 종목의 최근 7일 일봉과 기술지표를 갱신합니다." onClick={() => void onCollectPrices("RECENT_7D")}>
+              {priceCollectingMode === "RECENT_7D" ? "최근 7일 수집 중..." : "최근 7일 수집"}
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={!selectedStock || loading || Boolean(priceCollectingMode)}
+              title="선택 종목의 지원 전체 범위 일봉과 기술지표를 갱신합니다."
+              onClick={() => {
+                if (!selectedStock) return;
+                const confirmed = window.confirm(`${selectedStock.stock_name}의 전체 가격 데이터를 수집하시겠습니까?\n선택한 종목 1개만 처리하며 기존 데이터는 유지됩니다.`);
+                if (confirmed) void onCollectPrices("FULL");
+              }}
+            >
+              {priceCollectingMode === "FULL" ? "전체 수집 중..." : "전체 수집"}
+            </button>
+          </div>
+          {priceCollectionNotice ? <p className={`training-price-collection-notice ${priceCollectionNotice.tone}`}>{priceCollectionNotice.text}</p> : null}
+        </section>
         <div className="training-option-grid training-settings-option-grid">
           {mode === "standalone" ? (
             <label><span>초기자금</span><input className="input-control" type="number" min={1} value={initialCash} onChange={(event) => setInitialCash(Number(event.target.value) || 0)} /></label>
@@ -3207,7 +3250,7 @@ function SettingsModal({
         <p className="training-settings-help">선택한 종목의 수집 기간이 기본값으로 설정됩니다. 시작일 이전 가격은 최대 30봉까지 차트에 먼저 표시되며, 이전 데이터가 없으면 시작일 1봉부터 표시됩니다.</p>
         <div className="training-modal-actions">
           <button type="button" className="btn btn-secondary" onClick={onClose}>닫기</button>
-          <button type="submit" className="btn btn-primary" disabled={!selectedStock || loading}>
+          <button type="submit" className="btn btn-primary" disabled={!selectedStock || loading || Boolean(priceCollectingMode)}>
             {loading ? "시작 중..." : mode === "account-linked" ? "계좌에 연결하여 훈련 시작" : "종목매매 시작"}
           </button>
         </div>
@@ -5083,6 +5126,8 @@ function TradeTrainingPage() {
   const [linkedTrainingAccount, setLinkedTrainingAccount] = useState<TradeTrainingAccount | null>(null);
   const [accountTrainingOpen, setAccountTrainingOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [priceCollectingMode, setPriceCollectingMode] = useState<TradeTrainingPriceCollectionMode | null>(null);
+  const [priceCollectionNotice, setPriceCollectionNotice] = useState<{ tone: "success" | "error" | "info"; text: string } | null>(null);
   const [resultLoading, setResultLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -5188,6 +5233,7 @@ function TradeTrainingPage() {
 
   useEffect(() => {
     if (!selectedStock) return;
+    setPriceCollectionNotice(null);
     setStartDate(selectedStock.first_date || "");
     setEndDate(selectedStock.last_date || "");
   }, [selectedStock?.stock_id]);
@@ -5198,6 +5244,45 @@ function TradeTrainingPage() {
     }
   }, [detail?.session.position_qty, detail?.session.avg_price]);
 
+  const collectSelectedTrainingStockPrices = async (mode: TradeTrainingPriceCollectionMode) => {
+    if (!selectedStock || priceCollectingMode) return;
+    const requestedStock = selectedStock;
+    const previousFirstDate = requestedStock.first_date;
+    const previousLastDate = requestedStock.last_date;
+    const previousStartDate = startDate;
+    const previousEndDate = endDate;
+    setPriceCollectingMode(mode);
+    setPriceCollectionNotice({ tone: "info", text: mode === "RECENT_7D" ? "최근 7일 가격과 기술지표를 수집하고 있습니다." : "전체 가격과 기술지표를 수집하고 있습니다." });
+    try {
+      const response: TradeTrainingPriceCollectionResult = await repositories.tradeTraining.collectStockPrices(requestedStock.stock_id, mode);
+      if (response.target_count !== 1 || response.stock_id !== requestedStock.stock_id) {
+        throw new Error("선택 종목과 가격 수집 결과가 일치하지 않습니다. 화면을 새로고침한 후 다시 시도해 주세요.");
+      }
+      const refreshedStock: TrainingStockItem = { ...requestedStock, price_count: response.price_count, first_date: response.first_trade_date, last_date: response.latest_trade_date };
+      setStocks((rows) => rows.map((row) => row.stock_id === requestedStock.stock_id ? refreshedStock : row));
+      setSelectedStock((current) => current?.stock_id === requestedStock.stock_id ? refreshedStock : current);
+
+      const nextFirst = response.first_trade_date;
+      const nextLast = response.latest_trade_date;
+      if (!previousEndDate || previousEndDate === previousLastDate) setEndDate(nextLast || previousEndDate);
+      if (nextFirst && nextLast && (!previousStartDate || previousStartDate < nextFirst || previousStartDate > nextLast)) setStartDate(nextFirst);
+      else if (!previousStartDate && previousFirstDate) setStartDate(previousFirstDate);
+
+      if (!response.success) {
+        setPriceCollectionNotice({ tone: "error", text: response.error_message || "가격 수집에 실패했습니다. 오류 내용을 확인한 후 다시 시도해 주세요." });
+      } else if (response.partial || response.technical_indicator_error) {
+        setPriceCollectionNotice({ tone: "error", text: `${requestedStock.stock_name} 1종목 가격 수집 일부 완료 · 수집 ${fmtNumber(response.collected_count)}건 · 저장 ${fmtNumber(response.saved_count)}건 · 기술지표 ${fmtNumber(response.technical_indicator_saved_count)}건` });
+      } else if (mode === "RECENT_7D") {
+        setPriceCollectionNotice({ tone: "success", text: `${requestedStock.stock_name} 1종목 최근 7일 가격·기술지표 수집 완료 · ${response.requested_start_date} ~ ${response.requested_end_date} · 저장 ${fmtNumber(response.saved_count)}건` });
+      } else {
+        setPriceCollectionNotice({ tone: "success", text: `${requestedStock.stock_name} 1종목 전체 가격·기술지표 수집 완료 · 가격 ${fmtNumber(response.price_count)}건 · ${response.first_trade_date || "-"} ~ ${response.latest_trade_date || "-"}` });
+      }
+    } catch (nextError) {
+      setPriceCollectionNotice({ tone: "error", text: nextError instanceof Error ? nextError.message : "가격 수집에 실패했습니다. 오류 내용을 확인한 후 다시 시도해 주세요." });
+    } finally {
+      setPriceCollectingMode(null);
+    }
+  };
   const startSession = async () => {
     if (!selectedStock) return;
     setLoading(true);
@@ -5473,6 +5558,7 @@ function TradeTrainingPage() {
   };
 
   const openStandaloneSettings = () => {
+    setPriceCollectionNotice(null);
     setSettingsMode("standalone");
     setLinkedTrainingAccount(null);
     void loadTradeMethods();
@@ -5480,6 +5566,7 @@ function TradeTrainingPage() {
   };
 
   const openAccountLinkedSettings = (account: TradeTrainingAccount) => {
+    setPriceCollectionNotice(null);
     setLinkedTrainingAccount(account);
     setSettingsMode("account-linked");
     setInitialCash(Number(account.cash_balance || account.realized_equity || account.initial_capital || 50_000_000));
@@ -5769,7 +5856,10 @@ function TradeTrainingPage() {
           endDate={endDate}
           setEndDate={setEndDate}
           loading={loading}
+          priceCollectingMode={priceCollectingMode}
+          priceCollectionNotice={priceCollectionNotice}
           onSearch={() => loadStocks()}
+          onCollectPrices={collectSelectedTrainingStockPrices}
           onStart={startSession}
           onClose={() => {
             setSettingsOpen(false);

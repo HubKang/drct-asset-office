@@ -23,6 +23,8 @@ import type {
   TradeTrainingAccountSessionListResponse,
   TradeTrainingAccountSummary,
   TradeTrainingClosedTradeListResponse,
+  TradeTrainingPriceCollectionMode,
+  TradeTrainingPriceCollectionResult,
   TrainingSessionCreate,
   TrainingSessionDetail,
   TrainingStockListResponse,
@@ -69,6 +71,11 @@ export const tradeTrainingApiRepository = {
     const query = search.toString();
     return apiRequest<TrainingStockListResponse>(`/trade-training/stocks${query ? `?${query}` : ""}`);
   },
+  collectStockPrices: (stockId: number, mode: TradeTrainingPriceCollectionMode) =>
+    apiRequest<TradeTrainingPriceCollectionResult>(`/trade-training/stocks/${stockId}/collect-prices`, {
+      method: "POST",
+      body: JSON.stringify({ mode }),
+    }),
   createSession: (payload: TrainingSessionCreate) =>
     apiRequest<TrainingSessionDetail>("/trade-training/sessions", {
       method: "POST",

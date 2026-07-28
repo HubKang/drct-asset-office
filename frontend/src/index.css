@@ -2254,6 +2254,69 @@ a:focus-visible {
   font-weight: 800;
 }
 
+.training-price-collection-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 14px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #dbe4f0;
+  border-radius: 10px;
+  background: #f8fbff;
+}
+
+.training-price-collection-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.training-price-collection-copy strong {
+  color: #334155;
+  font-size: 12px;
+}
+
+.training-price-collection-copy span {
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.training-price-collection-copy small {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.training-price-collection-actions {
+  display: flex;
+  gap: 7px;
+}
+
+.training-price-collection-actions .btn {
+  min-height: 34px;
+  padding: 7px 11px;
+  white-space: nowrap;
+}
+
+.training-price-collection-notice {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding-top: 7px;
+  border-top: 1px solid #e2e8f0;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.training-price-collection-notice.success { color: #047857; }
+.training-price-collection-notice.error { color: #b91c1c; }
+.training-price-collection-notice.info { color: #1d4ed8; }
+
+.training-stock-item:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
 .training-stock-page-button {
   border: 1px solid #cbd5e1;
   border-radius: 8px;
@@ -13823,6 +13886,14 @@ a:focus-visible {
   font-weight: 900;
 }
 
+.kms-editor-content h3,
+.kms-rich-content h3 {
+  margin: 14px 0 7px;
+  font-size: 16px;
+  line-height: 1.45;
+  font-weight: 850;
+}
+
 .kms-editor-content p,
 .kms-rich-content p {
   min-height: 1.65em;
@@ -14266,6 +14337,220 @@ a:focus-visible {
 .kms-detail-drawer-meta b {
   color: var(--text-color);
   font-weight: 900;
+}
+.kms-detail-support {
+  display: grid;
+  gap: 22px;
+  padding-top: 4px;
+  border-top: 1px solid #e5eaf1;
+}
+
+.kms-detail-group {
+  display: grid;
+  gap: 12px;
+  padding-top: 18px;
+}
+
+.kms-detail-group + .kms-detail-group {
+  border-top: 1px solid #e5eaf1;
+}
+
+.kms-detail-group-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.kms-detail-group-heading h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 17px;
+  font-weight: 900;
+  line-height: 1.35;
+}
+
+.kms-detail-group-heading p {
+  margin: 3px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.kms-detail-info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.kms-detail-info-card,
+.kms-ai-summary-panel {
+  min-width: 0;
+  border: 1px solid #dbe3ef;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.kms-detail-info-card {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-height: 96px;
+  padding: 13px 14px;
+}
+
+.kms-detail-info-card-heading,
+.kms-ai-summary-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.kms-detail-info-card-heading h4,
+.kms-ai-summary-header h4,
+.kms-processing-status h4 {
+  margin: 0;
+  color: #1e293b;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.35;
+}
+
+.kms-detail-info-card-heading > span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.kms-detail-source-link {
+  display: block;
+  overflow: hidden;
+  color: #2563eb;
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.kms-compact-empty,
+.kms-compact-message {
+  min-height: 36px;
+  padding: 9px 11px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.kms-ai-summary-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  background: #fbfdff;
+}
+
+.kms-ai-summary-header > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.kms-ai-summary-header .btn {
+  flex: 0 0 auto;
+}
+
+.kms-compact-message.is-running {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.kms-compact-message.is-error {
+  border-color: #fecaca;
+  background: #fff7f7;
+  color: #b91c1c;
+}
+
+.kms-processing-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 2px 0 0;
+}
+
+.kms-processing-pill-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.kms-processing-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 27px;
+  padding: 4px 9px;
+  border: 1px solid #dbe3ef;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.kms-processing-pill.is-success {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.kms-processing-pill.is-running {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.kms-processing-pill.is-error {
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: #be123c;
+}
+
+.kms-processing-pill.is-pending {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+  color: #64748b;
+}
+
+.kms-processing-status > p {
+  flex-basis: 100%;
+  margin: 0;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+@media (max-width: 760px) {
+  .kms-detail-info-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .kms-ai-summary-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .kms-ai-summary-header .btn {
+    width: 100%;
+  }
 }
 
 .kms-category-toolbar {
@@ -35574,4 +35859,13 @@ button.chip-light {
 @media (max-width: 640px) {
   .stock-tracking-register-search-row { grid-template-columns: 1fr; }
   .stock-tracking-direct-register-modal { width: calc(100vw - 20px); max-height: calc(100vh - 20px); }
+}
+@media (max-width: 700px) {
+  .training-price-collection-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .training-price-collection-actions .btn {
+    flex: 1;
+  }
 }

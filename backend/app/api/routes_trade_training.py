@@ -16,6 +16,8 @@ from backend.app.schemas.trade_training_schema import (
     TradeTrainingAccountSummaryResponse,
     TradeTrainingAccountUpdate,
     TradeTrainingClosedTradeListResponse,
+    TradeTrainingPriceCollectRequest,
+    TradeTrainingPriceCollectResponse,
     TradeTrainingRiskScenarioDetail,
     TradeTrainingRiskScenarioDraftRequest,
     TradeTrainingRiskScenarioRevisionListResponse,
@@ -35,6 +37,7 @@ from backend.app.schemas.trade_training_schema import (
     TrainingStockListResponse,
 )
 from backend.app.services.trade_training_service import TradeTrainingService
+from backend.app.services.stock_price_service import StockPriceService
 
 router = APIRouter(tags=["trade-training"])
 
@@ -112,6 +115,15 @@ def list_training_stocks(
     db: Session = Depends(get_db),
 ) -> dict:
     return TradeTrainingService(db).list_stocks(q=q, limit=limit)
+
+
+@router.post("/trade-training/stocks/{stock_id}/collect-prices", response_model=TradeTrainingPriceCollectResponse)
+def collect_trade_training_stock_prices(
+    stock_id: int,
+    payload: TradeTrainingPriceCollectRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    return StockPriceService(db).collect_trade_training_stock_prices(stock_id=stock_id, mode=payload.mode)
 
 
 @router.post("/trade-training/sessions", response_model=TrainingSessionDetailResponse)

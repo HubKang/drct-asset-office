@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import date, datetime, timedelta
 
 from fastapi import HTTPException, status
@@ -355,6 +356,111 @@ class StockPriceService:
         result = self._collect_and_upsert_with_stats(stock, source, start_date, end_date)
         return str(result["normalized"]), int(result["collected_count"] or 0), int(result["saved_count"] or 0)
 
+    def collect_trade_training_stock_prices(self, stock_id: int, mode: str, source: str = "kiwoom_rest") -> dict:
+        started_at = time.perf_counter()
+        normalized_mode = (mode or "").strip().upper()
+        if normalized_mode not in {"RECENT_7D", "FULL"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="mode는 RECENT_7D 또는 FULL이어야 합니다.")
+        stock = self.stock_repo.get_by_id(stock_id)
+        if stock is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="종목을 찾을 수 없습니다.")
+
+        end_date = date.today()
+        if normalized_mode == "RECENT_7D":
+            action = "selected_recent_7d"
+            collection_mode = "trade_training_recent_7d"
+            start_date = end_date - timedelta(days=7)
+            max_pages = 1
+        else:
+            action = "selected_full"
+            collection_mode = "trade_training_full"
+            _, start_date, end_date, _, _ = self._resolve_collect_window(
+                stock.id, source, period_years=2, overlap_days=7, force_full_refresh=True
+            )
+            max_pages = None
+
+        logger.info(
+            "[TRADE TRAINING PRICE COLLECT] action=%s selected_count=1 target_count=1 stock_id=%s stock_code=%s requested_start_date=%s requested_end_date=%s mode=%s",
+            action, stock.id, stock.stock_code, start_date.isoformat(), end_date.isoformat(), collection_mode,
+        )
+        collected_count = 0
+        saved_count = 0
+        pages_fetched = 0
+        technical_saved_count = 0
+        technical_error = None
+        error_message = None
+        success = False
+        partial = False
+        try:
+            result = self._collect_and_upsert_with_stats(
+                stock=stock,
+                source=source,
+                start_date=start_date,
+                end_date=end_date,
+                mode=collection_mode,
+                stop_at_start_date=True,
+                recalculate_derived=True,
+                max_pages=max_pages,
+            )
+            collected_count = int(result.get("collected_count") or 0)
+            saved_count = int(result.get("saved_count") or 0)
+            pages_fetched = int(result.get("pages_fetched") or 0)
+            success = collected_count > 0
+            if not success:
+                error_message = "요청 범위의 일봉 가격 응답이 비어 있습니다. 기존 가격 데이터는 유지되었습니다."
+            if collected_count > 0:
+                try:
+                    indicator_result = self.technical_indicator_service.calculate_and_save_for_stock(
+                        stock.id,
+                        source_label="kiwoom_rest" if source == "kiwoom_rest" else "calculated_from_pykrx_prices",
+                    )
+                    technical_saved_count = int(indicator_result.get("saved_count") or 0)
+                except Exception as indicator_exc:
+                    self.db.rollback()
+                    technical_error = self._truncate_message(str(indicator_exc))
+                    partial = success
+                    logger.exception(
+                        "trade training technical indicator calculation failed: stock_id=%s stock_code=%s",
+                        stock.id, stock.stock_code,
+                    )
+        except Exception as exc:
+            self.db.rollback()
+            error_message = self._truncate_message(str(exc))
+            logger.exception(
+                "trade training price collection failed: stock_id=%s stock_code=%s action=%s",
+                stock.id, stock.stock_code, action,
+            )
+
+        summary = self.price_repo.get_stock_summary_window(stock_id=stock.id, source=source) or {}
+        total_ms = int((time.perf_counter() - started_at) * 1000)
+        response = {
+            "stock_id": stock.id,
+            "stock_code": stock.stock_code,
+            "stock_name": stock.stock_name,
+            "action": action,
+            "mode": collection_mode,
+            "target_count": 1,
+            "requested_start_date": start_date.isoformat(),
+            "requested_end_date": end_date.isoformat(),
+            "pages_fetched": pages_fetched,
+            "collected_count": collected_count,
+            "saved_count": saved_count,
+            "technical_indicator_saved_count": technical_saved_count,
+            "price_count": int(summary.get("price_count") or 0),
+            "first_trade_date": summary.get("min_trade_date"),
+            "latest_trade_date": summary.get("max_trade_date"),
+            "success": success,
+            "partial": partial,
+            "error_message": error_message,
+            "technical_indicator_error": technical_error,
+            "total_ms": total_ms,
+        }
+        logger.info(
+            "[TRADE TRAINING PRICE COLLECT DONE] action=%s target_count=1 success=%s partial=%s failed=%s pages=%s collected=%s saved=%s technical_saved=%s price_count=%s first_trade_date=%s latest_trade_date=%s total_ms=%s",
+            action, int(success), int(partial), int(not success), pages_fetched, collected_count, saved_count,
+            technical_saved_count, response["price_count"], response["first_trade_date"], response["latest_trade_date"], total_ms,
+        )
+        return response
     def collect_selected_backfill(self, stock_ids: list[int], period_years: int, source: str, overlap_days: int = 7, force_full_refresh: bool = False, start_date: str | None = None, end_date: str | None = None) -> dict:
         selected_ids = self._validate_selected_stock_ids(stock_ids)
         active_ids = set(self.watchlist_repo.list_active_stock_ids())

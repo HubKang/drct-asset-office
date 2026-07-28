@@ -21,6 +21,32 @@ class TrainingStockListResponse(BaseModel):
     limit: int
 
 
+class TradeTrainingPriceCollectRequest(BaseModel):
+    mode: str
+
+
+class TradeTrainingPriceCollectResponse(BaseModel):
+    stock_id: int
+    stock_code: str
+    stock_name: str
+    action: str
+    mode: str
+    target_count: int = 1
+    requested_start_date: str
+    requested_end_date: str
+    pages_fetched: int = 0
+    collected_count: int = 0
+    saved_count: int = 0
+    technical_indicator_saved_count: int = 0
+    price_count: int = 0
+    first_trade_date: str | None = None
+    latest_trade_date: str | None = None
+    success: bool
+    partial: bool = False
+    error_message: str | None = None
+    technical_indicator_error: str | None = None
+    total_ms: int = 0
+
 class TradeTrainingAccountBase(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str | None = None

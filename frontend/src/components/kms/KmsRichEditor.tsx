@@ -11,11 +11,12 @@ import TableRow from "@tiptap/extension-table-row";
 import { TextStyle } from "@tiptap/extension-text-style";
 import Underline from "@tiptap/extension-underline";
 import { EditorContent, useEditor } from "@tiptap/react";
+import { TextSelection } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
 import { imageApiRepository } from "@/services/api/imageApiRepository";
 import { appConfig } from "@/services/config/appConfig";
 import type { AppImageDomain } from "@/types/image";
-import { sanitizeKmsHtml, toKmsEditableHtml } from "@/utils/kmsRichContent";
+import { toKmsEditableHtml } from "@/utils/kmsRichContent";
 
 type KmsRichEditorProps = {
   value: string;
@@ -106,9 +107,9 @@ function KmsRichEditor({
   ownerId = null,
   enableImageUpload = true,
 }: KmsRichEditorProps) {
-  const lastResetKeyRef = useRef<string | number>(resetKey);
+  const lastAppliedResetKeyRef = useRef<string | number>(resetKey);
+  const lastEmittedHtmlRef = useRef("");
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
-  const [, setEditorRevision] = useState(0);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [imageUploadError, setImageUploadError] = useState("");
   const [imageUploadMessage, setImageUploadMessage] = useState("");
@@ -145,30 +146,39 @@ function KmsRichEditor({
     ],
     content: toKmsEditableHtml(value),
     onUpdate: ({ editor: activeEditor }) => {
-      setEditorRevision((revision) => revision + 1);
-      onChange(sanitizeKmsHtml(activeEditor.getHTML()));
-    },
-    onSelectionUpdate: () => {
-      setEditorRevision((revision) => revision + 1);
+      const nextHtml = activeEditor.getHTML();
+      lastEmittedHtmlRef.current = nextHtml;
+      onChange(nextHtml);
     },
     editorProps: {
       attributes: {
         class: "kms-editor-content",
+        "data-testid": "kms-rich-editor-content",
+      },
+      handleClick: (view, position, event) => {
+        if (event.button !== 0 || event.detail !== 1 || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return false;
+        const target = event.target instanceof HTMLElement ? event.target : null;
+        if (target?.closest("a, img, table")) return false;
+        const selection = TextSelection.near(view.state.doc.resolve(position));
+        view.dispatch(view.state.tr.setSelection(selection));
+        return true;
       },
     },
   });
 
   useEffect(() => {
     if (!editor) return;
-    if (lastResetKeyRef.current === resetKey) return;
-    if (editor.isFocused) return;
     const nextContent = toKmsEditableHtml(value);
+    const resetKeyChanged = lastAppliedResetKeyRef.current !== resetKey;
+    if (!resetKeyChanged && value === lastEmittedHtmlRef.current) return;
+    if (!resetKeyChanged && editor.isFocused) return;
     if (editor.getHTML() === nextContent) {
-      lastResetKeyRef.current = resetKey;
+      lastAppliedResetKeyRef.current = resetKey;
       return;
     }
     editor.commands.setContent(nextContent, { emitUpdate: false });
-    lastResetKeyRef.current = resetKey;
+    lastAppliedResetKeyRef.current = resetKey;
+    lastEmittedHtmlRef.current = nextContent;
   }, [editor, resetKey, value]);
 
   const run = useCallback(
@@ -195,10 +205,10 @@ function KmsRichEditor({
     const url = window.prompt("Link URL", previousUrl || "https://");
     if (url === null) return;
     if (!url.trim()) {
-      run(() => editor.chain().focus().extendMarkRange("link").unsetLink().run());
+      run(() => editor.chain().focus(undefined, { scrollIntoView: false }).extendMarkRange("link").unsetLink().run());
       return;
     }
-    run(() => editor.chain().focus().extendMarkRange("link").setLink({ href: url.trim() }).run());
+    run(() => editor.chain().focus(undefined, { scrollIntoView: false }).extendMarkRange("link").setLink({ href: url.trim() }).run());
   };
 
   const insertImageUrl = () => {
@@ -287,24 +297,25 @@ function KmsRichEditor({
     void uploadEditorImage(file);
   };
 
-  const insertTable = () => run(() => editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run());
-  const setFontSize = (fontSize: string) => run(() => editor?.chain().focus().setMark("textStyle", { fontSize }).run());
-  const setTextColor = (color: string) => run(() => editor?.chain().focus().setMark("textStyle", { color }).run());
+  const insertTable = () => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run());
+  const setFontSize = (fontSize: string) => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).setMark("textStyle", { fontSize }).run());
+  const setTextColor = (color: string) => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).setMark("textStyle", { color }).run());
   const setBackgroundColor = (backgroundColor: string) =>
-    run(() => editor?.chain().focus().setMark("textStyle", { backgroundColor: backgroundColor === "transparent" ? null : backgroundColor }).run());
+    run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).setMark("textStyle", { backgroundColor: backgroundColor === "transparent" ? null : backgroundColor }).run());
   const setTextAlign = (textAlign: "left" | "center" | "right") =>
-    run(() => editor?.chain().focus().updateAttributes("paragraph", { textAlign }).updateAttributes("heading", { textAlign }).run());
+    run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).updateAttributes("paragraph", { textAlign }).updateAttributes("heading", { textAlign }).run());
   const setImageWidth = (activeEditor: Editor | null, widthPercent: number) => {
     if (!activeEditor) return;
-    run(() => activeEditor.chain().focus().updateAttributes("image", { width: `${widthPercent}%`, height: null }).run());
+    run(() => activeEditor.chain().focus(undefined, { scrollIntoView: false }).updateAttributes("image", { width: `${widthPercent}%`, height: null }).run());
   };
 
   return (
     <div className="kms-editor-shell">
       <div className="kms-editor-toolbar" aria-label="Editor tools">
-        <button type="button" title="Paragraph" className={buttonClass(editor?.isActive("paragraph"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().setParagraph().run())}>P</button>
-        <button type="button" title="Heading 1" className={buttonClass(editor?.isActive("heading", { level: 1 }))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleHeading({ level: 1 }).run())}>H1</button>
-        <button type="button" title="Heading 2" className={buttonClass(editor?.isActive("heading", { level: 2 }))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleHeading({ level: 2 }).run())}>H2</button>
+        <button type="button" title="Paragraph" className={buttonClass(editor?.isActive("paragraph"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).setParagraph().run())}>P</button>
+        <button type="button" title="Heading 1" className={buttonClass(editor?.isActive("heading", { level: 1 }))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).toggleHeading({ level: 1 }).run())}>H1</button>
+        <button type="button" title="Heading 2" className={buttonClass(editor?.isActive("heading", { level: 2 }))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).toggleHeading({ level: 2 }).run())}>H2</button>
+        <button type="button" title="Heading 3" className={buttonClass(editor?.isActive("heading", { level: 3 }))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).toggleHeading({ level: 3 }).run())}>H3</button>
         <select className="kms-editor-select" title="Font size" defaultValue="" onMouseDown={(event) => event.stopPropagation()} onChange={(event) => { if (event.target.value) setFontSize(event.target.value); event.target.value = ""; }}>
           <option value="">Size</option>
           {fontSizeOptions.map((size) => <option key={size} value={size}>{size}</option>)}
@@ -317,22 +328,22 @@ function KmsRichEditor({
           <option value="">Bg</option>
           {backgroundColorOptions.map((color) => <option key={color} value={color}>{color}</option>)}
         </select>
-        <button type="button" title="Bold" className={buttonClass(editor?.isActive("bold"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleBold().run())}>B</button>
-        <button type="button" title="Italic" className={buttonClass(editor?.isActive("italic"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleItalic().run())}>I</button>
-        <button type="button" title="Underline" className={buttonClass(editor?.isActive("underline"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleUnderline().run())}>U</button>
+        <button type="button" title="Bold" className={buttonClass(editor?.isActive("bold"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).toggleBold().run())}>B</button>
+        <button type="button" title="Italic" className={buttonClass(editor?.isActive("italic"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).toggleItalic().run())}>I</button>
+        <button type="button" title="Underline" className={buttonClass(editor?.isActive("underline"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).toggleUnderline().run())}>U</button>
         <button type="button" title="Align left" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => setTextAlign("left")}>Left</button>
         <button type="button" title="Align center" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => setTextAlign("center")}>Center</button>
         <button type="button" title="Align right" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => setTextAlign("right")}>Right</button>
-        <button type="button" title="Bullet list" className={buttonClass(editor?.isActive("bulletList"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleBulletList().run())}>List</button>
-        <button type="button" title="Ordered list" className={buttonClass(editor?.isActive("orderedList"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleOrderedList().run())}>1.</button>
-        <button type="button" title="Quote" className={buttonClass(editor?.isActive("blockquote"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().toggleBlockquote().run())}>Quote</button>
+        <button type="button" title="Bullet list" className={buttonClass(editor?.isActive("bulletList"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).toggleBulletList().run())}>List</button>
+        <button type="button" title="Ordered list" className={buttonClass(editor?.isActive("orderedList"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).toggleOrderedList().run())}>1.</button>
+        <button type="button" title="Quote" className={buttonClass(editor?.isActive("blockquote"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).toggleBlockquote().run())}>Quote</button>
         <button type="button" title="Link" className={buttonClass(editor?.isActive("link"))} onMouseDown={keepSelection} onClick={setLink}>Link</button>
         <button type="button" title="Insert table" className="kms-editor-button" onMouseDown={keepSelection} onClick={insertTable}>Table</button>
-        <button type="button" title="Add column" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().addColumnAfter().run())} disabled={!isTableSelected}>Col+</button>
-        <button type="button" title="Add row" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().addRowAfter().run())} disabled={!isTableSelected}>Row+</button>
-        <button type="button" title="Delete column" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().deleteColumn().run())} disabled={!isTableSelected}>Col-</button>
-        <button type="button" title="Delete row" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().deleteRow().run())} disabled={!isTableSelected}>Row-</button>
-        <button type="button" title="Delete table" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().deleteTable().run())} disabled={!isTableSelected}>Clear</button>
+        <button type="button" title="Add column" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).addColumnAfter().run())} disabled={!isTableSelected}>Col+</button>
+        <button type="button" title="Add row" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).addRowAfter().run())} disabled={!isTableSelected}>Row+</button>
+        <button type="button" title="Delete column" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).deleteColumn().run())} disabled={!isTableSelected}>Col-</button>
+        <button type="button" title="Delete row" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).deleteRow().run())} disabled={!isTableSelected}>Row-</button>
+        <button type="button" title="Delete table" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).deleteTable().run())} disabled={!isTableSelected}>Clear</button>
         <button type="button" title="Insert image URL" className="kms-editor-button" onMouseDown={keepSelection} onClick={insertImageUrl}>이미지 URL</button>
         {enableImageUpload ? (
           <>
@@ -347,8 +358,8 @@ function KmsRichEditor({
           <input type="range" min="0" max="100" step="1" value={activeImageWidthValue} onMouseDown={(event) => event.stopPropagation()} onChange={(event) => setImageWidth(editor, Number(event.target.value))} disabled={!isImageSelected} />
           <output>{activeImageWidthValue}%</output>
         </label>
-        <button type="button" title="Undo" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().undo().run())} disabled={!editor?.can().undo()}>Undo</button>
-        <button type="button" title="Redo" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus().redo().run())} disabled={!editor?.can().redo()}>Redo</button>
+        <button type="button" title="Undo" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).undo().run())} disabled={!editor?.can().undo()}>Undo</button>
+        <button type="button" title="Redo" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).redo().run())} disabled={!editor?.can().redo()}>Redo</button>
       </div>
       {imageUploadError ? <p className="kms-editor-error">{imageUploadError}</p> : null}
       {imageUploadMessage ? <p className="kms-editor-success">{imageUploadMessage}</p> : null}

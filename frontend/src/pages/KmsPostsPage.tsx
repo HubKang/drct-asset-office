@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import PageHeader from "@/components/common/PageHeader";
@@ -33,6 +33,13 @@ const statusLabel = (value: string | null | undefined) => {
     FAILED: "실패",
   };
   return map[String(value || "PENDING")] || String(value || "대기");
+};
+const statusToneClass = (value: string | null | undefined) => {
+  const normalized = String(value || "PENDING").toUpperCase();
+  if (normalized === "DONE" || normalized === "READY") return "is-success";
+  if (normalized === "RUNNING") return "is-running";
+  if (normalized === "FAILED") return "is-error";
+  return "is-pending";
 };
 
 const plainSnippet = (value: string | null | undefined, max = 140) => {
@@ -385,6 +392,7 @@ function KmsPostsPage() {
   const summaryHelpText = typeof summaryHelpPayload?.summary === "string" ? summaryHelpPayload.summary.trim() : "";
   const summaryHelpKeywords = Array.isArray(summaryHelpPayload?.keywords) ? summaryHelpPayload.keywords.map(String).filter(Boolean) : [];
   const isSummaryHelpApplied = Boolean(summaryHelpText && selectedItem?.summary?.trim() === summaryHelpText);
+  const selectedConfirmedTags = selectedItem ? confirmedTags(selectedItem) : [];
 
   const renderKnowledgeForm = (target: KmsKnowledgeItemPayload, setTarget: (updater: (prev: KmsKnowledgeItemPayload) => KmsKnowledgeItemPayload) => void, ownerId: number | null) => (
     <>
@@ -397,10 +405,10 @@ function KmsPostsPage() {
           <span className="kms-form-label">요약</span>
           <textarea className="textarea kms-form-control kms-summary-input" value={target.summary || ""} onChange={(event) => setTarget((prev) => ({ ...prev, summary: event.target.value }))} />
         </label>
-        <label className="kms-form-field">
+        <div className="kms-form-field">
           <span className="kms-form-label">본문 *</span>
           <KmsRichEditor resetKey={ownerId ? `knowledge-${ownerId}` : "knowledge-new"} value={target.content} selectLocalImage={() => repositories.kms.selectLocalImage()} imageUploadDomain="kms" ownerType="kms_knowledge_item" ownerId={ownerId} onChange={(content) => setTarget((prev) => ({ ...prev, content, content_format: "HTML" }))} />
-        </label>
+        </div>
       </div>
       <div className="kms-knowledge-meta-grid">
         {compactSettingSelect("PARA_TYPE", target.para_type_id, (value) => setTarget((prev) => ({ ...prev, para_type_id: value })), "지식 유형")}
@@ -490,7 +498,7 @@ function KmsPostsPage() {
       {selectedItem && drawerForm ? (
         <div className="kms-detail-drawer-backdrop" onClick={() => setSelectedItem(null)}>
           <aside className="kms-detail-drawer" onClick={(event) => event.stopPropagation()}>
-            <div className="kms-detail-drawer-header"><div><h2>{selectedItem.title}</h2><p>{selectedItem.para_type?.item_name || "-"} · {selectedItem.category?.item_name || "-"} · {selectedItem.updated_at}</p></div><div className="kms-detail-drawer-actions"><button type="button" className="btn btn-primary" onClick={() => setDrawerEditing((prev) => !prev)}>{drawerEditing ? "보기" : "수정"}</button><button type="button" className="btn btn-secondary" onClick={() => setSelectedItem(null)}>닫기</button></div></div>
+            <div className="kms-detail-drawer-header"><div><h2>{selectedItem.title}</h2><p>{selectedItem.para_type?.item_name || "-"} · {selectedItem.category?.item_name || "-"} · {selectedItem.created_at}</p></div><div className="kms-detail-drawer-actions"><button type="button" className="btn btn-primary" onClick={() => setDrawerEditing((prev) => !prev)}>{drawerEditing ? "보기" : "수정"}</button><button type="button" className="btn btn-secondary" onClick={() => setSelectedItem(null)}>닫기</button></div></div>
             <div className="kms-detail-drawer-body">
               {drawerEditing ? (
                 <div className="kms-detail-drawer-edit-form">
@@ -502,16 +510,70 @@ function KmsPostsPage() {
                   <div className="kms-card-badges"><SettingBadge item={selectedItem.para_type} fallback="유형" /><SettingBadge item={selectedItem.category} fallback="미분류" /><SettingBadge item={selectedItem.status} fallback="상태" /><SettingBadge item={selectedItem.importance} fallback="중요도" /><SettingBadge item={selectedItem.usage_context} fallback="사용처" /><SettingBadge item={selectedItem.source_type} fallback="출처" /></div>
                   {selectedItem.summary ? <section className="kms-content-section"><h3>요약</h3><p className="kms-detail-summary">{selectedItem.summary}</p></section> : null}
                   <section className="kms-content-section"><h3>본문</h3><div className="kms-detail-content kms-rich-content" dangerouslySetInnerHTML={{ __html: toKmsDisplayHtml(selectedItem.content) }} /></section>
-                  <section className="kms-content-section"><h3>태그</h3><div className="kms-chip-row">{confirmedTags(selectedItem).length ? confirmedTags(selectedItem).map((tag) => <button key={tag.id} type="button" className="kms-chip selected" onClick={() => void removeTag(tag.tag_id)}>#{tag.tag_name}</button>) : <span className="kms-muted-guide">태그 없음</span>}</div></section>
-                  <section className="kms-content-section">
-                    <h3>요약 도움</h3>
-                    <div className="kms-ai-status-actions"><span className="kms-ai-status-pill">상태: {statusLabel(selectedItem.ai_extract_status)}</span><button type="button" className="btn btn-primary" onClick={() => void runSummaryHelp()} disabled={aiBusy || selectedItem.ai_extract_status === "RUNNING"}>{aiBusy || selectedItem.ai_extract_status === "RUNNING" ? "요약 생성 중..." : summaryHelpText ? "다시 생성" : "요약 생성"}</button></div>
-                    {aiBusy || selectedItem.ai_extract_status === "RUNNING" ? <p className="kms-muted-guide">본문 앞부분을 기반으로 요약과 키워드를 생성하는 중입니다.</p> : null}
-                    {selectedItem.ai_extract_status === "FAILED" && !summaryHelpText ? <p className="kms-muted-guide">요약 생성에 실패했습니다. LM Studio 상태를 확인한 뒤 다시 시도해 주세요.</p> : null}
-                    {summaryHelpText ? <div className="kms-ai-result-grid"><article className="kms-extraction-card"><strong>요약 제안</strong><p>{summaryHelpText}</p><button type="button" className="btn btn-secondary" onClick={() => void applySummaryHelp({ apply_summary: true, summary: summaryHelpText })} disabled={aiBusy || isSummaryHelpApplied}>{isSummaryHelpApplied ? "적용됨" : "요약에 적용"}</button></article><article className="kms-extraction-card"><strong>키워드 제안</strong>{summaryHelpKeywords.length ? <div className="kms-chip-row">{summaryHelpKeywords.map((keyword) => <span key={keyword} className="kms-chip static">#{keyword}</span>)}</div> : <p className="kms-muted-guide">키워드 제안 없음</p>}{summaryHelpKeywords.length ? <button type="button" className="btn btn-secondary" onClick={() => void applySummaryHelp({ add_keywords_as_tags: true, keywords: summaryHelpKeywords })} disabled={aiBusy}>키워드를 태그에 추가</button> : null}</article></div> : <p className="kms-muted-guide">요약 생성 버튼을 눌러 요약과 키워드 제안을 만드세요. 결과는 자동 적용되지 않습니다.</p>}
-                  </section>
-                  <section className="kms-content-section"><h3>출처 정보</h3>{selectedItem.source_url ? <a className="kms-source-link" href={selectedItem.source_url} target="_blank" rel="noreferrer">{selectedItem.source_url}</a> : <p className="kms-muted-guide">출처 URL 없음</p>}</section>
-                  <div className="kms-detail-drawer-meta"><span>임베딩: {statusLabel(selectedItem.embedding_status)}</span>{selectedItem.legacy_source_type ? <span>기존 데이터: {selectedItem.legacy_source_type} #{selectedItem.legacy_source_id}</span> : null}</div>
+                  <div className="kms-detail-support">
+                    <section className="kms-detail-group" aria-labelledby="kms-knowledge-info-title">
+                      <div className="kms-detail-group-heading">
+                        <div>
+                          <h3 id="kms-knowledge-info-title">지식 정보</h3>
+                          <p>분류에 활용하는 태그와 원문 출처를 확인합니다.</p>
+                        </div>
+                      </div>
+                      <div className="kms-detail-info-grid">
+                        <article className="kms-detail-info-card">
+                          <div className="kms-detail-info-card-heading">
+                            <h4>태그</h4>
+                            {selectedConfirmedTags.length ? <span>{selectedConfirmedTags.length}개</span> : null}
+                          </div>
+                          {selectedConfirmedTags.length ? (
+                            <div className="kms-chip-row">
+                              {selectedConfirmedTags.map((tag) => <button key={tag.id} type="button" className="kms-chip selected" onClick={() => void removeTag(tag.tag_id)}>#{tag.tag_name}</button>)}
+                            </div>
+                          ) : <div className="kms-compact-empty">등록된 태그가 없습니다.</div>}
+                        </article>
+                        <article className="kms-detail-info-card">
+                          <div className="kms-detail-info-card-heading"><h4>출처</h4></div>
+                          {selectedItem.source_url ? (
+                            <a className="kms-source-link kms-detail-source-link" href={selectedItem.source_url} target="_blank" rel="noreferrer">{selectedItem.source_url}</a>
+                          ) : <div className="kms-compact-empty">출처 URL이 없습니다.</div>}
+                        </article>
+                      </div>
+                    </section>
+
+                    <section className="kms-detail-group" aria-labelledby="kms-ai-usage-title">
+                      <div className="kms-detail-group-heading">
+                        <div>
+                          <h3 id="kms-ai-usage-title">AI 활용</h3>
+                          <p>요약 제안을 생성하고 AI 처리 상태를 확인합니다.</p>
+                        </div>
+                      </div>
+                      <article className="kms-ai-summary-panel">
+                        <div className="kms-ai-summary-header">
+                          <div>
+                            <h4>요약 도움</h4>
+                            <span className={`kms-processing-pill ${statusToneClass(selectedItem.ai_extract_status)}`}>AI 추출 {statusLabel(selectedItem.ai_extract_status)}</span>
+                          </div>
+                          <button type="button" className="btn btn-primary" onClick={() => void runSummaryHelp()} disabled={aiBusy || selectedItem.ai_extract_status === "RUNNING"}>{aiBusy || selectedItem.ai_extract_status === "RUNNING" ? "요약 생성 중..." : summaryHelpText ? "다시 생성" : "요약 생성"}</button>
+                        </div>
+                        {aiBusy || selectedItem.ai_extract_status === "RUNNING" ? <div className="kms-compact-message is-running">본문 앞부분을 기반으로 요약과 키워드를 생성하는 중입니다.</div> : null}
+                        {selectedItem.ai_extract_status === "FAILED" && !summaryHelpText ? <div className="kms-compact-message is-error">요약 생성에 실패했습니다. LM Studio 상태를 확인한 뒤 다시 시도해 주세요.</div> : null}
+                        {summaryHelpText ? (
+                          <div className="kms-ai-result-grid">
+                            <article className="kms-extraction-card"><strong>요약 제안</strong><p>{summaryHelpText}</p><button type="button" className="btn btn-secondary" onClick={() => void applySummaryHelp({ apply_summary: true, summary: summaryHelpText })} disabled={aiBusy || isSummaryHelpApplied}>{isSummaryHelpApplied ? "적용됨" : "요약에 적용"}</button></article>
+                            <article className="kms-extraction-card"><strong>키워드 제안</strong>{summaryHelpKeywords.length ? <div className="kms-chip-row">{summaryHelpKeywords.map((keyword) => <span key={keyword} className="kms-chip static">#{keyword}</span>)}</div> : <div className="kms-compact-empty">키워드 제안이 없습니다.</div>}{summaryHelpKeywords.length ? <button type="button" className="btn btn-secondary" onClick={() => void applySummaryHelp({ add_keywords_as_tags: true, keywords: summaryHelpKeywords })} disabled={aiBusy}>키워드를 태그에 추가</button> : null}</article>
+                          </div>
+                        ) : selectedItem.ai_extract_status !== "FAILED" && selectedItem.ai_extract_status !== "RUNNING" && !aiBusy ? <div className="kms-compact-empty">요약 생성 버튼을 눌러 요약과 키워드 제안을 만드세요. 결과는 자동 적용되지 않습니다.</div> : null}
+                      </article>
+
+                      <div className="kms-processing-status">
+                        <h4>처리 상태</h4>
+                        <div className="kms-processing-pill-row">
+                          <span className={`kms-processing-pill ${statusToneClass(selectedItem.ai_extract_status)}`}>AI 추출 {statusLabel(selectedItem.ai_extract_status)}</span>
+                          <span className={`kms-processing-pill ${statusToneClass(selectedItem.embedding_status)}`}>임베딩 {statusLabel(selectedItem.embedding_status)}</span>
+                        </div>
+                        {selectedItem.legacy_source_type ? <p>기존 데이터: {selectedItem.legacy_source_type} #{selectedItem.legacy_source_id}</p> : null}
+                      </div>
+                    </section>
+                  </div>
                 </>
               )}
             </div>

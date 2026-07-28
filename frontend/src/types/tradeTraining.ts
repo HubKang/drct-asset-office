@@ -16,6 +16,30 @@ export type TrainingStockListResponse = {
   limit: number;
 };
 
+export type TradeTrainingPriceCollectionMode = "RECENT_7D" | "FULL";
+
+export type TradeTrainingPriceCollectionResult = {
+  stock_id: number;
+  stock_code: string;
+  stock_name: string;
+  action: "selected_recent_7d" | "selected_full";
+  mode: string;
+  target_count: number;
+  requested_start_date: string;
+  requested_end_date: string;
+  pages_fetched: number;
+  collected_count: number;
+  saved_count: number;
+  technical_indicator_saved_count: number;
+  price_count: number;
+  first_trade_date: string | null;
+  latest_trade_date: string | null;
+  success: boolean;
+  partial: boolean;
+  error_message: string | null;
+  technical_indicator_error: string | null;
+  total_ms: number;
+};
 export type TrainingSessionCreate = {
   stock_code: string;
   method_id?: number | null;
