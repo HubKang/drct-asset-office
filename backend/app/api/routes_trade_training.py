@@ -35,6 +35,10 @@ from backend.app.schemas.trade_training_schema import (
     SimulationReviewSaveRequest,
     TrainingCalendarResponse,
     TrainingStockListResponse,
+    MultiPeriodTechnicalAnalysisRequest,
+    MultiPeriodTechnicalAnalysisResponse,
+    TechnicalAnalysisPreviewRequest,
+    TechnicalAnalysisPreviewResponse,
 )
 from backend.app.services.trade_training_service import TradeTrainingService
 from backend.app.services.stock_price_service import StockPriceService
@@ -134,6 +138,22 @@ def create_training_session(payload: TrainingSessionCreate, db: Session = Depend
 @router.get("/trade-training/sessions/{session_id}", response_model=TrainingSessionDetailResponse)
 def get_training_session(session_id: int, db: Session = Depends(get_db)) -> dict:
     return TradeTrainingService(db).get_session_detail(session_id)
+
+
+@router.post("/trade-training/technical-analysis/preview", response_model=TechnicalAnalysisPreviewResponse)
+def preview_trade_training_technical_analysis(
+    payload: TechnicalAnalysisPreviewRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    return TradeTrainingService(db).preview_technical_analysis(payload)
+
+
+@router.post("/trade-training/technical-analysis/multi-period-preview", response_model=MultiPeriodTechnicalAnalysisResponse)
+def preview_trade_training_multi_period_technical_analysis(
+    payload: MultiPeriodTechnicalAnalysisRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    return TradeTrainingService(db).preview_multi_period_technical_analysis(payload)
 
 
 @router.get("/trade-training/sessions/{session_id}/result", response_model=TrainingResultResponse)

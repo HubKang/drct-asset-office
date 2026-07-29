@@ -313,7 +313,8 @@ class MarketIndexService:
                 rows = response.get("items", [])
                 if not rows:
                     rows = self._overview_fallback_row(code, start_dt, end_dt)
-                saved = self._upsert_daily_rows(code, rows, source_provider="KIWOOM_REST")
+                counts = self._upsert_daily_rows(code, rows, source_provider="KIWOOM_REST")
+                saved = counts["inserted_count"] + counts["updated_count"]
                 if saved:
                     changed_dates = [str(row.get("price_date")) for row in rows if row.get("price_date")]
                     self._recalculate_moving_averages(code, changed_dates=changed_dates)
@@ -329,6 +330,9 @@ class MarketIndexService:
                         "status": final_status,
                         "collected_count": len(rows),
                         "saved_count": saved,
+                        "inserted_count": counts["inserted_count"],
+                        "updated_count": counts["updated_count"],
+                        "unchanged_count": counts["unchanged_count"],
                         "from_date": start_dt.isoformat(),
                         "to_date": end_dt.isoformat(),
                         "collection_mode": mode,
@@ -552,8 +556,8 @@ class MarketIndexService:
             if not rows:
                 return self._record_mapping_test(master["index_code"], provider, "ERROR", "provider mapping 검증 실패: 파싱된 일봉 데이터가 없습니다.", [])
             if payload.save_result:
-                saved = self._upsert_daily_rows(master["index_code"], rows, source_provider=provider)
-                if saved:
+                counts = self._upsert_daily_rows(master["index_code"], rows, source_provider=provider)
+                if counts["inserted_count"] + counts["updated_count"] > 0:
                     self._recalculate_moving_averages(master["index_code"])
             return self._record_mapping_test(master["index_code"], provider, "SUCCESS", "provider mapping 검증 성공", rows, verified=True)
         except UnsupportedMarketIndicatorError as exc:
@@ -955,8 +959,11 @@ class MarketIndexService:
             }
         ]
 
-    def _upsert_daily_rows(self, index_code: str, rows: list[dict[str, Any]], *, source_provider: str) -> int:
+    def _upsert_daily_rows(self, index_code: str, rows: list[dict[str, Any]], *, source_provider: str) -> dict[str, int]:
         params: list[dict[str, Any]] = []
+        inserted_count = 0
+        updated_count = 0
+        unchanged_count = 0
         for row in rows:
             if not row.get("price_date") or row.get("close_price") is None:
                 continue
@@ -971,6 +978,12 @@ class MarketIndexService:
                 {"index_code": index_code, "price_date": row.get("price_date")},
             ).mappings().first()
             changed = not existing or any(existing.get(key) != row.get(key) for key in ("open_price", "high_price", "low_price", "close_price", "volume", "trading_value", "change_rate"))
+            if not existing:
+                inserted_count += 1
+            elif changed:
+                updated_count += 1
+            else:
+                unchanged_count += 1
             params.append(
                 {
                     "index_code": index_code,
@@ -987,7 +1000,7 @@ class MarketIndexService:
                 }
             )
         if not params:
-            return 0
+            return {"inserted_count": 0, "updated_count": 0, "unchanged_count": 0}
 
         sql = text(
             """
@@ -1023,12 +1036,18 @@ class MarketIndexService:
         self.db.execute(sql, params)
         self.db.commit()
         logger.info(
-            "market index daily price batch upsert completed: index_code=%s rows_count=%s saved_count=%s upsert_mode=batch",
+            "market index daily price batch upsert completed: index_code=%s rows_count=%s inserted_count=%s updated_count=%s unchanged_count=%s upsert_mode=batch",
             index_code,
             len(rows),
-            len(params),
+            inserted_count,
+            updated_count,
+            unchanged_count,
         )
-        return len(params)
+        return {
+            "inserted_count": inserted_count,
+            "updated_count": updated_count,
+            "unchanged_count": unchanged_count,
+        }
 
     def _recalculate_moving_averages(self, index_code: str, *, changed_dates: list[str] | None = None) -> None:
         rows = self._daily_rows(index_code, None, None)

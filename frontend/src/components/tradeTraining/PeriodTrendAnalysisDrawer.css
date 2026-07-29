@@ -1,0 +1,73 @@
+.training-period-drawer{width:min(1240px,97vw);grid-template-rows:auto auto minmax(0,1fr) auto}
+.training-period-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid #e2e8f0;background:#f8fafc;padding:12px 20px}
+.training-period-buttons{display:flex;gap:7px}
+.training-period-buttons button{min-width:58px;height:38px;border:1px solid #cbd5e1;border-radius:9px;background:#fff;color:#334155;font-size:13px;font-weight:800}
+.training-period-buttons button.active{border-color:#172033;background:#172033;color:#fff}
+.training-period-range{display:grid;justify-items:end;gap:2px;color:#64748b;font-size:11px}
+.training-period-range b{color:#172033;font-size:12px}
+.training-period-drawer-body{overflow-y:auto;overflow-x:hidden;display:grid;align-content:start;gap:12px;padding:14px 20px 18px}
+.training-analysis-cards{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.training-analysis-cards article{display:grid;align-content:start;gap:4px;min-width:0;border:1px solid #dbe3ee;border-radius:9px;background:#fafbfc;padding:10px 12px}
+.training-analysis-cards span{color:#64748b;font-size:10px;font-weight:800}
+.training-analysis-cards strong{overflow:hidden;color:#0f172a;font-size:13px;text-overflow:ellipsis;white-space:nowrap}
+.training-analysis-cards small{overflow:hidden;color:#64748b;font-size:10px;font-weight:700;text-overflow:ellipsis;white-space:nowrap}
+.training-period-chart-section{position:relative;display:grid;gap:8px;min-width:0;border:1px solid #dbe3ee;border-radius:11px;background:#fff;padding:10px 12px;transition:opacity .18s}
+.training-period-chart-section.loading>.training-period-chart-guide,.training-period-chart-section.loading>.training-period-chart-shell{opacity:.35}
+.training-period-chart-loading{position:absolute;z-index:4;inset:0;display:grid;place-items:center;color:#334155;font-size:13px;font-weight:800}
+.training-period-chart-guide{display:grid;grid-template-columns:2fr 1fr 1fr;gap:8px}
+.training-period-chart-guide>div{display:flex;align-items:center;justify-content:space-between;gap:10px;border-radius:7px;background:#f5f7fa;padding:7px 10px}
+.training-period-chart-guide span{color:#64748b;font-size:10px;font-weight:700}
+.training-period-chart-guide b{color:#172033;font-size:11px}
+.training-period-chart-shell{overflow:hidden;min-width:0;background:#fff}
+.training-period-chart-shell svg{display:block;width:100%;height:clamp(460px,52vh,560px);touch-action:none}
+.training-period-chart-legend{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:4px 8px 1px;color:#64748b;font-size:10px;font-weight:700}
+.training-period-chart-legend span{display:inline-flex;align-items:center;gap:5px}
+.training-period-chart-legend i{display:inline-block;width:16px;height:2px;background:#64748b}
+.training-period-chart-legend i.candles{background:linear-gradient(90deg,#ef4444 50%,#2563eb 50%)}
+.training-period-chart-legend i.regression{height:0;border-top:2px dashed #172033;background:transparent}
+.training-period-chart-legend i.channel{height:1px;background:#8fa2bc}
+.training-period-chart-legend i.ma20{background:#e3a500}
+.training-period-chart-legend i.ma60{background:#15965a}
+.training-period-chart-legend b{margin-left:auto;border-radius:999px;background:#eef2ff;padding:3px 7px;color:#4338ca}
+.training-period-basis-note{margin:2px 8px 0;color:#64748b;font-size:10.5px;line-height:1.5}
+.training-period-chart-empty{display:grid;place-items:center;min-height:460px;color:#64748b}
+.training-period-commentary{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(360px,1fr);gap:12px}
+.training-period-commentary article{overflow:hidden;border:1px solid #dbe3ee;border-radius:10px;background:#fff;box-shadow:0 1px 2px rgb(15 23 42 / 4%)}
+.training-period-commentary article>header{display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid #e6ebf2;padding:9px 12px}
+.training-period-commentary article>header strong{color:#172033;font-size:12px}
+.training-period-commentary article>header span{border-radius:999px;padding:3px 7px;font-size:9.5px;font-weight:800}
+.training-period-insight-card{border-top:3px solid #2563eb!important}
+.training-period-insight-card>header{background:#f5f8ff}
+.training-period-insight-card>header span{background:#dbeafe;color:#1d4ed8}
+.training-period-insight-card>p{margin:0;padding:12px;color:#475569;font-size:11px;line-height:1.65}
+.training-period-check-card{border-top:3px solid #7c3aed!important}
+.training-period-check-card>header{background:#faf7ff}
+.training-period-check-card>header span{background:#ede9fe;color:#6d28d9}
+.training-period-check-card ol{display:grid;gap:7px;margin:0;padding:11px 12px;list-style:none}
+.training-period-check-card li{display:grid;grid-template-columns:20px minmax(0,1fr);align-items:center;gap:7px;color:#475569;font-size:10.5px}
+.training-period-check-card li b{display:grid;place-items:center;width:20px;height:20px;border-radius:6px;background:#f1edff;color:#6d28d9;font-size:9.5px}
+.training-period-settings{margin:auto;width:min(680px,100%)}
+@media(max-width:1280px){
+  .training-period-drawer{width:min(1120px,98vw)}
+  .training-period-chart-shell svg{height:clamp(420px,50vh,500px)}
+}
+@media(max-width:900px){
+  .training-period-drawer{width:100vw;max-width:100vw}
+  .training-analysis-cards{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .training-analysis-cards article:last-child{grid-column:1/-1}
+  .training-period-chart-guide{grid-template-columns:1fr}
+  .training-period-commentary{grid-template-columns:1fr}
+}
+@media(max-width:768px){
+  .training-period-drawer>header{padding:12px 14px}
+  .training-period-toolbar{align-items:flex-start;flex-direction:column;padding:10px 12px}
+  .training-period-buttons{width:100%}
+  .training-period-buttons button{flex:1;min-width:0}
+  .training-period-range{justify-items:start}
+  .training-period-drawer-body{padding:10px 12px}
+  .training-analysis-cards{grid-template-columns:1fr 1fr}
+  .training-analysis-cards article:last-child{grid-column:1/-1}
+  .training-period-chart-shell svg{height:clamp(360px,47vh,440px)}
+  .training-period-chart-legend{gap:7px}
+  .training-period-chart-guide>div{padding:6px 8px}
+}

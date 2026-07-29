@@ -72,6 +72,9 @@ class MarketIndexCollectItemResult(BaseModel):
     status: str
     collected_count: int = 0
     saved_count: int = 0
+    inserted_count: int = 0
+    updated_count: int = 0
+    unchanged_count: int = 0
     from_date: str | None = None
     to_date: str | None = None
     collection_mode: str | None = None

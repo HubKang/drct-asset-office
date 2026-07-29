@@ -73,6 +73,9 @@ export type MarketIndexCollectResponse = {
     status: string;
     collected_count: number;
     saved_count: number;
+    inserted_count?: number;
+    updated_count?: number;
+    unchanged_count?: number;
     from_date?: string | null;
     to_date?: string | null;
     message?: string | null;

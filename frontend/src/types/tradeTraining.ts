@@ -619,6 +619,75 @@ export type TrainingSessionDetail = {
   risk_scenario?: TradeTrainingRiskScenarioDetail | null;
 };
 
+export type TechnicalAnalysisPeriod = "1M" | "3M" | "6M" | "1Y" | "ALL";
+
+export type TechnicalAnalysisConfiguration = {
+  short_window: number;
+  medium_window: number;
+  trend_window: number;
+  channel_multiplier: number;
+  minimum_break_persistence: number;
+  reversal_persistence: number;
+  swing_confirmation_width: number;
+  minimum_trend_strength?: number;
+  minimum_r_squared?: number;
+};
+
+export type TechnicalAnalysisPoint = { date: string; value: number };
+
+export type TechnicalAnalysisPreview = {
+  as_of_date: string;
+  display_period: TechnicalAnalysisPeriod;
+  display_start_date: string | null;
+  display_end_date: string | null;
+  display_observation_count: number;
+  analysis_start_date: string | null;
+  analysis_end_date: string | null;
+  analysis_observation_count: number;
+  applied_configuration: TechnicalAnalysisConfiguration;
+  trend: Record<string, any>;
+  moving_averages: {
+    values?: Record<string, { value?: number | null; distance_pct?: number | null; slope_pct?: number | null }>;
+    arrangement?: string;
+    arrangement_label?: string;
+    latest_cross?: { type: string; label: string; date: string } | null;
+  };
+  volume: Record<string, any>;
+  price_position: Record<string, any>;
+  current_candle: Record<string, any>;
+  volatility: Record<string, any>;
+  summary: {
+    status_label?: string;
+    compact_items?: string[];
+    easy_explanation?: string;
+    next_checks?: string[];
+    current_candle_label?: string;
+    volatility_label?: string;
+  };
+  overlay: {
+    regression_points: TechnicalAnalysisPoint[];
+    upper_channel_points: TechnicalAnalysisPoint[];
+    lower_channel_points: TechnicalAnalysisPoint[];
+    analysis_start_date?: string | null;
+    current_point?: TechnicalAnalysisPoint | null;
+  };
+  performance: {
+    cache_hit?: boolean;
+    queried_row_count?: number;
+    query_ms?: number;
+    calculation_ms?: number;
+    total_ms?: number;
+  };
+};
+
+export type TechnicalAnalysisPreviewRequest = {
+  training_session_id: number;
+  stock_code?: string | null;
+  as_of_date?: string | null;
+  display_period: TechnicalAnalysisPeriod;
+  configuration?: Partial<TechnicalAnalysisConfiguration>;
+};
+
 export type TrainingFinishResponse = {
   session: TrainingSession;
   account: TrainingAccount;

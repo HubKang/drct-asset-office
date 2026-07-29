@@ -19,6 +19,10 @@ export async function apiRequest<T>(path: string, options?: ApiRequestOptions): 
   const url = `${appConfig.apiBaseUrl}${path}`;
   const { timeoutMs, ...requestOptions } = options || {};
   const controller = new AbortController();
+  const externalSignal = requestOptions.signal;
+  const forwardAbort = () => controller.abort();
+  if (externalSignal?.aborted) controller.abort();
+  else externalSignal?.addEventListener("abort", forwardAbort, { once: true });
   const method = requestOptions.method || "GET";
   const timeout = timeoutMs
     ? setTimeout(() => {
@@ -62,6 +66,7 @@ export async function apiRequest<T>(path: string, options?: ApiRequestOptions): 
     );
   } finally {
     if (timeout) clearTimeout(timeout);
+    externalSignal?.removeEventListener("abort", forwardAbort);
   }
 
   if (!response.ok) {

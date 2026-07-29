@@ -30,6 +30,7 @@ export type MarketDataCollectResponse = {
   status: string;
   target_count: number;
   success_count: number;
+  waiting_count: number;
   inserted_count: number;
   updated_count: number;
   unchanged_count: number;

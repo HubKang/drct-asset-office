@@ -785,6 +785,32 @@ class TradeTrainingRepository:
         ).mappings().all()
         return [dict(row) for row in reversed(rows)]
 
+    def list_prices_through(
+        self,
+        stock_id: int,
+        source: str | None,
+        end_date: str,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        clauses = ["stock_id = :stock_id", "trade_date <= :end_date"]
+        params: dict[str, Any] = {"stock_id": stock_id, "end_date": end_date, "limit": max(1, int(limit))}
+        if source is not None:
+            clauses.append("COALESCE(source, '') = :source")
+            params["source"] = source
+        rows = self.db.execute(
+            text(
+                f"""
+                SELECT trade_date, open_price, high_price, low_price, close_price, volume, trading_value
+                FROM stock_daily_prices
+                WHERE {" AND ".join(clauses)}
+                ORDER BY trade_date DESC, id DESC
+                LIMIT :limit
+                """
+            ),
+            params,
+        ).mappings().all()
+        return [dict(row) for row in reversed(rows)]
+
     def create_session(self, payload: dict[str, Any]) -> dict[str, Any]:
         self.ensure_training_account_table()
         now = now_kst()

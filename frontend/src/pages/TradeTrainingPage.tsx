@@ -6,8 +6,10 @@ import EmptyState from "@/components/common/EmptyState";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import ScenarioHabitsPanel from "@/components/tradeTraining/ScenarioHabitsPanel";
+import PeriodTrendAnalysisDrawer from "@/components/tradeTraining/PeriodTrendAnalysisDrawer";
 import { repositories } from "@/services";
 import type { MarketIndexDailyPriceItem } from "@/types/marketIndex";
+import type { MultiPeriodTechnicalAnalysis } from "@/types/multiPeriodTechnicalAnalysis";
 import type { TradeMethod, TradeMethodSaveRequest } from "@/types/tradeJournal";
 import type {
   SimulationReview,
@@ -17,6 +19,9 @@ import type {
   TrainingEquityCurvePoint,
   TrainingGptPackage,
   TrainingLaunchMode,
+  TechnicalAnalysisConfiguration,
+  TechnicalAnalysisPeriod,
+  TechnicalAnalysisPreview,
   TrainingMethodReview,
   TrainingOrderRequest,
   TradeTrainingRiskPlanStep,
@@ -464,6 +469,13 @@ function CandleChart({
   onRiskReachAlertSelect,
   marketIndexControls,
   renderMarketIndexPanel,
+  technicalEnabled,
+  technicalData,
+  technicalLoading,
+  technicalError,
+  onToggleTechnical,
+  onOpenTechnical,
+  onRetryTechnical,
 }: {
   sessionId?: number | string | null;
   candles: TrainingCandle[];
@@ -483,6 +495,13 @@ function CandleChart({
   onMarkerClick?: (tradeDate: string, tradeId: number | null) => void;
   marketIndexControls?: ReactNode;
   renderMarketIndexPanel?: (layout: TrainingChartLayout) => ReactNode;
+  technicalEnabled: boolean;
+  technicalData: TechnicalAnalysisPreview | null;
+  technicalLoading: boolean;
+  technicalError: string;
+  onToggleTechnical: () => void;
+  onOpenTechnical: () => void;
+  onRetryTechnical: () => void;
 }) {
   const [tooltip, setTooltip] = useState<{ candle: TrainingCandle; x: number; y: number; changeRate: number | null } | null>(null);
   const [markerTooltip, setMarkerTooltip] = useState<TradeMarkerTooltip | null>(null);
@@ -490,6 +509,7 @@ function CandleChart({
   const [chartDrawings, setChartDrawings] = useState<ChartDrawing[]>([]);
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
   const [pendingTrendStart, setPendingTrendStart] = useState<TrendPoint | null>(null);
+  const [moreOpen, setMoreOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const previousViewportRef = useRef<number | null>(null);
   const fallbackWidth = 1080;
@@ -743,6 +763,14 @@ function CandleChart({
     setMarkerTooltip(null);
   };
 
+  const technicalPolyline = (points: Array<{ date: string; value: number }> = []) =>
+    points.map((point) => {
+      const index = candles.findIndex((candle) => candle.trade_date === point.date);
+      return index < 0 ? null : `${xAt(index)},${yPrice(Number(point.value))}`;
+    }).filter(Boolean).join(" ");
+  const technicalStartIndex = technicalData?.analysis_start_date
+    ? candles.findIndex((candle) => candle.trade_date >= String(technicalData.analysis_start_date)) : -1;
+
   if (candles.length === 0) {
     return <div className="training-chart-empty">훈련을 시작하면 차트가 표시됩니다.</div>;
   }
@@ -750,20 +778,39 @@ function CandleChart({
   return (
     <div className="training-chart-card">
       <div className="training-chart-tools">
-        <button className={`training-chart-tool-btn ${drawingTool === "horizontal" ? "active" : ""}`} type="button" onClick={() => toggleDrawingTool("horizontal")}>
-          수평선
-        </button>
-        <button className={`training-chart-tool-btn ${drawingTool === "trend" ? "active" : ""}`} type="button" onClick={() => toggleDrawingTool("trend")}>
-          추세선
-        </button>
-        <button className="training-chart-tool-btn" type="button" onClick={handleDeleteSelectedDrawing} disabled={!selectedDrawingId}>
-          선택삭제
-        </button>
-        <button className="training-chart-tool-btn" type="button" onClick={handleClearAllDrawings} disabled={chartDrawings.length === 0 && !pendingTrendStart}>
-          전체삭제
-        </button>
-        {marketIndexControls}
+        <div className="training-chart-tool-group" aria-label="작도">
+          <span>작도</span>
+          <button title="차트에 수평 가격선을 그립니다." className={`training-chart-tool-btn ${drawingTool === "horizontal" ? "active" : ""}`} type="button" onClick={() => toggleDrawingTool("horizontal")}>수평선</button>
+          <button title="차트에서 두 지점을 선택해 사용자가 직접 추세선을 그립니다." className={`training-chart-tool-btn ${drawingTool === "trend" ? "active" : ""}`} type="button" onClick={() => toggleDrawingTool("trend")}>수동 추세선</button>
+        </div>
+        <div className="training-chart-tool-separator" />
+        <div className="training-chart-tool-group" aria-label="분석">
+          <span>분석</span>
+          <button title="메인 차트에서는 최근 80봉으로 현재 추세를 간편 분석합니다. 1개월·3개월·6개월·1년·전체 기간 비교는 기술분석 상세에서 확인할 수 있습니다." className={`training-chart-tool-btn ${technicalEnabled ? "active" : ""}`} type="button" onClick={onToggleTechnical}>자동 추세분석</button>
+          <button title="현재 캔들의 추세, 이동평균, 거래량, 전고점·전저점 위치를 확인합니다." className="training-chart-tool-btn" type="button" onClick={onOpenTechnical}>기술분석 상세</button>
+        </div>
+        <div className="training-chart-tool-separator" />
+        <div className="training-chart-tool-group" aria-label="비교"><span>비교</span>{marketIndexControls}</div>
+        <div className="training-chart-tool-separator" />
+        <div className="training-chart-tool-group training-chart-management" aria-label="관리">
+          <span>관리</span>
+          <div className="training-chart-more">
+            <button className="training-chart-tool-btn" type="button" aria-expanded={moreOpen} onClick={() => setMoreOpen((value) => !value)}>⋯</button>
+            {moreOpen ? <div className="training-chart-more-menu">
+              <button type="button" onClick={() => { handleDeleteSelectedDrawing(); setMoreOpen(false); }} disabled={!selectedDrawingId}>선택한 사용자 선 삭제</button>
+              <button type="button" onClick={() => { handleClearAllDrawings(); setMoreOpen(false); }} disabled={chartDrawings.length === 0 && !pendingTrendStart}>사용자 작도 전체 삭제</button>
+            </div> : null}
+          </div>
+        </div>
+
       </div>
+      {technicalEnabled ? <div className="training-technical-strip" aria-live="polite">
+        <strong>자동 추세분석</strong><span>최근 80봉 간편 분석</span>
+        {technicalLoading ? <span className="training-technical-skeleton">분석 중…</span>
+          : technicalError ? <><span>기술 분석을 불러오지 못했습니다.</span><button type="button" onClick={onRetryTechnical}>다시 시도</button></>
+          : technicalData ? <><b>{technicalData.summary.status_label}</b><span>{(technicalData.summary.compact_items || []).join(" · ")}</span><button type="button" onClick={onOpenTechnical}>상세</button></>
+          : <span>분석을 준비하고 있습니다.</span>}
+      </div> : null}
       {renderMarketIndexPanel?.(chartLayout)}
       <div className="training-chart-viewport" ref={scrollRef}>
         <div className="training-chart-track" style={{ width }}>
@@ -792,6 +839,20 @@ function CandleChart({
             </g>
           );
         })}
+
+        {technicalEnabled && technicalData && technicalStartIndex >= 0 ? (
+          <g className="training-technical-overlay" pointerEvents="none">
+            <rect x={xAt(technicalStartIndex)-slot/2} y={pad.top} width={Math.max(slot, width-pad.right-(xAt(technicalStartIndex)-slot/2))} height={priceHeight} fill="#64748b" opacity={0.035} />
+            <line x1={xAt(technicalStartIndex)} x2={xAt(technicalStartIndex)} y1={pad.top} y2={pad.top+priceHeight} stroke="#94a3b8" strokeDasharray="3 5" />
+            <polyline points={technicalPolyline(technicalData.overlay.upper_channel_points)} fill="none" stroke="#94a3b8" strokeWidth={1} />
+            <polyline points={technicalPolyline(technicalData.overlay.lower_channel_points)} fill="none" stroke="#94a3b8" strokeWidth={1} />
+            <polyline points={technicalPolyline(technicalData.overlay.regression_points)} fill="none" stroke="#334155" strokeWidth={1.5} strokeDasharray="6 4" />
+            {technicalData.overlay.current_point ? (() => {
+              const index = candles.findIndex((candle) => candle.trade_date === technicalData.overlay.current_point?.date);
+              return index >= 0 ? <circle cx={xAt(index)} cy={yPrice(Number(technicalData.overlay.current_point.value))} r={3.2} fill="#0f172a" stroke="#fff" strokeWidth={1} /> : null;
+            })() : null}
+          </g>
+        ) : null}
 
         {maKeys.map((key) => {
           const style = maStyle(key);
@@ -5119,6 +5180,18 @@ function TradeTrainingPage() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [detail, setDetail] = useState<TrainingSessionDetail | null>(null);
+  const [technicalEnabled, setTechnicalEnabled] = useState(false);
+  const [technicalData, setTechnicalData] = useState<TechnicalAnalysisPreview | null>(null);
+  const [technicalLoading, setTechnicalLoading] = useState(false);
+  const [technicalError, setTechnicalError] = useState("");
+  const [technicalRetryKey, setTechnicalRetryKey] = useState(0);
+  const [technicalPeriod, setTechnicalPeriod] = useState<TechnicalAnalysisPeriod>("6M");
+  const [technicalConfigurations, setTechnicalConfigurations] = useState<Partial<Record<TechnicalAnalysisPeriod, Partial<TechnicalAnalysisConfiguration>>>>({});
+  const [multiTechnicalData, setMultiTechnicalData] = useState<MultiPeriodTechnicalAnalysis | null>(null);
+  const [multiTechnicalLoading, setMultiTechnicalLoading] = useState(false);
+  const [multiTechnicalError, setMultiTechnicalError] = useState("");
+  const [multiTechnicalRetryKey, setMultiTechnicalRetryKey] = useState(0);
+  const [technicalDrawerOpen, setTechnicalDrawerOpen] = useState(false);
   const [result, setResult] = useState<TrainingResult | null>(null);
   const [resultInitialSelection, setResultInitialSelection] = useState<ResultTradeSelection>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -5157,6 +5230,9 @@ function TradeTrainingPage() {
   const [restoreViewportSignal, setRestoreViewportSignal] = useState(0);
   const [canRestoreRiskViewport, setCanRestoreRiskViewport] = useState(false);
   const previousPendingAlertIdsRef = useRef<Set<number>>(new Set());
+  const technicalRequestRef = useRef(0);
+  const multiTechnicalRequestRef = useRef(0);
+  const multiTechnicalCacheRef = useRef<Map<string, MultiPeriodTechnicalAnalysis>>(new Map());
 
   const selectedTrainingMethod = useMemo(
     () => tradeMethods.find((method) => method.id === selectedMethodId) ?? null,
@@ -5180,6 +5256,86 @@ function TradeTrainingPage() {
     setCanRestoreRiskViewport(false);
   }, [detail?.session.id]);
 
+  useEffect(() => {
+    setTechnicalEnabled(false);
+    setTechnicalData(null);
+    setTechnicalError("");
+    setTechnicalPeriod("6M");
+    setTechnicalConfigurations({});
+    setMultiTechnicalData(null);
+    multiTechnicalCacheRef.current.clear();
+    setMultiTechnicalError("");
+    setTechnicalDrawerOpen(false);
+  }, [detail?.session.id]);
+
+  useEffect(() => {
+    if (!technicalEnabled || !detail?.session.id || !detail.session.current_date) return;
+    const controller = new AbortController();
+    const requestId = ++technicalRequestRef.current;
+    setTechnicalLoading(true);
+    setTechnicalError("");
+    void repositories.tradeTraining.previewTechnicalAnalysis({
+      training_session_id: detail.session.id,
+      stock_code: detail.session.stock_code,
+      as_of_date: detail.session.current_date,
+      display_period: "6M",
+      configuration: { trend_window: 80 },
+    }, controller.signal).then((response) => {
+      if (requestId === technicalRequestRef.current) setTechnicalData(response);
+    }).catch((nextError) => {
+      if (controller.signal.aborted || requestId !== technicalRequestRef.current) return;
+      setTechnicalError(nextError instanceof Error ? nextError.message : "기술 분석을 불러오지 못했습니다.");
+    }).finally(() => {
+      if (requestId === technicalRequestRef.current) setTechnicalLoading(false);
+    });
+    return () => controller.abort();
+  }, [technicalEnabled, technicalRetryKey, detail?.session.id, detail?.session.current_date]);
+
+  useEffect(() => {
+    if (!technicalDrawerOpen || !detail?.session.id || !detail.session.current_date) return;
+    const cacheKey = JSON.stringify([detail.session.id, detail.session.current_date, technicalPeriod, technicalConfigurations[technicalPeriod] || {}]);
+    const cached = multiTechnicalCacheRef.current.get(cacheKey);
+    if (cached) {
+      setMultiTechnicalData(cached);
+      setMultiTechnicalLoading(false);
+      setMultiTechnicalError("");
+      return;
+    }
+    const controller = new AbortController();
+    const requestId = ++multiTechnicalRequestRef.current;
+    setMultiTechnicalLoading(true);
+    setMultiTechnicalError("");
+    void repositories.tradeTraining.previewMultiPeriodTechnicalAnalysis({
+      training_session_id: detail.session.id,
+      stock_code: detail.session.stock_code,
+      as_of_date: detail.session.current_date,
+      selected_period: technicalPeriod,
+      configuration: technicalConfigurations[technicalPeriod] || {},
+    }, controller.signal).then((response) => {
+      if (requestId === multiTechnicalRequestRef.current) {
+        multiTechnicalCacheRef.current.set(cacheKey, response);
+        setMultiTechnicalData(response);
+      }
+    }).catch((nextError) => {
+      if (controller.signal.aborted || requestId !== multiTechnicalRequestRef.current) return;
+      setMultiTechnicalError(nextError instanceof Error ? nextError.message : "다중 기간 기술 분석을 불러오지 못했습니다.");
+    }).finally(() => {
+      if (requestId === multiTechnicalRequestRef.current) setMultiTechnicalLoading(false);
+    });
+    return () => controller.abort();
+  }, [technicalDrawerOpen, technicalPeriod, technicalConfigurations, multiTechnicalRetryKey, detail?.session.id, detail?.session.current_date]);
+
+  const openTechnicalDrawer = () => {
+    setTechnicalEnabled(true);
+    setTechnicalPeriod("6M");
+    setTechnicalDrawerOpen(true);
+  };
+
+  const retryTechnicalAnalysis = () => setTechnicalRetryKey((current) => current + 1);
+  const retryMultiTechnicalAnalysis = () => {
+    multiTechnicalCacheRef.current.clear();
+    setMultiTechnicalRetryKey((current) => current + 1);
+  };
   useEffect(() => {
     if (!pendingRiskAlerts.length) {
       previousPendingAlertIdsRef.current = new Set();
@@ -5730,6 +5886,13 @@ function TradeTrainingPage() {
                 highlightedTradeDate={highlightedTradeDate}
                 highlightedTradeId={highlightedTradeId}
                 onMarkerClick={highlightTradeMarker}
+                technicalEnabled={technicalEnabled}
+                technicalData={technicalData}
+                technicalLoading={technicalLoading}
+                technicalError={technicalError}
+                onToggleTechnical={() => setTechnicalEnabled((current) => !current)}
+                onOpenTechnical={openTechnicalDrawer}
+                onRetryTechnical={retryTechnicalAnalysis}
                 marketIndexControls={
                   <>
                     {(["KOSPI", "KOSDAQ"] as MarketIndexCode[]).map((indexCode) => (
@@ -5826,6 +5989,19 @@ function TradeTrainingPage() {
           </>
         )}
       </div>
+
+      <PeriodTrendAnalysisDrawer
+        open={technicalDrawerOpen}
+        stockName={detail?.session.stock_name || detail?.session.stock_code || "-"}
+        data={multiTechnicalData}
+        loading={multiTechnicalLoading}
+        error={multiTechnicalError}
+        selectedPeriod={technicalPeriod}
+        onPeriodChange={setTechnicalPeriod}
+        onClose={() => setTechnicalDrawerOpen(false)}
+        onRetry={retryMultiTechnicalAnalysis}
+        onApplyConfiguration={(configuration) => setTechnicalConfigurations((current) => ({ ...current, [technicalPeriod]: configuration }))}
+      />
 
       {settingsOpen ? (
         <SettingsModal

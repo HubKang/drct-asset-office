@@ -321,6 +321,52 @@ class TrainingSessionCreate(BaseModel):
     training_account_id: int | None = None
 
 
+class TechnicalAnalysisPreviewRequest(BaseModel):
+    training_session_id: int
+    stock_code: str | None = None
+    as_of_date: str | None = None
+    display_period: str = Field(default="6M", pattern=r"^(1M|3M|6M|1Y|ALL)$")
+    configuration: dict = Field(default_factory=dict)
+
+
+class TechnicalAnalysisPreviewResponse(BaseModel):
+    as_of_date: str
+    display_period: str
+    display_start_date: str | None = None
+    display_end_date: str | None = None
+    display_observation_count: int = 0
+    analysis_start_date: str | None = None
+    analysis_end_date: str | None = None
+    analysis_observation_count: int = 0
+    applied_configuration: dict = Field(default_factory=dict)
+    trend: dict = Field(default_factory=dict)
+    moving_averages: dict = Field(default_factory=dict)
+    volume: dict = Field(default_factory=dict)
+    price_position: dict = Field(default_factory=dict)
+    current_candle: dict = Field(default_factory=dict)
+    volatility: dict = Field(default_factory=dict)
+    summary: dict = Field(default_factory=dict)
+    overlay: dict = Field(default_factory=dict)
+    performance: dict = Field(default_factory=dict)
+
+
+class MultiPeriodTechnicalAnalysisRequest(BaseModel):
+    training_session_id: int
+    stock_code: str | None = None
+    as_of_date: str | None = None
+    selected_period: str = Field(default="6M", pattern=r"^(1M|3M|6M|1Y|ALL)$")
+    configuration: dict = Field(default_factory=dict)
+
+
+class MultiPeriodTechnicalAnalysisResponse(BaseModel):
+    as_of_date: str
+    default_period: str = "6M"
+    selected_period: str
+    applied_configuration: dict = Field(default_factory=dict)
+    selected_period_detail: dict = Field(default_factory=dict)
+    performance: dict = Field(default_factory=dict)
+
+
 class RiskPlanStepBase(BaseModel):
     plan_group: str
     plan_type: str

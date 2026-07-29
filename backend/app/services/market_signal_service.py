@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.core.market_signal_validation_summary import compact_validation_summary
 from backend.app.services.market_signal_display_service import MarketSignalDisplayService
+from backend.app.services.technical_analysis_service import calculate_regression_channel
 
 
 SUPPORTED_TRANSFORMS = {
@@ -2901,17 +2902,17 @@ class MarketSignalService:
         sample_count = min(trend_window, len(values))
         analysis_start_index = len(values) - sample_count
         sample = values[-sample_count:]
-        regression = self._linear_regression(sample)
+        shared_trend = calculate_regression_channel(sample, channel_multiplier)
+        regression = shared_trend
         last = sample[-1]
-        mean_abs = max(abs(self._mean(sample) or 0), 1e-9)
-        normalized_slope = (regression["slope"] / mean_abs) * len(sample) * 100
-        trend_strength = abs(normalized_slope) * max(float(regression["r_squared"]), 0.01)
+        normalized_slope = float(shared_trend["normalized_slope"])
+        trend_strength = float(shared_trend["trend_strength"])
         short_slope = self._window_slope(values, short_window)
         medium_slope = self._window_slope(values, medium_window)
-        upper = regression["last_center"] + channel_multiplier * regression["residual_stddev"]
-        lower = regression["last_center"] - channel_multiplier * regression["residual_stddev"]
+        upper = float(shared_trend["channel_upper"])
+        lower = float(shared_trend["channel_lower"])
         channel_width = upper - lower
-        channel_position = None if math.isclose(channel_width, 0) else (last - lower) / channel_width
+        channel_position = shared_trend["channel_position"]
         up_ratio = self._recent_direction_ratio(values[-min(short_window, len(values)) :], upward=True)
         down_ratio = self._recent_direction_ratio(values[-min(short_window, len(values)) :], upward=False)
         trend_state = "SIDEWAYS"

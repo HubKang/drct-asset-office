@@ -28,7 +28,13 @@ import type {
   TrainingSessionCreate,
   TrainingSessionDetail,
   TrainingStockListResponse,
+  TechnicalAnalysisPreview,
+  TechnicalAnalysisPreviewRequest,
 } from "@/types/tradeTraining";
+import type {
+  MultiPeriodTechnicalAnalysis,
+  MultiPeriodTechnicalAnalysisRequest,
+} from "@/types/multiPeriodTechnicalAnalysis";
 
 export const tradeTrainingApiRepository = {
   listAccounts: (params?: { status?: string }) => {
@@ -82,6 +88,14 @@ export const tradeTrainingApiRepository = {
       body: JSON.stringify(payload),
     }),
   getSession: (sessionId: number) => apiRequest<TrainingSessionDetail>(`/trade-training/sessions/${sessionId}`),
+  previewTechnicalAnalysis: (payload: TechnicalAnalysisPreviewRequest, signal?: AbortSignal) =>
+    apiRequest<TechnicalAnalysisPreview>("/trade-training/technical-analysis/preview", {
+      method: "POST", body: JSON.stringify(payload), signal,
+    }),
+  previewMultiPeriodTechnicalAnalysis: (payload: MultiPeriodTechnicalAnalysisRequest, signal?: AbortSignal) =>
+    apiRequest<MultiPeriodTechnicalAnalysis>("/trade-training/technical-analysis/multi-period-preview", {
+      method: "POST", body: JSON.stringify(payload), signal,
+    }),
   getResult: (sessionId: number) => apiRequest<TrainingResult>(`/trade-training/sessions/${sessionId}/result`),
   getGptPackage: (sessionId: number) => apiRequest<TrainingGptPackage>(`/trade-training/sessions/${sessionId}/gpt-package`),
   getReview: (sessionId: number) => apiRequest<SimulationReview>(`/trade-training/sessions/${sessionId}/review`),

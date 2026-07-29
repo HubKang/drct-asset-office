@@ -40,6 +40,7 @@ class MarketDataCollectResponse(BaseModel):
     status: str
     target_count: int
     success_count: int = 0
+    waiting_count: int = 0
     inserted_count: int = 0
     updated_count: int = 0
     unchanged_count: int = 0

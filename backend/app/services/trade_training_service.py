@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from decimal import Decimal
 import json
+from time import perf_counter
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -26,7 +27,17 @@ from backend.app.schemas.trade_training_schema import (
     RiskLevelResponseRequest,
     TradeTrainingRiskScenarioDraftRequest,
     TrainingSessionCreate,
+    MultiPeriodTechnicalAnalysisRequest,
+    TechnicalAnalysisPreviewRequest,
 )
+from backend.app.services.technical_analysis_service import (
+    DISPLAY_PERIOD_DAYS,
+    TECHNICAL_PREVIEW_CACHE,
+    calculate_technical_analysis,
+    configuration_hash,
+    normalize_configuration,
+)
+from backend.app.services.trade_training_multi_period_preview import build_multi_period_preview
 
 
 RUNNING_STATUS = "진행중"
@@ -1225,6 +1236,56 @@ class TradeTrainingService:
             "trades": self.repo.list_trades(session_id),
             "risk_scenario": self.get_current_risk_scenario_detail(session_id),
         }
+
+    def preview_technical_analysis(self, payload: TechnicalAnalysisPreviewRequest) -> dict[str, Any]:
+        started_at = perf_counter()
+        session = self.repo.get_session(payload.training_session_id)
+        if not session:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="훈련 세션을 찾을 수 없습니다.")
+        if payload.stock_code and str(payload.stock_code) != str(session.get("stock_code") or ""):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="훈련 세션의 종목과 요청 종목이 일치하지 않습니다.")
+        session_as_of = str(session.get("current_date") or session.get("start_date") or "")
+        requested_as_of = str(payload.as_of_date or session_as_of)
+        as_of_date = min(requested_as_of, session_as_of)
+        try:
+            datetime.strptime(as_of_date, "%Y-%m-%d")
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="기준일 형식이 올바르지 않습니다.") from exc
+        config = normalize_configuration(payload.configuration)
+        # The main replay chart intentionally remains a fixed, compact 80-candle analysis.
+        config["trend_window"] = 80
+        options = self._parse_options(session)
+        period = payload.display_period.upper()
+        display_count = 244 if period in {"1Y", "ALL"} else max(30, int(DISPLAY_PERIOD_DAYS[period] / 7 * 5) + 5)
+        query_limit = min(600, max(display_count, 120) + max(120, config["trend_window"]) + config["swing_confirmation_width"] * 2)
+        query_started = perf_counter()
+        rows = self.repo.list_prices_through(
+            stock_id=int(options.get("stock_id") or 0),
+            source=str(options.get("source") or ""),
+            end_date=as_of_date,
+            limit=query_limit,
+        )
+        query_ms = (perf_counter() - query_started) * 1000
+        latest_date = str(rows[-1]["trade_date"]) if rows else ""
+        cache_key = "|".join((str(payload.training_session_id), str(session.get("stock_code") or ""), as_of_date, period, configuration_hash(config), latest_date))
+        cached = TECHNICAL_PREVIEW_CACHE.get(cache_key)
+        if cached is not None:
+            cached["performance"] = {"cache_hit": True, "queried_row_count": len(rows), "query_ms": round(query_ms, 3),
+                                     "calculation_ms": 0.0, "total_ms": round((perf_counter()-started_at)*1000, 3)}
+            return cached
+        calculation_started = perf_counter()
+        result = calculate_technical_analysis(rows, as_of_date=as_of_date, display_period=period, configuration=config)
+        result["performance"] = {
+            "cache_hit": False, "queried_row_count": len(rows), "query_ms": round(query_ms, 3),
+            "calculation_ms": round((perf_counter()-calculation_started)*1000, 3),
+            "total_ms": round((perf_counter()-started_at)*1000, 3),
+        }
+        TECHNICAL_PREVIEW_CACHE.put(cache_key, result)
+        return result
+
+    def preview_multi_period_technical_analysis(self, payload: MultiPeriodTechnicalAnalysisRequest) -> dict[str, Any]:
+        return build_multi_period_preview(self, payload)
+
 
     def _running_session(self, session_id: int) -> dict[str, Any]:
         session = self.repo.get_session(session_id)

@@ -35,7 +35,7 @@ class MarketDataCollectionService:
                 if target["item_type"] == "INDEX":
                     result = self._collect_index(target["item_code"])
                 else:
-                    result = self._collect_indicator(target["item_code"], skip_error_status=(mode == "INCREMENTAL_ALL"), start_date=start_date, end_date=end_date)
+                    result = self._collect_indicator(target["item_code"], skip_error_status=False, start_date=start_date, end_date=end_date)
             except Exception as exc:  # noqa: BLE001 - isolate item failures.
                 result = {
                     "item_type": target["item_type"],
@@ -52,7 +52,11 @@ class MarketDataCollectionService:
 
         totals = self._summarize(results)
         elapsed_ms = int((time.perf_counter() - started) * 1000)
-        final_status = "SUCCESS" if totals["failed_count"] == 0 and totals["skipped_count"] == 0 else "PARTIAL_SUCCESS"
+        final_status = (
+            "SUCCESS"
+            if totals["failed_count"] == 0 and totals["skipped_count"] == 0 and totals["waiting_count"] == 0
+            else "PARTIAL_SUCCESS"
+        )
         if totals["failed_count"] == len(results) and results:
             final_status = "FAILED"
         self._finish_run(run_id, final_status, totals, elapsed_ms)
@@ -108,7 +112,8 @@ class MarketDataCollectionService:
                 """
                 SELECT 'INDEX' AS item_type, index_code AS item_code
                 FROM market_indexes
-                WHERE is_active = 1 AND collection_status NOT IN ('ERROR', 'CUSTOM_INDEX_REQUIRED', 'NO_OFFICIAL_INDEX', 'EXCLUDED')
+                WHERE is_active = 1
+                  AND collection_status NOT IN ('CUSTOM_INDEX_REQUIRED', 'NO_OFFICIAL_INDEX', 'EXCLUDED')
                 """
             )
         ).mappings().all()
@@ -117,7 +122,7 @@ class MarketDataCollectionService:
                 """
                 SELECT 'INDICATOR' AS item_type, indicator_code AS item_code
                 FROM market_indicators
-                WHERE is_active = 1 AND collection_status <> 'ERROR'
+                WHERE is_active = 1
                 """
             )
         ).mappings().all()
@@ -128,7 +133,9 @@ class MarketDataCollectionService:
         item = response["results"][0] if response.get("results") else {}
         status_value = str(item.get("status") or "ERROR").upper()
         received_count = int(item.get("collected_count") or 0)
-        saved_count = int(item.get("saved_count") or 0)
+        inserted_count = int(item.get("inserted_count") or 0)
+        updated_count = int(item.get("updated_count") or 0)
+        unchanged_count = int(item.get("unchanged_count") or 0)
         return {
             "item_type": "INDEX",
             "item_code": code,
@@ -137,9 +144,10 @@ class MarketDataCollectionService:
             "requested_from": item.get("from_date"),
             "requested_to": item.get("to_date"),
             "received_count": received_count,
-            "inserted_count": saved_count,
-            "updated_count": 0,
-            "unchanged_count": max(received_count - saved_count, 0),
+            "inserted_count": inserted_count,
+            "updated_count": updated_count,
+            "unchanged_count": unchanged_count,
+            "failed_count": 1 if status_value == "ERROR" else 0,
             "error_message": item.get("error_message"),
         }
 
@@ -272,6 +280,7 @@ class MarketDataCollectionService:
     def _summarize(results: list[dict[str, Any]]) -> dict[str, int]:
         return {
             "success_count": sum(1 for item in results if str(item.get("status") or "").upper() in {"SUCCESS", "LATEST"}),
+            "waiting_count": sum(1 for item in results if str(item.get("status") or "").upper() == "WAITING"),
             "inserted_count": sum(int(item.get("inserted_count") or 0) for item in results),
             "updated_count": sum(int(item.get("updated_count") or 0) for item in results),
             "unchanged_count": sum(int(item.get("unchanged_count") or 0) for item in results),
@@ -286,5 +295,5 @@ class MarketDataCollectionService:
             f"{mode} collection finished: success {totals['success_count']}, "
             f"inserted {totals['inserted_count']}, updated {totals['updated_count']}, "
             f"unchanged {totals['unchanged_count']}, skipped {totals['skipped_count']}, "
-            f"errors {totals['failed_count']}, {seconds}s."
+            f"waiting {totals['waiting_count']}, errors {totals['failed_count']}, {seconds}s."
         )
