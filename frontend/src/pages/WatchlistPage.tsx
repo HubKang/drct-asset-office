@@ -130,7 +130,7 @@ function WatchlistPage() {
   const [watchlistMarket, setWatchlistMarket] = useState("");
   const [watchlistState, setWatchlistState] = useState(1);
   const [watchlistKeyword, setWatchlistKeyword] = useState("");
-  const [viewMode, setViewMode] = useState<WatchlistViewMode>("theme");
+  const [viewMode, setViewMode] = useState<WatchlistViewMode>("list");
   const [themeNameByStockId, setThemeNameByStockId] = useState<Record<number, string>>({});
   const [themeIdByStockId, setThemeIdByStockId] = useState<Record<number, number>>({});
   const [expandedThemes, setExpandedThemes] = useState<string[]>([]);

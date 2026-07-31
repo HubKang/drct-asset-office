@@ -80,13 +80,15 @@ function ThemeLinkedStockChart({
   label,
   sidcode,
   onOpen,
+  variant = "table",
 }: {
   stockCode: string;
   stockName: string;
   period: NaverStockCandlePeriod;
   label: string;
   sidcode: number;
-  onOpen: (chart: { url: string; alt: string }) => void;
+  onOpen: (chart: { url: string; alt: string; title?: string }) => void;
+  variant?: "table" | "detail";
 }) {
   const [hasError, setHasError] = useState(false);
 
@@ -95,7 +97,11 @@ function ThemeLinkedStockChart({
   }, [period, sidcode, stockCode]);
 
   if (!stockCode || hasError) {
-    return <div className="theme-linked-stock-chart-fallback">차트 없음</div>;
+    return (
+      <div className={`theme-linked-stock-chart-fallback${variant === "detail" ? " theme-detail-daily-chart-fallback" : ""}`}>
+        {hasError ? "차트 불러오기 실패" : "차트 없음"}
+      </div>
+    );
   }
 
   const url = buildNaverStockCandleChartUrl(stockCode, period, sidcode);
@@ -104,16 +110,17 @@ function ThemeLinkedStockChart({
   return (
     <button
       type="button"
-      className="theme-linked-stock-chart-button"
+      className={`theme-linked-stock-chart-button${variant === "detail" ? " theme-detail-daily-chart-button" : ""}`}
+      aria-label={`${stockName || stockCode} ${label} 차트 크게 보기`}
       onClick={(event) => {
         event.stopPropagation();
-        onOpen({ url, alt });
+        onOpen({ url, alt, title: alt });
       }}
     >
       <img
         src={url}
         alt={alt}
-        className="theme-linked-stock-chart"
+        className={`theme-linked-stock-chart${variant === "detail" ? " theme-detail-daily-chart-image" : ""}`}
         loading="lazy"
         onError={() => setHasError(true)}
       />
@@ -1877,7 +1884,8 @@ function MarketThemesPage() {
             <img
               src={zoomedChart.url}
               alt={zoomedChart.alt}
-              className="theme-linked-stock-chart-modal-image"
+              className="theme-linked-stock-chart-modal-image theme-linked-stock-chart-modal-image-clickable"
+              onClick={() => setZoomedChart(null)}
             />
           </div>
         </div>
@@ -2068,25 +2076,62 @@ function MarketThemesPage() {
                         {selectedReturnDetail.failed_stock_count > 0 ? <span>조회 실패: {selectedReturnDetail.failed_stock_count}개</span> : null}
                       </div>
                       {selectedReturnDetail.stocks.length > 0 ? (
-                        <div className="table-shell overflow-auto">
-                          <table className="data-table compact-table theme-return-stock-table">
-                            <thead><tr><th>종목명</th><th className="text-right">거래대금(억)</th><th className="text-right">등락률(%)</th></tr></thead>
-                            <tbody>
-                              {selectedReturnDetail.stocks.map((stock) => (
-                                <tr key={`${stock.stock_id}-${stock.stock_code}`}>
-                                  <td>
-                                    <div className="stock-cell">
-                                      <strong>{stock.stock_name || stock.stock_code || "-"}</strong>
-                                      {stock.stock_code ? <span>{stock.stock_code}</span> : null}
-                                      {stock.data_status !== "success" ? <small className="theme-return-fail-text">조회 실패</small> : null}
-                                    </div>
-                                  </td>
-                                  <td className="text-right">{fmtEok(stock.trading_value_100m)}</td>
-                                  <td className={`text-right ${returnToneClass(stock.change_rate)}`}>{fmtPct(stock.change_rate)}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                        <div className="theme-detail-stock-list" role="table" aria-label={`${selectedReturnDetail.theme_name} 연결 종목`}>
+                          <div className="theme-detail-stock-header" role="row">
+                            <span role="columnheader">종목명</span>
+                            <span role="columnheader">거래대금(억)</span>
+                            <span role="columnheader">등락률(%)</span>
+                            <span
+                              role="columnheader"
+                              title="네이버에서 제공하는 현재 기준 일봉 차트입니다."
+                              className="theme-detail-daily-heading"
+                            >
+                              일봉 <Info size={13} aria-hidden="true" />
+                            </span>
+                            <span
+                              role="columnheader"
+                              title="네이버에서 제공하는 현재 기준 주봉 차트입니다."
+                              className="theme-detail-daily-heading"
+                            >
+                              주봉 <Info size={13} aria-hidden="true" />
+                            </span>
+                          </div>
+                          {selectedReturnDetail.stocks.map((stock) => {
+                            const stockCode = normalizeNaverStockCode(stock.stock_code);
+                            return (
+                              <div className="theme-detail-stock-row" role="row" key={`${stock.stock_id}-${stock.stock_code}`}>
+                                <div className="stock-cell" role="cell">
+                                  <strong>{stock.stock_name || stock.stock_code || "-"}</strong>
+                                  {stock.stock_code ? <span>{stockCode || stock.stock_code}</span> : null}
+                                  {stock.data_status !== "success" ? <small className="theme-return-fail-text">조회 실패</small> : null}
+                                </div>
+                                <span className="theme-detail-stock-number" role="cell">{fmtEok(stock.trading_value_100m)}</span>
+                                <span className={`theme-detail-stock-number ${returnToneClass(stock.change_rate)}`} role="cell">{fmtPct(stock.change_rate)}</span>
+                                <div className="theme-detail-daily-chart-cell" role="cell">
+                                  <ThemeLinkedStockChart
+                                    stockCode={stockCode}
+                                    stockName={stock.stock_name}
+                                    period="day"
+                                    label="일봉"
+                                    sidcode={chartSidcode}
+                                    onOpen={setZoomedChart}
+                                    variant="detail"
+                                  />
+                                </div>
+                                <div className="theme-detail-daily-chart-cell" role="cell">
+                                  <ThemeLinkedStockChart
+                                    stockCode={stockCode}
+                                    stockName={stock.stock_name}
+                                    period="week"
+                                    label="주봉"
+                                    sidcode={chartSidcode}
+                                    onOpen={setZoomedChart}
+                                    variant="detail"
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       ) : (
                         <p className="selected-empty-message">이 테마에 연결된 종목이 없습니다.</p>
