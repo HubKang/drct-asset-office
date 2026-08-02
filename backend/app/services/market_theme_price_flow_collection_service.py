@@ -620,6 +620,8 @@ class MarketThemePriceFlowJobManager:
         db = SessionLocal()
         try:
             result = MarketThemePriceFlowCollectionService(db).refresh(payload, progress_callback=progress)
+            from backend.app.services.market_theme_flow_trend_service import invalidate_market_theme_flow_trend_cache
+            invalidate_market_theme_flow_trend_cache()
             with cls._lock:
                 cls._jobs[job_id].update({
                     "status": result.job_status,

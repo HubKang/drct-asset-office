@@ -19,6 +19,7 @@ from backend.app.schemas.market_theme_stock_schema import (
 )
 from backend.app.services.market_theme_service import MarketThemeService
 from backend.app.services.market_theme_stock_service import MarketThemeStockService
+from backend.app.services.market_theme_flow_trend_service import invalidate_market_theme_flow_trend_cache
 
 router = APIRouter()
 
@@ -54,17 +55,23 @@ def get_market_theme(theme_id: int, db: Session = Depends(get_db)) -> MarketThem
 
 @router.post("/market-themes", response_model=MarketThemeResponse)
 def create_market_theme(payload: MarketThemeCreateRequest, db: Session = Depends(get_db)) -> MarketThemeResponse:
-    return MarketThemeService(db).create_theme(payload)
+    result = MarketThemeService(db).create_theme(payload)
+    invalidate_market_theme_flow_trend_cache()
+    return result
 
 
 @router.put("/market-themes/{theme_id}", response_model=MarketThemeResponse)
 def update_market_theme(theme_id: int, payload: MarketThemeUpdateRequest, db: Session = Depends(get_db)) -> MarketThemeResponse:
-    return MarketThemeService(db).update_theme(theme_id, payload)
+    result = MarketThemeService(db).update_theme(theme_id, payload)
+    invalidate_market_theme_flow_trend_cache()
+    return result
 
 
 @router.patch("/market-themes/{theme_id}/deactivate", response_model=MarketThemeResponse)
 def deactivate_market_theme(theme_id: int, db: Session = Depends(get_db)) -> MarketThemeResponse:
-    return MarketThemeService(db).deactivate_theme(theme_id)
+    result = MarketThemeService(db).deactivate_theme(theme_id)
+    invalidate_market_theme_flow_trend_cache()
+    return result
 
 
 @router.get("/market-themes/{theme_id}/stocks", response_model=list[MarketThemeStockResponse])
@@ -90,7 +97,9 @@ def create_market_theme_stock(
     payload: MarketThemeStockCreateRequest,
     db: Session = Depends(get_db),
 ) -> MarketThemeStockResponse:
-    return MarketThemeStockService(db).create_theme_stock(theme_id, payload)
+    result = MarketThemeStockService(db).create_theme_stock(theme_id, payload)
+    invalidate_market_theme_flow_trend_cache()
+    return result
 
 
 @router.patch("/market-theme-stocks/{mapping_id}", response_model=MarketThemeStockResponse)
@@ -99,12 +108,16 @@ def update_market_theme_stock(
     payload: MarketThemeStockUpdateRequest,
     db: Session = Depends(get_db),
 ) -> MarketThemeStockResponse:
-    return MarketThemeStockService(db).update_theme_stock(mapping_id, payload)
+    result = MarketThemeStockService(db).update_theme_stock(mapping_id, payload)
+    invalidate_market_theme_flow_trend_cache()
+    return result
 
 
 @router.patch("/market-theme-stocks/{mapping_id}/deactivate", response_model=MarketThemeStockResponse)
 def deactivate_market_theme_stock(mapping_id: int, db: Session = Depends(get_db)) -> MarketThemeStockResponse:
-    return MarketThemeStockService(db).deactivate_theme_stock(mapping_id)
+    result = MarketThemeStockService(db).deactivate_theme_stock(mapping_id)
+    invalidate_market_theme_flow_trend_cache()
+    return result
 
 
 @router.get("/market-themes/by-stock/{stock_code}", response_model=MarketThemeByStockResponse)

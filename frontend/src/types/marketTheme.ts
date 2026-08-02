@@ -126,6 +126,54 @@ export type MarketThemeFlowChartResponse = {
   selected: MarketThemeFlowChartSeriesItem | null;
 };
 
+export type MarketThemeFlowTrendActor = "FOREIGN" | "INSTITUTION" | "FOREIGN_INSTITUTION" | "INDIVIDUAL" | "PROGRAM";
+export type MarketThemeFlowTrendMetric = "FLOW_STRENGTH" | "NET_AMOUNT" | "BREADTH";
+export type MarketThemeFlowTrendAttribution = "FRACTIONAL" | "FULL";
+export type MarketThemeFlowTrendQuality = "ENOUGH" | "PARTIAL" | "INSUFFICIENT" | "EMPTY";
+
+export type MarketThemeFlowTrendContributor = {
+  stock_id: number; stock_code: string | null; stock_name: string; net_buy_amount: number;
+};
+export type MarketThemeFlowTrendCell = {
+  trade_date: string; net_buy_amount: number | null; trading_value: number | null;
+  flow_strength: number | null; breadth_ratio: number | null;
+  positive_stock_count: number; negative_stock_count: number; zero_stock_count: number;
+  actor_data_stock_count: number; connected_stock_count: number; missing_stock_count: number;
+  completeness_ratio: number; data_quality: MarketThemeFlowTrendQuality;
+  theme_return_pct: number | null; top_contributors: MarketThemeFlowTrendContributor[];
+};
+export type MarketThemeFlowTrendPeriodSummary = {
+  cumulative_net_buy_amount: number | null; cumulative_trading_value: number | null;
+  flow_strength: number | null; latest_breadth_ratio: number | null;
+  positive_stock_count: number; actor_data_stock_count: number; current_streak: number;
+  connected_stock_count: number; completeness_ratio: number; data_quality: MarketThemeFlowTrendQuality;
+};
+export type MarketThemeFlowTrendTheme = {
+  theme_id: number; theme_name: string; theme_group_id: number | null; theme_group_name: string | null;
+  sort_order: number; connected_stock_count: number; twenty_day_summary: MarketThemeFlowTrendPeriodSummary;
+  cells: MarketThemeFlowTrendCell[];
+};
+export type MarketThemeFlowTrendTopItem = {
+  theme_id: number; theme_name: string; flow_strength: number | null; net_buy_amount: number | null;
+  breadth_ratio: number | null; positive_stock_count: number; actor_data_stock_count: number;
+  current_streak: number; completeness_ratio: number; data_quality: MarketThemeFlowTrendQuality;
+};
+export type MarketThemeFlowTrendResponse = {
+  request: {
+    end_date: string; actual_end_date: string | null; recent_days: number; actor: MarketThemeFlowTrendActor;
+    metric: MarketThemeFlowTrendMetric; attribution_mode: MarketThemeFlowTrendAttribution;
+    aggregation_basis: "CURRENT_ACTIVE_LINKS"; theme_group_id: number | null; search: string | null; limit: number | null;
+  };
+  dates: string[];
+  summary: { top_today: MarketThemeFlowTrendTopItem | null; top_five_day: MarketThemeFlowTrendTopItem | null; top_breadth: MarketThemeFlowTrendTopItem | null; top_streak: MarketThemeFlowTrendTopItem | null };
+  themes: MarketThemeFlowTrendTheme[];
+  performance: Record<string, number | boolean>;
+};
+export type MarketThemeFlowTrendParams = {
+  end_date: string; recent_days?: number; actor: MarketThemeFlowTrendActor; metric: MarketThemeFlowTrendMetric;
+  attribution: MarketThemeFlowTrendAttribution; theme_group_id?: number; search?: string; limit?: number; refresh?: boolean; signal?: AbortSignal;
+};
+
 export type MarketThemeReturnRefreshRequest = {
   scope: "all_active" | "selected";
   theme_ids?: number[];

@@ -5,6 +5,7 @@ import SectionCard from "@/components/common/SectionCard";
 import StatusBadge from "@/components/common/StatusBadge";
 import MarketThemePriceFlowPanel from "@/components/marketThemes/MarketThemePriceFlowPanel";
 import MarketThemeFlowChartPanel from "@/components/marketThemes/MarketThemeFlowChartPanel";
+import MarketThemeFlowTrendPanel, { invalidateMarketThemeFlowTrendFrontendCache } from "@/components/marketThemes/MarketThemeFlowTrendPanel";
 import { StockFlowCompactCard, ThemeFlowOverview, type FlowActor } from "@/components/marketThemes/FlowSummaryCards";
 import { repositories } from "@/services";
 import { ApiError } from "@/services/api/apiClient";
@@ -21,6 +22,10 @@ import type {
   MarketTheme,
   MarketThemeCandidate,
   MarketThemeLatestReturnDetail,
+  MarketThemeFlowTrendActor,
+  MarketThemeFlowTrendAttribution,
+  MarketThemeFlowTrendMetric,
+  MarketThemeFlowTrendTheme,
   MarketThemeMonthlyReturnResponse,
   MarketThemeMonthlyReturnThemeItem,
   MarketThemeReturnRefreshResponse,
@@ -34,7 +39,7 @@ import type {
 import type { Stock } from "@/types/stock";
 
 type ActiveTab = "themes" | "mapping" | "candidates";
-type ThemeViewMode = "group" | "theme" | "trend";
+type ThemeViewMode = "group" | "theme" | "trend" | "flowTrend";
 type ThemeReturnSort = "default" | "desc" | "asc";
 type ThemeReturnTrendViewMode = "heatmap" | "line";
 type TrendSortMode = "CURRENT_STRENGTH" | "ROLLING_30D_RETURN";
@@ -541,6 +546,7 @@ function MarketThemesPage() {
   const [returnDetailLoading, setReturnDetailLoading] = useState(false);
   const [returnDetailError, setReturnDetailError] = useState("");
   const [selectedReturnDetail, setSelectedReturnDetail] = useState<MarketThemeLatestReturnDetail | null>(null);
+  const [returnFlowContext, setReturnFlowContext] = useState<{ actor: MarketThemeFlowTrendActor; metric: MarketThemeFlowTrendMetric; attribution: MarketThemeFlowTrendAttribution } | null>(null);
   const [stockFlowModal, setStockFlowModal] = useState<{ stockId: number; stockName: string; themeId: number; focusDate: string | null } | null>(null);
   const [themeFlowModal, setThemeFlowModal] = useState<{ themeId: number; themeName: string; focusDate: string | null; actor: FlowActor | null } | null>(null);
   const [stockDrawerOpen, setStockDrawerOpen] = useState(false);
@@ -702,7 +708,7 @@ function MarketThemesPage() {
     }, null);
   }, [manageableThemes]);
   const themeGroupCount = useMemo(() => themes.filter((x) => x.theme_level === "THEME_GROUP").length, [themes]);
-  const themeManagementTitle = themeViewMode === "group" ? "테마그룹 관리" : themeViewMode === "trend" ? "테마등락추이" : "테마별 관리";
+  const themeManagementTitle = themeViewMode === "group" ? "테마그룹 관리" : themeViewMode === "trend" ? "테마등락추이" : themeViewMode === "flowTrend" ? "테마수급추이" : "테마별 관리";
 
   const resetForm = () => {
     setFormThemeId(null);
@@ -804,6 +810,7 @@ function MarketThemesPage() {
       }
       const res = job.result;
       setRefreshFailures(res.failure_items ?? []);
+      invalidateMarketThemeFlowTrendFrontendCache();
       await Promise.all([loadThemes(), loadThemeReturnTrend()]);
       const totalSeconds = typeof res.total_ms === "number" ? (res.total_ms / 1000).toFixed(1) : null;
       const uniqueCount = res.unique_stock_count ?? res.stock_count;
@@ -867,8 +874,13 @@ function MarketThemesPage() {
       setTrendLoading(false);
     }
   };
-  const openThemeReturnDetail = async (theme: MarketTheme | MarketThemeMonthlyReturnThemeItem, returnDate?: string) => {
+  const openThemeReturnDetail = async (
+    theme: MarketTheme | MarketThemeMonthlyReturnThemeItem | MarketThemeFlowTrendTheme,
+    returnDate?: string,
+    flowContext: { actor: MarketThemeFlowTrendActor; metric: MarketThemeFlowTrendMetric; attribution: MarketThemeFlowTrendAttribution } | null = null,
+  ) => {
     const themeId = "id" in theme ? theme.id : theme.theme_id;
+    setReturnFlowContext(flowContext);
     setSelectedThemeId(themeId);
     setReturnDrawerOpen(true);
     setReturnDetailLoading(true);
@@ -891,6 +903,7 @@ function MarketThemesPage() {
     setReturnDetailLoading(false);
     setReturnDetailError("");
     setSelectedReturnDetail(null);
+    setReturnFlowContext(null);
   };
 
   const closeStockDrawer = () => {
@@ -1130,6 +1143,7 @@ function MarketThemesPage() {
           is_supply_theme: nextIsSupplyTheme,
           is_active: isActive,
         });
+        invalidateMarketThemeFlowTrendFrontendCache();
       } else {
         await repositories.marketThemes.create({
           theme_name: themeName.trim(),
@@ -1142,6 +1156,7 @@ function MarketThemesPage() {
           is_supply_theme: nextIsSupplyTheme,
           is_active: isActive,
         });
+        invalidateMarketThemeFlowTrendFrontendCache();
       }
       await loadThemes();
       setThemeModalOpen(false);
@@ -1157,6 +1172,7 @@ function MarketThemesPage() {
     if (!ok) return;
     try {
       await repositories.marketThemes.deactivate(themeId);
+      invalidateMarketThemeFlowTrendFrontendCache();
       await loadThemes();
       setMessage("테마가 비활성화되었습니다.");
     } catch (e) {
@@ -1179,6 +1195,7 @@ function MarketThemesPage() {
         sort_order: theme.sort_order,
         is_active: 1,
       });
+      invalidateMarketThemeFlowTrendFrontendCache();
       await loadThemes();
       setMessage("테마가 활성화되었습니다.");
     } catch (e) {
@@ -1274,6 +1291,7 @@ function MarketThemesPage() {
     }
     try {
       await repositories.marketThemes.createThemeStock(selectedThemeId, { stock_id: stockId, is_primary: false });
+      invalidateMarketThemeFlowTrendFrontendCache();
       await Promise.all([loadThemeStocks(selectedThemeId), loadThemes()]);
       setMessage("테마에 종목이 연결되었습니다.");
     } catch (e) {
@@ -1287,6 +1305,7 @@ function MarketThemesPage() {
     if (!ok) return;
     try {
       await repositories.marketThemes.deactivateThemeStock(mappingId);
+      invalidateMarketThemeFlowTrendFrontendCache();
       if (selectedLinkedStock?.mapping_id === mappingId) closeStockDrawer();
       await Promise.all([loadThemeStocks(selectedThemeId), loadThemes()]);
       setMessage("테마 연결이 해제되었습니다.");
@@ -1299,6 +1318,7 @@ function MarketThemesPage() {
     setUpdatingPrimaryMappingId(mappingId);
     try {
       await repositories.marketThemes.updateThemeStock(mappingId, { is_primary: checked });
+      invalidateMarketThemeFlowTrendFrontendCache();
       await loadThemeStocks(selectedThemeId);
       setMessage("대표 여부가 변경되었습니다.");
     } catch (e) {
@@ -1421,6 +1441,9 @@ function MarketThemesPage() {
             </button>
             <button type="button" className={`theme-view-mode-tab ${themeViewMode === "trend" ? "active" : ""}`} onClick={() => setThemeViewMode("trend")}>
               테마등락추이
+            </button>
+            <button type="button" className={`theme-view-mode-tab ${themeViewMode === "flowTrend" ? "active" : ""}`} onClick={() => setThemeViewMode("flowTrend")}>
+              테마수급추이
             </button>
           </div>
           {themeViewMode === "trend" ? (
@@ -1559,6 +1582,19 @@ function MarketThemesPage() {
                 <ThemeReturnLineChart themes={trendData?.themes ?? []} dates={trendDates} hoveredThemeId={hoveredTrendThemeId} onHoverTheme={setHoveredTrendThemeId} />
               )}
             </div>
+          ) : themeViewMode === "flowTrend" ? (
+            <MarketThemeFlowTrendPanel
+              endDate={trendEndDate}
+              onEndDateChange={setTrendEndDate}
+              themeGroupId={trendThemeGroupId}
+              onThemeGroupChange={setTrendThemeGroupId}
+              keyword={trendKeyword}
+              onKeywordChange={setTrendKeyword}
+              limit={trendLimit}
+              onLimitChange={setTrendLimit}
+              themeGroups={themeGroups}
+              onCellClick={(theme, date, actor, metric, attribution) => void openThemeReturnDetail(theme, date, { actor, metric, attribution })}
+            />
           ) : (
             <>
           <div className="market-theme-filter-toolbar">
@@ -2188,7 +2224,7 @@ function MarketThemesPage() {
                       <div className="theme-return-kpi-grid">
                         <div><span>테마등락률</span><strong className={returnToneClass(selectedReturnDetail.avg_change_rate)}>{fmtPct(selectedReturnDetail.avg_change_rate)}</strong></div>
                         <div><span>연결 종목</span><strong>{selectedReturnDetail.stock_count}개</strong></div>
-                        <div><span>거래대금 합계(억)</span><strong>{fmtEok(selectedReturnDetail.total_trading_value_100m)}</strong></div>
+                        <div><span>거래대금(억)</span><strong>{fmtEok(selectedReturnDetail.total_trading_value_100m)}</strong></div>
                         <div><span>상승</span><strong className="theme-return-positive">{selectedReturnDetail.rising_stock_count}개</strong></div>
                         <div><span>하락</span><strong className="theme-return-negative">{selectedReturnDetail.falling_stock_count}개</strong></div>
                         <div><span>보합</span><strong className="theme-return-neutral">{selectedReturnDetail.flat_stock_count}개</strong></div>
@@ -2201,6 +2237,7 @@ function MarketThemesPage() {
                       {selectedReturnDetail.flow_summary ? (
                         <ThemeFlowOverview
                           summary={selectedReturnDetail.flow_summary}
+                          highlightedActors={returnFlowContext ? returnFlowContext.actor === "FOREIGN_INSTITUTION" ? ["foreign", "institution"] : returnFlowContext.actor === "FOREIGN" ? ["foreign"] : returnFlowContext.actor === "INSTITUTION" ? ["institution"] : returnFlowContext.actor === "INDIVIDUAL" ? ["individual"] : ["program"] : []}
                           onActorClick={(actor) => {
                             setZoomedChart(null);
                             setThemeFlowModal({

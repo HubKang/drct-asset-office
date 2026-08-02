@@ -41,6 +41,10 @@ def flow_db():
             (1,1,'2026-07-29',1000),(2,2,'2026-07-29',2000),
             (3,1,'2026-07-30',1100),(4,2,'2026-07-30',2100),
             (5,1,'2026-07-31',1200),(6,2,'2026-07-31',2200)""")
+        # Saved theme-return trading values are raw won; stock_daily_prices
+        # stores the provider's million-won unit and is converted by fallback.
+        conn.exec_driver_sql("""INSERT INTO market_theme_stock_daily_returns VALUES
+            (1,1,1,'2026-07-31',1200),(2,1,2,'2026-07-31',2200)""")
         conn.exec_driver_sql("""INSERT INTO stock_investor_flows VALUES
             (1,1,'2026-07-29',100,200,300,400),(2,2,'2026-07-29',-50,100,-100,50),
             (3,1,'2026-07-30',10,-20,30,40),(4,2,'2026-07-30',20,-30,40,50),

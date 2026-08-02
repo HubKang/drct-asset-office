@@ -14,6 +14,8 @@ import type {
   MarketThemePriceFlowChartParams,
   MarketThemePriceFlowChartResponse,
   MarketThemeFlowChartResponse,
+  MarketThemeFlowTrendParams,
+  MarketThemeFlowTrendResponse,
   MarketThemeRangeReturnParams,
   MarketThemeReturnRefreshRequest,
   MarketThemeReturnRefreshResponse,
@@ -133,6 +135,18 @@ export const marketThemeMockRepository = {
       aggregation_basis: "CURRENT_ACTIVE_LINKS", attribution_mode: "FULL", data_quality: "EMPTY",
       summary: { theme_return_pct: null, individual: emptyActor, foreign: emptyActor, institution: emptyActor, program: emptyActor },
       series: [], focus_date: params.focus_date ?? null, selected: null,
+    };
+  },
+  async getThemeFlowTrend(params: MarketThemeFlowTrendParams): Promise<MarketThemeFlowTrendResponse> {
+    return {
+      request: {
+        end_date: params.end_date, actual_end_date: null, recent_days: params.recent_days ?? 30,
+        actor: params.actor, metric: params.metric, attribution_mode: params.attribution,
+        aggregation_basis: "CURRENT_ACTIVE_LINKS", theme_group_id: params.theme_group_id ?? null,
+        search: params.search ?? null, limit: params.limit ?? null,
+      },
+      dates: [], summary: { top_today: null, top_five_day: null, top_breadth: null, top_streak: null },
+      themes: [], performance: { cache_hit: false },
     };
   },
   async getLatestReturn(themeId: number): Promise<MarketThemeLatestReturnDetail> {

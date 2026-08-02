@@ -308,3 +308,93 @@ class MarketThemeFlowChartResponse(BaseModel):
     series: list[MarketThemeFlowChartSeriesItem] = Field(default_factory=list)
     focus_date: str | None = None
     selected: MarketThemeFlowChartSeriesItem | None = None
+
+
+class MarketThemeFlowTrendContributor(BaseModel):
+    stock_id: int
+    stock_code: str | None = None
+    stock_name: str
+    net_buy_amount: int
+
+
+class MarketThemeFlowTrendCell(BaseModel):
+    trade_date: str
+    net_buy_amount: int | None = None
+    trading_value: int | None = None
+    flow_strength: float | None = None
+    breadth_ratio: float | None = None
+    positive_stock_count: int = 0
+    negative_stock_count: int = 0
+    zero_stock_count: int = 0
+    actor_data_stock_count: int = 0
+    connected_stock_count: int = 0
+    missing_stock_count: int = 0
+    completeness_ratio: float = 0.0
+    data_quality: Literal["ENOUGH", "PARTIAL", "INSUFFICIENT", "EMPTY"] = "EMPTY"
+    theme_return_pct: float | None = None
+    top_contributors: list[MarketThemeFlowTrendContributor] = Field(default_factory=list)
+
+
+class MarketThemeFlowTrendPeriodSummary(BaseModel):
+    cumulative_net_buy_amount: int | None = None
+    cumulative_trading_value: int | None = None
+    flow_strength: float | None = None
+    latest_breadth_ratio: float | None = None
+    positive_stock_count: int = 0
+    actor_data_stock_count: int = 0
+    current_streak: int = 0
+    connected_stock_count: int = 0
+    completeness_ratio: float = 0.0
+    data_quality: Literal["ENOUGH", "PARTIAL", "INSUFFICIENT", "EMPTY"] = "EMPTY"
+
+
+class MarketThemeFlowTrendTheme(BaseModel):
+    theme_id: int
+    theme_name: str
+    theme_group_id: int | None = None
+    theme_group_name: str | None = None
+    sort_order: int = 0
+    connected_stock_count: int = 0
+    twenty_day_summary: MarketThemeFlowTrendPeriodSummary
+    cells: list[MarketThemeFlowTrendCell] = Field(default_factory=list)
+
+
+class MarketThemeFlowTrendTopItem(BaseModel):
+    theme_id: int
+    theme_name: str
+    flow_strength: float | None = None
+    net_buy_amount: int | None = None
+    breadth_ratio: float | None = None
+    positive_stock_count: int = 0
+    actor_data_stock_count: int = 0
+    current_streak: int = 0
+    completeness_ratio: float = 0.0
+    data_quality: str = "EMPTY"
+
+
+class MarketThemeFlowTrendSummary(BaseModel):
+    top_today: MarketThemeFlowTrendTopItem | None = None
+    top_five_day: MarketThemeFlowTrendTopItem | None = None
+    top_breadth: MarketThemeFlowTrendTopItem | None = None
+    top_streak: MarketThemeFlowTrendTopItem | None = None
+
+
+class MarketThemeFlowTrendRequestMeta(BaseModel):
+    end_date: str
+    actual_end_date: str | None = None
+    recent_days: int
+    actor: Literal["FOREIGN", "INSTITUTION", "FOREIGN_INSTITUTION", "INDIVIDUAL", "PROGRAM"]
+    metric: Literal["FLOW_STRENGTH", "NET_AMOUNT", "BREADTH"]
+    attribution_mode: Literal["FRACTIONAL", "FULL"]
+    aggregation_basis: Literal["CURRENT_ACTIVE_LINKS"] = "CURRENT_ACTIVE_LINKS"
+    theme_group_id: int | None = None
+    search: str | None = None
+    limit: int | None = None
+
+
+class MarketThemeFlowTrendResponse(BaseModel):
+    request: MarketThemeFlowTrendRequestMeta
+    dates: list[str] = Field(default_factory=list)
+    summary: MarketThemeFlowTrendSummary
+    themes: list[MarketThemeFlowTrendTheme] = Field(default_factory=list)
+    performance: dict[str, int | float | bool] = Field(default_factory=dict)

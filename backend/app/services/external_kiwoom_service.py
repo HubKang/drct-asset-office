@@ -3047,13 +3047,66 @@ class ExternalKiwoomService:
             {"theme_id": theme_id, "return_date": return_date},
         ).mappings().first()
         if not daily:
+            # The flow heatmap can have a valid investor-flow cell even when the
+            # legacy theme-return snapshot was not saved for that theme/date.
+            # Build a transient drawer payload from the current active links and
+            # already-saved daily price/flow rows instead of reporting no stocks.
+            fallback_rows = self.db.execute(
+                text(
+                    """
+                    SELECT s.id AS stock_id, s.stock_code, s.stock_name,
+                           CASE WHEN p.trading_value IS NULL THEN NULL ELSE p.trading_value / 100.0 END AS trading_value_100m,
+                           p.change_rate, CAST(p.close_price AS INTEGER) AS current_price,
+                           CASE WHEN p.stock_id IS NULL THEN 'missing' ELSE 'success' END AS data_status,
+                           NULL AS error_message
+                    FROM market_theme_stocks mts
+                    JOIN stocks s ON s.id=mts.stock_id AND COALESCE(s.is_active, 1)=1
+                    LEFT JOIN stock_daily_prices p
+                      ON p.stock_id=mts.stock_id AND p.trade_date=:return_date
+                    WHERE mts.theme_id=:theme_id AND COALESCE(mts.is_active, 1)=1
+                    ORDER BY p.stock_id IS NOT NULL DESC, COALESCE(p.trading_value, 0) DESC, s.stock_name ASC
+                    """
+                ),
+                {"theme_id": theme_id, "return_date": return_date},
+            ).mappings().all()
+            flow_summary, stock_flow_summaries = MarketThemeFlowAnalysisService(self.db).get_daily_context(
+                theme_id, return_date
+            )
+            stock_items: list[MarketThemeReturnStockItem] = []
+            change_rates: list[float] = []
+            total_trading_value_100m = 0.0
+            trading_value_seen = False
+            success_stock_count = rising_stock_count = falling_stock_count = flat_stock_count = 0
+            for row in fallback_rows:
+                payload = dict(row)
+                payload["flow_summary"] = stock_flow_summaries.get(int(row["stock_id"]))
+                stock_items.append(MarketThemeReturnStockItem(**payload))
+                if row["data_status"] == "success":
+                    success_stock_count += 1
+                if row["change_rate"] is not None:
+                    rate = float(row["change_rate"])
+                    change_rates.append(rate)
+                    rising_stock_count += int(rate > 0)
+                    falling_stock_count += int(rate < 0)
+                    flat_stock_count += int(rate == 0)
+                if row["trading_value_100m"] is not None:
+                    total_trading_value_100m += float(row["trading_value_100m"])
+                    trading_value_seen = True
             return MarketThemeLatestReturnResponse(
                 theme_id=theme_id,
                 theme_name=str(theme["theme_name"]),
                 theme_group_name=theme["theme_group_name"],
                 return_date=return_date,
-                stock_count=len(self._list_active_theme_return_stocks(theme_id)),
-                stocks=[],
+                avg_change_rate=round(sum(change_rates) / len(change_rates), 4) if change_rates else None,
+                stock_count=len(fallback_rows),
+                success_stock_count=success_stock_count,
+                failed_stock_count=0,
+                rising_stock_count=rising_stock_count,
+                falling_stock_count=falling_stock_count,
+                flat_stock_count=flat_stock_count,
+                total_trading_value_100m=round(total_trading_value_100m, 4) if trading_value_seen else None,
+                flow_summary=flow_summary,
+                stocks=stock_items,
             )
         stock_rows = self.db.execute(
             text(

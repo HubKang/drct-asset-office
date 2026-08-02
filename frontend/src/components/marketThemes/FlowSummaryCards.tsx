@@ -54,11 +54,11 @@ export function StockFlowCompactCard({ summary, baseDate, onClick }: { summary?:
   </button>;
 }
 
-export function ThemeFlowOverview({ summary, onActorClick }: { summary: ThemeDailyFlowSummary; onActorClick: (actor: FlowActor) => void }) {
+export function ThemeFlowOverview({ summary, onActorClick, highlightedActors = [] }: { summary: ThemeDailyFlowSummary; onActorClick: (actor: FlowActor) => void; highlightedActors?: FlowActor[] }) {
   if (summary.quality_status === "EMPTY") return <div className="theme-flow-overview-empty"><strong>수집된 수급 데이터가 없습니다.</strong><span>테마 등락률·수급 갱신을 실행하면 활성 연결 종목의 수급 데이터가 수집됩니다.</span></div>;
   return <section className="theme-flow-overview">
     <div className="theme-flow-overview-head"><div><h4>테마 수급 현황</h4><p>{summary.base_date} · 현재 활성 연결 종목 · 전체 반영</p></div><span className={`price-flow-quality is-${summary.quality_status.toLowerCase()}`}>수급 데이터 {summary.complete_stock_count}/{summary.connected_stock_count}종목</span></div>
     <p className="theme-flow-daily-summary">{summary.summary_code === "FOREIGN_INSTITUTION_BUY" ? "외국인·기관 동반 순매수" : summary.summary_code === "FOREIGN_LEAD" ? "외국인 순매수 우위" : summary.summary_code === "INSTITUTION_LEAD" ? "기관 순매수 우위" : summary.summary_code === "INDIVIDUAL_LEAD" ? "개인 순매수 우위" : summary.summary_code === "FOREIGN_INSTITUTION_SELL" ? "외국인·기관 동반 순매도" : "수급 혼조"}{summary.program.net_amount != null ? ` · 프로그램 ${summary.program.net_amount > 0 ? "순매수" : summary.program.net_amount < 0 ? "순매도" : "중립"}` : " · 프로그램 데이터 없음"}</p>
-    <div className="theme-flow-overview-grid">{FLOW_ACTORS.map(({ key, label, color }) => { const actor = summary[key]; return <button type="button" key={key} className={key === "program" ? "is-program" : ""} onClick={() => onActorClick(key)}><span>{label}{key === "program" ? " · 보조 수급" : ""}</span><strong style={{ color }}>{flowAmount(actor.net_amount)}원</strong><small>강도 {actor.flow_strength == null ? "-" : `${actor.flow_strength > 0 ? "+" : ""}${actor.flow_strength.toFixed(2)}%`} · {actor.positive_stock_count}/{actor.data_stock_count}종목 순매수</small></button>; })}</div>
+    <div className="theme-flow-overview-grid">{FLOW_ACTORS.map(({ key, label, color }) => { const actor = summary[key]; return <button type="button" key={key} className={`${key === "program" ? "is-program" : ""} ${highlightedActors.includes(key) ? "is-highlighted" : ""}`} onClick={() => onActorClick(key)}><span>{label}{key === "program" ? " · 보조 수급" : ""}</span><strong style={{ color }}>{flowAmount(actor.net_amount)}원</strong><small>강도 {actor.flow_strength == null ? "-" : `${actor.flow_strength > 0 ? "+" : ""}${actor.flow_strength.toFixed(2)}%`} · {actor.positive_stock_count}/{actor.data_stock_count}종목 순매수</small></button>; })}</div>
   </section>;
 }

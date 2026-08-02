@@ -81,7 +81,7 @@ class MarketThemeFlowAnalysisService:
             text(
                 """
                 SELECT s.id AS stock_id,
-                       COALESCE(sdr.trading_value, p.trading_value) AS trading_value,
+                       COALESCE(sdr.trading_value, p.trading_value * 1000000) AS trading_value,
                        f.individual_net_amount, f.foreign_net_amount,
                        f.institution_net_amount, f.program_net_amount
                 FROM market_theme_stocks mts

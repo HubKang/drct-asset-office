@@ -17,6 +17,8 @@ import type {
   MarketThemePriceFlowChartParams,
   MarketThemePriceFlowChartResponse,
   MarketThemeFlowChartResponse,
+  MarketThemeFlowTrendParams,
+  MarketThemeFlowTrendResponse,
   MarketThemeRangeReturnParams,
   MarketThemeReturnRefreshRequest,
   MarketThemeReturnRefreshResponse,
@@ -70,6 +72,23 @@ export const marketThemeApiRepository = {
     if (params.focus_date) search.set("focus_date", params.focus_date);
     return apiRequest<MarketThemeFlowChartResponse>(
       `/external/kiwoom/market-themes/${themeId}/price-flow-chart?${search.toString()}`,
+    );
+  },
+  getThemeFlowTrend: (params: MarketThemeFlowTrendParams) => {
+    const search = new URLSearchParams({
+      end_date: params.end_date,
+      recent_days: String(params.recent_days ?? 30),
+      actor: params.actor,
+      metric: params.metric,
+      attribution: params.attribution,
+    });
+    if (params.theme_group_id !== undefined) search.set("theme_group_id", String(params.theme_group_id));
+    if (params.search) search.set("search", params.search);
+    if (params.limit !== undefined) search.set("limit", String(params.limit));
+    if (params.refresh) search.set("refresh", "true");
+    return apiRequest<MarketThemeFlowTrendResponse>(
+      `/external/kiwoom/market-themes/flow-trend?${search.toString()}`,
+      { signal: params.signal },
     );
   },
   getLatestReturn: (themeId: number) => apiRequest<MarketThemeLatestReturnDetail>(`/external/kiwoom/market-themes/${themeId}/returns/latest`),

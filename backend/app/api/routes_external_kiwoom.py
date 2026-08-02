@@ -41,10 +41,11 @@ from backend.app.schemas.external_kiwoom_schema import (
     SupplyTopStockPriceCollectRequest,
     SupplyTopStockPriceCollectResponse,
 )
-from backend.app.schemas.market_theme_stock_schema import MarketThemeFlowChartResponse, MarketThemePriceFlowChartResponse
+from backend.app.schemas.market_theme_stock_schema import MarketThemeFlowChartResponse, MarketThemeFlowTrendResponse, MarketThemePriceFlowChartResponse
 from backend.app.services.external_kiwoom_service import ExternalKiwoomService
 from backend.app.services.market_theme_price_flow_chart_service import MarketThemePriceFlowChartService
 from backend.app.services.market_theme_flow_analysis_service import MarketThemeFlowAnalysisService
+from backend.app.services.market_theme_flow_trend_service import MarketThemeFlowTrendService, invalidate_market_theme_flow_trend_cache
 from backend.app.services.market_theme_price_flow_collection_service import (
     MarketThemePriceFlowCollectionService,
     MarketThemePriceFlowJobManager,
@@ -161,7 +162,9 @@ def refresh_market_theme_returns(
     payload: MarketThemeReturnRefreshRequest | None = None,
     db: Session = Depends(get_db),
 ) -> MarketThemeReturnRefreshResponse:
-    return ExternalKiwoomService(db).refresh_market_theme_returns(payload or MarketThemeReturnRefreshRequest())
+    result = ExternalKiwoomService(db).refresh_market_theme_returns(payload or MarketThemeReturnRefreshRequest())
+    invalidate_market_theme_flow_trend_cache()
+    return result
 
 
 @router.post(
@@ -172,7 +175,9 @@ def refresh_market_theme_returns_and_flows(
     payload: MarketThemeReturnRefreshRequest | None = None,
     db: Session = Depends(get_db),
 ) -> MarketThemePriceFlowRefreshResponse:
-    return MarketThemePriceFlowCollectionService(db).refresh(payload or MarketThemeReturnRefreshRequest())
+    result = MarketThemePriceFlowCollectionService(db).refresh(payload or MarketThemeReturnRefreshRequest())
+    invalidate_market_theme_flow_trend_cache()
+    return result
 
 
 @router.post(
@@ -221,6 +226,30 @@ def get_market_theme_stock_price_flow_chart(
         unit=unit,
         view=view,
         theme_id=theme_id,
+    )
+
+
+@router.get(
+    "/external/kiwoom/market-themes/flow-trend",
+    response_model=MarketThemeFlowTrendResponse,
+)
+def get_market_theme_flow_trend(
+    end_date: str = Query(...),
+    recent_days: int = Query(default=30, ge=1, le=60),
+    actor: str = Query(default="FOREIGN"),
+    metric: str = Query(default="FLOW_STRENGTH"),
+    attribution: str = Query(default="FRACTIONAL"),
+    theme_group_id: int | None = Query(default=None),
+    search: str | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1, le=100),
+    refresh: bool = Query(default=False),
+    db: Session = Depends(get_db),
+) -> MarketThemeFlowTrendResponse:
+    """Aggregate saved theme flows only. No provider collection is triggered."""
+    return MarketThemeFlowTrendService(db).get_trend(
+        end_date=end_date, recent_days=recent_days, actor=actor, metric=metric,
+        attribution=attribution, theme_group_id=theme_group_id, search=search,
+        limit=limit, refresh=refresh,
     )
 
 
