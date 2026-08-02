@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Select, select, text
+from sqlalchemy import Select, func, select, text
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import now_kst
@@ -108,4 +108,10 @@ class TechnicalIndicatorRepository:
             .limit(1)
         )
         return self.db.scalar(stmt)
+
+    def count_by_stock(self, stock_id: int) -> int:
+        stmt = select(func.count(StockDailyTechnicalIndicator.id)).where(
+            StockDailyTechnicalIndicator.stock_id == stock_id
+        )
+        return int(self.db.scalar(stmt) or 0)
 

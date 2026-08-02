@@ -256,6 +256,8 @@ export type InvestorFlowChartItem = {
   source_method?: string | null;
   is_real_investor_flow?: boolean;
   collection_status?: string | null;
+  individual_net_qty?: number | null;
+  individual_net_amount?: number | null;
   foreign_net_qty?: number | null;
   institution_net_qty?: number | null;
   program_net_qty?: number | null;
@@ -279,7 +281,7 @@ export type InvestorFlowChartResponse = {
   source_methods?: string[];
   has_real_data?: boolean;
   amount_available?: boolean;
-  available_subjects?: Record<"foreign" | "institution" | "program", boolean>;
+  available_subjects?: Record<"foreign" | "institution" | "program", boolean> & { individual?: boolean };
   available_metrics?: { foreign_holding_ratio?: boolean };
   data_notice?: string | null;
   items: InvestorFlowChartItem[];
@@ -302,5 +304,5 @@ export type InvestorFlowCollectResponse = {
   success_count: number;
   failed_count: number;
   saved_count: number;
-  items: Array<{ stock_id: number; stock_code: string; stock_name: string; status: string; message?: string | null; saved_count: number; data_source_type?: string | null; foreign_status?: string | null; institution_status?: string | null; program_status?: string | null; foreign_holding_status?: string | null }>; 
+  items: Array<{ stock_id: number; stock_code: string; stock_name: string; status: string; message?: string | null; saved_count: number; data_source_type?: string | null; individual_status?: string | null; foreign_status?: string | null; institution_status?: string | null; program_status?: string | null; foreign_holding_status?: string | null }>;
 };

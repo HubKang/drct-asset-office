@@ -458,6 +458,12 @@ def ensure_runtime_schema() -> None:
                 stock_id INTEGER NOT NULL,
                 stock_code TEXT NOT NULL,
                 flow_date TEXT NOT NULL,
+                individual_buy_qty INTEGER,
+                individual_sell_qty INTEGER,
+                individual_net_qty INTEGER,
+                individual_buy_amount INTEGER,
+                individual_sell_amount INTEGER,
+                individual_net_amount INTEGER,
                 foreign_buy_qty INTEGER,
                 foreign_sell_qty INTEGER,
                 foreign_net_qty INTEGER,
@@ -501,6 +507,12 @@ def ensure_runtime_schema() -> None:
         )
         investor_flow_columns = {str(row[1]) for row in conn.exec_driver_sql("PRAGMA table_info(stock_investor_flows)").fetchall()}
         investor_flow_add_columns = {
+            "individual_buy_qty": "INTEGER",
+            "individual_sell_qty": "INTEGER",
+            "individual_net_qty": "INTEGER",
+            "individual_buy_amount": "INTEGER",
+            "individual_sell_amount": "INTEGER",
+            "individual_net_amount": "INTEGER",
             "foreign_holding_qty": "INTEGER",
             "foreign_holding_ratio": "REAL",
             "data_source_type": "TEXT NOT NULL DEFAULT 'DERIVED_PRICE_FLOW'",

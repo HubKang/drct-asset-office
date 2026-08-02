@@ -3,7 +3,11 @@ import type { CSSProperties } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown, Info, RefreshCw } from "lucide-react";
 import SectionCard from "@/components/common/SectionCard";
 import StatusBadge from "@/components/common/StatusBadge";
+import MarketThemePriceFlowPanel from "@/components/marketThemes/MarketThemePriceFlowPanel";
+import MarketThemeFlowChartPanel from "@/components/marketThemes/MarketThemeFlowChartPanel";
+import { StockFlowCompactCard, ThemeFlowOverview, type FlowActor } from "@/components/marketThemes/FlowSummaryCards";
 import { repositories } from "@/services";
+import { ApiError } from "@/services/api/apiClient";
 import {
   buildNaverTraderChartUrl,
   buildNaverStockCandleChartUrl,
@@ -19,6 +23,7 @@ import type {
   MarketThemeLatestReturnDetail,
   MarketThemeMonthlyReturnResponse,
   MarketThemeMonthlyReturnThemeItem,
+  MarketThemeReturnRefreshResponse,
   MarketThemeCandidateStatus,
   MarketThemeLevel,
   MarketThemeStock,
@@ -56,6 +61,16 @@ const THEME_RETURN_LINE_COLORS = [
 function toErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message.trim()) return error.message;
   return fallback;
+}
+
+function toPriceFlowErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 404) return "가격·수급 갱신 API 또는 작업 상태를 찾을 수 없습니다. 백엔드 서버를 재시작해 주세요.";
+    if (error.status === 409) return "이미 가격·수급 갱신 작업이 실행 중입니다.";
+    if (error.status === 500) return "가격·수급 갱신 작업을 시작하지 못했습니다.";
+    if (error.status === 0 || error.status === 408) return "서버에 연결할 수 없습니다. 백엔드 실행 상태를 확인해 주세요.";
+  }
+  return toErrorMessage(error, "테마 등락률&수급 갱신에 실패했습니다. Kiwoom REST 연결 상태를 확인해 주세요.");
 }
 
 function parseKeywordsInput(value: string): string[] {
@@ -476,6 +491,7 @@ function ThemeReturnLineChart({
 }
 
 function MarketThemesPage() {
+  const refreshPollingTokenRef = useRef(0);
   const [activeTab, setActiveTab] = useState<ActiveTab>("themes");
 
   const [themes, setThemes] = useState<MarketTheme[]>([]);
@@ -509,6 +525,7 @@ function MarketThemesPage() {
   const [searching, setSearching] = useState(false);
   const [generatingCandidates, setGeneratingCandidates] = useState(false);
   const [refreshingReturns, setRefreshingReturns] = useState(false);
+  const [refreshFailures, setRefreshFailures] = useState<NonNullable<MarketThemeReturnRefreshResponse["failure_items"]>>([]);
   const [themeReturnSort, setThemeReturnSort] = useState<ThemeReturnSort>("default");
   const [trendEndDate, setTrendEndDate] = useState(getDateInputValue());
   const [trendThemeGroupId, setTrendThemeGroupId] = useState<"all" | string>("all");
@@ -524,6 +541,8 @@ function MarketThemesPage() {
   const [returnDetailLoading, setReturnDetailLoading] = useState(false);
   const [returnDetailError, setReturnDetailError] = useState("");
   const [selectedReturnDetail, setSelectedReturnDetail] = useState<MarketThemeLatestReturnDetail | null>(null);
+  const [stockFlowModal, setStockFlowModal] = useState<{ stockId: number; stockName: string; themeId: number; focusDate: string | null } | null>(null);
+  const [themeFlowModal, setThemeFlowModal] = useState<{ themeId: number; themeName: string; focusDate: string | null; actor: FlowActor | null } | null>(null);
   const [stockDrawerOpen, setStockDrawerOpen] = useState(false);
   const [selectedLinkedStock, setSelectedLinkedStock] = useState<MarketThemeStock | null>(null);
   const [zoomedChart, setZoomedChart] = useState<{ url: string; alt: string; title?: string } | null>(null);
@@ -533,6 +552,10 @@ function MarketThemesPage() {
   const [stockSupplySummary, setStockSupplySummary] = useState<MarketThemeStockSupplySummary | null>(null);
   const [stockSupplyLoading, setStockSupplyLoading] = useState(false);
   const [stockSupplyError, setStockSupplyError] = useState("");
+
+  useEffect(() => () => {
+    refreshPollingTokenRef.current += 1;
+  }, []);
   const [showAllSupplyDates, setShowAllSupplyDates] = useState(false);
   const [supplyCountSort, setSupplyCountSort] = useState<SupplyCountSort>("default");
   const [supplyCountInfoOpen, setSupplyCountInfoOpen] = useState(false);
@@ -749,12 +772,53 @@ function MarketThemesPage() {
     }
     setRefreshingReturns(true);
     setError("");
-    setMessage("\ud14c\ub9c8\ub4f1\ub77d\ub960 \uac31\uc2e0 \uc911...");
+    setRefreshFailures([]);
+    setMessage("가격·수급 갱신 작업을 요청하고 있습니다.");
+    const pollingToken = ++refreshPollingTokenRef.current;
     try {
-      const res = await repositories.marketThemes.refreshReturns({ scope: "all_active" });
+      const startedJob = await repositories.marketThemes.startPriceFlowRefresh({ scope: "all_active" });
+      if (!startedJob.job_id) {
+        throw new Error("가격·수급 갱신 작업 번호를 받지 못했습니다.");
+      }
+      if (pollingToken !== refreshPollingTokenRef.current) return;
+      setMessage("활성 테마 연결 종목 준비 → 가격·기술지표 → 투자자·프로그램 수급 → 테마등락률 집계 중...");
+      let job = await repositories.marketThemes.getPriceFlowRefreshJob(startedJob.job_id);
+      while (job.status === "PENDING" || job.status === "RUNNING") {
+        if (pollingToken !== refreshPollingTokenRef.current) return;
+        const stageLabels: Record<string, string> = {
+          PENDING: "작업 준비",
+          TARGETS: "대상 종목 확정",
+          PRICE: "가격 수집",
+          TECHNICAL: "기술지표 계산",
+          FLOW: "투자자·프로그램 수급 수집",
+          THEME_RETURN: "테마등락률 집계",
+        };
+        const progress = job.total_count > 0 ? ` ${job.completed_count}/${job.total_count}` : "";
+        setMessage(`${stageLabels[job.stage] ?? job.stage}${progress} · ${job.message ?? "진행 중..."}`);
+        await new Promise((resolve) => window.setTimeout(resolve, 1000));
+        if (pollingToken !== refreshPollingTokenRef.current) return;
+        job = await repositories.marketThemes.getPriceFlowRefreshJob(startedJob.job_id);
+      }
+      if (job.status === "FAILED" || !job.result) {
+        throw new Error(job.message || "테마 등락률&수급 갱신 작업이 실패했습니다.");
+      }
+      const res = job.result;
+      setRefreshFailures(res.failure_items ?? []);
       await Promise.all([loadThemes(), loadThemeReturnTrend()]);
       const totalSeconds = typeof res.total_ms === "number" ? (res.total_ms / 1000).toFixed(1) : null;
-      const fallbackMessage = `\ud14c\ub9c8\ub4f1\ub77d\ub960 \uac31\uc2e0 \uc644\ub8cc: ${res.theme_count}\uac1c \ud14c\ub9c8, \uace0\uc720 ${res.unique_stock_count ?? res.stock_count}\uac1c \uc885\ubaa9${totalSeconds ? `, ${totalSeconds}\ucd08` : ""}`;
+      const uniqueCount = res.unique_stock_count ?? res.stock_count;
+      const statusLabel = res.job_status === "PARTIAL" ? "부분 완료" : "완료";
+      const fallbackMessage = [
+        `테마 등락률&수급 갱신 ${statusLabel}`,
+        `연결 ${res.theme_stock_link_count ?? res.stock_count}건 · 고유 ${uniqueCount}개`,
+        `가격 ${res.price_success_count ?? "-"}/${uniqueCount}`,
+        `기술지표 ${res.technical_success_count ?? "-"}/${uniqueCount}`,
+        `투자자 수급 ${res.investor_success_count ?? "-"}/${uniqueCount}`,
+        `프로그램 수급 ${res.program_success_count ?? "-"}/${uniqueCount}`,
+        `테마등락률 ${res.theme_count}개`,
+        `기준일 ${res.return_date}`,
+        totalSeconds ? `${totalSeconds}초` : "",
+      ].filter(Boolean).join(" · ");
       setMessage(res.message || fallbackMessage);
       console.info("[theme-return-refresh]", {
         themes: res.theme_count,
@@ -774,9 +838,10 @@ function MarketThemesPage() {
         totalMs: res.total_ms,
       });
     } catch (e) {
-      setError(toErrorMessage(e, "\ud14c\ub9c8\ub4f1\ub77d\ub960 \uac31\uc2e0\uc5d0 \uc2e4\ud328\ud588\uc2b5\ub2c8\ub2e4. Kiwoom REST \ud1a0\ud070/\uc5f0\uacb0 \uc0c1\ud0dc\ub97c \ud655\uc778\ud574 \uc8fc\uc138\uc694."));
+      console.error("[theme-price-flow-refresh]", e);
+      if (pollingToken === refreshPollingTokenRef.current) setError(toPriceFlowErrorMessage(e));
     } finally {
-      setRefreshingReturns(false);
+      if (pollingToken === refreshPollingTokenRef.current) setRefreshingReturns(false);
     }
   };
 
@@ -820,6 +885,8 @@ function MarketThemesPage() {
   };
 
   const closeReturnDrawer = () => {
+    setStockFlowModal(null);
+    setThemeFlowModal(null);
     setReturnDrawerOpen(false);
     setReturnDetailLoading(false);
     setReturnDetailError("");
@@ -947,6 +1014,17 @@ function MarketThemesPage() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [zoomedChart]);
+
+  useEffect(() => {
+    if (!stockFlowModal && !themeFlowModal) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (stockFlowModal) setStockFlowModal(null);
+      else setThemeFlowModal(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [stockFlowModal, themeFlowModal]);
 
   useEffect(() => {
     if (!selectedLinkedStock) return;
@@ -1301,6 +1379,28 @@ function MarketThemesPage() {
 
       {message ? <div className="inline-result inline-success">{message}</div> : null}
       {error ? <div className="inline-result inline-error">{error}</div> : null}
+      {refreshFailures.length > 0 ? (
+        <details className="inline-result inline-error">
+          <summary>실패 상세 {refreshFailures.length}건</summary>
+          <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+            {Array.from(
+              refreshFailures.reduce((groups, item) => {
+                const key = item.error_code || `${item.stage}:${item.message}`;
+                const current = groups.get(key);
+                if (current) current.count += 1;
+                else groups.set(key, { item, count: 1 });
+                return groups;
+              }, new Map<string, { item: (typeof refreshFailures)[number]; count: number }>()).values(),
+            ).map(({ item, count }) => (
+              <div key={`${item.error_code || item.stage}-${item.stock_id || "common"}`}>
+                <strong>{item.error_code || item.stage} · {count}종목</strong>
+                <div>{item.user_message || item.message}</div>
+                {item.stock_code ? <small>{item.stock_name || item.stock_code} ({item.stock_code}) · 재실행 {item.retryable === false ? "불가" : "가능"}</small> : null}
+              </div>
+            ))}
+          </div>
+        </details>
+      ) : null}
 
       <SectionCard title="" className="market-theme-tabs-card">
         <div className="gpt-domain-tabs market-theme-primary-tabs">
@@ -1486,8 +1586,14 @@ function MarketThemesPage() {
                 <span className="market-theme-latest-return-date" title={latestThemeReturnRefresh?.refreshedAt ? `최종 처리: ${latestThemeReturnRefresh.refreshedAt}` : undefined}>
                   최신갱신일 {formatThemeReturnDateLabel(latestThemeReturnRefresh?.returnDate)}
                 </span>
-                <button type="button" className="btn btn-secondary market-theme-action-button market-theme-refresh-button" onClick={() => void onRefreshThemeReturns()} disabled={refreshingReturns}>
-                  {refreshingReturns ? "갱신 중..." : "테마등락률 갱신"}
+                <button
+                  type="button"
+                  className="btn btn-secondary market-theme-action-button market-theme-refresh-button"
+                  onClick={() => void onRefreshThemeReturns()}
+                  disabled={refreshingReturns}
+                  title="현재 활성 테마에 연결된 고유 종목의 가격과 개인·외국인·기관·프로그램 수급을 갱신하고 테마등락률을 재계산합니다. 같은 날짜의 기존 데이터는 최신 값으로 갱신됩니다."
+                >
+                  {refreshingReturns ? "가격·수급 갱신 중..." : "테마 등락률&수급 갱신"}
                 </button>
               </div>
             ) : null}
@@ -1931,6 +2037,8 @@ function MarketThemesPage() {
                 )}
               </section>
 
+              <MarketThemePriceFlowPanel stockId={selectedLinkedStock.stock_id} themeId={selectedLinkedStock.theme_id} />
+
               <section
                 className="market-theme-stock-supply-section"
                 style={{ "--theme-context-color": stockSupplySummary?.current_theme.color ?? "#dc2626" } as CSSProperties}
@@ -2090,12 +2198,27 @@ function MarketThemesPage() {
                         <span>최종 갱신: {selectedReturnDetail.snapshot_at || "-"}</span>
                         {selectedReturnDetail.failed_stock_count > 0 ? <span>조회 실패: {selectedReturnDetail.failed_stock_count}개</span> : null}
                       </div>
+                      {selectedReturnDetail.flow_summary ? (
+                        <ThemeFlowOverview
+                          summary={selectedReturnDetail.flow_summary}
+                          onActorClick={(actor) => {
+                            setZoomedChart(null);
+                            setThemeFlowModal({
+                              themeId: selectedReturnDetail.theme_id,
+                              themeName: selectedReturnDetail.theme_name,
+                              focusDate: selectedReturnDetail.return_date,
+                              actor,
+                            });
+                          }}
+                        />
+                      ) : null}
                       {selectedReturnDetail.stocks.length > 0 ? (
                         <div className="theme-detail-stock-list" role="table" aria-label={`${selectedReturnDetail.theme_name} 연결 종목`}>
                           <div className="theme-detail-stock-header" role="row">
                             <span role="columnheader">종목명</span>
                             <span role="columnheader">거래대금(억)</span>
                             <span role="columnheader">등락률(%)</span>
+                            <span role="columnheader">개외기 수급</span>
                             <span
                               role="columnheader"
                               title="네이버에서 제공하는 현재 기준 일봉 차트입니다."
@@ -2122,6 +2245,21 @@ function MarketThemesPage() {
                                 </div>
                                 <span className="theme-detail-stock-number" role="cell">{fmtEok(stock.trading_value_100m)}</span>
                                 <span className={`theme-detail-stock-number ${returnToneClass(stock.change_rate)}`} role="cell">{fmtPct(stock.change_rate)}</span>
+                                <div role="cell">
+                                  <StockFlowCompactCard
+                                    summary={stock.flow_summary}
+                                    baseDate={selectedReturnDetail.return_date}
+                                    onClick={() => {
+                                      setZoomedChart(null);
+                                      setStockFlowModal({
+                                        stockId: stock.stock_id,
+                                        stockName: stock.stock_name || stock.stock_code || "종목",
+                                        themeId: selectedReturnDetail.theme_id,
+                                        focusDate: selectedReturnDetail.return_date,
+                                      });
+                                    }}
+                                  />
+                                </div>
                                 <div className="theme-detail-daily-chart-cell" role="cell">
                                   <ThemeLinkedStockChart
                                     stockCode={stockCode}
@@ -2161,6 +2299,34 @@ function MarketThemesPage() {
               ) : null}
             </div>
           </aside>
+        </div>
+      ) : null}
+
+      {stockFlowModal ? (
+        <div className="market-flow-modal-backdrop" onClick={() => setStockFlowModal(null)}>
+          <section className="market-flow-modal" role="dialog" aria-modal="true" aria-label={`${stockFlowModal.stockName} 가격·수급 추이`} onClick={(event) => event.stopPropagation()}>
+            <header className="market-flow-modal-header">
+              <div><h3>{stockFlowModal.stockName}</h3><p>가격·수급 추이</p></div>
+              <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => setStockFlowModal(null)}>닫기</button>
+            </header>
+            <div className="market-flow-modal-body">
+              <MarketThemePriceFlowPanel stockId={stockFlowModal.stockId} themeId={stockFlowModal.themeId} focusDate={stockFlowModal.focusDate} />
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {themeFlowModal ? (
+        <div className="market-flow-modal-backdrop" onClick={() => setThemeFlowModal(null)}>
+          <section className="market-flow-modal" role="dialog" aria-modal="true" aria-label={`${themeFlowModal.themeName} 테마 가격·수급 추이`} onClick={(event) => event.stopPropagation()}>
+            <header className="market-flow-modal-header">
+              <div><h3>{themeFlowModal.themeName}</h3><p>테마 가격·수급 추이</p></div>
+              <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => setThemeFlowModal(null)}>닫기</button>
+            </header>
+            <div className="market-flow-modal-body">
+              <MarketThemeFlowChartPanel themeId={themeFlowModal.themeId} focusDate={themeFlowModal.focusDate} initialActor={themeFlowModal.actor} />
+            </div>
+          </section>
         </div>
       ) : null}
 

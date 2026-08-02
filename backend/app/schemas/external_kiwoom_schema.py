@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+from backend.app.schemas.market_theme_stock_schema import StockDailyFlowSummary, ThemeDailyFlowSummary
 
 
 class KiwoomConditionItemIn(BaseModel):
@@ -237,6 +238,10 @@ class KiwoomMarketEventThemeLinkDeleteResponse(BaseModel):
 class MarketThemeReturnRefreshRequest(BaseModel):
     scope: str = "all_active"
     theme_ids: list[int] = Field(default_factory=list)
+    mode: Literal["FULL", "PILOT"] = "FULL"
+    pilot_stock_ids: list[int] = Field(default_factory=list)
+    pilot_stock_codes: list[str] = Field(default_factory=list)
+    max_stocks: int | None = Field(default=None, ge=1, le=20)
 
 
 class MarketThemeReturnRefreshItem(BaseModel):
@@ -276,6 +281,118 @@ class MarketThemeReturnRefreshResponse(BaseModel):
     message: str | None = None
 
 
+class MarketThemePriceFlowFailureItem(BaseModel):
+    stock_id: int | None = None
+    stock_code: str | None = None
+    stock_name: str | None = None
+    stage: str
+    message: str
+    error_code: str = "COLLECTION_ERROR"
+    user_message: str | None = None
+    internal_summary: str | None = None
+    retryable: bool = True
+
+
+class MarketThemeCollectionStageSummary(BaseModel):
+    target_count: int = 0
+    attempted_count: int = 0
+    success_count: int = 0
+    up_to_date_count: int = 0
+    no_data_count: int = 0
+    skipped_count: int = 0
+    failed_count: int = 0
+    inserted_rows: int = 0
+    updated_rows: int = 0
+
+
+class MarketThemePriceFlowStockResult(BaseModel):
+    stock_id: int
+    stock_code: str
+    stock_name: str
+    market: str | None = None
+    provider: str = "kiwoom_rest"
+    collect_start_date: str | None = None
+    collect_end_date: str | None = None
+    price_status: str = "SKIPPED"
+    technical_status: str = "SKIPPED"
+    investor_status: str = "SKIPPED"
+    program_status: str = "SKIPPED"
+    price_response_rows: int = 0
+    flow_response_rows: int = 0
+    price_inserted_rows: int = 0
+    price_updated_rows: int = 0
+    flow_inserted_rows: int = 0
+    flow_updated_rows: int = 0
+    latest_price_date: str | None = None
+    latest_investor_date: str | None = None
+    latest_program_date: str | None = None
+    skip_reason: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+class MarketThemePriceFlowRefreshResponse(MarketThemeReturnRefreshResponse):
+    run_id: int | None = None
+    job_status: str = "COMPLETED"
+    price_success_count: int = 0
+    price_failed_count: int = 0
+    price_inserted_count: int = 0
+    price_updated_count: int = 0
+    technical_success_count: int = 0
+    technical_failed_count: int = 0
+    technical_saved_count: int = 0
+    investor_success_count: int = 0
+    investor_failed_count: int = 0
+    program_success_count: int = 0
+    program_failed_count: int = 0
+    flow_inserted_count: int = 0
+    flow_updated_count: int = 0
+    latest_price_date: str | None = None
+    latest_investor_flow_date: str | None = None
+    latest_program_flow_date: str | None = None
+    collection_mode: str = "FULL"
+    processed_stock_codes: list[str] = Field(default_factory=list)
+    price_stage: MarketThemeCollectionStageSummary = Field(default_factory=MarketThemeCollectionStageSummary)
+    technical_stage: MarketThemeCollectionStageSummary = Field(default_factory=MarketThemeCollectionStageSummary)
+    investor_stage: MarketThemeCollectionStageSummary = Field(default_factory=MarketThemeCollectionStageSummary)
+    program_stage: MarketThemeCollectionStageSummary = Field(default_factory=MarketThemeCollectionStageSummary)
+    theme_return_stage: MarketThemeCollectionStageSummary = Field(default_factory=MarketThemeCollectionStageSummary)
+    target_results: list[MarketThemePriceFlowStockResult] = Field(default_factory=list)
+    failure_items: list[MarketThemePriceFlowFailureItem] = Field(default_factory=list)
+
+
+class MarketThemePriceFlowJobStartResponse(BaseModel):
+    job_id: str
+    status: str = "PENDING"
+    message: str
+    requested_at: str
+
+
+class MarketThemePriceFlowJobStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    stage: str
+    completed_count: int = 0
+    total_count: int = 0
+    current_stage: str
+    current_stage_label: str
+    completed_stock_count: int = 0
+    total_stock_count: int = 0
+    failed_stock_count: int = 0
+    price_result: MarketThemeCollectionStageSummary = Field(default_factory=MarketThemeCollectionStageSummary)
+    technical_indicator_result: MarketThemeCollectionStageSummary = Field(default_factory=MarketThemeCollectionStageSummary)
+    investor_flow_result: MarketThemeCollectionStageSummary = Field(default_factory=MarketThemeCollectionStageSummary)
+    program_flow_result: MarketThemeCollectionStageSummary = Field(default_factory=MarketThemeCollectionStageSummary)
+    theme_return_result: MarketThemeCollectionStageSummary = Field(default_factory=MarketThemeCollectionStageSummary)
+    requested_at: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    error: str | None = None
+    failures: list[MarketThemePriceFlowFailureItem] = Field(default_factory=list)
+    message: str | None = None
+    result: MarketThemePriceFlowRefreshResponse | None = None
+
+
 class MarketThemeReturnStockItem(BaseModel):
     stock_id: int
     stock_code: str | None = None
@@ -285,6 +402,7 @@ class MarketThemeReturnStockItem(BaseModel):
     current_price: int | None = None
     data_status: str = "missing"
     error_message: str | None = None
+    flow_summary: StockDailyFlowSummary | None = None
 
 
 class MarketThemeLatestReturnResponse(BaseModel):
@@ -301,6 +419,7 @@ class MarketThemeLatestReturnResponse(BaseModel):
     falling_stock_count: int = 0
     flat_stock_count: int = 0
     total_trading_value_100m: float | None = None
+    flow_summary: ThemeDailyFlowSummary | None = None
     stocks: list[MarketThemeReturnStockItem] = Field(default_factory=list)
 
 

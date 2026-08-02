@@ -80,6 +80,7 @@ from backend.app.schemas.external_kiwoom_schema import (
     KiwoomMarketEventSaveResponse,
 )
 from backend.app.services.stock_price_service import StockPriceService
+from backend.app.services.market_theme_flow_analysis_service import MarketThemeFlowAnalysisService
 from backend.app.utils.stock_code import normalize_stock_code
 
 logger = logging.getLogger(__name__)
@@ -2545,6 +2546,14 @@ class ExternalKiwoomService:
             ),
             {"daily_return_id": int(latest["id"])},
         ).mappings().all()
+        flow_summary, stock_flow_summaries = MarketThemeFlowAnalysisService(self.db).get_daily_context(
+            theme_id, str(latest["return_date"])
+        )
+        stock_items = []
+        for row in stock_rows:
+            payload = dict(row)
+            payload["flow_summary"] = stock_flow_summaries.get(int(row["stock_id"]))
+            stock_items.append(MarketThemeReturnStockItem(**payload))
         return MarketThemeLatestReturnResponse(
             theme_id=theme_id,
             theme_name=str(theme["theme_name"]),
@@ -2559,7 +2568,8 @@ class ExternalKiwoomService:
             falling_stock_count=int(latest["falling_stock_count"] or 0),
             flat_stock_count=int(latest["flat_stock_count"] or 0),
             total_trading_value_100m=latest["total_trading_value_100m"],
-            stocks=[MarketThemeReturnStockItem(**dict(row)) for row in stock_rows],
+            flow_summary=flow_summary,
+            stocks=stock_items,
         )
 
     def get_market_theme_monthly_returns(
@@ -3056,6 +3066,14 @@ class ExternalKiwoomService:
             ),
             {"daily_return_id": int(daily["id"])},
         ).mappings().all()
+        flow_summary, stock_flow_summaries = MarketThemeFlowAnalysisService(self.db).get_daily_context(
+            theme_id, str(daily["return_date"])
+        )
+        stock_items = []
+        for row in stock_rows:
+            payload = dict(row)
+            payload["flow_summary"] = stock_flow_summaries.get(int(row["stock_id"]))
+            stock_items.append(MarketThemeReturnStockItem(**payload))
         return MarketThemeLatestReturnResponse(
             theme_id=theme_id,
             theme_name=str(theme["theme_name"]),
@@ -3070,7 +3088,8 @@ class ExternalKiwoomService:
             falling_stock_count=int(daily["falling_stock_count"] or 0),
             flat_stock_count=int(daily["flat_stock_count"] or 0),
             total_trading_value_100m=daily["total_trading_value_100m"],
-            stocks=[MarketThemeReturnStockItem(**dict(row)) for row in stock_rows],
+            flow_summary=flow_summary,
+            stocks=stock_items,
         )
     def _list_return_refresh_themes(self, payload: MarketThemeReturnRefreshRequest) -> list[dict[str, object]]:
         params: dict[str, object] = {}
@@ -3112,6 +3131,7 @@ class ExternalKiwoomService:
                     s.id AS stock_id,
                     s.stock_code,
                     s.stock_name,
+                    s.market,
                     COALESCE(mts.is_primary, 0) AS is_primary
                 FROM market_theme_stocks mts
                 JOIN stocks s ON s.id=mts.stock_id

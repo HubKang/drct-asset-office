@@ -23,6 +23,7 @@ class InvestorFlowCollectItem(BaseModel):
     saved_count: int = 0
     status: str
     data_source_type: str | None = None
+    individual_status: str | None = None
     foreign_status: str | None = None
     institution_status: str | None = None
     program_status: str | None = None
@@ -46,6 +47,8 @@ class InvestorFlowChartItem(BaseModel):
     source_method: str | None = None
     is_real_investor_flow: bool = False
     collection_status: str | None = None
+    individual_net_qty: int | None = None
+    individual_net_amount: int | None = None
     foreign_net_qty: int | None = None
     foreign_net_amount: int | None = None
     foreign_holding_qty: int | None = None

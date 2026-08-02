@@ -12,6 +12,11 @@ import type {
   MarketThemeListParams,
   MarketThemeMonthlyReturnParams,
   MarketThemeMonthlyReturnResponse,
+  MarketThemePriceFlowJobStartResponse,
+  MarketThemePriceFlowJobStatusResponse,
+  MarketThemePriceFlowChartParams,
+  MarketThemePriceFlowChartResponse,
+  MarketThemeFlowChartResponse,
   MarketThemeRangeReturnParams,
   MarketThemeReturnRefreshRequest,
   MarketThemeReturnRefreshResponse,
@@ -45,7 +50,28 @@ export const marketThemeApiRepository = {
   deactivate: (themeId: number) =>
     apiRequest<MarketTheme>(`/market-themes/${themeId}/deactivate`, { method: "PATCH" }),
   refreshReturns: (payload: MarketThemeReturnRefreshRequest = { scope: "all_active" }) =>
-    apiRequest<MarketThemeReturnRefreshResponse>("/external/kiwoom/market-themes/returns/refresh", { method: "POST", body: JSON.stringify(payload) }),
+    apiRequest<MarketThemeReturnRefreshResponse>("/external/kiwoom/market-themes/returns-and-flows/refresh", { method: "POST", body: JSON.stringify(payload) }),
+  startPriceFlowRefresh: (payload: MarketThemeReturnRefreshRequest = { scope: "all_active" }) =>
+    apiRequest<MarketThemePriceFlowJobStartResponse>("/external/kiwoom/market-themes/returns-and-flows/jobs", { method: "POST", body: JSON.stringify(payload) }),
+  getPriceFlowRefreshJob: (jobId: string) =>
+    apiRequest<MarketThemePriceFlowJobStatusResponse>(`/external/kiwoom/market-themes/returns-and-flows/jobs/${encodeURIComponent(jobId)}`),
+  getStockPriceFlowChart: (stockId: number, params: MarketThemePriceFlowChartParams) => {
+    const search = new URLSearchParams();
+    search.set("period", params.period);
+    search.set("unit", params.unit);
+    search.set("view", params.view);
+    if (params.theme_id !== undefined) search.set("theme_id", String(params.theme_id));
+    return apiRequest<MarketThemePriceFlowChartResponse>(
+      `/external/kiwoom/market-themes/stocks/${stockId}/price-flow-chart?${search.toString()}`,
+    );
+  },
+  getThemePriceFlowChart: (themeId: number, params: { period: "1M" | "3M" | "6M"; focus_date?: string }) => {
+    const search = new URLSearchParams({ period: params.period });
+    if (params.focus_date) search.set("focus_date", params.focus_date);
+    return apiRequest<MarketThemeFlowChartResponse>(
+      `/external/kiwoom/market-themes/${themeId}/price-flow-chart?${search.toString()}`,
+    );
+  },
   getLatestReturn: (themeId: number) => apiRequest<MarketThemeLatestReturnDetail>(`/external/kiwoom/market-themes/${themeId}/returns/latest`),
   getDailyReturn: (themeId: number, date: string) => apiRequest<MarketThemeLatestReturnDetail>(`/external/kiwoom/market-themes/${themeId}/returns/daily?date=${encodeURIComponent(date)}`),
   listMonthlyReturns: (params: MarketThemeMonthlyReturnParams) => {

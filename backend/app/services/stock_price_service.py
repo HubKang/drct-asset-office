@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import logging
 import time
+from calendar import monthrange
 from datetime import date, datetime, timedelta
+from typing import Callable
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -244,6 +246,9 @@ class StockPriceService:
         recalculate_derived: bool = True,
         max_pages: int | None = None,
     ) -> dict[str, object]:
+        existing_dates = self.price_repo.get_trade_dates_in_window(
+            stock.id, start_date.isoformat(), end_date.isoformat()
+        )
         normalized, payload, diagnostics = self._collect_rows_by_source(
             stock,
             start_date,
@@ -254,6 +259,9 @@ class StockPriceService:
             max_pages=max_pages,
         )
         collected_count = len(payload)
+        payload_dates = {str(row["trade_date"]) for row in payload if row.get("trade_date")}
+        inserted_count = len(payload_dates - existing_dates)
+        updated_count = len(payload_dates & existing_dates)
         saved = self.price_repo.upsert_daily_rows(stock.id, source, payload)
         if payload and recalculate_derived:
             self.price_repo.recalculate_change_rate_for_stock(stock.id, source=source, digits=2)
@@ -273,8 +281,136 @@ class StockPriceService:
             "normalized": normalized,
             "collected_count": collected_count,
             "saved_count": saved,
+            "inserted_count": inserted_count,
+            "updated_count": updated_count,
             **diagnostics,
         }
+
+    @staticmethod
+    def _subtract_calendar_months(value: date, months: int) -> date:
+        month_index = value.year * 12 + value.month - 1 - max(0, months)
+        year, month_zero = divmod(month_index, 12)
+        month = month_zero + 1
+        return date(year, month, min(value.day, monthrange(year, month)[1]))
+
+    @staticmethod
+    def _latest_expected_weekday(value: date) -> date:
+        expected = value
+        while expected.weekday() >= 5:
+            expected -= timedelta(days=1)
+        return expected
+
+    @staticmethod
+    def _is_common_provider_error(message: str) -> bool:
+        normalized = (message or "").upper()
+        return any(token in normalized for token in (
+            "/OAUTH2/TOKEN", "KIWOOM_AUTH", "WINERROR 10013", "CONNECTION REFUSED",
+            "NAME OR SERVICE NOT KNOWN", "TEMPORARY FAILURE IN NAME RESOLUTION",
+        ))
+
+    def refresh_theme_stock_price_ranges(
+        self,
+        *,
+        stock_ids: list[int],
+        end_date: date,
+        initial_lookback_months: int = 6,
+        overlap_days: int = 7,
+        source: str = "kiwoom_rest",
+        progress_callback: Callable[[int, int], None] | None = None,
+    ) -> list[dict[str, object]]:
+        """Collect each unique theme stock once using the shared price table and upsert path."""
+        unique_ids = list(dict.fromkeys(stock_ids))
+        stocks_by_id = {stock.id: stock for stock in self.stock_repo.get_by_ids(unique_ids)}
+        latest_dates = self.price_repo.get_latest_trade_dates(unique_ids)
+        initial_start = self._subtract_calendar_months(end_date, initial_lookback_months)
+        expected_trade_date = self._latest_expected_weekday(end_date)
+        results: list[dict[str, object]] = []
+        for stock_index, stock_id in enumerate(unique_ids):
+            stock = stocks_by_id.get(stock_id)
+            latest_text = latest_dates.get(stock_id)
+            start_date = (
+                min(date.fromisoformat(latest_text) - timedelta(days=max(0, overlap_days)), end_date)
+                if latest_text else initial_start
+            )
+            mode = "INCREMENTAL" if latest_text else "INITIAL_6M"
+            if stock is None:
+                results.append({
+                    "stock_id": stock_id, "stock_code": "", "stock_name": "", "status": "FAILED",
+                    "collection_mode": mode, "collect_start_date": start_date.isoformat(),
+                    "collect_end_date": end_date.isoformat(), "collected_count": 0, "saved_count": 0,
+                    "inserted_count": 0, "updated_count": 0, "error_message": "stock not found",
+                })
+                if progress_callback:
+                    progress_callback(len(results), len(unique_ids))
+                continue
+            if latest_text and date.fromisoformat(latest_text) >= expected_trade_date:
+                results.append({
+                    "stock_id": stock.id, "stock_code": stock.stock_code, "stock_name": stock.stock_name,
+                    "market": stock.market, "provider": source, "attempted": False,
+                    "status": "UP_TO_DATE", "collection_mode": mode,
+                    "collect_start_date": start_date.isoformat(), "collect_end_date": end_date.isoformat(),
+                    "collected_count": 0, "saved_count": 0, "inserted_count": 0, "updated_count": 0,
+                    "latest_trade_date": latest_text, "skip_reason": "LATEST_EXPECTED_TRADE_DATE_PRESENT",
+                    "error_message": None,
+                })
+                if progress_callback:
+                    progress_callback(len(results), len(unique_ids))
+                continue
+            try:
+                stats = self._collect_and_upsert_with_stats(
+                    stock, source, start_date, end_date,
+                    mode="market_theme_price_flow_refresh", stop_at_start_date=True,
+                    recalculate_derived=True, max_pages=None,
+                )
+                collected_count = int(stats.get("collected_count") or 0)
+                results.append({
+                    "stock_id": stock.id, "stock_code": stock.stock_code, "stock_name": stock.stock_name,
+                    "market": stock.market, "provider": source, "attempted": True,
+                    "status": "SUCCESS" if collected_count > 0 else "NO_DATA", "collection_mode": mode,
+                    "collect_start_date": start_date.isoformat(), "collect_end_date": end_date.isoformat(),
+                    "collected_count": collected_count,
+                    "saved_count": int(stats.get("saved_count") or 0),
+                    "inserted_count": int(stats.get("inserted_count") or 0),
+                    "updated_count": int(stats.get("updated_count") or 0),
+                    "latest_trade_date": self.price_repo.get_latest_trade_date(stock.id),
+                    "skip_reason": None,
+                    "error_message": None,
+                })
+            except Exception as exc:  # noqa: BLE001
+                self.db.rollback()
+                logger.exception("theme stock price refresh failed: stock_id=%s", stock_id)
+                results.append({
+                    "stock_id": stock.id, "stock_code": stock.stock_code, "stock_name": stock.stock_name,
+                    "market": stock.market, "provider": source, "attempted": True,
+                    "status": "FAILED", "collection_mode": mode,
+                    "collect_start_date": start_date.isoformat(), "collect_end_date": end_date.isoformat(),
+                    "collected_count": 0, "saved_count": 0, "inserted_count": 0, "updated_count": 0,
+                    "latest_trade_date": latest_text, "skip_reason": None,
+                    "error_message": self._truncate_message(str(exc)),
+                })
+                if self._is_common_provider_error(str(exc)):
+                    common_message = self._truncate_message(f"COMMON_PROVIDER_ERROR: {exc}")
+                    for remaining_id in unique_ids[stock_index + 1:]:
+                        remaining_stock = stocks_by_id.get(remaining_id)
+                        remaining_latest = latest_dates.get(remaining_id)
+                        if remaining_stock is None:
+                            continue
+                        results.append({
+                            "stock_id": remaining_stock.id, "stock_code": remaining_stock.stock_code,
+                            "stock_name": remaining_stock.stock_name, "market": remaining_stock.market,
+                            "provider": source, "attempted": False, "status": "FAILED",
+                            "collection_mode": "INCREMENTAL" if remaining_latest else "INITIAL_6M",
+                            "collect_start_date": None, "collect_end_date": end_date.isoformat(),
+                            "collected_count": 0, "saved_count": 0, "inserted_count": 0, "updated_count": 0,
+                            "latest_trade_date": remaining_latest, "skip_reason": "COMMON_PROVIDER_ERROR",
+                            "error_message": common_message,
+                        })
+                    if progress_callback:
+                        progress_callback(len(results), len(unique_ids))
+                    break
+            if progress_callback:
+                progress_callback(len(results), len(unique_ids))
+        return results
 
     def refresh_price_ranges_only(
         self,

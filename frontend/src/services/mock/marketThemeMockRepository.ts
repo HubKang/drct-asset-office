@@ -11,6 +11,9 @@ import type {
   MarketThemeListParams,
   MarketThemeMonthlyReturnParams,
   MarketThemeMonthlyReturnResponse,
+  MarketThemePriceFlowChartParams,
+  MarketThemePriceFlowChartResponse,
+  MarketThemeFlowChartResponse,
   MarketThemeRangeReturnParams,
   MarketThemeReturnRefreshRequest,
   MarketThemeReturnRefreshResponse,
@@ -61,6 +64,75 @@ export const marketThemeMockRepository = {
       ka10015_calls: 0,
       items: [],
       message: "mock mode: 갱신할 테마가 없습니다.",
+    };
+  },
+  async startPriceFlowRefresh(_payload: MarketThemeReturnRefreshRequest) {
+    return {
+      job_id: "mock-theme-price-flow",
+      status: "PENDING",
+      message: "작업 시작을 기다리고 있습니다.",
+      requested_at: new Date().toISOString(),
+    };
+  },
+  async getPriceFlowRefreshJob(jobId: string) {
+    return {
+      job_id: jobId,
+      status: "COMPLETED" as const,
+      stage: "COMPLETED",
+      completed_count: 0,
+      total_count: 0,
+      current_stage: "COMPLETED",
+      current_stage_label: "작업 완료",
+      completed_stock_count: 0,
+      total_stock_count: 0,
+      failed_stock_count: 0,
+      price_result: { target_count: 0, attempted_count: 0, success_count: 0, up_to_date_count: 0, no_data_count: 0, skipped_count: 0, failed_count: 0, inserted_rows: 0, updated_rows: 0 },
+      technical_indicator_result: { target_count: 0, attempted_count: 0, success_count: 0, up_to_date_count: 0, no_data_count: 0, skipped_count: 0, failed_count: 0, inserted_rows: 0, updated_rows: 0 },
+      investor_flow_result: { target_count: 0, attempted_count: 0, success_count: 0, up_to_date_count: 0, no_data_count: 0, skipped_count: 0, failed_count: 0, inserted_rows: 0, updated_rows: 0 },
+      program_flow_result: { target_count: 0, attempted_count: 0, success_count: 0, up_to_date_count: 0, no_data_count: 0, skipped_count: 0, failed_count: 0, inserted_rows: 0, updated_rows: 0 },
+      theme_return_result: { target_count: 0, attempted_count: 0, success_count: 0, up_to_date_count: 0, no_data_count: 0, skipped_count: 0, failed_count: 0, inserted_rows: 0, updated_rows: 0 },
+      requested_at: new Date().toISOString(),
+      started_at: new Date().toISOString(),
+      finished_at: new Date().toISOString(),
+      error: null,
+      failures: [],
+      message: "mock mode: 갱신할 테마가 없습니다.",
+      result: await this.refreshReturns({ scope: "all_active" }),
+    };
+  },
+  async getStockPriceFlowChart(stockId: number, params: MarketThemePriceFlowChartParams): Promise<MarketThemePriceFlowChartResponse> {
+    const stock = mappings.find((row) => row.stock_id === stockId);
+    if (!stock) throw new Error("market theme stock not found");
+    const requestedDays = params.period === "1M" ? 20 : params.period === "3M" ? 63 : 126;
+    return {
+      stock: { stock_id: stock.stock_id, stock_code: stock.stock_code, stock_name: stock.stock_name, market: stock.market ?? null },
+      requested_unit: params.unit,
+      requested_view: params.view,
+      period: { code: params.period, requested_trading_days: requestedDays, actual_trading_days: 0, start_date: null, end_date: null },
+      latest_dates: { price: null, investor: null, program: null, common: null },
+      data_quality: { status: "EMPTY", valid_days: 0, missing_price_days: 0, missing_investor_days: 0, missing_program_days: 0, completeness_ratio: 0 },
+      summary: {
+        price_return_pct: null, individual_cumulative: null, foreign_cumulative: null,
+        institution_cumulative: null, program_cumulative: null, individual_positive_days: 0,
+        foreign_positive_days: 0, institution_positive_days: 0, program_positive_days: 0,
+        individual_streak: 0, foreign_streak: 0, institution_streak: 0, program_streak: 0,
+      },
+      series: [],
+      events: [],
+    };
+  },
+  async getThemePriceFlowChart(themeId: number, params: { period: "1M" | "3M" | "6M"; focus_date?: string }): Promise<MarketThemeFlowChartResponse> {
+    const theme = themes.find((row) => row.id === themeId);
+    if (!theme) throw new Error("market theme not found");
+    const requestedDays = params.period === "1M" ? 20 : params.period === "3M" ? 63 : 126;
+    const emptyActor = { cumulative_amount: null, positive_days: 0, positive_stock_count: 0, data_stock_count: 0 };
+    return {
+      theme_id: themeId, theme_name: theme.theme_name,
+      period: { code: params.period, requested_trading_days: requestedDays, actual_trading_days: 0, start_date: null, end_date: null },
+      latest_theme_return_date: null, latest_flow_date: null, common_latest_date: null,
+      aggregation_basis: "CURRENT_ACTIVE_LINKS", attribution_mode: "FULL", data_quality: "EMPTY",
+      summary: { theme_return_pct: null, individual: emptyActor, foreign: emptyActor, institution: emptyActor, program: emptyActor },
+      series: [], focus_date: params.focus_date ?? null, selected: null,
     };
   },
   async getLatestReturn(themeId: number): Promise<MarketThemeLatestReturnDetail> {

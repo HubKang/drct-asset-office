@@ -17,6 +17,46 @@ export type MarketThemeReturnStock = {
   current_price?: number | null;
   data_status: "success" | "failed" | "missing";
   error_message?: string | null;
+  flow_summary?: StockDailyFlowSummary | null;
+};
+
+export type StockDailyFlowSummary = {
+  individual_net_amount: number | null;
+  foreign_net_amount: number | null;
+  institution_net_amount: number | null;
+  program_net_amount: number | null;
+  individual_flow_strength: number | null;
+  foreign_flow_strength: number | null;
+  institution_flow_strength: number | null;
+  program_flow_strength: number | null;
+  summary_code: "FOREIGN_INSTITUTION_BUY" | "FOREIGN_LEAD" | "INSTITUTION_LEAD" | "INDIVIDUAL_LEAD" | "FOREIGN_INSTITUTION_SELL" | "MIXED" | "NO_DATA";
+  has_investor_data: boolean;
+  has_program_data: boolean;
+};
+
+export type ThemeActorDailyFlowSummary = {
+  net_amount: number | null;
+  flow_strength: number | null;
+  positive_stock_count: number;
+  data_stock_count: number;
+};
+
+export type ThemeDailyFlowSummary = {
+  base_date: string;
+  aggregation_basis: "CURRENT_ACTIVE_LINKS";
+  attribution_mode: "FULL";
+  connected_stock_count: number;
+  investor_data_stock_count: number;
+  program_data_stock_count: number;
+  complete_stock_count: number;
+  completeness_ratio: number;
+  quality_status: "ENOUGH" | "PARTIAL" | "INSUFFICIENT" | "EMPTY";
+  theme_trading_value: number | null;
+  summary_code: string;
+  individual: ThemeActorDailyFlowSummary;
+  foreign: ThemeActorDailyFlowSummary;
+  institution: ThemeActorDailyFlowSummary;
+  program: ThemeActorDailyFlowSummary;
 };
 
 export type MarketThemeLatestReturnDetail = {
@@ -33,12 +73,66 @@ export type MarketThemeLatestReturnDetail = {
   falling_stock_count: number;
   flat_stock_count: number;
   total_trading_value_100m: number | null;
+  flow_summary?: ThemeDailyFlowSummary | null;
   stocks: MarketThemeReturnStock[];
+};
+
+export type MarketThemeFlowChartSeriesItem = {
+  trade_date: string;
+  theme_daily_return_pct: number | null;
+  theme_cumulative_return_pct: number | null;
+  theme_trading_value: number | null;
+  individual_daily_amount: number | null;
+  individual_cumulative_amount: number | null;
+  foreign_daily_amount: number | null;
+  foreign_cumulative_amount: number | null;
+  institution_daily_amount: number | null;
+  institution_cumulative_amount: number | null;
+  program_daily_amount: number | null;
+  program_cumulative_amount: number | null;
+  individual_positive_stock_count: number;
+  foreign_positive_stock_count: number;
+  institution_positive_stock_count: number;
+  program_positive_stock_count: number;
+  individual_data_stock_count: number;
+  foreign_data_stock_count: number;
+  institution_data_stock_count: number;
+  program_data_stock_count: number;
+  investor_data_stock_count: number;
+  complete_stock_count: number;
+  connected_stock_count: number;
+  completeness_ratio: number;
+};
+
+export type MarketThemeFlowChartResponse = {
+  theme_id: number;
+  theme_name: string;
+  period: { code: MarketThemePriceFlowPeriod; requested_trading_days: number; actual_trading_days: number; start_date: string | null; end_date: string | null };
+  latest_theme_return_date: string | null;
+  latest_flow_date: string | null;
+  common_latest_date: string | null;
+  aggregation_basis: "CURRENT_ACTIVE_LINKS";
+  attribution_mode: "FULL";
+  data_quality: "ENOUGH" | "PARTIAL" | "INSUFFICIENT" | "EMPTY";
+  summary: {
+    theme_return_pct: number | null;
+    individual: { cumulative_amount: number | null; positive_days: number; positive_stock_count: number; data_stock_count: number };
+    foreign: { cumulative_amount: number | null; positive_days: number; positive_stock_count: number; data_stock_count: number };
+    institution: { cumulative_amount: number | null; positive_days: number; positive_stock_count: number; data_stock_count: number };
+    program: { cumulative_amount: number | null; positive_days: number; positive_stock_count: number; data_stock_count: number };
+  };
+  series: MarketThemeFlowChartSeriesItem[];
+  focus_date: string | null;
+  selected: MarketThemeFlowChartSeriesItem | null;
 };
 
 export type MarketThemeReturnRefreshRequest = {
   scope: "all_active" | "selected";
   theme_ids?: number[];
+  mode?: "FULL" | "PILOT";
+  pilot_stock_ids?: number[];
+  pilot_stock_codes?: string[];
+  max_stocks?: number;
 };
 
 export type MarketThemeReturnRefreshItem = {
@@ -74,8 +168,187 @@ export type MarketThemeReturnRefreshResponse = {
   calc_ms?: number;
   db_upsert_ms?: number;
   total_ms?: number;
+  run_id?: number | null;
+  job_status?: "COMPLETED" | "PARTIAL" | "FAILED";
+  price_success_count?: number;
+  price_failed_count?: number;
+  price_inserted_count?: number;
+  price_updated_count?: number;
+  technical_success_count?: number;
+  technical_failed_count?: number;
+  technical_saved_count?: number;
+  investor_success_count?: number;
+  investor_failed_count?: number;
+  program_success_count?: number;
+  program_failed_count?: number;
+  flow_inserted_count?: number;
+  flow_updated_count?: number;
+  latest_price_date?: string | null;
+  latest_investor_flow_date?: string | null;
+  latest_program_flow_date?: string | null;
+  collection_mode?: "FULL" | "PILOT";
+  processed_stock_codes?: string[];
+  failure_items?: Array<{
+    stock_id?: number | null;
+    stock_code?: string | null;
+    stock_name?: string | null;
+    stage: string;
+    message: string;
+    error_code?: string;
+    user_message?: string | null;
+    internal_summary?: string | null;
+    retryable?: boolean;
+  }>;
+  price_stage?: MarketThemePriceFlowStageResult;
+  technical_stage?: MarketThemePriceFlowStageResult;
+  investor_stage?: MarketThemePriceFlowStageResult;
+  program_stage?: MarketThemePriceFlowStageResult;
+  theme_return_stage?: MarketThemePriceFlowStageResult;
+  target_results?: Array<{
+    stock_id: number;
+    stock_code: string;
+    stock_name: string;
+    market?: string | null;
+    price_status: string;
+    technical_status: string;
+    investor_status: string;
+    program_status: string;
+    error_code?: string | null;
+    error_message?: string | null;
+  }>;
   items: MarketThemeReturnRefreshItem[];
   message?: string | null;
+};
+
+export type MarketThemePriceFlowJobStartResponse = {
+  job_id: string;
+  status: string;
+  message: string;
+  requested_at: string;
+};
+
+export type MarketThemePriceFlowStageResult = {
+  target_count: number;
+  attempted_count: number;
+  success_count: number;
+  up_to_date_count: number;
+  no_data_count: number;
+  skipped_count: number;
+  failed_count: number;
+  inserted_rows: number;
+  updated_rows: number;
+};
+
+export type MarketThemePriceFlowJobStatusResponse = {
+  job_id: string;
+  status: "PENDING" | "RUNNING" | "COMPLETED" | "PARTIAL" | "FAILED";
+  stage: string;
+  completed_count: number;
+  total_count: number;
+  current_stage: string;
+  current_stage_label: string;
+  completed_stock_count: number;
+  total_stock_count: number;
+  failed_stock_count: number;
+  price_result: MarketThemePriceFlowStageResult;
+  technical_indicator_result: MarketThemePriceFlowStageResult;
+  investor_flow_result: MarketThemePriceFlowStageResult;
+  program_flow_result: MarketThemePriceFlowStageResult;
+  theme_return_result: MarketThemePriceFlowStageResult;
+  requested_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  error?: string | null;
+  failures?: NonNullable<MarketThemeReturnRefreshResponse["failure_items"]>;
+  message?: string | null;
+  result?: MarketThemeReturnRefreshResponse | null;
+};
+
+export type MarketThemePriceFlowPeriod = "1M" | "3M" | "6M";
+export type MarketThemePriceFlowUnit = "QUANTITY" | "AMOUNT";
+export type MarketThemePriceFlowView = "ACTUAL" | "NORMALIZED";
+
+export type MarketThemePriceFlowChartParams = {
+  period: MarketThemePriceFlowPeriod;
+  unit: MarketThemePriceFlowUnit;
+  view: MarketThemePriceFlowView;
+  theme_id?: number;
+};
+
+export type MarketThemePriceFlowSeriesItem = {
+  trade_date: string;
+  close_price: number | null;
+  daily_return_pct: number | null;
+  price_return_pct: number | null;
+  individual_daily: number | null;
+  individual_cumulative: number | null;
+  foreign_daily: number | null;
+  foreign_cumulative: number | null;
+  institution_daily: number | null;
+  institution_cumulative: number | null;
+  program_daily: number | null;
+  program_cumulative: number | null;
+  normalized_price: number | null;
+  normalized_individual: number | null;
+  normalized_foreign: number | null;
+  normalized_institution: number | null;
+  normalized_program: number | null;
+};
+
+export type MarketThemePriceFlowEvent = {
+  event_date: string;
+  event_count: number;
+  is_current_theme: boolean;
+  items: Array<{
+    theme_id: number | null;
+    theme_name: string | null;
+    memo: string | null;
+    is_current_theme: boolean;
+  }>;
+};
+
+export type MarketThemePriceFlowChartResponse = {
+  stock: { stock_id: number; stock_code: string; stock_name: string; market: string | null };
+  requested_unit: MarketThemePriceFlowUnit;
+  requested_view: MarketThemePriceFlowView;
+  period: {
+    code: MarketThemePriceFlowPeriod;
+    requested_trading_days: number;
+    actual_trading_days: number;
+    start_date: string | null;
+    end_date: string | null;
+  };
+  latest_dates: {
+    price: string | null;
+    investor: string | null;
+    program: string | null;
+    common: string | null;
+  };
+  data_quality: {
+    status: "ENOUGH" | "PERIOD_SHORT" | "PARTIAL" | "LATEST_MISMATCH" | "EMPTY";
+    valid_days: number;
+    missing_price_days: number;
+    missing_investor_days: number;
+    missing_program_days: number;
+    completeness_ratio: number;
+  };
+  summary: {
+    price_return_pct: number | null;
+    individual_cumulative: number | null;
+    foreign_cumulative: number | null;
+    institution_cumulative: number | null;
+    program_cumulative: number | null;
+    individual_positive_days: number;
+    foreign_positive_days: number;
+    institution_positive_days: number;
+    program_positive_days: number;
+    individual_streak: number;
+    foreign_streak: number;
+    institution_streak: number;
+    program_streak: number;
+  };
+  series: MarketThemePriceFlowSeriesItem[];
+  events: MarketThemePriceFlowEvent[];
 };
 
 export type MarketThemeMonthlyReturnDailyItem = {

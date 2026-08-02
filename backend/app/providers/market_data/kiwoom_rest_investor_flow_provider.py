@@ -15,6 +15,12 @@ class KiwoomInvestorFlowNotConfigured(RuntimeError):
 @dataclass
 class KiwoomInvestorFlowRow:
     flow_date: str
+    individual_buy_qty: int | None = None
+    individual_sell_qty: int | None = None
+    individual_net_qty: int | None = None
+    individual_buy_amount: int | None = None
+    individual_sell_amount: int | None = None
+    individual_net_amount: int | None = None
     foreign_buy_qty: int | None = None
     foreign_sell_qty: int | None = None
     foreign_net_qty: int | None = None
@@ -59,29 +65,46 @@ class KiwoomRestInvestorFlowProvider:
     def __init__(self) -> None:
         self.client = KiwoomRestClient()
 
-    def get_investor_flows(self, *, stock_code: str, start_date: str, end_date: str, max_rows: int = 120) -> dict[str, Any]:
+    def get_investor_flows(self, *, stock_code: str, start_date: str, end_date: str, max_rows: int = 160) -> dict[str, Any]:
         normalized = normalize_stock_code(stock_code)
         base_date = end_date.replace('-', '')
-        qty_payloads = self._fetch_pages(
-            path=self.INVESTOR_PATH,
-            api_id=self.INVESTOR_API_ID,
-            body={'stk_cd': normalized, 'dt': base_date, 'amt_qty_tp': '2', 'trde_tp': '0', 'unit_tp': '1'},
-            row_key='stk_invsr_orgn',
-            max_rows=max_rows,
-        )
-        amount_payloads = self._fetch_pages(
-            path=self.INVESTOR_PATH,
-            api_id=self.INVESTOR_API_ID,
-            body={'stk_cd': normalized, 'dt': base_date, 'amt_qty_tp': '1', 'trde_tp': '0', 'unit_tp': '1'},
-            row_key='stk_invsr_orgn',
-            max_rows=max_rows,
-        )
-        program_payloads = self._fetch_pages(
+        errors: dict[str, str] = {}
+
+        def safe_fetch(*, name: str, path: str, api_id: str, body: dict[str, Any], row_key: str) -> dict[str, Any]:
+            try:
+                return self._fetch_pages(
+                    path=path, api_id=api_id, body=body, row_key=row_key, max_rows=max_rows
+                )
+            except Exception as exc:  # noqa: BLE001
+                errors[name] = str(exc)[:500]
+                return {'rows': [], 'pages': 0}
+
+        qty_payloads = {
+            side: safe_fetch(
+                name=f'ka10059_qty_{side}',
+                path=self.INVESTOR_PATH,
+                api_id=self.INVESTOR_API_ID,
+                body={'stk_cd': normalized, 'dt': base_date, 'amt_qty_tp': '2', 'trde_tp': code, 'unit_tp': '1'},
+                row_key='stk_invsr_orgn',
+            )
+            for side, code in (('net', '0'), ('buy', '1'), ('sell', '2'))
+        }
+        amount_payloads = {
+            side: safe_fetch(
+                name=f'ka10059_amount_{side}',
+                path=self.INVESTOR_PATH,
+                api_id=self.INVESTOR_API_ID,
+                body={'stk_cd': normalized, 'dt': base_date, 'amt_qty_tp': '1', 'trde_tp': code, 'unit_tp': '1'},
+                row_key='stk_invsr_orgn',
+            )
+            for side, code in (('net', '0'), ('buy', '1'), ('sell', '2'))
+        }
+        program_payloads = safe_fetch(
+            name='ka90013',
             path=self.PROGRAM_PATH,
             api_id=self.PROGRAM_API_ID,
             body={'stk_cd': normalized, 'dt': base_date},
             row_key='stk_daly_prm_trde_trnsn',
-            max_rows=max_rows,
         )
         holding_error: str | None = None
         try:
@@ -97,14 +120,16 @@ class KiwoomRestInvestorFlowProvider:
             holding_error = str(exc)
 
         rows_by_date: dict[str, KiwoomInvestorFlowRow] = {}
-        for raw in qty_payloads['rows']:
-            row = self._map_ka10059_qty_row(raw)
-            if row:
-                rows_by_date[row.flow_date] = self._merge_row(rows_by_date.get(row.flow_date), row)
-        for raw in amount_payloads['rows']:
-            row = self._map_ka10059_amount_row(raw)
-            if row:
-                rows_by_date[row.flow_date] = self._merge_row(rows_by_date.get(row.flow_date), row)
+        for side, payloads in qty_payloads.items():
+            for raw in payloads['rows']:
+                row = self._map_ka10059_qty_row(raw, trade_side=side)
+                if row:
+                    rows_by_date[row.flow_date] = self._merge_row(rows_by_date.get(row.flow_date), row)
+        for side, payloads in amount_payloads.items():
+            for raw in payloads['rows']:
+                row = self._map_ka10059_amount_row(raw, trade_side=side)
+                if row:
+                    rows_by_date[row.flow_date] = self._merge_row(rows_by_date.get(row.flow_date), row)
         for raw in program_payloads['rows']:
             row = self._map_ka90013_row(raw)
             if row:
@@ -124,11 +149,12 @@ class KiwoomRestInvestorFlowProvider:
             'investor_path': self.INVESTOR_PATH,
             'program_api_id': self.PROGRAM_API_ID,
             'program_path': self.PROGRAM_PATH,
-            'ka10059_qty_count': len(qty_payloads['rows']),
-            'ka10059_amount_count': len(amount_payloads['rows']),
+            'ka10059_qty_count': sum(len(payload['rows']) for payload in qty_payloads.values()),
+            'ka10059_amount_count': sum(len(payload['rows']) for payload in amount_payloads.values()),
             'ka90013_count': len(program_payloads['rows']),
             'ka10008_count': len(holding_payloads['rows']),
             'ka10008_error': holding_error,
+            'collection_errors': errors,
             'items': [row.__dict__ for row in rows],
         }
 
@@ -161,34 +187,42 @@ class KiwoomRestInvestorFlowProvider:
         return []
 
     @classmethod
-    def _map_ka10059_qty_row(cls, row: dict[str, Any]) -> KiwoomInvestorFlowRow | None:
+    def _map_ka10059_qty_row(cls, row: dict[str, Any], trade_side: str = 'net') -> KiwoomInvestorFlowRow | None:
         flow_date = cls._normalize_date(cls._get_first_str(row, ('dt', 'date', 'trd_dt', 'base_dt', 'trade_date')))
         if not flow_date:
             return None
-        return KiwoomInvestorFlowRow(
-            flow_date=flow_date,
-            foreign_net_qty=cls._get_first_int(row, ('frgnr_invsr', 'foreign_net_qty', 'for_netprps')),
-            institution_net_qty=cls._get_first_int(row, ('orgn', 'institution_net_qty', 'orgn_netprps')),
-            financial_investment_net_qty=cls._get_first_int(row, ('fnnc_invt', 'financial_investment_net_qty')),
-            insurance_net_qty=cls._get_first_int(row, ('insrnc', 'insurance_net_qty')),
-            investment_trust_net_qty=cls._get_first_int(row, ('invtrt', 'investment_trust_net_qty')),
-            bank_net_qty=cls._get_first_int(row, ('bank', 'bank_net_qty')),
-            other_finance_net_qty=cls._get_first_int(row, ('etc_fnnc', 'other_finance_net_qty')),
-            pension_fund_net_qty=cls._get_first_int(row, ('penfnd_etc', 'pension_fund_net_qty')),
-            private_fund_net_qty=cls._get_first_int(row, ('samo_fund', 'private_fund_net_qty')),
-            other_corporation_net_qty=cls._get_first_int(row, ('etc_corp', 'other_corporation_net_qty')),
-        )
+        values = {
+            'individual': cls._get_first_int(row, ('ind_invsr', 'individual_investor', 'individual_net_qty')),
+            'foreign': cls._get_first_int(row, ('frgnr_invsr', 'foreign_net_qty', 'for_netprps')),
+            'institution': cls._get_first_int(row, ('orgn', 'institution_net_qty', 'orgn_netprps')),
+        }
+        base = KiwoomInvestorFlowRow(flow_date=flow_date)
+        if trade_side == 'net':
+            base.financial_investment_net_qty = cls._get_first_int(row, ('fnnc_invt', 'financial_investment_net_qty'))
+            base.insurance_net_qty = cls._get_first_int(row, ('insrnc', 'insurance_net_qty'))
+            base.investment_trust_net_qty = cls._get_first_int(row, ('invtrt', 'investment_trust_net_qty'))
+            base.bank_net_qty = cls._get_first_int(row, ('bank', 'bank_net_qty'))
+            base.other_finance_net_qty = cls._get_first_int(row, ('etc_fnnc', 'other_finance_net_qty'))
+            base.pension_fund_net_qty = cls._get_first_int(row, ('penfnd_etc', 'pension_fund_net_qty'))
+            base.private_fund_net_qty = cls._get_first_int(row, ('samo_fund', 'private_fund_net_qty'))
+            base.other_corporation_net_qty = cls._get_first_int(row, ('etc_corp', 'other_corporation_net_qty'))
+        for subject, value in values.items():
+            setattr(base, f'{subject}_{trade_side}_qty', value)
+        return base
 
     @classmethod
-    def _map_ka10059_amount_row(cls, row: dict[str, Any]) -> KiwoomInvestorFlowRow | None:
+    def _map_ka10059_amount_row(cls, row: dict[str, Any], trade_side: str = 'net') -> KiwoomInvestorFlowRow | None:
         flow_date = cls._normalize_date(cls._get_first_str(row, ('dt', 'date', 'trd_dt', 'base_dt', 'trade_date')))
         if not flow_date:
             return None
-        return KiwoomInvestorFlowRow(
-            flow_date=flow_date,
-            foreign_net_amount=cls._get_first_amount(row, ('frgnr_invsr', 'foreign_net_amount')),
-            institution_net_amount=cls._get_first_amount(row, ('orgn', 'institution_net_amount')),
-        )
+        base = KiwoomInvestorFlowRow(flow_date=flow_date)
+        for subject, keys in (
+            ('individual', ('ind_invsr', 'individual_investor', 'individual_net_amount')),
+            ('foreign', ('frgnr_invsr', 'foreign_net_amount')),
+            ('institution', ('orgn', 'institution_net_amount')),
+        ):
+            setattr(base, f'{subject}_{trade_side}_amount', cls._get_first_amount(row, keys))
+        return base
 
     @classmethod
     def _map_ka90013_row(cls, row: dict[str, Any]) -> KiwoomInvestorFlowRow | None:

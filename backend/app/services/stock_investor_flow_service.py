@@ -121,6 +121,12 @@ class StockInvestorFlowService:
             "stock_id": stock.id,
             "stock_code": normalize_kr_stock_code(stock.stock_code),
             "flow_date": str(row.get("trade_date")),
+            "individual_buy_qty": None,
+            "individual_sell_qty": None,
+            "individual_net_qty": None,
+            "individual_buy_amount": None,
+            "individual_sell_amount": None,
+            "individual_net_amount": None,
             "foreign_buy_qty": foreign_buy,
             "foreign_sell_qty": foreign_sell,
             "foreign_net_qty": foreign_net_qty,
@@ -163,6 +169,7 @@ class StockInvestorFlowService:
 
     def _row_has_real_payload(self, row: dict[str, Any]) -> bool:
         return any(row.get(key) is not None for key in (
+            "individual_net_qty", "individual_net_amount",
             "foreign_net_qty", "foreign_net_amount",
             "institution_net_qty", "institution_net_amount", "program_net_qty", "program_net_amount",
         ))
@@ -172,13 +179,14 @@ class StockInvestorFlowService:
         subject_count = sum(
             1
             for keys in (
+                ("individual_net_qty", "individual_net_amount"),
                 ("foreign_net_qty", "foreign_net_amount"),
                 ("institution_net_qty", "institution_net_amount"),
                 ("program_net_qty", "program_net_amount"),
             )
             if any(row.get(key) is not None for key in keys)
         )
-        if subject_count >= 3:
+        if subject_count >= 4:
             return "SUCCESS"
         if subject_count > 0:
             return "PARTIAL"
@@ -200,15 +208,16 @@ class StockInvestorFlowService:
         })
         return payload
 
-    def _collect_kiwoom_real(self, stock: Any, start: date, end: date, requested_days: int, period: str, now: str) -> tuple[int, str, str, str, str, str]:
+    def _collect_kiwoom_real(self, stock: Any, start: date, end: date, requested_days: int, period: str, now: str) -> tuple[int, str, str, str, str, str, str]:
         result = self.kiwoom_provider.get_investor_flows(
             stock_code=normalize_kr_stock_code(stock.stock_code),
             start_date=start.isoformat(),
             end_date=end.isoformat(),
-            max_rows=max(1, min(requested_days, 120)),
+            max_rows=max(1, min(requested_days, 190)),
         )
         saved = 0
-        meta = {}
+        meta = {"collection_errors": dict(result.get("collection_errors") or {})}
+        individual_status = "NOT_COLLECTED"
         foreign_status = "NOT_COLLECTED"
         institution_status = "NOT_COLLECTED"
         program_status = "NOT_COLLECTED"
@@ -237,15 +246,31 @@ class StockInvestorFlowService:
                 saved += 1
             if row.get("foreign_net_qty") is not None or row.get("foreign_net_amount") is not None:
                 foreign_status = "SUCCESS"
+            if row.get("individual_net_qty") is not None or row.get("individual_net_amount") is not None:
+                individual_status = "SUCCESS"
             if row.get("institution_net_qty") is not None or row.get("institution_net_amount") is not None:
                 institution_status = "SUCCESS"
             if row.get("program_net_qty") is not None or row.get("program_net_amount") is not None:
                 program_status = "SUCCESS"
             if has_holding_payload:
                 foreign_holding_status = "SUCCESS"
+        error_names = sorted(meta["collection_errors"])
+        if not saved and error_names:
+            error_summary = "; ".join(
+                f"{name}={str(meta['collection_errors'][name])[:180]}" for name in error_names[:3]
+            )
+            raise RuntimeError(f"KIWOOM_REQUEST_FAILED: {error_summary}")
         if not saved:
-            raise RuntimeError("KIWOOM_REAL_EMPTY")
-        return saved, foreign_status, institution_status, program_status, foreign_holding_status, "Kiwoom ka10059/ka90013/ka10008 investor flow saved"
+            return (
+                0, "NO_DATA", "NO_DATA", "NO_DATA", "NO_DATA", "NO_DATA",
+                "KIWOOM_NO_DATA",
+            )
+        message = (
+            f"Kiwoom investor flow partially saved; failed calls={','.join(error_names)}"
+            if error_names
+            else "Kiwoom ka10059/ka90013/ka10008 investor flow saved"
+        )
+        return saved, individual_status, foreign_status, institution_status, program_status, foreign_holding_status, message
 
     def _collect_derived(self, stock: Any, start: date, end: date, now: str) -> int:
         rows = self._price_rows(stock.id, start, end)
@@ -265,6 +290,7 @@ class StockInvestorFlowService:
         saved_total = 0
         for watchlist_id, stock in targets:
             data_source_type = None
+            individual_status = "NOT_COLLECTED"
             foreign_status = "NOT_COLLECTED"
             institution_status = "NOT_COLLECTED"
             program_status = "NOT_COLLECTED"
@@ -275,7 +301,7 @@ class StockInvestorFlowService:
                 real_error: str | None = None
                 if payload.prefer_real_source:
                     try:
-                        saved, foreign_status, institution_status, program_status, foreign_holding_status, message = self._collect_kiwoom_real(stock, start, end, requested_days, payload.period, now)
+                        saved, individual_status, foreign_status, institution_status, program_status, foreign_holding_status, message = self._collect_kiwoom_real(stock, start, end, requested_days, payload.period, now)
                         data_source_type = "KIWOOM_REAL"
                     except KiwoomInvestorFlowNotConfigured as exc:
                         real_error = f"Kiwoom investor flow API not configured: {exc}"
@@ -286,6 +312,8 @@ class StockInvestorFlowService:
                 if saved:
                     success_count += 1
                     status_value = "SUCCESS" if data_source_type == "KIWOOM_REAL" else "DERIVED"
+                elif message == "KIWOOM_NO_DATA":
+                    status_value = "NO_DATA"
                 else:
                     failed_count += 1
                     status_value = "ERROR"
@@ -301,6 +329,7 @@ class StockInvestorFlowService:
                         saved_count=saved,
                         status=status_value,
                         data_source_type=data_source_type,
+                        individual_status=individual_status,
                         foreign_status=foreign_status,
                         institution_status=institution_status,
                         program_status=program_status,
@@ -318,6 +347,7 @@ class StockInvestorFlowService:
                         stock_name=stock.stock_name,
                         status="ERROR",
                         data_source_type=data_source_type,
+                        individual_status=individual_status,
                         foreign_status=foreign_status,
                         institution_status=institution_status,
                         program_status=program_status,
@@ -395,6 +425,8 @@ class StockInvestorFlowService:
                 source_method=str(row.get("source_method")) if row.get("source_method") else None,
                 is_real_investor_flow=bool(row.get("is_real_investor_flow")),
                 collection_status=str(row.get("collection_status")) if row.get("collection_status") else None,
+                individual_net_qty=self._to_int(row.get("individual_net_qty")),
+                individual_net_amount=self._to_int(row.get("individual_net_amount")),
                 foreign_net_qty=self._to_int(row.get("foreign_net_qty")),
                 foreign_net_amount=self._to_int(row.get("foreign_net_amount")),
                 foreign_holding_qty=self._to_int(row.get("foreign_holding_qty")),
@@ -414,9 +446,10 @@ class StockInvestorFlowService:
         amount_available = any(
             value is not None
             for item in items
-            for value in (item.foreign_net_amount, item.institution_net_amount, item.program_net_amount)
+            for value in (item.individual_net_amount, item.foreign_net_amount, item.institution_net_amount, item.program_net_amount)
         )
         available_subjects = {
+            "individual": any(item.individual_net_qty is not None or item.individual_net_amount is not None for item in items),
             "foreign": any(item.foreign_net_qty is not None or item.foreign_net_amount is not None for item in items),
             "institution": any(item.institution_net_qty is not None or item.institution_net_amount is not None for item in items),
             "program": any(item.program_net_qty is not None or item.program_net_amount is not None for item in items),

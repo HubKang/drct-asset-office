@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -105,3 +107,204 @@ class MarketThemeStockMemoResponse(BaseModel):
     stock_code: str
     stock_name: str | None = None
     items: list[MarketThemeStockMemoItem]
+
+
+class MarketThemePriceFlowChartStock(BaseModel):
+    stock_id: int
+    stock_code: str
+    stock_name: str
+    market: str | None = None
+
+
+class MarketThemePriceFlowChartPeriod(BaseModel):
+    code: Literal["1M", "3M", "6M"]
+    requested_trading_days: int
+    actual_trading_days: int
+    start_date: str | None = None
+    end_date: str | None = None
+
+
+class MarketThemePriceFlowLatestDates(BaseModel):
+    price: str | None = None
+    investor: str | None = None
+    program: str | None = None
+    common: str | None = None
+
+
+class MarketThemePriceFlowDataQuality(BaseModel):
+    status: Literal["ENOUGH", "PERIOD_SHORT", "PARTIAL", "LATEST_MISMATCH", "EMPTY"]
+    valid_days: int = 0
+    missing_price_days: int = 0
+    missing_investor_days: int = 0
+    missing_program_days: int = 0
+    completeness_ratio: float = 0.0
+
+
+class MarketThemePriceFlowSummary(BaseModel):
+    price_return_pct: float | None = None
+    individual_cumulative: int | None = None
+    foreign_cumulative: int | None = None
+    institution_cumulative: int | None = None
+    program_cumulative: int | None = None
+    individual_positive_days: int = 0
+    foreign_positive_days: int = 0
+    institution_positive_days: int = 0
+    program_positive_days: int = 0
+    individual_streak: int = 0
+    foreign_streak: int = 0
+    institution_streak: int = 0
+    program_streak: int = 0
+
+
+class MarketThemePriceFlowSeriesItem(BaseModel):
+    trade_date: str
+    close_price: float | None = None
+    daily_return_pct: float | None = None
+    price_return_pct: float | None = None
+    individual_daily: int | None = None
+    individual_cumulative: int | None = None
+    foreign_daily: int | None = None
+    foreign_cumulative: int | None = None
+    institution_daily: int | None = None
+    institution_cumulative: int | None = None
+    program_daily: int | None = None
+    program_cumulative: int | None = None
+    normalized_price: float | None = None
+    normalized_individual: float | None = None
+    normalized_foreign: float | None = None
+    normalized_institution: float | None = None
+    normalized_program: float | None = None
+
+
+class MarketThemePriceFlowEventItem(BaseModel):
+    theme_id: int | None = None
+    theme_name: str | None = None
+    memo: str | None = None
+    is_current_theme: bool = False
+
+
+class MarketThemePriceFlowEvent(BaseModel):
+    event_date: str
+    event_count: int
+    is_current_theme: bool = False
+    items: list[MarketThemePriceFlowEventItem] = Field(default_factory=list)
+
+
+class MarketThemePriceFlowChartResponse(BaseModel):
+    stock: MarketThemePriceFlowChartStock
+    requested_unit: Literal["QUANTITY", "AMOUNT"]
+    requested_view: Literal["ACTUAL", "NORMALIZED"]
+    period: MarketThemePriceFlowChartPeriod
+    latest_dates: MarketThemePriceFlowLatestDates
+    data_quality: MarketThemePriceFlowDataQuality
+    summary: MarketThemePriceFlowSummary
+    series: list[MarketThemePriceFlowSeriesItem] = Field(default_factory=list)
+    events: list[MarketThemePriceFlowEvent] = Field(default_factory=list)
+
+
+class StockDailyFlowSummary(BaseModel):
+    individual_net_amount: int | None = None
+    foreign_net_amount: int | None = None
+    institution_net_amount: int | None = None
+    program_net_amount: int | None = None
+    individual_flow_strength: float | None = None
+    foreign_flow_strength: float | None = None
+    institution_flow_strength: float | None = None
+    program_flow_strength: float | None = None
+    summary_code: Literal[
+        "FOREIGN_INSTITUTION_BUY", "FOREIGN_LEAD", "INSTITUTION_LEAD",
+        "INDIVIDUAL_LEAD", "FOREIGN_INSTITUTION_SELL", "MIXED", "NO_DATA",
+    ] = "NO_DATA"
+    has_investor_data: bool = False
+    has_program_data: bool = False
+
+
+class ThemeActorDailyFlowSummary(BaseModel):
+    net_amount: int | None = None
+    flow_strength: float | None = None
+    positive_stock_count: int = 0
+    data_stock_count: int = 0
+
+
+class ThemeDailyFlowSummary(BaseModel):
+    base_date: str
+    aggregation_basis: Literal["CURRENT_ACTIVE_LINKS"] = "CURRENT_ACTIVE_LINKS"
+    attribution_mode: Literal["FULL"] = "FULL"
+    connected_stock_count: int = 0
+    investor_data_stock_count: int = 0
+    program_data_stock_count: int = 0
+    complete_stock_count: int = 0
+    completeness_ratio: float = 0.0
+    quality_status: Literal["ENOUGH", "PARTIAL", "INSUFFICIENT", "EMPTY"] = "EMPTY"
+    theme_trading_value: int | None = None
+    summary_code: str = "NO_DATA"
+    individual: ThemeActorDailyFlowSummary
+    foreign: ThemeActorDailyFlowSummary
+    institution: ThemeActorDailyFlowSummary
+    program: ThemeActorDailyFlowSummary
+
+
+class MarketThemeFlowChartPeriod(BaseModel):
+    code: Literal["1M", "3M", "6M"]
+    requested_trading_days: int
+    actual_trading_days: int
+    start_date: str | None = None
+    end_date: str | None = None
+
+
+class MarketThemeFlowChartActorSummary(BaseModel):
+    cumulative_amount: int | None = None
+    positive_days: int = 0
+    positive_stock_count: int = 0
+    data_stock_count: int = 0
+
+
+class MarketThemeFlowChartSummary(BaseModel):
+    theme_return_pct: float | None = None
+    individual: MarketThemeFlowChartActorSummary
+    foreign: MarketThemeFlowChartActorSummary
+    institution: MarketThemeFlowChartActorSummary
+    program: MarketThemeFlowChartActorSummary
+
+
+class MarketThemeFlowChartSeriesItem(BaseModel):
+    trade_date: str
+    theme_daily_return_pct: float | None = None
+    theme_cumulative_return_pct: float | None = None
+    theme_trading_value: int | None = None
+    individual_daily_amount: int | None = None
+    individual_cumulative_amount: int | None = None
+    foreign_daily_amount: int | None = None
+    foreign_cumulative_amount: int | None = None
+    institution_daily_amount: int | None = None
+    institution_cumulative_amount: int | None = None
+    program_daily_amount: int | None = None
+    program_cumulative_amount: int | None = None
+    individual_positive_stock_count: int = 0
+    foreign_positive_stock_count: int = 0
+    institution_positive_stock_count: int = 0
+    program_positive_stock_count: int = 0
+    individual_data_stock_count: int = 0
+    foreign_data_stock_count: int = 0
+    institution_data_stock_count: int = 0
+    program_data_stock_count: int = 0
+    investor_data_stock_count: int = 0
+    complete_stock_count: int = 0
+    connected_stock_count: int = 0
+    completeness_ratio: float = 0.0
+
+
+class MarketThemeFlowChartResponse(BaseModel):
+    theme_id: int
+    theme_name: str
+    period: MarketThemeFlowChartPeriod
+    latest_theme_return_date: str | None = None
+    latest_flow_date: str | None = None
+    common_latest_date: str | None = None
+    aggregation_basis: Literal["CURRENT_ACTIVE_LINKS"] = "CURRENT_ACTIVE_LINKS"
+    attribution_mode: Literal["FULL"] = "FULL"
+    data_quality: Literal["ENOUGH", "PARTIAL", "INSUFFICIENT", "EMPTY"] = "EMPTY"
+    summary: MarketThemeFlowChartSummary
+    series: list[MarketThemeFlowChartSeriesItem] = Field(default_factory=list)
+    focus_date: str | None = None
+    selected: MarketThemeFlowChartSeriesItem | None = None

@@ -264,6 +264,14 @@ class StockPriceRepository:
             if row.latest_trade_date
         }
 
+    def get_trade_dates_in_window(self, stock_id: int, start_date: str, end_date: str) -> set[str]:
+        stmt = select(StockDailyPrice.trade_date).where(
+            StockDailyPrice.stock_id == stock_id,
+            StockDailyPrice.trade_date >= start_date,
+            StockDailyPrice.trade_date <= end_date,
+        )
+        return {str(value) for value in self.db.scalars(stmt).all()}
+
     def get_stock_summary_window(self, stock_id: int, source: str = "pykrx") -> dict | None:
         stmt = (
             select(

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from sqlalchemy.orm import Session
 
 from backend.app.core.database import get_db
@@ -30,6 +30,9 @@ from backend.app.schemas.external_kiwoom_schema import (
     DailyThemeRanksUpdateResponse,
     MarketThemeLatestReturnResponse,
     MarketThemeMonthlyReturnResponse,
+    MarketThemePriceFlowJobStartResponse,
+    MarketThemePriceFlowJobStatusResponse,
+    MarketThemePriceFlowRefreshResponse,
     MarketThemeReturnRefreshRequest,
     MarketThemeReturnRefreshResponse,
     MonthlyThemeFlowCalendarResponse,
@@ -38,7 +41,14 @@ from backend.app.schemas.external_kiwoom_schema import (
     SupplyTopStockPriceCollectRequest,
     SupplyTopStockPriceCollectResponse,
 )
+from backend.app.schemas.market_theme_stock_schema import MarketThemeFlowChartResponse, MarketThemePriceFlowChartResponse
 from backend.app.services.external_kiwoom_service import ExternalKiwoomService
+from backend.app.services.market_theme_price_flow_chart_service import MarketThemePriceFlowChartService
+from backend.app.services.market_theme_flow_analysis_service import MarketThemeFlowAnalysisService
+from backend.app.services.market_theme_price_flow_collection_service import (
+    MarketThemePriceFlowCollectionService,
+    MarketThemePriceFlowJobManager,
+)
 
 router = APIRouter()
 
@@ -152,6 +162,81 @@ def refresh_market_theme_returns(
     db: Session = Depends(get_db),
 ) -> MarketThemeReturnRefreshResponse:
     return ExternalKiwoomService(db).refresh_market_theme_returns(payload or MarketThemeReturnRefreshRequest())
+
+
+@router.post(
+    "/external/kiwoom/market-themes/returns-and-flows/refresh",
+    response_model=MarketThemePriceFlowRefreshResponse,
+)
+def refresh_market_theme_returns_and_flows(
+    payload: MarketThemeReturnRefreshRequest | None = None,
+    db: Session = Depends(get_db),
+) -> MarketThemePriceFlowRefreshResponse:
+    return MarketThemePriceFlowCollectionService(db).refresh(payload or MarketThemeReturnRefreshRequest())
+
+
+@router.post(
+    "/external/kiwoom/market-themes/returns-and-flows/jobs",
+    response_model=MarketThemePriceFlowJobStartResponse,
+)
+def start_market_theme_returns_and_flows_job(
+    background_tasks: BackgroundTasks,
+    payload: MarketThemeReturnRefreshRequest | None = None,
+) -> MarketThemePriceFlowJobStartResponse:
+    job_id = MarketThemePriceFlowJobManager.start(payload or MarketThemeReturnRefreshRequest())
+    background_tasks.add_task(MarketThemePriceFlowJobManager.run, job_id)
+    job = MarketThemePriceFlowJobManager.get(job_id)
+    return MarketThemePriceFlowJobStartResponse(
+        job_id=job_id,
+        status="PENDING",
+        message=str(job["message"]),
+        requested_at=str(job["requested_at"]),
+    )
+
+
+@router.get(
+    "/external/kiwoom/market-themes/returns-and-flows/jobs/{job_id}",
+    response_model=MarketThemePriceFlowJobStatusResponse,
+)
+def get_market_theme_returns_and_flows_job(job_id: str) -> MarketThemePriceFlowJobStatusResponse:
+    return MarketThemePriceFlowJobStatusResponse(**MarketThemePriceFlowJobManager.get(job_id))
+
+
+@router.get(
+    "/external/kiwoom/market-themes/stocks/{stock_id}/price-flow-chart",
+    response_model=MarketThemePriceFlowChartResponse,
+)
+def get_market_theme_stock_price_flow_chart(
+    stock_id: int,
+    period: str = Query(default="3M"),
+    unit: str = Query(default="QUANTITY"),
+    view: str = Query(default="ACTUAL"),
+    theme_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> MarketThemePriceFlowChartResponse:
+    """Read saved prices and flows only; this endpoint never starts collection."""
+    return MarketThemePriceFlowChartService(db).get_chart(
+        stock_id,
+        period=period,
+        unit=unit,
+        view=view,
+        theme_id=theme_id,
+    )
+
+
+@router.get(
+    "/external/kiwoom/market-themes/{theme_id}/price-flow-chart",
+    response_model=MarketThemeFlowChartResponse,
+)
+def get_market_theme_price_flow_chart(
+    theme_id: int,
+    period: str = Query(default="3M"),
+    focus_date: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> MarketThemeFlowChartResponse:
+    return MarketThemeFlowAnalysisService(db).get_chart(
+        theme_id, period=period, focus_date=focus_date
+    )
 
 
 @router.get("/external/kiwoom/market-themes/{theme_id}/returns/latest", response_model=MarketThemeLatestReturnResponse)
