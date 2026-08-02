@@ -125,12 +125,11 @@ const changeRateClass = (value: number | null | undefined) => {
 const heatmapReturnClass = (value: number | null | undefined) => {
   if (value == null || Number.isNaN(Number(value))) return "is-empty";
   const n = Number(value);
-  if (n <= -10) return "negative-strong";
-  if (n <= -5) return "negative-medium";
-  if (n < 0) return "negative-soft";
-  if (n >= 10) return "positive-strong";
-  if (n >= 5) return "positive-medium";
-  if (n > 0) return "positive-soft";
+  if (n >= 20) return "positive-20";
+  if (n >= 15) return "positive-15";
+  if (n >= 10) return "positive-10";
+  if (n >= 5) return "positive-5";
+  if (n > 0) return "positive-near-zero";
   return "neutral";
 };
 
@@ -154,11 +153,11 @@ const MonthlySupplyHeatmap = memo(function MonthlySupplyHeatmap({
   return (
     <div className="monthly-supply-heatmap-wrap">
       <div className="monthly-supply-heatmap-legend">
-        <span><i className="negative-strong" />-10% 이하</span>
-        <span><i className="negative-medium" />-5%</span>
         <span><i className="neutral" />0%</span>
-        <span><i className="positive-medium" />+5%</span>
-        <span><i className="positive-strong" />+10% 이상</span>
+        <span><i className="positive-5" />+5%</span>
+        <span><i className="positive-10" />+10%</span>
+        <span><i className="positive-15" />+15%</span>
+        <span><i className="positive-20" />+20% 이상</span>
       </div>
       <div className="monthly-supply-heatmap-scroll">
         <div className="monthly-supply-heatmap" style={{ gridTemplateColumns: `minmax(130px, 180px) repeat(${Math.max(dates.length, 1)}, minmax(0, 1fr))` }}>
