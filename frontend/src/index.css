@@ -16957,12 +16957,18 @@ a:focus-visible {
   cursor: default;
 }
 
-.theme-return-heatmap__value-text--negative-strong,
+.theme-return-heatmap__value-text--negative-strong {
+  color: #ffffff;
+}
+
 .theme-return-heatmap__value-text--negative {
   color: #1d4ed8;
 }
 
-.theme-return-heatmap__value-text--positive-strong,
+.theme-return-heatmap__value-text--positive-strong {
+  color: #ffffff;
+}
+
 .theme-return-heatmap__value-text--positive {
   color: #b91c1c;
 }

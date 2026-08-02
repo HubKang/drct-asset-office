@@ -247,25 +247,41 @@ const fmtHeatmapCellPct = (value: number | null | undefined) => {
   const n = Number(value);
   return `${n > 0 ? "+" : ""}${n.toFixed(1)}`;
 };
+const THEME_RETURN_HEATMAP_COLORS = [
+  "#2563EB",
+  "#60A5FA",
+  "#93C5FD",
+  "#DBEAFE",
+  "#E5E7EB",
+  "#FEE2E2",
+  "#FCA5A5",
+  "#F87171",
+  "#DC2626",
+] as const;
+const THEME_RETURN_NEAR_ZERO_NEGATIVE_COLOR = "#EFF6FF";
+const THEME_RETURN_NEAR_ZERO_POSITIVE_COLOR = "#FFF1F2";
+
 const getThemeReturnHeatmapColor = (rate: number | null | undefined): string => {
   if (rate == null || Number.isNaN(Number(rate))) return "#F8FAFC";
   const value = Number(rate);
-  if (value <= -10) return "#93C5FD";
-  if (value <= -7) return "#BFDBFE";
-  if (value <= -5) return "#DBEAFE";
-  if (value <= -3) return "#EFF6FF";
-  if (value < 3) return "#F3F4F6";
-  if (value < 5) return "#FEF2F2";
-  if (value < 7) return "#FEE2E2";
-  if (value < 10) return "#FECACA";
-  return "#FCA5A5";
+  if (value <= -20) return THEME_RETURN_HEATMAP_COLORS[0];
+  if (value <= -15) return THEME_RETURN_HEATMAP_COLORS[1];
+  if (value <= -10) return THEME_RETURN_HEATMAP_COLORS[2];
+  if (value <= -5) return THEME_RETURN_HEATMAP_COLORS[3];
+  if (value < 0) return THEME_RETURN_NEAR_ZERO_NEGATIVE_COLOR;
+  if (value === 0) return THEME_RETURN_HEATMAP_COLORS[4];
+  if (value < 5) return THEME_RETURN_NEAR_ZERO_POSITIVE_COLOR;
+  if (value < 10) return THEME_RETURN_HEATMAP_COLORS[5];
+  if (value < 15) return THEME_RETURN_HEATMAP_COLORS[6];
+  if (value < 20) return THEME_RETURN_HEATMAP_COLORS[7];
+  return THEME_RETURN_HEATMAP_COLORS[8];
 };
 
 const heatmapTextClass = (rate: number | null | undefined) => {
   if (rate == null || Number.isNaN(Number(rate))) return "theme-return-heatmap__value-text--empty";
-  if (Number(rate) <= -7) return "theme-return-heatmap__value-text--negative-strong";
+  if (Number(rate) <= -20) return "theme-return-heatmap__value-text--negative-strong";
   if (Number(rate) < 0) return "theme-return-heatmap__value-text--negative";
-  if (Number(rate) >= 7) return "theme-return-heatmap__value-text--positive-strong";
+  if (Number(rate) >= 20) return "theme-return-heatmap__value-text--positive-strong";
   if (Number(rate) > 0) return "theme-return-heatmap__value-text--positive";
   return "theme-return-heatmap__value-text--empty";
 };
@@ -1392,9 +1408,8 @@ function MarketThemesPage() {
               </div>
               {trendViewMode === "heatmap" ? (
                 <div className="theme-return-legend">
-                  {[`-10% 이하`, `-7%`, `-5%`, `-3%`, `0%`, `+3%`, `+5%`, `+7%`, `+10% 이상`].map((label, index) => {
-                    const colors = ["#93C5FD", "#BFDBFE", "#DBEAFE", "#EFF6FF", "#F3F4F6", "#FEF2F2", "#FEE2E2", "#FECACA", "#FCA5A5"];
-                    return <span key={label} className="theme-return-legend__item"><i className="theme-return-legend__chip" style={{ background: colors[index] }} />{label}</span>;
+                  {[`-20% 이하`, `-15%`, `-10%`, `-5%`, `0%`, `+5%`, `+10%`, `+15%`, `+20% 이상`].map((label, index) => {
+                    return <span key={label} className="theme-return-legend__item"><i className="theme-return-legend__chip" style={{ background: THEME_RETURN_HEATMAP_COLORS[index] }} />{label}</span>;
                   })}
                 </div>
               ) : null}
