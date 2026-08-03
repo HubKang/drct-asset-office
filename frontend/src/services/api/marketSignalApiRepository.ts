@@ -1,6 +1,9 @@
 import { apiRequest } from "@/services/api/apiClient";
 import type {
   MarketSignalCondition,
+  MarketSignalCurrentEvaluationSummary,
+  MarketSignalCurrentStatesResponse,
+  MarketSignalTodayTransitionsResponse,
   MarketSignalCatalogResponse,
   MarketSignalConditionPreviewResponse,
   MarketSignalDefinition,
@@ -75,6 +78,10 @@ export const marketSignalApiRepository = {
   gptDraft: (payload: { goal_text: string; gpt_result_json?: Record<string, unknown> | null }) =>
     apiRequest<MarketSignalGptDraftResponse>("/market-signals/gpt-rule-draft", { method: "POST", body: JSON.stringify(payload) }),
   todayEvents: () => apiRequest<MarketSignalGenericItemResponse<{ items: Record<string, unknown>[]; observation_date: string }>>("/market-signals/events/today"),
+  runCurrentEvaluation: (payload: { trigger_type?: string; force?: boolean } = {}) =>
+    apiRequest<MarketSignalCurrentEvaluationSummary>("/signal-evaluations/run-current", { method: "POST", body: JSON.stringify({ trigger_type: payload.trigger_type ?? "MANUAL", force: payload.force ?? false }) }),
+  todayTransitions: () => apiRequest<MarketSignalTodayTransitionsResponse>("/signal-evaluations/today-transitions"),
+  currentStates: () => apiRequest<MarketSignalCurrentStatesResponse>("/signal-evaluations/current"),
   singleIndicators: () => apiRequest<MarketSignalGenericListResponse<SingleIndicatorSignal>>("/market-signals/single-indicator"),
   singleIndicator: (id: number) => apiRequest<MarketSignalGenericItemResponse<SingleIndicatorSignal>>(`/market-signals/single-indicator/${id}`),
   previewSingleIndicatorDraft: (payload: { item_type: "INDEX" | "INDICATOR"; item_code: string; profile_code?: string; period?: string; configuration?: Record<string, number> }) =>

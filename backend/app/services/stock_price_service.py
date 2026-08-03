@@ -317,6 +317,7 @@ class StockPriceService:
         overlap_days: int = 7,
         source: str = "kiwoom_rest",
         progress_callback: Callable[[int, int], None] | None = None,
+        refresh_current_trade_date: bool = False,
     ) -> list[dict[str, object]]:
         """Collect each unique theme stock once using the shared price table and upsert path."""
         unique_ids = list(dict.fromkeys(stock_ids))
@@ -324,13 +325,17 @@ class StockPriceService:
         latest_dates = self.price_repo.get_latest_trade_dates(unique_ids)
         initial_start = self._subtract_calendar_months(end_date, initial_lookback_months)
         expected_trade_date = self._latest_expected_weekday(end_date)
+        force_current_refresh = refresh_current_trade_date and end_date == expected_trade_date
         results: list[dict[str, object]] = []
         for stock_index, stock_id in enumerate(unique_ids):
             stock = stocks_by_id.get(stock_id)
             latest_text = latest_dates.get(stock_id)
             start_date = (
-                min(date.fromisoformat(latest_text) - timedelta(days=max(0, overlap_days)), end_date)
-                if latest_text else initial_start
+                expected_trade_date
+                if latest_text and force_current_refresh and date.fromisoformat(latest_text) >= expected_trade_date
+                else min(date.fromisoformat(latest_text) - timedelta(days=max(0, overlap_days)), end_date)
+                if latest_text
+                else initial_start
             )
             mode = "INCREMENTAL" if latest_text else "INITIAL_6M"
             if stock is None:
@@ -343,7 +348,7 @@ class StockPriceService:
                 if progress_callback:
                     progress_callback(len(results), len(unique_ids))
                 continue
-            if latest_text and date.fromisoformat(latest_text) >= expected_trade_date:
+            if latest_text and date.fromisoformat(latest_text) >= expected_trade_date and not force_current_refresh:
                 results.append({
                     "stock_id": stock.id, "stock_code": stock.stock_code, "stock_name": stock.stock_name,
                     "market": stock.market, "provider": source, "attempted": False,

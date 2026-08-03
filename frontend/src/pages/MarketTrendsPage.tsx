@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import type { CSSProperties, DragEvent } from "react";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
+import { StockFlowCompactCard } from "@/components/marketThemes/FlowSummaryCards";
 import { buildTreemapLayout, getTreemapLabelClass, getTreemapTextMetrics } from "@/utils/treemapLayout";
 import {
   buildNaverKoreaMarketChartUrl,
@@ -26,6 +27,8 @@ import type {
   SupplyTopStockReturnTrendResponse,
   MonthlyThemeFlowTrendPoint,
   MonthlyThemeFlowTrendResponse,
+  MonthlyThemeCellDetailResponse,
+  MonthlyThemeCellDetailStock,
 } from "@/types/marketTrend";
 import type { MarketTheme } from "@/types/marketTheme";
 import type { Stock } from "@/types/stock";
@@ -77,6 +80,8 @@ type ManualCandidateForm = {
 };
 
 const fmtNumber = (value: number | null | undefined) => (value == null ? "-" : value.toLocaleString("ko-KR"));
+const fmtEok100m = (value: number | null | undefined) =>
+  value == null ? "미수집" : value.toLocaleString("ko-KR", { minimumFractionDigits: 0, maximumFractionDigits: 1 });
 const fmtPct = (value: number | null | undefined) => (value == null ? "-" : `${value.toFixed(2)}%`);
 const fmtSignedPct = (value: number | null | undefined) => (value == null ? "-" : `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`);
 const fmtScore = (value: number | null | undefined) => (value == null ? "0.0" : value.toLocaleString("ko-KR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }));
@@ -142,13 +147,13 @@ const fmtHeatmapPct = (value: number | null | undefined) => {
 type MonthlySupplyHeatmapProps = {
   rows: MonthlySupplyHeatmapRow[];
   dates: string[];
-  onSelectDate: (date: string) => void;
+  onSelectCell: (row: MonthlySupplyHeatmapRow, date: string, point: MonthlyThemeFlowTrendPoint) => void;
 };
 
 const MonthlySupplyHeatmap = memo(function MonthlySupplyHeatmap({
   rows,
   dates,
-  onSelectDate,
+  onSelectCell,
 }: MonthlySupplyHeatmapProps) {
   return (
     <div className="monthly-supply-heatmap-wrap">
@@ -174,13 +179,16 @@ const MonthlySupplyHeatmap = memo(function MonthlySupplyHeatmap({
               {dates.map((date) => {
                 const dayTheme = row.dailyMap.get(date);
                 const value = dayTheme?.avg_change_rate ?? null;
+                const hasDetail = Boolean(dayTheme && dayTheme.event_count > 0 && dayTheme.stock_count > 0);
                 return (
                   <button
                     key={`heat-cell-${row.marketThemeId}-${date}`}
                     type="button"
                     className={`monthly-supply-heatmap-cell ${heatmapReturnClass(value)}`}
-                    title={dayTheme ? `${date} ${row.themeName} 평균 ${fmtSignedPct(value)} · ${dayTheme.stock_count}종목` : `${date} 데이터 없음`}
-                    onClick={() => onSelectDate(date)}
+                    title={dayTheme ? `${date} ${row.themeName} 평균 ${fmtSignedPct(value)} · ${dayTheme.stock_count}종목 · 상세 보기` : `${date} 데이터 없음`}
+                    aria-label={dayTheme ? `${date} ${row.themeName} 수급 상세 보기` : `${date} ${row.themeName} 데이터 없음`}
+                    disabled={!hasDetail}
+                    onClick={() => dayTheme && hasDetail && onSelectCell(row, date, dayTheme)}
                   >
                     <span>{fmtHeatmapPct(value)}</span>
                   </button>
@@ -193,6 +201,49 @@ const MonthlySupplyHeatmap = memo(function MonthlySupplyHeatmap({
     </div>
   );
 });
+
+type HeatmapDetailStockChartProps = {
+  stock: MonthlyThemeCellDetailStock;
+  period: "day" | "week";
+  sidcode: number;
+  onOpen: (url: string, alt: string) => void;
+};
+
+const HeatmapDetailStockChart = memo(function HeatmapDetailStockChart({
+  stock,
+  period,
+  sidcode,
+  onOpen,
+}: HeatmapDetailStockChartProps) {
+  const [hasError, setHasError] = useState(false);
+  const code = normalizeStockCode(stock.stock_code ?? "");
+  const periodLabel = period === "day" ? "일봉" : "주봉";
+  const url = code ? getNaverChartImageUrl(code, period, sidcode) : "";
+
+  useEffect(() => setHasError(false), [url]);
+
+  if (!url || hasError) {
+    return <div className="theme-detail-daily-chart-fallback">{periodLabel} 차트 없음</div>;
+  }
+
+  return (
+    <button
+      type="button"
+      className="theme-detail-daily-chart-button"
+      onClick={() => onOpen(url, `${stock.stock_name} ${periodLabel} 현재 차트`)}
+      aria-label={`${stock.stock_name} ${periodLabel} 현재 차트 확대`}
+    >
+      <span className="monthly-cell-current-chart-note">현재 차트</span>
+      <img
+        src={url}
+        alt={`${stock.stock_name} ${periodLabel} 현재 차트`}
+        loading="lazy"
+        onError={() => setHasError(true)}
+      />
+    </button>
+  );
+});
+
 const STOCK_RETURN_COLORS = [
   "#dc2626", "#2563eb", "#16a34a", "#ea580c", "#7c3aed",
   "#0891b2", "#db2777", "#4f46e5", "#65a30d", "#d97706",
@@ -556,6 +607,23 @@ function MarketTrendsPage() {
   const [monthlyStartDate, setMonthlyStartDate] = useState<string>("");
   const [monthlyEndDate, setMonthlyEndDate] = useState<string>("");
   const [selectedMonthlyDate, setSelectedMonthlyDate] = useState<string>("");
+  const [selectedHeatmapCell, setSelectedHeatmapCell] = useState<{
+    themeId: number;
+    themeName: string;
+    themeGroupName: string | null;
+    date: string;
+    avgChangeRate: number | null;
+    stockCount: number;
+  } | null>(null);
+  const [heatmapCellDetail, setHeatmapCellDetail] = useState<MonthlyThemeCellDetailResponse | null>(null);
+  const [heatmapCellDetailLoading, setHeatmapCellDetailLoading] = useState(false);
+  const [heatmapCellDetailError, setHeatmapCellDetailError] = useState("");
+  const [isHeatmapCellDetailOpen, setIsHeatmapCellDetailOpen] = useState(false);
+  const heatmapCellDetailAbortRef = useRef<AbortController | null>(null);
+  const heatmapCellDetailRequestIdRef = useRef(0);
+  const heatmapCellDetailCacheRef = useRef(new Map<string, MonthlyThemeCellDetailResponse>());
+  const heatmapCellDetailTriggerRef = useRef<HTMLElement | null>(null);
+  const heatmapCellDetailCloseButtonRef = useRef<HTMLButtonElement | null>(null);
   const [selectedDayDetailTab, setSelectedDayDetailTab] = useState<SelectedDayDetailTab>("themes");
   const [monthlyLoading, setMonthlyLoading] = useState<boolean>(false);
   const monthlyRequestIdRef = useRef(0);
@@ -563,6 +631,8 @@ function MarketTrendsPage() {
   const topStockReturnPeriodKeyRef = useRef("");
   const topStockReturnRequestIdRef = useRef(0);
   const monthlyBaseMonthRef = useRef(monthlyBaseMonth);
+  const monthlyGridRef = useRef<HTMLDivElement | null>(null);
+  const monthlyCalendarPanelRef = useRef<HTMLDivElement | null>(null);
   const monthlyApplyMonthRef = useRef<(nextMonth: string) => Promise<boolean>>(async () => false);
   const [eventNameSortOrder, setEventNameSortOrder] = useState<SortOrder>("asc");
   const [manualModalOpen, setManualModalOpen] = useState(false);
@@ -1393,19 +1463,139 @@ ${tableRows}
   };
   monthlyApplyMonthRef.current = applyMonthlyFlowMonth;
 
-  const selectMonthlyHeatmapDate = useCallback((date: string) => {
-    const dateMonth = getMonthKey(date);
-    if (dateMonth !== monthlyBaseMonthRef.current) {
-      void monthlyApplyMonthRef.current(dateMonth).then((loaded) => {
-        if (!loaded) return;
-        setSelectedMonthlyDate(date);
-        setSelectedDayDetailTab("themes");
-      });
-      return;
-    }
-    setSelectedMonthlyDate(date);
-    setSelectedDayDetailTab("themes");
+  const closeMonthlyHeatmapCellDetail = useCallback(() => {
+    heatmapCellDetailAbortRef.current?.abort();
+    heatmapCellDetailAbortRef.current = null;
+    setIsHeatmapCellDetailOpen(false);
+    window.setTimeout(() => heatmapCellDetailTriggerRef.current?.focus(), 0);
   }, []);
+
+  const openMonthlyHeatmapCellDetail = useCallback(
+    (row: MonthlySupplyHeatmapRow, date: string, point: MonthlyThemeFlowTrendPoint) => {
+      const periodTo = todayInKst();
+      const periodFrom = subtractOneMonth(periodTo);
+      const cacheKey = `${row.marketThemeId}:${date}:${periodFrom}:${periodTo}`;
+      const cached = heatmapCellDetailCacheRef.current.get(cacheKey);
+      const requestId = ++heatmapCellDetailRequestIdRef.current;
+      heatmapCellDetailTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      heatmapCellDetailAbortRef.current?.abort();
+      setSelectedHeatmapCell({
+        themeId: row.marketThemeId,
+        themeName: row.themeName,
+        themeGroupName: row.themeGroupName,
+        date,
+        avgChangeRate: point.avg_change_rate,
+        stockCount: point.stock_count,
+      });
+      setIsHeatmapCellDetailOpen(true);
+      setHeatmapCellDetailError("");
+      if (cached) {
+        setHeatmapCellDetail(cached);
+        setHeatmapCellDetailLoading(false);
+        return;
+      }
+
+      const controller = new AbortController();
+      heatmapCellDetailAbortRef.current = controller;
+      setHeatmapCellDetail(null);
+      setHeatmapCellDetailLoading(true);
+      void repositories.marketTrends
+        .getMonthlyThemeCellDetail(row.marketThemeId, date, periodFrom, periodTo, controller.signal)
+        .then((detail) => {
+          if (requestId !== heatmapCellDetailRequestIdRef.current) return;
+          heatmapCellDetailCacheRef.current.set(cacheKey, detail);
+          setHeatmapCellDetail(detail);
+        })
+        .catch((reason: unknown) => {
+          if (reason instanceof Error && reason.name === "AbortError") return;
+          if (requestId !== heatmapCellDetailRequestIdRef.current) return;
+          setHeatmapCellDetailError(toErr(reason, "선택한 히트맵 셀의 상세 정보를 불러오지 못했습니다."));
+        })
+        .finally(() => {
+          if (requestId === heatmapCellDetailRequestIdRef.current) setHeatmapCellDetailLoading(false);
+        });
+    },
+    [],
+  );
+
+  const retryMonthlyHeatmapCellDetail = useCallback(() => {
+    if (!selectedHeatmapCell) return;
+    const periodTo = todayInKst();
+    const periodFrom = subtractOneMonth(periodTo);
+    heatmapCellDetailCacheRef.current.delete(
+      `${selectedHeatmapCell.themeId}:${selectedHeatmapCell.date}:${periodFrom}:${periodTo}`,
+    );
+    const trigger = heatmapCellDetailTriggerRef.current;
+    const point: MonthlyThemeFlowTrendPoint = {
+      trade_date: selectedHeatmapCell.date,
+      value: 0,
+      daily_score: 0,
+      final_rank: null,
+      rank_basis: "auto",
+      stock_count: selectedHeatmapCell.stockCount,
+      event_count: 1,
+      avg_change_rate: selectedHeatmapCell.avgChangeRate,
+      max_change_rate: selectedHeatmapCell.avgChangeRate,
+      estimated_trading_value_sum: 0,
+    };
+    openMonthlyHeatmapCellDetail(
+      {
+        marketThemeId: selectedHeatmapCell.themeId,
+        themeName: selectedHeatmapCell.themeName,
+        themeGroupName: selectedHeatmapCell.themeGroupName,
+        avgChangeRate: selectedHeatmapCell.avgChangeRate,
+        stockCount: selectedHeatmapCell.stockCount,
+        eventCount: 1,
+        dailyMap: new Map([[selectedHeatmapCell.date, point]]),
+      },
+      selectedHeatmapCell.date,
+      point,
+    );
+    heatmapCellDetailTriggerRef.current = trigger;
+  }, [openMonthlyHeatmapCellDetail, selectedHeatmapCell]);
+
+  useEffect(() => {
+    if (!isHeatmapCellDetailOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.setTimeout(() => heatmapCellDetailCloseButtonRef.current?.focus(), 0);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        if (zoomedChart) setZoomedChart(null);
+        else closeMonthlyHeatmapCellDetail();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const drawer = heatmapCellDetailCloseButtonRef.current?.closest("aside");
+      const focusable = Array.from(
+        drawer?.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      ).filter((element) => element.offsetParent !== null);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [closeMonthlyHeatmapCellDetail, isHeatmapCellDetailOpen, zoomedChart]);
+
+  useEffect(
+    () => () => {
+      heatmapCellDetailAbortRef.current?.abort();
+    },
+    [],
+  );
   const beginRankEdit = () => {
     if (flowSummaries.length === 0) return;
     setRankDraftItems(flowSummaries);
@@ -1523,6 +1713,23 @@ ${tableRows}
   useEffect(() => {
     setSelectedDayDetailTab("themes");
   }, [selectedMonthlyDate]);
+
+  useEffect(() => {
+    const grid = monthlyGridRef.current;
+    const calendarPanel = monthlyCalendarPanelRef.current;
+    if (activeTab !== "monthly" || !grid || !calendarPanel) return;
+
+    const syncCalendarHeight = () => {
+      grid.style.setProperty("--monthly-flow-calendar-height", `${calendarPanel.offsetHeight}px`);
+    };
+    syncCalendarHeight();
+    const observer = new ResizeObserver(syncCalendarHeight);
+    observer.observe(calendarPanel);
+    return () => {
+      observer.disconnect();
+      grid.style.removeProperty("--monthly-flow-calendar-height");
+    };
+  }, [activeTab, monthlyBaseMonth, monthlyCalendarDays.length]);
 
   useEffect(() => {
     if (activeTab === "kiwoom") {
@@ -2492,8 +2699,8 @@ ${tableRows}
             {!monthlyLoading && monthlyCalendarDays.length === 0 ? <p className="text-sm text-muted">저장된 수급 이벤트 후보가 없습니다.</p> : null}
 
             {monthlyCalendarDays.length > 0 ? (
-              <div className="market-trend-monthly-grid">
-                <div className="border rounded-lg p-3">
+              <div className="market-trend-monthly-grid" ref={monthlyGridRef}>
+                <div className="border rounded-lg p-3 monthly-flow-calendar-panel" ref={monthlyCalendarPanelRef}>
                   <div className="watchlist-card-title-wrap">
                     <h4 className="section-title m-0">월간 수급 달력</h4>
                     <span className="hint-icon" title="날짜별로 저장된 수급 이벤트 후보의 테마 점수를 표시합니다. 강한 수급일은 더 강조되어 표시됩니다.">i</span>
@@ -2669,7 +2876,10 @@ ${tableRows}
                   <button
                     type="button"
                     className={monthlyThemeFlowView === "heatmap" ? "active" : ""}
-                    onClick={() => setMonthlyThemeFlowView("heatmap")}
+                    onClick={() => {
+                      setMonthlyThemeFlowView("heatmap");
+                      setMonthlyTrendViewMode("THEME");
+                    }}
                   >
                     히트맵
                   </button>
@@ -2713,7 +2923,7 @@ ${tableRows}
                 <MonthlySupplyHeatmap
                   rows={monthlySupplyHeatmapRows}
                   dates={monthlyHeatmapDates}
-                  onSelectDate={selectMonthlyHeatmapDate}
+                  onSelectCell={openMonthlyHeatmapCellDetail}
                 />
               )
             ) : monthlyTreemapItems.length === 0 ? (
@@ -2845,8 +3055,181 @@ ${tableRows}
         </div>
       ) : null}
 
+      {isHeatmapCellDetailOpen && selectedHeatmapCell ? (
+        <div
+          className="theme-return-drawer-backdrop monthly-heatmap-detail-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeMonthlyHeatmapCellDetail();
+          }}
+        >
+          <aside
+            className="theme-return-drawer monthly-heatmap-detail-drawer"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="monthly-heatmap-detail-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="theme-return-drawer-header">
+              <div>
+                <h3 id="monthly-heatmap-detail-title">최근 1개월 수급 테마 상세</h3>
+                <p>{selectedHeatmapCell.themeName} · 선택일 {selectedHeatmapCell.date}</p>
+              </div>
+              <button
+                ref={heatmapCellDetailCloseButtonRef}
+                type="button"
+                className="btn btn-secondary btn-table-sm"
+                onClick={closeMonthlyHeatmapCellDetail}
+              >
+                닫기
+              </button>
+            </div>
+            <div className="theme-return-drawer-body">
+              {heatmapCellDetailLoading ? (
+                <div className="monthly-cell-detail-skeleton" aria-label="히트맵 상세 조회 중">
+                  <span /><span /><span /><span />
+                </div>
+              ) : null}
+              {heatmapCellDetailError ? (
+                <div className="monthly-cell-detail-error" role="alert">
+                  <strong>상세 정보를 불러오지 못했습니다.</strong>
+                  <span>{heatmapCellDetailError}</span>
+                  <button type="button" className="btn btn-secondary btn-table-sm" onClick={retryMonthlyHeatmapCellDetail}>
+                    재시도
+                  </button>
+                </div>
+              ) : null}
+              {!heatmapCellDetailLoading && !heatmapCellDetailError && heatmapCellDetail ? (
+                <div className="theme-return-detail-stack">
+                  <div className="theme-return-detail-title-block">
+                    <strong>{heatmapCellDetail.theme.name}</strong>
+                    <span>
+                      {heatmapCellDetail.theme.group_name || "미지정 테마그룹"} · {heatmapCellDetail.period.from_date} ~ {heatmapCellDetail.period.to_date}
+                    </span>
+                  </div>
+
+                  <div className="theme-return-kpi-grid monthly-cell-detail-kpi-grid">
+                    <div><span>월간 출현</span><strong>{heatmapCellDetail.summary.appearance_days}일</strong></div>
+                    <div><span>월간 고유 종목</span><strong>{heatmapCellDetail.summary.unique_stock_count}개</strong></div>
+                    <div><span>선택일 종목</span><strong>{heatmapCellDetail.summary.selected_stock_count}개</strong></div>
+                    <div>
+                      <span>선택일 평균등락률</span>
+                      <strong className={changeRateClass(heatmapCellDetail.summary.selected_avg_change_rate)}>
+                        {fmtSignedPct(heatmapCellDetail.summary.selected_avg_change_rate)}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>선택일 거래대금(억)</span>
+                      <strong>{fmtEok100m(heatmapCellDetail.summary.selected_trading_value_100m)}</strong>
+                    </div>
+                    <div>
+                      <span>선택일 등락 분포</span>
+                      <strong>
+                        <em className="rate-positive">상 {heatmapCellDetail.summary.rise_count}</em>
+                        {" · "}
+                        <em className="rate-negative">하 {heatmapCellDetail.summary.fall_count}</em>
+                        {" · "}보 {heatmapCellDetail.summary.flat_count}
+                      </strong>
+                    </div>
+                  </div>
+
+                  <div className="monthly-cell-detail-history">
+                    <div>
+                      <span>최초 출현</span>
+                      <strong>{heatmapCellDetail.summary.first_appearance_date ?? "-"}</strong>
+                    </div>
+                    <div>
+                      <span>최근 출현</span>
+                      <strong>{heatmapCellDetail.summary.latest_appearance_date ?? "-"}</strong>
+                    </div>
+                    <div>
+                      <span>월간 평균등락률</span>
+                      <strong className={changeRateClass(heatmapCellDetail.summary.monthly_avg_change_rate)}>
+                        {fmtSignedPct(heatmapCellDetail.summary.monthly_avg_change_rate)}
+                      </strong>
+                    </div>
+                    <div className="monthly-cell-detail-recent-dates">
+                      <span>최근 출현일</span>
+                      <strong>
+                        {heatmapCellDetail.summary.recent_appearance_dates.length
+                          ? heatmapCellDetail.summary.recent_appearance_dates.join(", ")
+                          : "-"}
+                      </strong>
+                    </div>
+                  </div>
+
+                  <div className="monthly-cell-detail-stock-heading">
+                    <div>
+                      <h4>선택일 저장 이벤트 종목</h4>
+                      <p>선택일 당시 저장된 이벤트·테마 연결 기준입니다. 가격과 수급은 {heatmapCellDetail.selected_date} 기준입니다.</p>
+                    </div>
+                    <span className={`monthly-cell-flow-readiness ${heatmapCellDetail.summary.flow_ready_count === heatmapCellDetail.summary.flow_total_count ? "is-ready" : "is-partial"}`}>
+                      수급 {heatmapCellDetail.summary.flow_ready_count}/{heatmapCellDetail.summary.flow_total_count}종목
+                    </span>
+                  </div>
+
+                  {heatmapCellDetail.stocks.length ? (
+                    <div className="theme-detail-stock-list monthly-cell-detail-stock-list" role="table" aria-label={`${heatmapCellDetail.theme.name} 선택일 종목`}>
+                      <div className="theme-detail-stock-header" role="row">
+                        <span role="columnheader">종목명</span>
+                        <span role="columnheader">거래대금(억)</span>
+                        <span role="columnheader">등락률(%)</span>
+                        <span role="columnheader">개외기 수급</span>
+                        <span role="columnheader" className="theme-detail-daily-heading" title="네이버에서 제공하는 현재 기준 차트입니다.">일봉 · 현재</span>
+                        <span role="columnheader" className="theme-detail-daily-heading" title="네이버에서 제공하는 현재 기준 차트입니다.">주봉 · 현재</span>
+                      </div>
+                      {heatmapCellDetail.stocks.map((stock) => (
+                        <div className="theme-detail-stock-row" role="row" key={`${stock.stock_id}-${stock.stock_code}`}>
+                          <div className="stock-cell" role="cell">
+                            <strong>{stock.stock_name || stock.stock_code || "-"}</strong>
+                            {stock.stock_code ? <span>{normalizeStockCode(stock.stock_code) || stock.stock_code}</span> : null}
+                            {stock.data_status !== "success" ? <small className="theme-return-fail-text">선택일 가격 없음</small> : null}
+                          </div>
+                          <span className="theme-detail-stock-number" role="cell">{fmtEok100m(stock.trading_value_100m)}</span>
+                          <span className={`theme-detail-stock-number ${changeRateClass(stock.change_rate)}`} role="cell">
+                            {fmtSignedPct(stock.change_rate)}
+                          </span>
+                          <div role="cell">
+                            <StockFlowCompactCard
+                              summary={stock.flow_summary}
+                              baseDate={heatmapCellDetail.selected_date}
+                            />
+                          </div>
+                          <div className="theme-detail-daily-chart-cell" role="cell">
+                            <HeatmapDetailStockChart
+                              stock={stock}
+                              period="day"
+                              sidcode={chartSidcode}
+                              onOpen={(url, alt) => setZoomedChart({ url, alt })}
+                            />
+                          </div>
+                          <div className="theme-detail-daily-chart-cell" role="cell">
+                            <HeatmapDetailStockChart
+                              stock={stock}
+                              period="week"
+                              sidcode={chartSidcode}
+                              onOpen={(url, alt) => setZoomedChart({ url, alt })}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="monthly-cell-detail-empty">
+                      선택일 이벤트에 저장된 종목이 없습니다. 현재 연결 종목으로 대체하지 않았습니다.
+                    </div>
+                  )}
+                  <p className="monthly-cell-detail-chart-note">
+                    일봉·주봉 이미지는 과거 선택일 차트가 아니라 현재 네이버 차트입니다. 확대하려면 이미지를 클릭하세요.
+                  </p>
+                </div>
+              ) : null}
+            </div>
+          </aside>
+        </div>
+      ) : null}
+
       {zoomedChart ? (
-        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={() => setZoomedChart(null)}>
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4 theme-linked-stock-chart-modal" onClick={() => setZoomedChart(null)}>
           <img
             src={zoomedChart.url}
             alt={zoomedChart.alt}

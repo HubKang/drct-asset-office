@@ -49,6 +49,7 @@ class MarketDataCollectResponse(BaseModel):
     elapsed_ms: int = 0
     message: str
     results: list[MarketDataCollectItemResult] = Field(default_factory=list)
+    signal_evaluation: dict | None = None
 
 
 class MarketDataCollectionRun(BaseModel):

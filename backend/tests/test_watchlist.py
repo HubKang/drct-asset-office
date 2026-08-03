@@ -4,13 +4,8 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from backend.app.main import app
 
-
-client = TestClient(app)
-
-
-def _create_stock(code_prefix: str = "W", market: str = "KOSPI") -> int:
+def _create_stock(client: TestClient, code_prefix: str = "W", market: str = "KOSPI") -> int:
     code = f"{code_prefix}{uuid4().hex[:6].upper()}"
     response = client.post(
         "/stocks",
@@ -20,14 +15,15 @@ def _create_stock(code_prefix: str = "W", market: str = "KOSPI") -> int:
     return int(response.json()["id"])
 
 
-def test_create_and_list_watchlist() -> None:
-    stock_id = _create_stock()
+def test_create_and_list_watchlist(isolated_api_client: TestClient) -> None:
+    client = isolated_api_client
+    stock_id = _create_stock(client)
 
     create_resp = client.post(
         "/watchlist",
         json={
             "stock_id": stock_id,
-            "status": "\uad00\uc2ec",
+            "status": "관심",
             "interest_reason": "core idea",
             "entry_condition": "condition A",
             "exit_condition": "condition B",
@@ -42,9 +38,10 @@ def test_create_and_list_watchlist() -> None:
     assert any(item["stock_id"] == stock_id for item in list_resp.json())
 
 
-def test_watchlist_stock_ids_and_bulk_flow() -> None:
-    stock_id_1 = _create_stock("B", "KOSPI")
-    stock_id_2 = _create_stock("C", "KOSDAQ")
+def test_watchlist_stock_ids_and_bulk_flow(isolated_api_client: TestClient) -> None:
+    client = isolated_api_client
+    stock_id_1 = _create_stock(client, "B", "KOSPI")
+    stock_id_2 = _create_stock(client, "C", "KOSDAQ")
 
     bulk_resp = client.post(
         "/watchlist/bulk",
@@ -71,10 +68,11 @@ def test_watchlist_stock_ids_and_bulk_flow() -> None:
     assert duplicate_resp.json()["skipped_count"] == 2
 
 
-def test_watchlist_bulk_reactivates_inactive_item() -> None:
-    stock_id = _create_stock("R", "KOSPI")
+def test_watchlist_bulk_reactivates_inactive_item(isolated_api_client: TestClient) -> None:
+    client = isolated_api_client
+    stock_id = _create_stock(client, "R", "KOSPI")
 
-    create_resp = client.post("/watchlist", json={"stock_id": stock_id, "status": "\uad00\uc2ec"})
+    create_resp = client.post("/watchlist", json={"stock_id": stock_id, "status": "관심"})
     assert create_resp.status_code == 201
     watchlist_id = create_resp.json()["id"]
 

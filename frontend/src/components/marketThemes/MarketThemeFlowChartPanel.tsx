@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 import { repositories } from "@/services";
 import type { MarketThemeFlowChartResponse, MarketThemeFlowChartSeriesItem, MarketThemePriceFlowPeriod } from "@/types/marketTheme";
 
@@ -95,6 +96,11 @@ export default function MarketThemeFlowChartPanel({ themeId, focusDate, initialA
     return { rows, width, height, plot, x, value, y };
   }, [data]);
   const selectedRow = selected == null ? null : data?.series[selected] ?? null;
+  const toggleLine = (key: Key) => setHidden((before) => {
+    const next = new Set(before);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
 
   if (loading) return <div className="price-flow-loading">테마 가격·수급 데이터를 계산하는 중입니다.</div>;
   if (error) return <div className="price-flow-empty is-error"><strong>차트를 불러오지 못했습니다.</strong><span>{error}</span></div>;
@@ -105,9 +111,28 @@ export default function MarketThemeFlowChartPanel({ themeId, focusDate, initialA
     <div className="price-flow-data-status"><span>기간 {data.period.start_date} ~ {data.period.end_date}</span><span>테마등락률 {data.latest_theme_return_date ?? "-"}</span><span>수급 {data.latest_flow_date ?? "-"}</span><strong>공통 기준 {data.common_latest_date ?? "-"}</strong></div>
     <div className="price-flow-summary-grid">
       <div><span>테마 누적 수익률</span><strong>{pct(data.summary.theme_return_pct)}</strong><small>{data.period.actual_trading_days}/{data.period.requested_trading_days}거래일</small></div>
-      {LINES.slice(1).map((line) => { const actor = data.summary[line.key as Exclude<Key, "theme">]; return <div key={line.key}><span>{line.label} 누적</span><strong style={{ color: line.color }}>{amount(actor.cumulative_amount)}</strong><small>순매수 {actor.positive_days}/{data.period.actual_trading_days}일 · 종목 {actor.positive_stock_count}/{actor.data_stock_count}</small></div>; })}
+      {LINES.slice(1).map((line) => {
+        const actor = data.summary[line.key as Exclude<Key, "theme">];
+        const isHidden = hidden.has(line.key);
+        return (
+          <button
+            type="button"
+            key={line.key}
+            className={`price-flow-summary-card is-series-toggle ${isHidden ? "is-hidden" : ""}`}
+            style={{ "--price-flow-series-color": line.color } as CSSProperties}
+            aria-pressed={!isHidden}
+            aria-label={`${line.label} 그래프 ${isHidden ? "나타내기" : "숨기기"}`}
+            title={`클릭하여 ${line.label} 그래프를 ${isHidden ? "나타냅니다" : "숨깁니다"}.`}
+            onClick={() => toggleLine(line.key)}
+          >
+            <span>{line.label} 누적</span>
+            <strong style={{ color: line.color }}>{amount(actor.cumulative_amount)}</strong>
+            <small>순매수 {actor.positive_days}/{data.period.actual_trading_days}일 · 종목 {actor.positive_stock_count}/{actor.data_stock_count}</small>
+          </button>
+        );
+      })}
     </div>
-    <div className="price-flow-legend">{LINES.map((line) => <button type="button" key={line.key} className={hidden.has(line.key) ? "is-hidden" : ""} onClick={() => setHidden((before) => { const next = new Set(before); if (next.has(line.key)) next.delete(line.key); else next.add(line.key); return next; })}><i style={{ borderColor: line.color, borderStyle: line.dashed ? "dashed" : "solid" }} />{line.label}</button>)}</div>
+    <div className="price-flow-legend">{LINES.map((line) => <button type="button" key={line.key} className={hidden.has(line.key) ? "is-hidden" : ""} onClick={() => toggleLine(line.key)}><i style={{ borderColor: line.color, borderStyle: line.dashed ? "dashed" : "solid" }} />{line.label}</button>)}</div>
     <div className="price-flow-chart-wrap">
       <svg className="price-flow-chart" viewBox={`0 0 ${chart.width} ${chart.height}`} role="img" aria-label={`${data.theme_name} 가격·수급 추이`} onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); const svgX = (event.clientX - rect.left) / rect.width * chart.width; const ratio = Math.max(0, Math.min(1, (svgX - chart.plot.left) / chart.plot.width)); const index = Math.round(ratio * (chart.rows.length - 1)); setSelected((before) => before === index ? null : index); }}>
         {[0, .25, .5, .75, 1].map((ratio) => <line key={ratio} x1={chart.plot.left} x2={chart.plot.left + chart.plot.width} y1={chart.plot.top + ratio * chart.plot.height} y2={chart.plot.top + ratio * chart.plot.height} className="price-flow-grid-line" />)}

@@ -29,9 +29,9 @@ const summaryLabel: Record<StockDailyFlowSummary["summary_code"], string> = {
   NO_DATA: "수급 없음",
 };
 
-export function StockFlowCompactCard({ summary, baseDate, onClick }: { summary?: StockDailyFlowSummary | null; baseDate?: string | null; onClick: () => void }) {
+export function StockFlowCompactCard({ summary, baseDate, onClick }: { summary?: StockDailyFlowSummary | null; baseDate?: string | null; onClick?: () => void }) {
   if (!summary || (!summary.has_investor_data && !summary.has_program_data)) {
-    return <button type="button" className="stock-flow-compact is-empty" onClick={onClick}>수급 없음</button>;
+    return <button type="button" className="stock-flow-compact is-empty" onClick={onClick} disabled={!onClick}>수급 없음</button>;
   }
   const tooltip = [
     `${baseDate ?? "-"} 수급`,
@@ -42,7 +42,7 @@ export function StockFlowCompactCard({ summary, baseDate, onClick }: { summary?:
     }),
     `요약: ${summaryLabel[summary.summary_code]}`,
   ].join("\n");
-  return <button type="button" className="stock-flow-compact" title={tooltip} onClick={onClick}>
+  return <button type="button" className="stock-flow-compact" title={tooltip} onClick={onClick} disabled={!onClick}>
     <span className="stock-flow-compact-main">
       {FLOW_ACTORS.slice(0, 3).map(({ key, short }) => {
         const value = summary[`${key}_flow_strength` as keyof StockDailyFlowSummary] as number | null;

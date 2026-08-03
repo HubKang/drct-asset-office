@@ -3599,6 +3599,34 @@ def ensure_market_signal_schema() -> None:
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_market_signal_events_date ON market_signal_events(event_date)")
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_market_signal_events_live_state ON market_signal_events(signal_definition_id, is_live, new_state)")
 
+        # Compact current-state projection. Do not add condition payloads,
+        # chart series, provider responses, or per-day snapshots here.
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_signal_current_states (
+                signal_definition_id INTEGER PRIMARY KEY,
+                signal_version_id INTEGER NOT NULL,
+                previous_state TEXT,
+                current_state TEXT NOT NULL,
+                evaluated_at TEXT NOT NULL,
+                effective_date TEXT,
+                last_transition_at TEXT,
+                last_transition_from TEXT,
+                last_transition_to TEXT,
+                evaluation_status TEXT NOT NULL DEFAULT 'NOT_EVALUATED',
+                missing_reason TEXT,
+                error_message TEXT,
+                collection_run_id INTEGER,
+                trigger_type TEXT NOT NULL DEFAULT 'MANUAL',
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (signal_definition_id) REFERENCES market_signal_definitions(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_signal_current_transition ON market_signal_current_states(last_transition_at, evaluation_status)"
+        )
+
         signal_columns = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(market_signal_definitions)").fetchall()}
         definition_additions = {
             "display_signal_level": "TEXT",

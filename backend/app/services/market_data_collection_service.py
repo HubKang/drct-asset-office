@@ -60,14 +60,28 @@ class MarketDataCollectionService:
         if totals["failed_count"] == len(results) and results:
             final_status = "FAILED"
         self._finish_run(run_id, final_status, totals, elapsed_ms)
-        changed_items = [
-            {"item_type": str(item.get("item_type") or ""), "item_code": str(item.get("item_code") or "")}
-            for item in results
-            if int(item.get("inserted_count") or 0) + int(item.get("updated_count") or 0) > 0
-        ]
-        from backend.app.services.market_signal_service import MarketSignalService
+        signal_evaluation = None
+        if mode == "INCREMENTAL_ALL" and final_status != "FAILED":
+            # Evaluate once, only after every provider target and the collection
+            # run have completed. Evaluation failures do not change collection status.
+            from backend.app.services.market_signal_service import MarketSignalService
 
-        signal_evaluation = MarketSignalService(self.db).evaluate_active_signals_for_changed_items(changed_items, collection_run_id=run_id)
+            try:
+                signal_evaluation = MarketSignalService(self.db).evaluate_current_signals(
+                    trigger_type="MARKET_DATA_COLLECTION",
+                    collection_run_id=run_id,
+                )
+            except Exception as exc:  # noqa: BLE001 - collection success remains authoritative.
+                self.db.rollback()
+                signal_evaluation = {
+                    "evaluated_count": 0,
+                    "transition_count": 0,
+                    "unchanged_count": 0,
+                    "data_shortage_count": 0,
+                    "failed_count": 1,
+                    "evaluated_at": None,
+                    "error_message": str(exc)[:500],
+                }
         return {
             "run_id": run_id,
             "run_type": mode,

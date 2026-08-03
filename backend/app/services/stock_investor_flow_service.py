@@ -208,12 +208,25 @@ class StockInvestorFlowService:
         })
         return payload
 
-    def _collect_kiwoom_real(self, stock: Any, start: date, end: date, requested_days: int, period: str, now: str) -> tuple[int, str, str, str, str, str, str]:
+    def _collect_kiwoom_real(
+        self,
+        stock: Any,
+        start: date,
+        end: date,
+        requested_days: int,
+        period: str,
+        now: str,
+        *,
+        include_trade_breakdown: bool = True,
+        include_foreign_holding: bool = True,
+    ) -> tuple[int, str, str, str, str, str, str]:
         result = self.kiwoom_provider.get_investor_flows(
             stock_code=normalize_kr_stock_code(stock.stock_code),
             start_date=start.isoformat(),
             end_date=end.isoformat(),
             max_rows=max(1, min(requested_days, 190)),
+            include_trade_breakdown=include_trade_breakdown,
+            include_foreign_holding=include_foreign_holding,
         )
         saved = 0
         meta = {"collection_errors": dict(result.get("collection_errors") or {})}
@@ -268,7 +281,11 @@ class StockInvestorFlowService:
         message = (
             f"Kiwoom investor flow partially saved; failed calls={','.join(error_names)}"
             if error_names
-            else "Kiwoom ka10059/ka90013/ka10008 investor flow saved"
+            else (
+                "Kiwoom ka10059/ka90013/ka10008 investor flow saved"
+                if include_foreign_holding
+                else "Kiwoom ka10059/ka90013 net investor flow saved"
+            )
         )
         return saved, individual_status, foreign_status, institution_status, program_status, foreign_holding_status, message
 
@@ -301,7 +318,16 @@ class StockInvestorFlowService:
                 real_error: str | None = None
                 if payload.prefer_real_source:
                     try:
-                        saved, individual_status, foreign_status, institution_status, program_status, foreign_holding_status, message = self._collect_kiwoom_real(stock, start, end, requested_days, payload.period, now)
+                        saved, individual_status, foreign_status, institution_status, program_status, foreign_holding_status, message = self._collect_kiwoom_real(
+                            stock,
+                            start,
+                            end,
+                            requested_days,
+                            payload.period,
+                            now,
+                            include_trade_breakdown=payload.include_trade_breakdown,
+                            include_foreign_holding=payload.include_foreign_holding,
+                        )
                         data_source_type = "KIWOOM_REAL"
                     except KiwoomInvestorFlowNotConfigured as exc:
                         real_error = f"Kiwoom investor flow API not configured: {exc}"

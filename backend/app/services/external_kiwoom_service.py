@@ -7,6 +7,7 @@ from collections import defaultdict
 from calendar import monthrange
 from datetime import date, datetime, timedelta
 from threading import Lock
+from typing import Callable
 
 from fastapi import HTTPException, status
 from sqlalchemy import text
@@ -2304,11 +2305,17 @@ class ExternalKiwoomService:
             theme_stock_sync = ThemeStockSyncResult(status="failed", reason=str(exc))
         self.db.commit()
         return KiwoomMarketEventThemeLinkDeleteResponse(success=True, link_id=link_id, theme_stock_sync=theme_stock_sync)
-    def refresh_market_theme_returns(self, payload: MarketThemeReturnRefreshRequest) -> MarketThemeReturnRefreshResponse:
+    def refresh_market_theme_returns(
+        self,
+        payload: MarketThemeReturnRefreshRequest,
+        *,
+        use_saved_prices: bool = False,
+        progress_callback: Callable[[int, int], None] | None = None,
+    ) -> MarketThemeReturnRefreshResponse:
         total_started_at = time.perf_counter()
         refreshed_at = now_kst()
         return_date = refreshed_at[:10]
-        provider = KiwoomRestMarketIndicatorProvider()
+        provider: KiwoomRestMarketIndicatorProvider | None = None
         rest_diagnostics_before = KiwoomRestClient.diagnostics_snapshot()
         auth_diagnostics_before = KiwoomAuthClient.diagnostics_snapshot()
         themes = self._list_return_refresh_themes(payload)
@@ -2334,11 +2341,29 @@ class ExternalKiwoomService:
             })
 
         price_started_at = time.perf_counter()
-        stock_return_cache: dict[int, dict[str, object]] = {}
-        for stock_id, stock in unique_stocks.items():
-            stock_return_cache[stock_id] = self._fetch_theme_stock_return(provider, stock, return_date)
+        stock_return_cache: dict[int, dict[str, object]]
+        price_api_call_count = 0
+        if use_saved_prices:
+            stock_return_cache = self._load_saved_theme_stock_returns(unique_stocks, return_date)
+            missing_stock_ids = [
+                stock_id
+                for stock_id, row in stock_return_cache.items()
+                if row.get("data_status") != "success"
+            ]
+            if missing_stock_ids:
+                provider = KiwoomRestMarketIndicatorProvider()
+                for stock_id in missing_stock_ids:
+                    stock_return_cache[stock_id] = self._fetch_theme_stock_return(
+                        provider, unique_stocks[stock_id], return_date
+                    )
+                price_api_call_count = len(missing_stock_ids)
+        else:
+            provider = KiwoomRestMarketIndicatorProvider()
+            stock_return_cache = {}
+            for stock_id, stock in unique_stocks.items():
+                stock_return_cache[stock_id] = self._fetch_theme_stock_return(provider, stock, return_date)
+            price_api_call_count = len(unique_stocks)
         price_fetch_ms = int((time.perf_counter() - price_started_at) * 1000)
-        price_api_call_count = len(unique_stocks)
 
         calc_started_at = time.perf_counter()
         theme_results: list[dict[str, object]] = []
@@ -2416,6 +2441,8 @@ class ExternalKiwoomService:
                     total_trading_value_100m=None,
                     save_action="skipped",
                 ))
+                if progress_callback:
+                    progress_callback(len(items), len(themes))
                 continue
 
             self._delete_market_theme_stock_daily_returns(theme_id=theme_id, return_date=return_date)
@@ -2451,6 +2478,8 @@ class ExternalKiwoomService:
                 total_trading_value_100m=total_trading_value_100m if total_trading_value_100m is None else float(total_trading_value_100m),
                 save_action=save_action,
             ))
+            if progress_callback:
+                progress_callback(len(items), len(themes))
 
         self.db.commit()
         db_upsert_ms = int((time.perf_counter() - db_started_at) * 1000)
@@ -3214,6 +3243,51 @@ class ExternalKiwoomService:
             {"theme_id": theme_id},
         ).mappings().all()
         return [dict(row) for row in rows]
+
+    def _load_saved_theme_stock_returns(
+        self,
+        stocks: dict[int, dict[str, object]],
+        return_date: str,
+    ) -> dict[int, dict[str, object]]:
+        if not stocks:
+            return {}
+        params: dict[str, object] = {"return_date": return_date}
+        placeholders: list[str] = []
+        for index, stock_id in enumerate(stocks):
+            key = f"stock_id_{index}"
+            placeholders.append(f":{key}")
+            params[key] = stock_id
+        rows = self.db.execute(
+            text(
+                f"""
+                SELECT stock_id, change_rate, trading_value, close_price
+                FROM stock_daily_prices
+                WHERE trade_date=:return_date
+                  AND stock_id IN ({", ".join(placeholders)})
+                """
+            ),
+            params,
+        ).mappings().all()
+        rows_by_stock = {int(row["stock_id"]): row for row in rows}
+        results: dict[int, dict[str, object]] = {}
+        for stock_id, stock in stocks.items():
+            stock_code = normalize_stock_code(str(stock.get("stock_code") or ""))
+            saved = rows_by_stock.get(stock_id)
+            raw_trading_value = self._to_int_or_none(saved.get("trading_value")) if saved else None
+            trading_value = raw_trading_value * 1_000_000 if raw_trading_value is not None else None
+            change_rate = float(saved["change_rate"]) if saved and saved.get("change_rate") is not None else None
+            results[stock_id] = {
+                "stock_id": stock_id,
+                "stock_code": stock_code,
+                "stock_name": str(stock.get("stock_name") or stock_code),
+                "change_rate": change_rate,
+                "trading_value": trading_value,
+                "trading_value_100m": round(raw_trading_value / 100.0, 4) if raw_trading_value is not None else None,
+                "current_price": self._to_abs_int(saved.get("close_price")) if saved else None,
+                "data_status": "success" if saved and change_rate is not None else "missing",
+                "error_message": None if saved and change_rate is not None else "saved_price_missing",
+            }
+        return results
 
     def _fetch_theme_stock_return(self, provider: KiwoomRestMarketIndicatorProvider, stock: dict[str, object], return_date: str) -> dict[str, object]:
         stock_code = normalize_stock_code(str(stock.get("stock_code") or ""))

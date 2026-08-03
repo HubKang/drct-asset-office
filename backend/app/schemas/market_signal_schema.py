@@ -96,6 +96,10 @@ class MarketSignalEvaluateRequest(BaseModel):
     save: bool = True
 
 
+class MarketSignalCurrentEvaluateRequest(BaseModel):
+    trigger_type: str = "MANUAL"
+    force: bool = False
+
 class MarketSignalEvaluateResponse(BaseModel):
     items: list[MarketSignalEvaluation] = Field(default_factory=list)
 

@@ -20,6 +20,7 @@ import type {
   MarketScope,
   MonthlyThemeFlowCalendarResponse,
   MonthlyThemeFlowTrendResponse,
+  MonthlyThemeCellDetailResponse,
   SaveKiwoomConditionResultsRequest,
   SaveKiwoomConditionResultsResponse,
   KiwoomMarketEventListResponse,
@@ -184,6 +185,19 @@ export const marketTrendApiRepository = {
     apiRequest<DailyThemeFlowStocksResponse>(
       `/external/kiwoom/theme-flow/daily/${marketThemeId}/stocks?trade_date=${tradeDate}`,
     ),
+  getMonthlyThemeCellDetail: (
+    themeId: number,
+    eventDate: string,
+    periodFrom: string,
+    periodTo: string,
+    signal?: AbortSignal,
+  ) => {
+    const search = new URLSearchParams({ period_from: periodFrom, period_to: periodTo });
+    return apiRequest<MonthlyThemeCellDetailResponse>(
+      `/external/kiwoom/theme-flow/monthly/themes/${themeId}/dates/${encodeURIComponent(eventDate)}/stocks?${search.toString()}`,
+      { signal },
+    );
+  },
   getExternalMonthlyThemeFlowCalendar: (month: string) =>
     apiRequest<MonthlyThemeFlowCalendarResponse>(`/external/kiwoom/theme-flow/monthly/calendar?month=${month}`),
   getSupplyTopStockReturnTrend: (periodStartDate: string, periodEndDate: string, limit = 20) => {

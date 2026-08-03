@@ -9,6 +9,7 @@ from backend.app.schemas.market_signal_schema import (
     MarketSignalDefinitionListResponse,
     MarketSignalConditionPreviewRequest,
     MarketSignalConditionPreviewResponse,
+    MarketSignalCurrentEvaluateRequest,
     MarketSignalEvaluateRequest,
     MarketSignalEvaluateResponse,
     MarketSignalEventListResponse,
@@ -51,6 +52,26 @@ def list_today_market_signal_events(db: Session = Depends(get_db)) -> MarketSign
 def get_market_signal_overview(db: Session = Depends(get_db)) -> dict:
     return MarketSignalService(db).overview()
 
+
+@router.post("/signal-evaluations/run-current", response_model=dict)
+def run_current_market_signal_evaluations(
+    payload: MarketSignalCurrentEvaluateRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    return MarketSignalService(db).evaluate_current_signals(
+        trigger_type=payload.trigger_type,
+        force=payload.force,
+    )
+
+
+@router.get("/signal-evaluations/today-transitions", response_model=dict)
+def list_today_current_market_signal_transitions(db: Session = Depends(get_db)) -> dict:
+    return MarketSignalService(db).list_today_current_transitions()
+
+
+@router.get("/signal-evaluations/current", response_model=dict)
+def list_current_market_signal_states(db: Session = Depends(get_db)) -> dict:
+    return MarketSignalService(db).list_current_signal_states()
 
 @router.post("/market-signals/gpt-rule-draft", response_model=MarketSignalGptDraftResponse)
 def draft_market_signal_with_gpt(payload: MarketSignalGptDraftRequest, db: Session = Depends(get_db)) -> MarketSignalGptDraftResponse:

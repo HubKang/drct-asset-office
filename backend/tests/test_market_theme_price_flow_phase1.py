@@ -13,6 +13,7 @@ from backend.app.main import app
 from backend.app.providers.market_data.kiwoom_rest_investor_flow_provider import KiwoomRestInvestorFlowProvider
 from backend.app.repositories.stock_investor_flow_repository import StockInvestorFlowRepository
 from backend.app.schemas.external_kiwoom_schema import MarketThemeReturnRefreshRequest
+from backend.app.services.external_kiwoom_service import ExternalKiwoomService
 from backend.app.services.stock_investor_flow_service import StockInvestorFlowService
 from backend.app.services.market_theme_price_flow_collection_service import (
     MarketThemePriceFlowCollectionService,
@@ -105,6 +106,38 @@ def test_price_latest_on_expected_trade_date_is_up_to_date() -> None:
     result = service.refresh_theme_stock_price_ranges(stock_ids=[1], end_date=date(2026, 8, 2))
     assert result[0]["status"] == "UP_TO_DATE"
     assert result[0]["attempted"] is False
+
+
+def test_price_current_trade_date_is_refreshed_when_requested() -> None:
+    service = object.__new__(StockPriceService)
+    stock = SimpleNamespace(id=1, stock_code="034020", stock_name="두산에너빌리티", market="KOSPI")
+    service.stock_repo = SimpleNamespace(get_by_ids=lambda ids: [stock])
+    service.price_repo = SimpleNamespace(
+        get_latest_trade_dates=lambda ids: {1: "2026-08-03"},
+        get_latest_trade_date=lambda stock_id: "2026-08-03",
+    )
+    calls: list[tuple[date, date]] = []
+
+    def collect(stock, source, start_date, end_date, **kwargs):
+        calls.append((start_date, end_date))
+        return {
+            "collected_count": 1,
+            "saved_count": 1,
+            "inserted_count": 0,
+            "updated_count": 1,
+        }
+
+    service._collect_and_upsert_with_stats = collect
+    result = service.refresh_theme_stock_price_ranges(
+        stock_ids=[1],
+        end_date=date(2026, 8, 3),
+        refresh_current_trade_date=True,
+    )
+
+    assert calls == [(date(2026, 8, 3), date(2026, 8, 3))]
+    assert result[0]["status"] == "SUCCESS"
+    assert result[0]["attempted"] is True
+    assert result[0]["updated_count"] == 1
 
 
 def test_empty_price_response_is_no_data_not_failed() -> None:
@@ -250,6 +283,126 @@ def test_program_failure_does_not_discard_ka10059_rows(monkeypatch: pytest.Monke
     assert result["items"][0]["individual_net_qty"] == 10
     assert result["items"][0]["program_net_qty"] is None
     assert "ka90013" in result["collection_errors"]
+
+def test_theme_lightweight_flow_profile_uses_only_three_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = KiwoomRestInvestorFlowProvider()
+    calls: list[tuple[str, str | None, str | None]] = []
+
+    def fake_fetch_pages(**kwargs):
+        body = kwargs["body"]
+        calls.append((kwargs["api_id"], body.get("amt_qty_tp"), body.get("trde_tp")))
+        if kwargs["api_id"] == provider.PROGRAM_API_ID:
+            return {
+                "rows": [{"dt": "20260801", "prm_netprps_qty": "40", "prm_netprps_amt": "4"}],
+                "pages": 1,
+            }
+        return {
+            "rows": [{"dt": "20260801", "ind_invsr": "10", "frgnr_invsr": "20", "orgn": "30"}],
+            "pages": 1,
+        }
+
+    monkeypatch.setattr(provider, "_fetch_pages", fake_fetch_pages)
+    result = provider.get_investor_flows(
+        stock_code="005930",
+        start_date="2026-07-01",
+        end_date="2026-08-01",
+        max_rows=30,
+        include_trade_breakdown=False,
+        include_foreign_holding=False,
+    )
+
+    assert calls == [
+        (provider.INVESTOR_API_ID, "2", "0"),
+        (provider.INVESTOR_API_ID, "1", "0"),
+        (provider.PROGRAM_API_ID, None, None),
+    ]
+    assert result["items"][0]["individual_net_qty"] == 10
+    assert result["items"][0]["foreign_net_amount"] == 20_000_000
+    assert result["items"][0]["institution_net_amount"] == 30_000_000
+    assert result["items"][0]["program_net_qty"] == 40
+    assert result["items"][0]["program_net_amount"] == 4_000_000
+    assert result["source_methods"] == ["kiwoom_rest_ka10059", "kiwoom_rest_ka90013"]
+    assert result["ka10008_count"] == 0
+
+
+def test_theme_flow_probe_skips_only_when_both_sources_are_stale() -> None:
+    service = object.__new__(MarketThemePriceFlowCollectionService)
+    service.flow_service = SimpleNamespace(kiwoom_provider=SimpleNamespace(
+        get_investor_flows=lambda **kwargs: {
+            "items": [{
+                "flow_date": "2026-07-31",
+                "individual_net_qty": 1,
+                "foreign_net_qty": 2,
+                "institution_net_qty": 3,
+                "program_net_qty": 4,
+            }],
+            "collection_errors": {},
+        }
+    ))
+
+    result = service._probe_theme_flow_availability(
+        stock={"stock_code": "005930"},
+        expected_trade_date=date(2026, 8, 3),
+    )
+
+    assert result["should_skip"] is True
+    assert result["investor_latest_date"] == "2026-07-31"
+    assert result["program_latest_date"] == "2026-07-31"
+
+
+def test_theme_flow_probe_failure_never_suppresses_collection() -> None:
+    service = object.__new__(MarketThemePriceFlowCollectionService)
+    service.flow_service = SimpleNamespace(kiwoom_provider=SimpleNamespace(
+        get_investor_flows=lambda **kwargs: {
+            "items": [],
+            "collection_errors": {"ka10059_qty_net": "temporary error"},
+        }
+    ))
+
+    result = service._probe_theme_flow_availability(
+        stock={"stock_code": "005930"},
+        expected_trade_date=date(2026, 8, 3),
+    )
+
+    assert result["should_skip"] is False
+
+
+def test_saved_theme_stock_returns_are_loaded_in_one_query_with_unit_conversion() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            """
+            CREATE TABLE stock_daily_prices (
+                stock_id INTEGER,
+                trade_date TEXT,
+                change_rate REAL,
+                trading_value INTEGER,
+                close_price REAL
+            )
+            """
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO stock_daily_prices VALUES (1, '2026-08-03', 2.5, 12300, 1500)"
+        )
+    session = sessionmaker(bind=engine)()
+    try:
+        service = ExternalKiwoomService(session)
+        result = service._load_saved_theme_stock_returns(
+            {
+                1: {"stock_id": 1, "stock_code": "000001", "stock_name": "A"},
+                2: {"stock_id": 2, "stock_code": "000002", "stock_name": "B"},
+            },
+            "2026-08-03",
+        )
+    finally:
+        session.close()
+
+    assert result[1]["data_status"] == "success"
+    assert result[1]["change_rate"] == 2.5
+    assert result[1]["trading_value"] == 12_300_000_000
+    assert result[1]["trading_value_100m"] == 123.0
+    assert result[1]["current_price"] == 1500
+    assert result[2]["data_status"] == "missing"
 
 
 def test_job_manager_rejects_duplicate_pending_job() -> None:

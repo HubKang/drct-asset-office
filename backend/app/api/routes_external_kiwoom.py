@@ -37,6 +37,7 @@ from backend.app.schemas.external_kiwoom_schema import (
     MarketThemeReturnRefreshResponse,
     MonthlyThemeFlowCalendarResponse,
     MonthlyThemeFlowTrendResponse,
+    MonthlyThemeCellDetailResponse,
     SupplyTopStockReturnTrendResponse,
     SupplyTopStockPriceCollectRequest,
     SupplyTopStockPriceCollectResponse,
@@ -46,6 +47,7 @@ from backend.app.services.external_kiwoom_service import ExternalKiwoomService
 from backend.app.services.market_theme_price_flow_chart_service import MarketThemePriceFlowChartService
 from backend.app.services.market_theme_flow_analysis_service import MarketThemeFlowAnalysisService
 from backend.app.services.market_theme_flow_trend_service import MarketThemeFlowTrendService, invalidate_market_theme_flow_trend_cache
+from backend.app.services.monthly_theme_cell_detail_service import MonthlyThemeCellDetailService
 from backend.app.services.market_theme_price_flow_collection_service import (
     MarketThemePriceFlowCollectionService,
     MarketThemePriceFlowJobManager,
@@ -346,6 +348,25 @@ def get_daily_theme_flow_stocks(
 ) -> DailyThemeFlowStocksResponse:
     return ExternalKiwoomService(db).get_daily_theme_flow_stocks(trade_date=trade_date, market_theme_id=market_theme_id)
 
+
+@router.get(
+    "/external/kiwoom/theme-flow/monthly/themes/{theme_id}/dates/{event_date}/stocks",
+    response_model=MonthlyThemeCellDetailResponse,
+)
+def get_monthly_theme_cell_detail(
+    theme_id: int,
+    event_date: str,
+    period_from: str = Query(..., description="YYYY-MM-DD"),
+    period_to: str = Query(..., description="YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+) -> MonthlyThemeCellDetailResponse:
+    """Return saved event stocks and selected-date price/flow data in one read-only query flow."""
+    return MonthlyThemeCellDetailService(db).get_detail(
+        theme_id=theme_id,
+        event_date=event_date,
+        period_from=period_from,
+        period_to=period_to,
+    )
 
 @router.get("/external/kiwoom/theme-flow/monthly/calendar", response_model=MonthlyThemeFlowCalendarResponse)
 def get_monthly_theme_flow_calendar(

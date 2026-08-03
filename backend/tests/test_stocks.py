@@ -4,20 +4,17 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from backend.app.main import app
 
-
-client = TestClient(app)
-
-
-def test_health() -> None:
+def test_health(isolated_api_client: TestClient) -> None:
+    client = isolated_api_client
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
 
 
-def test_create_and_list_stocks() -> None:
-    code = f"T{uuid4().hex[:6]}"
+def test_create_and_list_stocks(isolated_api_client: TestClient) -> None:
+    client = isolated_api_client
+    code = f"T{uuid4().hex[:6].upper()}"
     payload = {
         "stock_code": code,
         "stock_name": "테스트종목",

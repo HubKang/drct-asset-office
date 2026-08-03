@@ -1241,7 +1241,10 @@ function MarketIndexesPage() {
         triggered_by: "MARKET_INDEX_PAGE",
       });
       setNoticeType(result.failed_count > 0 || result.skipped_count > 0 || result.waiting_count > 0 ? "error" : "success");
-      setNotice(`수집 완료: 대상 지표 ${result.target_count} · 성공 ${result.success_count} · 대기 ${result.waiting_count} · 데이터 신규 ${result.inserted_count} · 수정 ${result.updated_count} · 동일 ${result.unchanged_count} · 건너뜀 ${result.skipped_count} · 오류 ${result.failed_count} · ${(result.elapsed_ms / 1000).toFixed(1)}초`);
+      const signalSummary = result.signal_evaluation
+        ? ` · 신호 평가 ${result.signal_evaluation.evaluated_count} · 신규 전환 ${result.signal_evaluation.transition_count} · 데이터 부족 ${result.signal_evaluation.data_shortage_count} · 평가 실패 ${result.signal_evaluation.failed_count}`
+        : "";
+      setNotice(`수집 완료: 대상 지표 ${result.target_count} · 성공 ${result.success_count} · 대기 ${result.waiting_count} · 데이터 신규 ${result.inserted_count} · 수정 ${result.updated_count} · 동일 ${result.unchanged_count} · 건너뜀 ${result.skipped_count} · 오류 ${result.failed_count}${signalSummary} · ${(result.elapsed_ms / 1000).toFixed(1)}초`);
       setCollectionRuns((prev) => [{
         id: result.run_id,
         run_type: result.run_type,

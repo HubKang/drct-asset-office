@@ -22,7 +22,14 @@ const ACTOR_LABEL: Record<MarketThemeFlowTrendActor, string> = Object.fromEntrie
 const FLOW_COLORS = ["#2563EB", "#60A5FA", "#93C5FD", "#DBEAFE", "#E5E7EB", "#FEE2E2", "#FCA5A5", "#F87171", "#DC2626"];
 const FLOW_NEAR_ZERO_NEGATIVE_COLOR = "#EFF6FF";
 const FLOW_NEAR_ZERO_POSITIVE_COLOR = "#FFF1F2";
-const BREADTH_COLORS = ["#2563EB", "#93C5FD", "#FDC698", "#FCA5A5", "#DC2626"];
+const BREADTH_BUCKETS = [
+  { label: "0~10%", color: "#1D4ED8" }, { label: "10~20%", color: "#2563EB" },
+  { label: "20~30%", color: "#60A5FA" }, { label: "30~40%", color: "#93C5FD" },
+  { label: "40~50%", color: "#DBEAFE" }, { label: "50~60%", color: "#FEE2E2" },
+  { label: "60~70%", color: "#FCA5A5" }, { label: "70~80%", color: "#F87171" },
+  { label: "80~90%", color: "#EF4444" }, { label: "90~100%", color: "#B91C1C" },
+] as const;
+const EMPTY_CELL_COLOR = "#f8fafc";
 const CACHE_TTL = 60_000;
 const flowTrendCache = new Map<string, { expires: number; value: MarketThemeFlowTrendResponse }>();
 export const invalidateMarketThemeFlowTrendFrontendCache = () => flowTrendCache.clear();
@@ -39,7 +46,7 @@ const qualityLabel = (value: string) => value === "ENOUGH" ? "충분" : value ==
 const streak = (value: number) => value > 0 ? `${value}일 연속 순매수` : value < 0 ? `${Math.abs(value)}일 연속 순매도` : "연속 흐름 없음";
 
 function strengthColor(value: number | null) {
-  if (value == null) return "#f8fafc";
+  if (value == null) return EMPTY_CELL_COLOR;
   if (value <= -20) return FLOW_COLORS[0]; if (value <= -15) return FLOW_COLORS[1];
   if (value <= -10) return FLOW_COLORS[2]; if (value <= -5) return FLOW_COLORS[3];
   if (value < 0) return FLOW_NEAR_ZERO_NEGATIVE_COLOR;
@@ -48,15 +55,35 @@ function strengthColor(value: number | null) {
   if (value < 20) return FLOW_COLORS[7]; return FLOW_COLORS[8];
 }
 function breadthColor(value: number | null) {
-  if (value == null) return "#f8fafc";
-  if (value < 30) return BREADTH_COLORS[0]; if (value < 40) return BREADTH_COLORS[1];
-  if (value <= 60) return BREADTH_COLORS[2]; if (value <= 70) return BREADTH_COLORS[3]; return BREADTH_COLORS[4];
+  if (value == null) return EMPTY_CELL_COLOR;
+  if (value <= 10) return BREADTH_BUCKETS[0].color; if (value <= 20) return BREADTH_BUCKETS[1].color;
+  if (value <= 30) return BREADTH_BUCKETS[2].color; if (value <= 40) return BREADTH_BUCKETS[3].color;
+  if (value <= 50) return BREADTH_BUCKETS[4].color; if (value <= 60) return BREADTH_BUCKETS[5].color;
+  if (value <= 70) return BREADTH_BUCKETS[6].color; if (value <= 80) return BREADTH_BUCKETS[7].color;
+  if (value < 90) return BREADTH_BUCKETS[8].color; return BREADTH_BUCKETS[9].color;
 }
 function amountColor(value: number | null, cap: number) {
-  if (value == null) return "#f8fafc";
+  if (value == null) return EMPTY_CELL_COLOR;
   if (value === 0) return FLOW_COLORS[4];
   const opacity = Math.min(.88, .14 + Math.abs(value) / Math.max(cap, 1) * .74);
   return value > 0 ? `rgba(220,38,38,${opacity})` : `rgba(37,99,235,${opacity})`;
+}
+
+function colorChannels(color: string) {
+  const hex = color.match(/^#([0-9a-f]{6})$/i);
+  if (hex) return [0, 2, 4].map((offset) => Number.parseInt(hex[1].slice(offset, offset + 2), 16));
+  const rgba = color.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)$/i);
+  if (!rgba) return [248, 250, 252];
+  const alpha = rgba[4] == null ? 1 : Number(rgba[4]);
+  return [Number(rgba[1]), Number(rgba[2]), Number(rgba[3])].map((channel) => Math.round(channel * alpha + 255 * (1 - alpha)));
+}
+function heatmapTextColor(background: string) {
+  const luminance = colorChannels(background).map((channel) => {
+    const value = channel / 255;
+    return value <= .03928 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4;
+  }).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
+  const darkLuminance = .009;
+  return 1.05 / (luminance + .05) >= (luminance + .05) / (darkLuminance + .05) ? "#ffffff" : "#0f172a";
 }
 
 function Segmented<T extends string>({ label, value, items, onChange }: { label: string; value: T; items: Array<{ value: T; label: string }>; onChange: (value: T) => void }) {
@@ -165,19 +192,21 @@ export default function MarketThemeFlowTrendPanel(props: Props) {
     {error ? <div className="theme-flow-state is-error"><strong>테마 수급 데이터를 불러오지 못했습니다.</strong><span>{error}</span><button type="button" onClick={() => setRefreshKey((value) => value + 1)}><RefreshCw size={13} /> 다시 시도</button></div> : null}
     {!error && topCards.length ? <div className="theme-flow-top-grid">{topCards.map((card) => <button type="button" key={card.label} disabled={!card.item} onClick={() => card.item && scrollToTheme(card.item.theme_id)}><span>{card.label}</span><strong>{card.item?.theme_name ?? "-"}</strong><em>{card.value}</em></button>)}</div> : null}
     {!error && metric === "FLOW_STRENGTH" ? <div className="theme-return-legend">{["-20% 이하", "-15%", "-10%", "-5%", "0%", "+5%", "+10%", "+15%", "+20% 이상"].map((label, index) => <span key={label} className="theme-return-legend__item"><i className="theme-return-legend__chip" style={{ background: FLOW_COLORS[index] }} />{label}</span>)}</div> : null}
-    {!error && metric === "BREADTH" ? <div className="theme-return-legend">{["0~30%", "30~40%", "40~60%", "60~70%", "70~100%"].map((label, index) => <span key={label} className="theme-return-legend__item"><i className="theme-return-legend__chip" style={{ background: BREADTH_COLORS[index] }} />{label}</span>)}</div> : null}
+    {!error && metric === "BREADTH" ? <div className="theme-return-legend">{BREADTH_BUCKETS.map((bucket) => <span key={bucket.label} className="theme-return-legend__item"><i className="theme-return-legend__chip" style={{ background: bucket.color }} />{bucket.label}</span>)}</div> : null}
     {!error && metric === "NET_AMOUNT" ? <p className="theme-flow-amount-legend">순매수 금액 색상은 현재 응답의 절대값 95 percentile을 상한으로 사용하며 실제 표시 금액은 변경하지 않습니다.</p> : null}
     {!error ? <div className="theme-return-heatmap-wrap theme-flow-heatmap-wrap">
-      <div className="theme-return-heatmap theme-flow-heatmap" style={{ gridTemplateColumns: `minmax(240px, 270px) repeat(${Math.max(data?.dates.length ?? 0, 1)}, minmax(34px, 1fr))` }}>
+      <div className="theme-return-heatmap theme-flow-heatmap" style={{ gridTemplateColumns: `var(--theme-flow-theme-column-width) repeat(${Math.max(data?.dates.length ?? 0, 1)}, minmax(var(--theme-flow-date-cell-min-width), 1fr))`, minWidth: `calc(var(--theme-flow-theme-column-width) + ${Math.max(data?.dates.length ?? 0, 1)} * var(--theme-flow-date-cell-min-width))` }}>
         <div className="theme-return-heatmap__theme-cell theme-return-heatmap__header-cell">테마</div>
         {(data?.dates ?? []).map((day) => <div key={day} className="theme-return-heatmap__date-cell" title={day}>{day.slice(8)}</div>)}
         {loading ? <div className="theme-return-heatmap__empty-row">테마수급추이를 조회 중입니다.</div> : null}
         {!loading && (!data || !data.themes.length) ? <div className="theme-flow-state"><strong>수집된 테마 수급 데이터가 없습니다.</strong><span>‘테마 등락률&수급 갱신’을 실행하면 현재 활성 연결 종목의 수급 데이터를 수집할 수 있습니다.</span></div> : null}
         {!loading && data?.themes.map((theme) => <Fragment key={theme.theme_id}>
           <div ref={(node) => { if (node) rowRefs.current.set(theme.theme_id, node); else rowRefs.current.delete(theme.theme_id); }} className={`theme-return-heatmap__theme-cell theme-flow-theme-cell ${highlightedThemeId === theme.theme_id ? "is-highlighted" : ""}`}>
-            <strong>{theme.theme_name}</strong><span>20일 {amount(theme.twenty_day_summary.cumulative_net_buy_amount, false)} · 강도 {pct(theme.twenty_day_summary.flow_strength)} · 연결종목 확산 {theme.twenty_day_summary.positive_stock_count}/{theme.twenty_day_summary.actor_data_stock_count} · {streak(theme.twenty_day_summary.current_streak)}</span><small>수급 {theme.twenty_day_summary.actor_data_stock_count}/{theme.connected_stock_count}종목 · {qualityLabel(theme.twenty_day_summary.data_quality)}</small>
+            <div className="theme-flow-theme-heading"><strong>{theme.theme_name}</strong><em className={`theme-flow-quality-badge is-${theme.twenty_day_summary.data_quality.toLowerCase()}`} title={`수급 완전성 ${theme.twenty_day_summary.actor_data_stock_count}/${theme.connected_stock_count}종목 · ${(theme.twenty_day_summary.completeness_ratio * 100).toFixed(0)}%`}>{qualityLabel(theme.twenty_day_summary.data_quality)}</em></div>
+            <span>20일 {amount(theme.twenty_day_summary.cumulative_net_buy_amount, false)} | 강도 {pct(theme.twenty_day_summary.flow_strength)}</span>
+            <span>{streak(theme.twenty_day_summary.current_streak)} | 연결종목 확산 {theme.twenty_day_summary.positive_stock_count}/{theme.twenty_day_summary.actor_data_stock_count}</span>
           </div>
-          {theme.cells.map((cell) => <button type="button" key={`${theme.theme_id}-${cell.trade_date}`} className={`theme-return-heatmap__value-cell theme-flow-value-cell ${cellTone(cell)} ${cell.actor_data_stock_count ? "" : "theme-return-heatmap__value-cell--empty"}`} style={{ background: cellColor(cell) }} title={tooltip(theme, cell)} onClick={() => cell.actor_data_stock_count && props.onCellClick(theme, cell.trade_date, actor, metric, attribution)}><span>{cellValue(cell)}</span></button>)}
+          {theme.cells.map((cell) => { const background = cellColor(cell); const description = tooltip(theme, cell); return <button type="button" key={`${theme.theme_id}-${cell.trade_date}`} className={`theme-return-heatmap__value-cell theme-flow-value-cell ${cellTone(cell)} ${cell.actor_data_stock_count ? "" : "theme-return-heatmap__value-cell--empty"}`} style={{ background, color: heatmapTextColor(background) }} title={description} aria-label={description.split("\n").join(", ")} onClick={() => cell.actor_data_stock_count && props.onCellClick(theme, cell.trade_date, actor, metric, attribution)}><span>{cellValue(cell)}</span></button>; })}
         </Fragment>)}
       </div>
     </div> : null}

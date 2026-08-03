@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 import { RefreshCw } from "lucide-react";
 import { repositories } from "@/services";
 import type {
@@ -239,7 +240,23 @@ export default function MarketThemePriceFlowPanel({ stockId, themeId, focusDate 
               const cumulative = finiteValue(data.summary[`${series.key}_cumulative` as keyof typeof data.summary]);
               const positive = Number(data.summary[`${series.key}_positive_days` as keyof typeof data.summary]);
               const streak = Number(data.summary[`${series.key}_streak` as keyof typeof data.summary]);
-              return <div key={series.key}><span>{series.label} 누적</span><strong style={{ color: series.color }}>{formatFlow(cumulative, unit)}</strong><small>{positive}/{data.period.actual_trading_days}일 순매수 · {streakLabel(streak)}</small></div>;
+              const isHidden = hidden.has(series.key);
+              return (
+                <button
+                  type="button"
+                  key={series.key}
+                  className={`price-flow-summary-card is-series-toggle ${isHidden ? "is-hidden" : ""}`}
+                  style={{ "--price-flow-series-color": series.color } as CSSProperties}
+                  aria-pressed={!isHidden}
+                  aria-label={`${series.label} 그래프 ${isHidden ? "나타내기" : "숨기기"}`}
+                  title={`클릭하여 ${series.label} 그래프를 ${isHidden ? "나타냅니다" : "숨깁니다"}.`}
+                  onClick={() => toggleSeries(series.key)}
+                >
+                  <span>{series.label} 누적</span>
+                  <strong style={{ color: series.color }}>{formatFlow(cumulative, unit)}</strong>
+                  <small>{positive}/{data.period.actual_trading_days}일 순매수 · {streakLabel(streak)}</small>
+                </button>
+              );
             })}
           </div>
 

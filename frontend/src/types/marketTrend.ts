@@ -1,3 +1,5 @@
+import type { StockDailyFlowSummary } from "@/types/marketTheme";
+
 export type MarketScope = "ALL" | "KOSPI" | "KOSDAQ";
 export type ThemeStatus =
   | "unassigned"
@@ -689,6 +691,43 @@ export type MonthlyThemeFlowTrendResponse = {
   themes: MonthlyThemeFlowTrendTheme[];
 };
 
+export type MonthlyThemeCellDetailStock = {
+  stock_id: number;
+  stock_code: string | null;
+  stock_name: string;
+  trading_value_100m: number | null;
+  change_rate: number | null;
+  current_price: number | null;
+  data_status: "success" | "failed" | "missing";
+  error_message?: string | null;
+  flow_summary?: StockDailyFlowSummary | null;
+};
+
+export type MonthlyThemeCellDetailResponse = {
+  theme: { id: number; name: string; group_name: string | null };
+  selected_date: string;
+  period: { from_date: string; to_date: string };
+  summary: {
+    appearance_days: number;
+    unique_stock_count: number;
+    selected_stock_count: number;
+    selected_avg_change_rate: number | null;
+    selected_trading_value_100m: number | null;
+    rise_count: number;
+    fall_count: number;
+    flat_count: number;
+    missing_change_count: number;
+    flow_ready_count: number;
+    flow_total_count: number;
+    first_appearance_date: string | null;
+    latest_appearance_date: string | null;
+    recent_appearance_dates: string[];
+    monthly_avg_change_rate: number | null;
+  };
+  stocks: MonthlyThemeCellDetailStock[];
+  chart_reference: "CURRENT";
+  queried_at: string;
+};
 export type UpdateDailyThemeRanksRequest = {
   trade_date: string;
   items: Array<{

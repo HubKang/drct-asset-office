@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import statistics
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta, timezone
+from threading import Lock
+from time import perf_counter
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException, status
 from sqlalchemy import text
@@ -13,6 +17,10 @@ from sqlalchemy.orm import Session
 from backend.app.core.market_signal_validation_summary import compact_validation_summary
 from backend.app.services.market_signal_display_service import MarketSignalDisplayService
 from backend.app.services.technical_analysis_service import calculate_regression_channel
+
+
+logger = logging.getLogger(__name__)
+CURRENT_SIGNAL_EVALUATION_LOCK = Lock()
 
 
 SUPPORTED_TRANSFORMS = {
@@ -214,6 +222,160 @@ class MarketSignalService:
         rows = self._target_signals(signal_ids=signal_ids, active_only=active_only)
         items = [self._evaluate_signal(dict(row), observation_date=observation_date, save=save) for row in rows]
         return {"items": items}
+
+    def evaluate_current_signals(
+        self,
+        *,
+        trigger_type: str = "MANUAL",
+        force: bool = False,
+        collection_run_id: int | None = None,
+    ) -> dict[str, Any]:
+        if not CURRENT_SIGNAL_EVALUATION_LOCK.acquire(blocking=False):
+            return {
+                "status": "ALREADY_RUNNING",
+                "message": "현재 신호 평가가 진행 중입니다.",
+                "evaluated_count": 0,
+                "transition_count": 0,
+                "unchanged_count": 0,
+                "data_shortage_count": 0,
+                "failed_count": 0,
+                "evaluated_at": None,
+            }
+        started = perf_counter()
+        trigger = str(trigger_type or "MANUAL").upper()
+        try:
+            logger.info("current signal evaluation started trigger_type=%s collection_run_id=%s", trigger, collection_run_id)
+            result = self._evaluate_current_signals_unlocked(
+                trigger_type=trigger,
+                force=force,
+                collection_run_id=collection_run_id,
+            )
+            result["status"] = "COMPLETED"
+            result["message"] = "현재 신호 평가가 완료되었습니다."
+            logger.info(
+                "current signal evaluation completed trigger_type=%s evaluated=%s transitions=%s shortage=%s failed=%s elapsed_ms=%s",
+                trigger,
+                result["evaluated_count"],
+                result["transition_count"],
+                result["data_shortage_count"],
+                result["failed_count"],
+                int((perf_counter() - started) * 1000),
+            )
+            return result
+        finally:
+            CURRENT_SIGNAL_EVALUATION_LOCK.release()
+    def _evaluate_current_signals_unlocked(
+        self,
+        *,
+        trigger_type: str = "MANUAL",
+        force: bool = False,
+        collection_run_id: int | None = None,
+    ) -> dict[str, Any]:
+        """Evaluate each operational signal once and upsert only its current state."""
+        del force  # Current-state evaluation is idempotent and is safe to repeat.
+        evaluated_at = datetime.now(timezone.utc)
+        targets = self._current_evaluation_targets()
+        summary = {
+            "evaluated_count": 0,
+            "transition_count": 0,
+            "unchanged_count": 0,
+            "data_shortage_count": 0,
+            "failed_count": 0,
+            "evaluated_at": evaluated_at.astimezone(ZoneInfo("Asia/Seoul")).isoformat(timespec="seconds"),
+        }
+        for target in targets:
+            try:
+                detail = self._evaluate_current_target(target)
+                transition = self._upsert_current_state(
+                    target,
+                    detail,
+                    evaluated_at=evaluated_at,
+                    trigger_type=trigger_type,
+                    collection_run_id=collection_run_id,
+                )
+                self.db.commit()
+                summary["evaluated_count"] += 1
+                if detail["evaluation_status"] == "DATA_SHORTAGE":
+                    summary["data_shortage_count"] += 1
+                if transition:
+                    summary["transition_count"] += 1
+                else:
+                    summary["unchanged_count"] += 1
+            except Exception as exc:  # noqa: BLE001 - one signal must not abort the batch.
+                logger.warning("current signal evaluation failed definition_id=%s error=%s", target.get("id"), str(exc)[:500])
+                self.db.rollback()
+                self._upsert_current_error(
+                    target,
+                    evaluated_at=evaluated_at,
+                    trigger_type=trigger_type,
+                    collection_run_id=collection_run_id,
+                    error_message=str(exc)[:500],
+                )
+                self.db.commit()
+                summary["failed_count"] += 1
+        return summary
+
+    def list_today_current_transitions(self) -> dict[str, Any]:
+        now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
+        start_utc = datetime.combine(now_kst.date(), time.min, tzinfo=ZoneInfo("Asia/Seoul")).astimezone(timezone.utc)
+        end_utc = datetime.combine(now_kst.date() + timedelta(days=1), time.min, tzinfo=ZoneInfo("Asia/Seoul")).astimezone(timezone.utc)
+        rows = self.db.execute(
+            text(
+                """
+                SELECT cs.*, d.signal_code, d.signal_name, d.signal_type, d.current_version
+                FROM market_signal_current_states cs
+                JOIN market_signal_definitions d ON d.id = cs.signal_definition_id
+                WHERE d.status = 'ACTIVE'
+                  AND cs.signal_version_id = d.current_version
+                  AND cs.evaluation_status = 'SUCCESS'
+                  AND cs.last_transition_at >= :start_utc
+                  AND cs.last_transition_at < :end_utc
+                  AND cs.last_transition_from IS NOT NULL
+                  AND cs.last_transition_from <> cs.last_transition_to
+                ORDER BY cs.last_transition_at DESC, cs.signal_definition_id
+                """
+            ),
+            {"start_utc": start_utc.isoformat(timespec="seconds"), "end_utc": end_utc.isoformat(timespec="seconds")},
+        ).mappings().all()
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            target = dict(row)
+            try:
+                detail = self._evaluate_current_target(target)
+            except Exception as exc:  # noqa: BLE001 - return the durable transition even if detail refresh fails.
+                detail = {"evaluation_status": "ERROR", "error_message": str(exc)[:500]}
+            items.append(self._current_state_dto(target, detail, include_transition=True))
+        current = self.list_current_signal_states(include_details=False)
+        return {
+            "items": items,
+            "date": now_kst.date().isoformat(),
+            "last_evaluated_at": current["last_evaluated_at"],
+            "summary": current["summary"],
+        }
+
+    def list_current_signal_states(self, *, include_details: bool = True) -> dict[str, Any]:
+        targets = self._current_evaluation_targets()
+        stored_rows = self.db.execute(text("SELECT * FROM market_signal_current_states")).mappings().all()
+        stored = {int(row["signal_definition_id"]): dict(row) for row in stored_rows}
+        items: list[dict[str, Any]] = []
+        for target in targets:
+            row = {**target, **stored.get(int(target["id"]), {})}
+            detail: dict[str, Any] = {}
+            if include_details:
+                try:
+                    detail = self._evaluate_current_target(target)
+                except Exception as exc:  # noqa: BLE001
+                    detail = {"evaluation_status": "ERROR", "error_message": str(exc)[:500]}
+            items.append(self._current_state_dto(row, detail, include_transition=False))
+        summary: dict[str, int] = {"NOT_EVALUATED": 0, "DATA_SHORTAGE": 0, "ERROR": 0}
+        for item in items:
+            state = str(item.get("current_state") or "NOT_EVALUATED")
+            summary[state] = summary.get(state, 0) + 1
+            status_value = str(item.get("evaluation_status") or "NOT_EVALUATED")
+            if status_value in {"DATA_SHORTAGE", "ERROR"} and state != status_value:
+                summary[status_value] = summary.get(status_value, 0) + 1
+        evaluated_values = [str(item["evaluated_at"]) for item in items if item.get("evaluated_at")]
+        return {"items": items, "summary": summary, "last_evaluated_at": max(evaluated_values) if evaluated_values else None}
 
     def list_evaluations(self, signal_id: int, *, limit: int = 50) -> dict[str, Any]:
         rows = self.db.execute(
@@ -420,6 +582,346 @@ class MarketSignalService:
                 self.db.rollback()
                 result["error_count"] += 1
         return result
+
+    def _current_evaluation_targets(self) -> list[dict[str, Any]]:
+        rows = self.db.execute(
+            text(
+                """
+                SELECT d.*,
+                       tm.id AS trend_model_id,
+                       tm.item_type AS trend_item_type,
+                       tm.item_code AS trend_item_code
+                FROM market_signal_definitions d
+                LEFT JOIN market_signal_trend_models tm
+                  ON tm.signal_definition_id = d.id AND tm.is_active = 1
+                WHERE d.status = 'ACTIVE'
+                  AND (
+                    tm.id IS NOT NULL
+                    OR EXISTS (
+                      SELECT 1 FROM market_signal_conditions c
+                      WHERE c.signal_definition_id = d.id
+                        AND (c.is_required = 1 OR c.condition_role IN ('TRIGGER', 'REQUIRED'))
+                    )
+                  )
+                ORDER BY CASE WHEN tm.id IS NOT NULL THEN 0 ELSE 1 END, d.id
+                """
+            )
+        ).mappings().all()
+        # A definition can have at most one active current evaluation target.
+        unique: dict[int, dict[str, Any]] = {}
+        for row in rows:
+            unique.setdefault(int(row["id"]), dict(row))
+        return list(unique.values())
+
+    def _evaluate_current_target(self, target: dict[str, Any]) -> dict[str, Any]:
+        observation_date = self._latest_observation_date()
+        if target.get("trend_model_id"):
+            model = self._trend_model_for_signal(int(target["id"]))
+            if not model:
+                raise RuntimeError("active trend model not found")
+            diagnostic = self._trend_diagnostic(model["item_type"], model["item_code"], observation_date, model=model)
+            raw_state = str(diagnostic.get("trend_health") or "ERROR").upper()
+            current_state = "DATA_SHORTAGE" if raw_state in {"DATA_INSUFFICIENT", "INSUFFICIENT_DATA"} else raw_state
+            missing = []
+            freshness_issue = self._freshness_issue(str(model.get("item_type") or "INDICATOR"), str(model.get("item_code") or ""))
+            if freshness_issue:
+                current_state = "DATA_SHORTAGE"
+                missing.append(freshness_issue)
+            if current_state == "DATA_SHORTAGE" and not missing:
+                missing.append({
+                    "indicator_code": str(model.get("item_code") or ""),
+                    "reason": str(diagnostic.get("reason") or diagnostic.get("message") or "필요 관측치가 부족합니다."),
+                    "available_count": int(diagnostic.get("observation_count") or 0),
+                    "required_count": int(model.get("trend_window") or 0),
+                    "latest_observation_date": diagnostic.get("observation_date"),
+                })
+            condition = {
+                "label": str(target.get("signal_name") or model.get("item_code") or "현재 추세"),
+                "indicator_code": str(model.get("item_code") or ""),
+                "value": diagnostic.get("latest_value"),
+                "observation_date": diagnostic.get("observation_date"),
+                "satisfied": current_state not in {"DATA_SHORTAGE", "ERROR"},
+            }
+            return {
+                "current_state": current_state,
+                "effective_date": str(diagnostic.get("observation_date") or observation_date),
+                "score": float(diagnostic.get("trend_strength") or 0),
+                "evaluation_status": "DATA_SHORTAGE" if current_state == "DATA_SHORTAGE" else ("ERROR" if current_state == "ERROR" else "SUCCESS"),
+                "required": {"satisfied": int(condition["satisfied"]), "total": 1},
+                "confirm": {"satisfied": 0, "total": 0},
+                "opposing": {"satisfied": 0, "total": 0},
+                "conditions": [condition],
+                "missing_indicators": missing,
+                "missing_reason": self._compact_missing_reason(missing),
+                "explanation": self._operation_explanation(raw_state, diagnostic),
+            }
+
+        evaluation = self._evaluate_signal(
+            target,
+            observation_date=observation_date,
+            save=False,
+            evaluation_type="MANUAL",
+        )
+        raw_state = str(evaluation.get("state") or "ERROR").upper()
+        current_state = "DATA_SHORTAGE" if raw_state in {"DATA_INSUFFICIENT", "INSUFFICIENT_DATA"} else raw_state
+        missing = list(evaluation.get("missing_data") or [])
+        missing_codes = {str(item.get("indicator_code") or item.get("item_code") or "").upper() for item in missing}
+        for condition in self._condition_rows(int(target["id"])):
+            issue = self._freshness_issue(str(condition.get("item_type") or "INDICATOR"), str(condition.get("item_code") or ""))
+            if issue and str(issue.get("indicator_code") or "").upper() not in missing_codes:
+                missing.append(issue)
+                missing_codes.add(str(issue.get("indicator_code") or "").upper())
+        if missing:
+            current_state = "DATA_SHORTAGE"
+        evidence = list(evaluation.get("evidence") or [])
+        opposing = list(evaluation.get("opposing_evidence") or [])
+        conditions = [
+            {
+                "label": item.get("fact_text") or item.get("display_text") or item.get("item_display_name") or item.get("item_code"),
+                "indicator_code": item.get("item_code"),
+                "value": item.get("value") if item.get("value") is not None else item.get("transformed_value"),
+                "observation_date": item.get("observation_date") or evaluation.get("observation_date"),
+                "satisfied": bool(item.get("satisfied", True)),
+                "role": item.get("condition_role") or item.get("display_role"),
+            }
+            for item in [*evidence, *opposing]
+        ]
+        return {
+            "current_state": current_state,
+            "effective_date": str(evaluation.get("observation_date") or observation_date),
+            "score": float(evaluation.get("score") or 0),
+            "evaluation_status": "DATA_SHORTAGE" if current_state == "DATA_SHORTAGE" or missing else ("ERROR" if current_state == "ERROR" else "SUCCESS"),
+            "required": {"satisfied": int(evaluation.get("required_pass_count") or 0), "total": int(evaluation.get("required_total_count") or 0)},
+            "confirm": {"satisfied": int(evaluation.get("confirm_pass_count") or 0), "total": sum(1 for row in self._condition_rows(int(target["id"])) if str(row.get("condition_role") or "").upper() == "CONFIRM")},
+            "opposing": {"satisfied": int(evaluation.get("opposing_pass_count") or 0), "total": sum(1 for row in self._condition_rows(int(target["id"])) if str(row.get("condition_role") or "").upper() == "OPPOSING")},
+            "conditions": conditions,
+            "missing_indicators": missing,
+            "missing_reason": self._compact_missing_reason(missing),
+            "explanation": evaluation.get("result_text") or evaluation.get("phenomenon_text") or evaluation.get("process_text"),
+        }
+
+    @staticmethod
+    def _compact_missing_reason(missing: list[dict[str, Any]]) -> str | None:
+        if not missing:
+            return None
+        labels = []
+        for item in missing[:5]:
+            code = str(item.get("indicator_code") or item.get("item_code") or "지표")
+            reason = str(item.get("reason") or item.get("message") or "데이터 부족")
+            labels.append(f"{code}: {reason}")
+        return "; ".join(labels)[:500]
+
+    def _freshness_issue(self, item_type: str, item_code: str) -> dict[str, Any] | None:
+        normalized_type = str(item_type or "INDICATOR").upper()
+        normalized_code = str(item_code or "").upper()
+        if not normalized_code:
+            return {"indicator_code": normalized_code, "reason": "지표 코드가 없습니다.", "available_count": 0, "required_count": 1, "latest_observation_date": None}
+        frequency = self.db.execute(
+            text("SELECT frequency FROM market_data_collection_policies WHERE item_type=:type AND item_code=:code"),
+            {"type": normalized_type, "code": normalized_code},
+        ).scalar()
+        if normalized_type == "INDEX":
+            row = self.db.execute(
+                text("SELECT COUNT(*) AS count_value, MAX(price_date) AS latest_date FROM market_index_daily_prices WHERE index_code=:code AND close_price IS NOT NULL"),
+                {"code": normalized_code},
+            ).mappings().one()
+            frequency = frequency or "DAILY"
+        else:
+            row = self.db.execute(
+                text("SELECT COUNT(*) AS count_value, MAX(value_date) AS latest_date FROM market_indicator_values WHERE indicator_code=:code AND COALESCE(value, close_value) IS NOT NULL"),
+                {"code": normalized_code},
+            ).mappings().one()
+            if not frequency:
+                frequency = self.db.execute(text("SELECT data_frequency FROM market_indicators WHERE indicator_code=:code"), {"code": normalized_code}).scalar()
+        latest_date = row.get("latest_date")
+        if not latest_date:
+            return {
+                "indicator_code": normalized_code,
+                "reason": "사용 가능한 관측값이 없습니다.",
+                "available_count": int(row.get("count_value") or 0),
+                "required_count": 1,
+                "latest_observation_date": None,
+            }
+        normalized_frequency = str(frequency or "DAILY").upper()
+        allowed_days = 7
+        if normalized_frequency in {"W", "WEEK", "WEEKLY"}:
+            allowed_days = 14
+        elif normalized_frequency in {"M", "MONTH", "MONTHLY"}:
+            allowed_days = 45
+        elif normalized_frequency in {"Q", "QUARTER", "QUARTERLY"}:
+            allowed_days = 120
+        try:
+            age_days = max((date.today() - date.fromisoformat(str(latest_date)[:10])).days, 0)
+        except ValueError:
+            age_days = allowed_days + 1
+        if age_days <= allowed_days:
+            return None
+        return {
+            "indicator_code": normalized_code,
+            "reason": f"최신 관측값이 허용 노후도 {allowed_days}일을 초과했습니다.",
+            "available_count": int(row.get("count_value") or 0),
+            "required_count": 1,
+            "latest_observation_date": str(latest_date),
+            "age_days": age_days,
+            "allowed_age_days": allowed_days,
+        }
+    def _upsert_current_state(
+        self,
+        target: dict[str, Any],
+        detail: dict[str, Any],
+        *,
+        evaluated_at: datetime,
+        trigger_type: str,
+        collection_run_id: int | None,
+    ) -> bool:
+        signal_id = int(target["id"])
+        existing = self.db.execute(
+            text("SELECT * FROM market_signal_current_states WHERE signal_definition_id=:id"),
+            {"id": signal_id},
+        ).mappings().first()
+        old_state = str(existing["current_state"]) if existing else None
+        new_state = str(detail["current_state"])
+        transitioned = bool(existing and old_state != new_state)
+        evaluated_text = evaluated_at.isoformat(timespec="seconds")
+        previous_state = old_state if transitioned else (existing.get("previous_state") if existing else None)
+        last_transition_at = evaluated_text if transitioned else (existing.get("last_transition_at") if existing else None)
+        last_transition_from = old_state if transitioned else (existing.get("last_transition_from") if existing else None)
+        last_transition_to = new_state if transitioned else (existing.get("last_transition_to") if existing else None)
+        self.db.execute(
+            text(
+                """
+                INSERT INTO market_signal_current_states
+                (signal_definition_id, signal_version_id, previous_state, current_state, evaluated_at,
+                 effective_date, last_transition_at, last_transition_from, last_transition_to,
+                 evaluation_status, missing_reason, error_message, collection_run_id, trigger_type, updated_at)
+                VALUES (:signal_definition_id, :signal_version_id, :previous_state, :current_state, :evaluated_at,
+                        :effective_date, :last_transition_at, :last_transition_from, :last_transition_to,
+                        :evaluation_status, :missing_reason, NULL, :collection_run_id, :trigger_type, :evaluated_at)
+                ON CONFLICT(signal_definition_id) DO UPDATE SET
+                    signal_version_id=excluded.signal_version_id,
+                    previous_state=excluded.previous_state,
+                    current_state=excluded.current_state,
+                    evaluated_at=excluded.evaluated_at,
+                    effective_date=excluded.effective_date,
+                    last_transition_at=excluded.last_transition_at,
+                    last_transition_from=excluded.last_transition_from,
+                    last_transition_to=excluded.last_transition_to,
+                    evaluation_status=excluded.evaluation_status,
+                    missing_reason=excluded.missing_reason,
+                    error_message=NULL,
+                    collection_run_id=excluded.collection_run_id,
+                    trigger_type=excluded.trigger_type,
+                    updated_at=excluded.updated_at
+                """
+            ),
+            {
+                "signal_definition_id": signal_id,
+                "signal_version_id": int(target.get("current_version") or 1),
+                "previous_state": previous_state,
+                "current_state": new_state,
+                "evaluated_at": evaluated_text,
+                "effective_date": detail.get("effective_date"),
+                "last_transition_at": last_transition_at,
+                "last_transition_from": last_transition_from,
+                "last_transition_to": last_transition_to,
+                "evaluation_status": detail.get("evaluation_status") or "SUCCESS",
+                "missing_reason": detail.get("missing_reason"),
+                "collection_run_id": collection_run_id,
+                "trigger_type": str(trigger_type or "MANUAL").upper(),
+            },
+        )
+        return transitioned
+
+    def _upsert_current_error(
+        self,
+        target: dict[str, Any],
+        *,
+        evaluated_at: datetime,
+        trigger_type: str,
+        collection_run_id: int | None,
+        error_message: str,
+    ) -> None:
+        existing = self.db.execute(
+            text("SELECT current_state FROM market_signal_current_states WHERE signal_definition_id=:id"),
+            {"id": int(target["id"])},
+        ).mappings().first()
+        self.db.execute(
+            text(
+                """
+                INSERT INTO market_signal_current_states
+                (signal_definition_id, signal_version_id, current_state, evaluated_at, evaluation_status,
+                 error_message, collection_run_id, trigger_type, updated_at)
+                VALUES (:id, :version, :current_state, :evaluated_at, 'ERROR', :error_message,
+                        :collection_run_id, :trigger_type, :evaluated_at)
+                ON CONFLICT(signal_definition_id) DO UPDATE SET
+                    signal_version_id=excluded.signal_version_id,
+                    evaluated_at=excluded.evaluated_at,
+                    evaluation_status='ERROR',
+                    error_message=excluded.error_message,
+                    collection_run_id=excluded.collection_run_id,
+                    trigger_type=excluded.trigger_type,
+                    updated_at=excluded.updated_at
+                """
+            ),
+            {
+                "id": int(target["id"]),
+                "version": int(target.get("current_version") or 1),
+                "current_state": str(existing.get("current_state") if existing else "ERROR"),
+                "evaluated_at": evaluated_at.isoformat(timespec="seconds"),
+                "error_message": error_message[:500],
+                "collection_run_id": collection_run_id,
+                "trigger_type": str(trigger_type or "MANUAL").upper(),
+            },
+        )
+
+    def _current_state_dto(self, row: dict[str, Any], detail: dict[str, Any], *, include_transition: bool) -> dict[str, Any]:
+        evaluated_at = row.get("evaluated_at")
+        last_transition_at = row.get("last_transition_at")
+        has_persisted_state = bool(evaluated_at)
+        stored_state = row.get("current_state") if has_persisted_state else "NOT_EVALUATED"
+        item = {
+            "definition_id": int(row.get("signal_definition_id") or row.get("id")),
+            "signal_version_id": int(row.get("signal_version_id") or row.get("current_version") or 1),
+            "title": row.get("signal_name"),
+            "signal_code": row.get("signal_code"),
+            "signal_type": row.get("signal_type"),
+            "current_state": (detail.get("current_state") if include_transition else stored_state) or "NOT_EVALUATED",
+            "calculated_state": detail.get("current_state"),
+            "stored_state": stored_state or "NOT_EVALUATED",
+            "evaluated_at": self._to_kst_iso(evaluated_at),
+            "effective_date": detail.get("effective_date") or row.get("effective_date"),
+            "evaluation_status": (detail.get("evaluation_status") if include_transition else (row.get("evaluation_status") if has_persisted_state else "NOT_EVALUATED")) or "NOT_EVALUATED",
+            "score": detail.get("score"),
+            "required": detail.get("required") or {"satisfied": 0, "total": 0},
+            "confirm": detail.get("confirm") or {"satisfied": 0, "total": 0},
+            "opposing": detail.get("opposing") or {"satisfied": 0, "total": 0},
+            "conditions": detail.get("conditions") or [],
+            "missing_indicators": detail.get("missing_indicators") or [],
+            "missing_reason": detail.get("missing_reason") or row.get("missing_reason"),
+            "error_message": detail.get("error_message") or row.get("error_message"),
+            "explanation": detail.get("explanation"),
+        }
+        if include_transition:
+            item.update({
+                "from_state": row.get("last_transition_from"),
+                "to_state": row.get("last_transition_to"),
+                "last_transition_at": self._to_kst_iso(last_transition_at),
+                "current_state_changed": bool(detail.get("current_state") and detail.get("current_state") != row.get("last_transition_to")),
+            })
+        return item
+
+    @staticmethod
+    def _to_kst_iso(value: Any) -> str | None:
+        if not value:
+            return None
+        text_value = str(value).replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(text_value)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(ZoneInfo("Asia/Seoul")).isoformat(timespec="seconds")
+        except ValueError:
+            return str(value)
 
     def list_events(self, *, limit: int = 50) -> dict[str, Any]:
         rows = self.db.execute(

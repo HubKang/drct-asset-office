@@ -144,6 +144,58 @@ class MarketThemePriceFlowCollectionService:
         latest = min(date.fromisoformat(investor_latest), date.fromisoformat(program_latest))
         return min(latest - timedelta(days=max(0, overlap_days)), end_date)
 
+    def _probe_theme_flow_availability(
+        self,
+        *,
+        stock: dict[str, object],
+        expected_trade_date: date,
+    ) -> dict[str, object]:
+        """Check one established stock before starting the full theme flow sweep.
+
+        The probe is transient and uses the same three requests as the lightweight
+        theme profile. Ambiguous or failed probes never suppress normal collection.
+        """
+        result = self.flow_service.kiwoom_provider.get_investor_flows(
+            stock_code=str(stock.get("stock_code") or ""),
+            start_date=(expected_trade_date - timedelta(days=7)).isoformat(),
+            end_date=expected_trade_date.isoformat(),
+            max_rows=1,
+            include_trade_breakdown=False,
+            include_foreign_holding=False,
+        )
+        errors = dict(result.get("collection_errors") or {})
+        investor_dates: list[str] = []
+        program_dates: list[str] = []
+        for row in result.get("items") or []:
+            if not isinstance(row, dict):
+                continue
+            flow_date = str(row.get("flow_date") or "")
+            if not flow_date:
+                continue
+            if any(row.get(key) is not None for key in (
+                "individual_net_qty", "individual_net_amount",
+                "foreign_net_qty", "foreign_net_amount",
+                "institution_net_qty", "institution_net_amount",
+            )):
+                investor_dates.append(flow_date)
+            if row.get("program_net_qty") is not None or row.get("program_net_amount") is not None:
+                program_dates.append(flow_date)
+        investor_latest = max(investor_dates, default=None)
+        program_latest = max(program_dates, default=None)
+        should_skip = bool(
+            not errors
+            and investor_latest
+            and program_latest
+            and date.fromisoformat(investor_latest) < expected_trade_date
+            and date.fromisoformat(program_latest) < expected_trade_date
+        )
+        return {
+            "should_skip": should_skip,
+            "investor_latest_date": investor_latest,
+            "program_latest_date": program_latest,
+            "errors": errors,
+        }
+
     def refresh(
         self,
         payload: MarketThemeReturnRefreshRequest,
@@ -187,6 +239,7 @@ class MarketThemePriceFlowCollectionService:
                 initial_lookback_months=6,
                 overlap_days=7,
                 source="kiwoom_rest",
+                refresh_current_trade_date=True,
                 progress_callback=(
                     (lambda completed, total: progress_callback("PRICE", completed, total, "가격을 수집하고 있습니다."))
                     if progress_callback
@@ -273,10 +326,37 @@ class MarketThemePriceFlowCollectionService:
             initial_flow_start = StockPriceService._subtract_calendar_months(end_date, 6)
             latest_before = self.flow_repo.get_latest_subject_dates(stock_ids)
             expected_trade_date = StockPriceService._latest_expected_weekday(end_date)
+            force_intraday_refresh = end_date == expected_trade_date
             investor_results: list[dict[str, object]] = []
             program_results: list[dict[str, object]] = []
             flow_inserted = 0
             flow_updated = 0
+            pending_probe_candidates = [] if force_intraday_refresh else [
+                stock_id
+                for stock_id in stock_ids
+                if latest_before.get(stock_id, {}).get("investor_latest_date")
+                and latest_before.get(stock_id, {}).get("program_latest_date")
+                and not (
+                    date.fromisoformat(str(latest_before[stock_id]["investor_latest_date"])) >= expected_trade_date
+                    and date.fromisoformat(str(latest_before[stock_id]["program_latest_date"])) >= expected_trade_date
+                )
+            ]
+            flow_probe: dict[str, object] = {"should_skip": False}
+            if pending_probe_candidates:
+                probe_stock_id = max(
+                    pending_probe_candidates,
+                    key=lambda value: min(
+                        str(latest_before[value]["investor_latest_date"]),
+                        str(latest_before[value]["program_latest_date"]),
+                    ),
+                )
+                try:
+                    flow_probe = self._probe_theme_flow_availability(
+                        stock=unique_stocks[probe_stock_id],
+                        expected_trade_date=expected_trade_date,
+                    )
+                except Exception:  # noqa: BLE001
+                    flow_probe = {"should_skip": False}
             for flow_index, stock_id in enumerate(stock_ids, start=1):
                 latest = latest_before.get(stock_id, {})
                 investor_latest = latest.get("investor_latest_date")
@@ -287,11 +367,15 @@ class MarketThemePriceFlowCollectionService:
                 program_current = bool(
                     program_latest and date.fromisoformat(str(program_latest)) >= expected_trade_date
                 )
-                start_date = self._resolve_flow_start(
-                    end_date=end_date,
-                    initial_start=initial_flow_start,
-                    investor_latest=str(investor_latest) if investor_latest else None,
-                    program_latest=str(program_latest) if program_latest else None,
+                start_date = (
+                    expected_trade_date
+                    if force_intraday_refresh and investor_current and program_current
+                    else self._resolve_flow_start(
+                        end_date=end_date,
+                        initial_start=initial_flow_start,
+                        investor_latest=str(investor_latest) if investor_latest else None,
+                        program_latest=str(program_latest) if program_latest else None,
+                    )
                 )
                 target_results[stock_id].update({
                     "latest_investor_date": investor_latest,
@@ -299,7 +383,7 @@ class MarketThemePriceFlowCollectionService:
                     "collect_start_date": target_results[stock_id].get("collect_start_date") or start_date.isoformat(),
                     "collect_end_date": end_date.isoformat(),
                 })
-                if investor_current and program_current:
+                if investor_current and program_current and not force_intraday_refresh:
                     investor_results.append({"stock_id": stock_id, "status": "UP_TO_DATE", "attempted": False})
                     program_results.append({"stock_id": stock_id, "status": "UP_TO_DATE", "attempted": False})
                     target_results[stock_id].update({
@@ -309,6 +393,24 @@ class MarketThemePriceFlowCollectionService:
                     if progress_callback:
                         progress_callback(
                             "FLOW", flow_index, len(stock_ids), "개인·외국인·기관·프로그램 수급을 확인하고 있습니다."
+                        )
+                    continue
+                if bool(flow_probe.get("should_skip")):
+                    investor_status = "UP_TO_DATE" if investor_current else "SKIPPED"
+                    program_status = "UP_TO_DATE" if program_current else "SKIPPED"
+                    investor_results.append({"stock_id": stock_id, "status": investor_status, "attempted": False})
+                    program_results.append({"stock_id": stock_id, "status": program_status, "attempted": False})
+                    target_results[stock_id].update({
+                        "investor_status": investor_status,
+                        "program_status": program_status,
+                        "skip_reason": "PROVIDER_EXPECTED_TRADE_DATE_NOT_AVAILABLE",
+                    })
+                    if progress_callback:
+                        progress_callback(
+                            "FLOW",
+                            flow_index,
+                            len(stock_ids),
+                            "Provider latest flow date is not available yet.",
                         )
                     continue
                 before_dates = self.flow_repo.get_dates_in_window(
@@ -323,6 +425,8 @@ class MarketThemePriceFlowCollectionService:
                         source="kiwoom",
                         prefer_real_source=True,
                         fallback_to_derived=False,
+                        include_trade_breakdown=False,
+                        include_foreign_holding=False,
                     ))
                     item = response.items[0]
                     after_dates = self.flow_repo.get_dates_in_window(
@@ -333,7 +437,7 @@ class MarketThemePriceFlowCollectionService:
                     flow_inserted += inserted
                     flow_updated += updated
                     investor_subjects = (item.individual_status, item.foreign_status, item.institution_status)
-                    if investor_current:
+                    if investor_current and not force_intraday_refresh:
                         investor_status = "UP_TO_DATE"
                     elif all(value == "SUCCESS" for value in investor_subjects):
                         investor_status = "SUCCESS"
@@ -341,7 +445,7 @@ class MarketThemePriceFlowCollectionService:
                         investor_status = "NO_DATA"
                     else:
                         investor_status = "FAILED"
-                    if program_current:
+                    if program_current and not force_intraday_refresh:
                         program_status = "UP_TO_DATE"
                     elif item.program_status == "SUCCESS":
                         program_status = "SUCCESS"
@@ -350,11 +454,13 @@ class MarketThemePriceFlowCollectionService:
                     else:
                         program_status = "FAILED"
                     investor_results.append({
-                        "stock_id": stock_id, "status": investor_status, "attempted": not investor_current,
+                        "stock_id": stock_id, "status": investor_status,
+                        "attempted": force_intraday_refresh or not investor_current,
                         "inserted_count": inserted, "updated_count": updated,
                     })
                     program_results.append({
-                        "stock_id": stock_id, "status": program_status, "attempted": not program_current,
+                        "stock_id": stock_id, "status": program_status,
+                        "attempted": force_intraday_refresh or not program_current,
                         "inserted_count": inserted, "updated_count": updated,
                     })
                     target_results[stock_id].update({
@@ -425,7 +531,20 @@ class MarketThemePriceFlowCollectionService:
                 try:
                     if progress_callback:
                         progress_callback("THEME_RETURN", 0, len(themes), "테마등락률을 집계하고 있습니다.")
-                    theme_result = self.external_service.refresh_market_theme_returns(payload)
+                    theme_result = self.external_service.refresh_market_theme_returns(
+                        payload,
+                        use_saved_prices=True,
+                        progress_callback=(
+                            (lambda completed, total: progress_callback(
+                                "THEME_RETURN",
+                                completed,
+                                total,
+                                "테마등락률을 집계하고 있습니다.",
+                            ))
+                            if progress_callback
+                            else None
+                        ),
+                    )
                     theme_payload = theme_result.model_dump()
                     for item in theme_payload.get("items") or []:
                         action = str(item.get("save_action") or "skipped")

@@ -39,6 +39,15 @@ export type MarketDataCollectResponse = {
   elapsed_ms: number;
   message: string;
   results: MarketDataCollectResult[];
+  signal_evaluation?: {
+    evaluated_count: number;
+    transition_count: number;
+    unchanged_count: number;
+    data_shortage_count: number;
+    failed_count: number;
+    evaluated_at?: string | null;
+    error_message?: string | null;
+  } | null;
 };
 
 export type MarketDataCollectionRun = {

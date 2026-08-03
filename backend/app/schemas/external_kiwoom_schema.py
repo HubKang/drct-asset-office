@@ -782,6 +782,44 @@ class MonthlyThemeFlowTrendResponse(BaseModel):
     themes: list[MonthlyThemeFlowTrendTheme] = Field(default_factory=list)
 
 
+class MonthlyThemeCellDetailTheme(BaseModel):
+    id: int
+    name: str
+    group_name: str | None = None
+
+
+class MonthlyThemeCellDetailPeriod(BaseModel):
+    from_date: str
+    to_date: str
+
+
+class MonthlyThemeCellDetailSummary(BaseModel):
+    appearance_days: int = 0
+    unique_stock_count: int = 0
+    selected_stock_count: int = 0
+    selected_avg_change_rate: float | None = None
+    selected_trading_value_100m: float | None = None
+    rise_count: int = 0
+    fall_count: int = 0
+    flat_count: int = 0
+    missing_change_count: int = 0
+    flow_ready_count: int = 0
+    flow_total_count: int = 0
+    first_appearance_date: str | None = None
+    latest_appearance_date: str | None = None
+    recent_appearance_dates: list[str] = Field(default_factory=list)
+    monthly_avg_change_rate: float | None = None
+
+
+class MonthlyThemeCellDetailResponse(BaseModel):
+    theme: MonthlyThemeCellDetailTheme
+    selected_date: str
+    period: MonthlyThemeCellDetailPeriod
+    summary: MonthlyThemeCellDetailSummary
+    stocks: list[MarketThemeReturnStockItem] = Field(default_factory=list)
+    chart_reference: str = "CURRENT"
+    queried_at: str
+
 class DailyThemeRankUpdateItem(BaseModel):
     market_theme_id: int
     manual_rank: int | None = None

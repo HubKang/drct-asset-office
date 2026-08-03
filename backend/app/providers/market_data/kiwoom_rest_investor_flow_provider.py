@@ -65,7 +65,16 @@ class KiwoomRestInvestorFlowProvider:
     def __init__(self) -> None:
         self.client = KiwoomRestClient()
 
-    def get_investor_flows(self, *, stock_code: str, start_date: str, end_date: str, max_rows: int = 160) -> dict[str, Any]:
+    def get_investor_flows(
+        self,
+        *,
+        stock_code: str,
+        start_date: str,
+        end_date: str,
+        max_rows: int = 160,
+        include_trade_breakdown: bool = True,
+        include_foreign_holding: bool = True,
+    ) -> dict[str, Any]:
         normalized = normalize_stock_code(stock_code)
         base_date = end_date.replace('-', '')
         errors: dict[str, str] = {}
@@ -79,6 +88,7 @@ class KiwoomRestInvestorFlowProvider:
                 errors[name] = str(exc)[:500]
                 return {'rows': [], 'pages': 0}
 
+        trade_sides = (('net', '0'), ('buy', '1'), ('sell', '2')) if include_trade_breakdown else (('net', '0'),)
         qty_payloads = {
             side: safe_fetch(
                 name=f'ka10059_qty_{side}',
@@ -87,7 +97,7 @@ class KiwoomRestInvestorFlowProvider:
                 body={'stk_cd': normalized, 'dt': base_date, 'amt_qty_tp': '2', 'trde_tp': code, 'unit_tp': '1'},
                 row_key='stk_invsr_orgn',
             )
-            for side, code in (('net', '0'), ('buy', '1'), ('sell', '2'))
+            for side, code in trade_sides
         }
         amount_payloads = {
             side: safe_fetch(
@@ -97,7 +107,7 @@ class KiwoomRestInvestorFlowProvider:
                 body={'stk_cd': normalized, 'dt': base_date, 'amt_qty_tp': '1', 'trde_tp': code, 'unit_tp': '1'},
                 row_key='stk_invsr_orgn',
             )
-            for side, code in (('net', '0'), ('buy', '1'), ('sell', '2'))
+            for side, code in trade_sides
         }
         program_payloads = safe_fetch(
             name='ka90013',
@@ -107,17 +117,18 @@ class KiwoomRestInvestorFlowProvider:
             row_key='stk_daly_prm_trde_trnsn',
         )
         holding_error: str | None = None
-        try:
-            holding_payloads = self._fetch_pages(
-                path=self.FOREIGN_HOLDING_PATH,
-                api_id=self.FOREIGN_HOLDING_API_ID,
-                body={'stk_cd': normalized},
-                row_key='stk_frgnr',
-                max_rows=max_rows,
-            )
-        except Exception as exc:  # noqa: BLE001
-            holding_payloads = {'rows': [], 'pages': 0}
-            holding_error = str(exc)
+        holding_payloads = {'rows': [], 'pages': 0}
+        if include_foreign_holding:
+            try:
+                holding_payloads = self._fetch_pages(
+                    path=self.FOREIGN_HOLDING_PATH,
+                    api_id=self.FOREIGN_HOLDING_API_ID,
+                    body={'stk_cd': normalized},
+                    row_key='stk_frgnr',
+                    max_rows=max_rows,
+                )
+            except Exception as exc:  # noqa: BLE001
+                holding_error = str(exc)
 
         rows_by_date: dict[str, KiwoomInvestorFlowRow] = {}
         for side, payloads in qty_payloads.items():
@@ -140,11 +151,14 @@ class KiwoomRestInvestorFlowProvider:
                 rows_by_date[row.flow_date] = self._merge_row(rows_by_date.get(row.flow_date), row)
 
         rows = [rows_by_date[k] for k in sorted(rows_by_date.keys())]
+        source_methods = ['kiwoom_rest_ka10059', 'kiwoom_rest_ka90013']
+        if include_foreign_holding:
+            source_methods.append('kiwoom_rest_ka10008')
         return {
             'provider': 'kiwoom_rest',
             'stock_code': stock_code,
             'normalized_stock_code': normalized,
-            'source_methods': ['kiwoom_rest_ka10059', 'kiwoom_rest_ka90013', 'kiwoom_rest_ka10008'],
+            'source_methods': source_methods,
             'investor_api_id': self.INVESTOR_API_ID,
             'investor_path': self.INVESTOR_PATH,
             'program_api_id': self.PROGRAM_API_ID,

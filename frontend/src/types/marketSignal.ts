@@ -328,6 +328,53 @@ export type MarketSignalRuleTemplate = {
   evidence_grade: string;
 };
 
+export type MarketSignalCurrentEvaluationSummary = {
+  evaluated_count: number;
+  transition_count: number;
+  unchanged_count: number;
+  data_shortage_count: number;
+  failed_count: number;
+  evaluated_at?: string | null;
+  status?: "COMPLETED" | "ALREADY_RUNNING";
+  message?: string;
+};
+
+export type MarketSignalCurrentStateItem = {
+  definition_id: number;
+  signal_version_id: number;
+  title?: string | null;
+  signal_code?: string | null;
+  signal_type?: string | null;
+  current_state: string;
+  stored_state: string;
+  calculated_state?: string | null;
+  evaluated_at?: string | null;
+  effective_date?: string | null;
+  evaluation_status: string;
+  score?: number | null;
+  required: { satisfied: number; total: number };
+  confirm: { satisfied: number; total: number };
+  opposing: { satisfied: number; total: number };
+  conditions: Record<string, unknown>[];
+  missing_indicators: Record<string, unknown>[];
+  missing_reason?: string | null;
+  error_message?: string | null;
+  explanation?: string | null;
+  from_state?: string | null;
+  to_state?: string | null;
+  last_transition_at?: string | null;
+  current_state_changed?: boolean;
+};
+
+export type MarketSignalCurrentStatesResponse = {
+  items: MarketSignalCurrentStateItem[];
+  summary: Record<string, number>;
+  last_evaluated_at?: string | null;
+};
+
+export type MarketSignalTodayTransitionsResponse = MarketSignalCurrentStatesResponse & {
+  date: string;
+};
 export type MarketSignalOverview = {
   observation_date: string;
   summary: Record<string, number>;

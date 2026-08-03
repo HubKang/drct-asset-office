@@ -12,6 +12,8 @@ class InvestorFlowCollectRequest(BaseModel):
     source: str = "kiwoom"
     prefer_real_source: bool = True
     fallback_to_derived: bool = False
+    include_trade_breakdown: bool = True
+    include_foreign_holding: bool = True
 
 
 class InvestorFlowCollectItem(BaseModel):

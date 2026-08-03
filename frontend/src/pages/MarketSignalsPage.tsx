@@ -7,6 +7,8 @@ import type {
   MarketSignalCatalogItem,
   MarketSignalCatalogResponse,
   MarketSignalCondition,
+  MarketSignalCurrentStatesResponse,
+  MarketSignalTodayTransitionsResponse,
   MarketSignalDefinition,
   MarketSignalIndicatorCatalogItem,
   MarketSignalEvaluationHistory,
@@ -21,6 +23,15 @@ type StudioSubTab = "simple" | "templates" | "gpt" | "advanced";
 type OperationStatus = "ALL" | "NOT_REGISTERED" | "DRAFT" | "ACTIVE" | "INACTIVE" | "DATA_INSUFFICIENT";
 type ValidationFilter = "ALL" | "UNVALIDATED" | "NEEDS_REVISION" | "VALIDATED" | "ACTIVATION_READY";
 type HistoryFilter = "ALL" | "TRANSITION" | "TREND_WEAKENING" | "BREAK_CANDIDATE" | "BREAK_CONFIRMED" | "FALSE_BREAK" | "REVERSAL_CONFIRMED" | "ERROR";
+type SignalEvaluationFilter = "BREAK_CANDIDATE" | "BREAK_CONFIRMED" | "REVERSAL_CONFIRMED" | "FALSE_BREAK" | "DATA_INSUFFICIENT";
+
+const SIGNAL_EVALUATION_FILTERS: { value: SignalEvaluationFilter; label: string; summaryKey: string }[] = [
+  { value: "BREAK_CANDIDATE", label: "추세 이탈 후보", summaryKey: "trend_break_candidate" },
+  { value: "BREAK_CONFIRMED", label: "추세 이탈 확인", summaryKey: "trend_break_confirmed" },
+  { value: "REVERSAL_CONFIRMED", label: "반전 확인", summaryKey: "reversal_confirmed" },
+  { value: "FALSE_BREAK", label: "일시 이탈 후 복귀", summaryKey: "false_break" },
+  { value: "DATA_INSUFFICIENT", label: "데이터 부족", summaryKey: "data_insufficient" },
+];
 
 const STATUS_LABELS: Record<string, string> = {
   DRAFT: "초안",
@@ -325,6 +336,12 @@ function operationStatus(catalogItem: MarketSignalCatalogItem, existing?: Record
   return "NOT_REGISTERED";
 }
 
+function matchesSingleEvaluationFilter(existing: Record<string, unknown> | undefined, filter: SignalEvaluationFilter | null) {
+  if (!filter) return true;
+  const status = String(existing?.evaluation_status ?? "").toUpperCase();
+  if (filter === "DATA_INSUFFICIENT") return status === "DATA_INSUFFICIENT" || status === "DATA_SHORTAGE";
+  return status === filter;
+}
 function operationLabel(status: OperationStatus) {
   return {
     ALL: "전체",
@@ -373,6 +390,8 @@ function defaultPreviewPeriod(frequency?: string | null) {
 
 function MarketSignalsPage() {
   const [overview, setOverview] = useState<MarketSignalOverview | null>(null);
+  const [todayTransitions, setTodayTransitions] = useState<MarketSignalTodayTransitionsResponse | null>(null);
+  const [currentStates, setCurrentStates] = useState<MarketSignalCurrentStatesResponse | null>(null);
   const [signals, setSignals] = useState<MarketSignalDefinition[]>([]);
   const [catalog, setCatalog] = useState<MarketSignalIndicatorCatalogItem[]>([]);
   const [signalCatalog, setSignalCatalog] = useState<MarketSignalCatalogResponse>({ items: [], summary: {}, total_count: 0 });
@@ -389,6 +408,7 @@ function MarketSignalsPage() {
   const [singleReadinessFilter, setSingleReadinessFilter] = useState<OperationStatus>("ACTIVE");
   const [validationFilter, setValidationFilter] = useState<ValidationFilter>("ALL");
   const [singleProfileFilter, setSingleProfileFilter] = useState("ALL");
+  const [singleEvaluationFilter, setSingleEvaluationFilter] = useState<SignalEvaluationFilter | null>(null);
   const [singleSearch, setSingleSearch] = useState("");
   const [compositeStatusFilter, setCompositeStatusFilter] = useState<OperationStatus>("ALL");
   const [compositeValidationFilter, setCompositeValidationFilter] = useState<ValidationFilter>("ALL");
@@ -447,17 +467,22 @@ function MarketSignalsPage() {
     setTemplatesLoaded(true);
   };
 
-  const load = async (nextSelectedId = selectedId) => {
+  const load = async (nextSelectedId = selectedId, clearNotice = false) => {
+    if (clearNotice) setNotice("");
     setLoading(true);
     try {
-      const [overviewData, signalData, catalogData, signalCatalogData, profileData] = await Promise.all([
+      const [overviewData, signalData, catalogData, signalCatalogData, profileData, transitionData, currentStateData] = await Promise.all([
         repositories.marketSignals.overview(),
         repositories.marketSignals.list(),
         repositories.marketSignals.catalog(),
         repositories.marketSignals.signalCatalog(),
         repositories.marketSignals.modelProfiles(),
+        repositories.marketSignals.todayTransitions(),
+        repositories.marketSignals.currentStates(),
       ]);
       setOverview(overviewData);
+      setTodayTransitions(transitionData);
+      setCurrentStates(currentStateData);
       setSignals(signalData.items);
       setCatalog(catalogData.items);
       setSignalCatalog(signalCatalogData);
@@ -474,6 +499,20 @@ function MarketSignalsPage() {
   useEffect(() => {
     load();
   }, []);
+
+  const runCurrentEvaluation = async () => {
+    if (loading) return;
+    setLoading(true);
+    try {
+      const result = await repositories.marketSignals.runCurrentEvaluation({ trigger_type: "MANUAL", force: false });
+      setNotice(result.status === "ALREADY_RUNNING" ? (result.message ?? "현재 신호 평가가 진행 중입니다.") : `신호 평가 완료 · 평가 ${result.evaluated_count}건 · 신규 전환 ${result.transition_count}건 · 데이터 부족 ${result.data_shortage_count}건 · 실패 ${result.failed_count}건`);
+      await load();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "현재 신호 평가를 실행하지 못했습니다.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (singleReadinessFilter !== "DRAFT" && validationFilter !== "ALL") {
@@ -833,6 +872,7 @@ function MarketSignalsPage() {
   const singleCards = overview?.single_indicator_signals ?? [];
   const compositeCards = overview?.composite_indicator_signals ?? [];
   const phenomenonCards = overview?.objective_phenomena ?? [];
+  const dataShortageItems = currentStates?.items.filter((item) => item.evaluation_status === "DATA_SHORTAGE") ?? [];
   const filteredPhenomenonCards = useMemo(() => phenomenonCards.filter((item) => {
     if (phenomenonFilter === "OFFICIAL") return item.operation_grade === "OFFICIAL";
     if (phenomenonFilter === "REFERENCE") return item.operation_grade === "REFERENCE";
@@ -874,14 +914,15 @@ function MarketSignalsPage() {
     return signalCatalog.items.filter((item) => {
       const existing = singleCardByItem.get(signalItemKey(item));
       const opStatus = operationStatus(item, existing);
+      if (!matchesSingleEvaluationFilter(existing, singleEvaluationFilter)) return false;
       if (!matchesMarketIndicatorGroup(item, singleGroupFilter)) return false;
-      if (singleReadinessFilter !== "ALL" && opStatus !== singleReadinessFilter) return false;
-      if (singleReadinessFilter === "DRAFT" && validationFilter !== "ALL" && validationStatusOf(existing) !== validationFilter) return false;
+      if (!singleEvaluationFilter && singleReadinessFilter !== "ALL" && opStatus !== singleReadinessFilter) return false;
+      if (!singleEvaluationFilter && singleReadinessFilter === "DRAFT" && validationFilter !== "ALL" && validationStatusOf(existing) !== validationFilter) return false;
       if (singleProfileFilter !== "ALL" && item.recommended_profile_code !== singleProfileFilter) return false;
       if (!needle) return true;
       return item.item_code.toUpperCase().includes(needle) || String(item.item_name ?? "").toUpperCase().includes(needle);
     });
-  }, [signalCatalog.items, singleCardByItem, singleGroupFilter, singleReadinessFilter, validationFilter, singleProfileFilter, singleSearch]);
+  }, [signalCatalog.items, singleCardByItem, singleEvaluationFilter, singleGroupFilter, singleReadinessFilter, validationFilter, singleProfileFilter, singleSearch]);
   const statusCounts = useMemo(() => {
     const counts: Record<OperationStatus, number> = { ALL: 0, NOT_REGISTERED: 0, DRAFT: 0, ACTIVE: 0, INACTIVE: 0, DATA_INSUFFICIENT: 0 };
     const needle = singleSearch.trim().toUpperCase();
@@ -918,7 +959,7 @@ function MarketSignalsPage() {
       <PageHeader
         title="지표 신호 관리"
         description="수집된 지표의 추세를 확인하고, 시그널 초안을 과거 데이터로 검증한 뒤 운영합니다."
-        action={<div className="market-signal-header-actions"><button className="btn btn-secondary" type="button" disabled={loading} onClick={() => load()}>새로고침</button></div>}
+        action={<div className="market-signal-header-actions"><button className="btn btn-primary" type="button" disabled={loading} onClick={() => void runCurrentEvaluation()}>{loading ? "신호 평가 중..." : "신호 재평가"}</button><button className="btn btn-secondary" type="button" disabled={loading} onClick={() => load(selectedId, true)}>새로고침</button></div>}
       />
 
       {notice ? <div className="inline-result inline-success">{notice}</div> : null}
@@ -937,20 +978,59 @@ function MarketSignalsPage() {
       </div>
 
       {mainTab === "today" ? (
-        <section className="market-signal-card-grid">
-          {phenomenonCards.map((item) => (
-            <article key={String(item.id)} className={cardClass(item.evaluation_status)}>
-              <header><div><strong>{String(item.phenomenon_name ?? item.phenomenon_code)}</strong><small>{String(item.observation_date ?? overview?.observation_date ?? "-")}</small></div><StatusPair rule={item.rule_status_label} evalStatus={item.status_label} /></header>
-              <div className="market-signal-card-body">
-                <div className="market-signal-card-reading"><b>{String(item.number_label ?? "-")}</b><span>{String(item.plain_judgement ?? "")}</span></div>
-                <Sparkline points={item.sparkline as Record<string, unknown>[] | undefined} />
-              </div>
-              <footer><span>{String(item.start_condition_summary ?? "시작 조건 -")}</span><span>{String(item.confirm_condition_summary ?? "지속 확인 -")}</span><span>{String(item.uncertainty_summary ?? "반대/부족 -")}</span></footer>
-            </article>
-          ))}
-        </section>
+        todayTransitions?.items.length ? (
+          <section className="market-signal-card-grid">
+            {todayTransitions.items.map((item) => (
+              <article key={item.definition_id} className={cardClass(item.evaluation_status)}>
+                <header>
+                  <div><strong>{item.title ?? item.signal_code ?? "지표 신호"}</strong><small>{item.effective_date ?? todayTransitions.date}</small></div>
+                  <StatusPair rule={item.from_state} evalStatus={item.to_state} />
+                </header>
+                <div className="market-signal-card-body">
+                  <div className="market-signal-card-reading">
+                    <b>{typeof item.score === "number" ? `${item.score.toFixed(1)}점` : label(item.current_state)}</b>
+                    <span>{item.explanation ?? (item.current_state_changed ? `현재 상태가 ${label(item.current_state)}(으)로 변경되었습니다.` : `${label(item.current_state)} 상태입니다.`)}</span>
+                  </div>
+                </div>
+                <footer>
+                  <span>시작 조건 {item.required.satisfied}/{item.required.total}</span>
+                  <span>지속 확인 {item.confirm.satisfied}/{item.confirm.total}</span>
+                  <span>반대/부족 {item.opposing.satisfied}/{item.opposing.total}{item.missing_indicators.length ? ` · 부족 ${item.missing_indicators.length}` : ""}</span>
+                </footer>
+              </article>
+            ))}
+          </section>
+        ) : (
+          <section className="market-signal-today-empty">
+            <strong>오늘 새롭게 발생한 상태 전환이 없습니다.</strong>
+            <p>최초 평가는 현재 상태만 설정하며 전환으로 표시하지 않습니다.</p>
+            <dl>
+              <div><dt>마지막 평가</dt><dd>{currentStates?.last_evaluated_at ? new Date(currentStates.last_evaluated_at).toLocaleString("ko-KR") : "미평가"}</dd></div>
+              <div><dt>현재 ACTIVE</dt><dd>{currentStates?.summary.ACTIVE ?? 0}개</dd></div>
+              <div><dt>현재 LIVE</dt><dd>{currentStates?.summary.LIVE ?? 0}개</dd></div>
+              <div><dt>데이터 부족</dt><dd>{currentStates?.summary.DATA_SHORTAGE ?? 0}개</dd></div>
+            </dl>
+          </section>
+        )
       ) : null}
 
+      {mainTab === "today" && dataShortageItems.length ? (
+        <details className="market-signal-shortage-panel">
+          <summary>데이터 부족 {dataShortageItems.length}건</summary>
+          <div className="market-signal-shortage-list">
+            {dataShortageItems.map((item) => (
+              <article key={item.definition_id}>
+                <strong>{item.title ?? item.signal_code ?? "지표 신호"}</strong>
+                {item.missing_indicators.length ? item.missing_indicators.map((missing, index) => (
+                  <p key={`${item.definition_id}-${String(missing.indicator_code ?? missing.item_code)}-${index}`}>
+                    부족 지표: {String(missing.indicator_code ?? missing.item_code ?? "-")} · 보유 {String(missing.available_count ?? "-")}개 / 필요 {String(missing.required_count ?? "-")}개 · 최신 관측일 {String(missing.latest_observation_date ?? "-")}
+                  </p>
+                )) : <p>{item.missing_reason ?? "필수 관측값이 부족합니다."}</p>}
+              </article>
+            ))}
+          </div>
+        </details>
+      ) : null}
       {mainTab === "signals" ? (
         <>
           <div className="theme-view-mode-tabs market-theme-view-toggle" role="tablist" aria-label="지표 시그널 유형">
@@ -966,11 +1046,25 @@ function MarketSignalsPage() {
               ))}
             </section>
             <section className="market-signal-summary-grid" aria-label="시그널 현황 요약">
-              <div><span>추세 이탈 후보</span><strong>{overview?.summary.trend_break_candidate ?? 0}</strong></div>
-              <div><span>추세 이탈 확인</span><strong>{overview?.summary.trend_break_confirmed ?? 0}</strong></div>
-              <div><span>반전 확인</span><strong>{overview?.summary.reversal_confirmed ?? 0}</strong></div>
-              <div><span>일시 이탈 후 복귀</span><strong>{overview?.summary.false_break ?? 0}</strong></div>
-              <div><span>데이터 부족</span><strong>{overview?.summary.data_insufficient ?? 0}</strong></div>
+              {SIGNAL_EVALUATION_FILTERS.map((filter) => {
+                const active = singleEvaluationFilter === filter.value;
+                return (
+                  <button
+                    key={filter.value}
+                    className={active ? "active" : ""}
+                    type="button"
+                    aria-pressed={active}
+                    title={active ? `${filter.label} 필터 해제` : `${filter.label} 지표만 보기`}
+                    onClick={() => {
+                      setSignalTab("single");
+                      setSingleEvaluationFilter((current) => current === filter.value ? null : filter.value);
+                    }}
+                  >
+                    <span>{filter.label}</span>
+                    <strong>{overview?.summary[filter.summaryKey] ?? 0}</strong>
+                  </button>
+                );
+              })}
             </section>
           </div>
           {signalTab === "single" ? (
