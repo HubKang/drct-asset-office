@@ -40,6 +40,7 @@ data_cache/
 data/raw/
 reports/
 
+
 # User-uploaded image files
 data/kms/**
 data/kms_images/**
@@ -64,7 +65,6 @@ archive/cleanup/
 *.session-journal
 backend/.local/
 backend/.local/telegram_sessions/
-
 
 # Kiwoom legacy agent runtime outputs
 kiwoom-rest-agent/data/**
