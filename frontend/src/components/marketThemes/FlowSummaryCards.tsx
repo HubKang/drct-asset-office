@@ -1,4 +1,5 @@
 import type { StockDailyFlowSummary, ThemeDailyFlowSummary } from "@/types/marketTheme";
+import type { MouseEventHandler } from "react";
 
 export type FlowActor = "individual" | "foreign" | "institution" | "program";
 export const FLOW_ACTORS: Array<{ key: FlowActor; short: string; label: string; color: string }> = [
@@ -29,7 +30,7 @@ const summaryLabel: Record<StockDailyFlowSummary["summary_code"], string> = {
   NO_DATA: "수급 없음",
 };
 
-export function StockFlowCompactCard({ summary, baseDate, onClick }: { summary?: StockDailyFlowSummary | null; baseDate?: string | null; onClick?: () => void }) {
+export function StockFlowCompactCard({ summary, baseDate, onClick }: { summary?: StockDailyFlowSummary | null; baseDate?: string | null; onClick?: MouseEventHandler<HTMLButtonElement> }) {
   if (!summary || (!summary.has_investor_data && !summary.has_program_data)) {
     return <button type="button" className="stock-flow-compact is-empty" onClick={onClick} disabled={!onClick}>수급 없음</button>;
   }

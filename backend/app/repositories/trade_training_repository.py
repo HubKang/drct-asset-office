@@ -601,82 +601,68 @@ class TradeTrainingRepository:
         row.pop("method_review_json", None)
         return row
 
-    def list_training_stocks(self, q: str | None, limit: int) -> list[dict[str, Any]]:
-        params: dict[str, Any] = {"limit": limit}
-        where = ""
-        if q:
-            where = "WHERE s.stock_code LIKE :q OR s.stock_name LIKE :q"
-            params["q"] = f"%{q.strip()}%"
+    def list_training_stocks(
+        self,
+        q: str | None,
+        page: int,
+        page_size: int,
+    ) -> tuple[list[dict[str, Any]], int]:
+        keyword = (q or "").strip()
+        params: dict[str, Any] = {
+            "limit": page_size,
+            "offset": (page - 1) * page_size,
+        }
+        search_filter = ""
+        if keyword:
+            search_filter = "WHERE (s.stock_code LIKE :q OR s.stock_name LIKE :q)"
+            params["q"] = f"%{keyword}%"
+
+        price_summary_sql = """
+            SELECT
+                p.stock_id,
+                COUNT(DISTINCT p.trade_date) AS price_count,
+                MIN(p.trade_date) AS first_date,
+                MAX(p.trade_date) AS last_date
+            FROM stock_daily_prices p
+            GROUP BY p.stock_id
+        """
+        total_count = int(
+            self.db.execute(
+                text(
+                    f"""
+                    WITH price_summary AS ({price_summary_sql})
+                    SELECT COUNT(*)
+                    FROM price_summary
+                    JOIN stocks s ON s.id = price_summary.stock_id
+                    {search_filter}
+                    """
+                ),
+                params,
+            ).scalar_one()
+        )
         rows = self.db.execute(
             text(
                 f"""
-                WITH source_rank AS (
-                    SELECT
-                        p.stock_id,
-                        COALESCE(p.source, '') AS source,
-                        COUNT(*) AS price_count,
-                        MIN(p.trade_date) AS first_date,
-                        MAX(p.trade_date) AS last_date,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY p.stock_id
-                            ORDER BY COUNT(*) DESC, MAX(p.trade_date) DESC,
-                                     CASE COALESCE(p.source, '') WHEN 'kiwoom_rest' THEN 0 WHEN 'pykrx' THEN 1 ELSE 2 END
-                        ) AS rn
-                    FROM stock_daily_prices p
-                    GROUP BY p.stock_id, COALESCE(p.source, '')
-                )
+                WITH price_summary AS ({price_summary_sql})
                 SELECT
                     s.id AS stock_id,
                     s.stock_code,
                     s.stock_name,
                     s.market,
-                    source_rank.price_count,
-                    source_rank.first_date,
-                    source_rank.last_date,
-                    NULLIF(source_rank.source, '') AS source
-                FROM source_rank
-                JOIN stocks s ON s.id = source_rank.stock_id
-                {where}
-                AND source_rank.rn = 1
-                ORDER BY source_rank.last_date DESC, source_rank.price_count DESC, s.stock_name ASC
-                LIMIT :limit
-                """
-                if where
-                else """
-                WITH source_rank AS (
-                    SELECT
-                        p.stock_id,
-                        COALESCE(p.source, '') AS source,
-                        COUNT(*) AS price_count,
-                        MIN(p.trade_date) AS first_date,
-                        MAX(p.trade_date) AS last_date,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY p.stock_id
-                            ORDER BY COUNT(*) DESC, MAX(p.trade_date) DESC,
-                                     CASE COALESCE(p.source, '') WHEN 'kiwoom_rest' THEN 0 WHEN 'pykrx' THEN 1 ELSE 2 END
-                        ) AS rn
-                    FROM stock_daily_prices p
-                    GROUP BY p.stock_id, COALESCE(p.source, '')
-                )
-                SELECT
-                    s.id AS stock_id,
-                    s.stock_code,
-                    s.stock_name,
-                    s.market,
-                    source_rank.price_count,
-                    source_rank.first_date,
-                    source_rank.last_date,
-                    NULLIF(source_rank.source, '') AS source
-                FROM source_rank
-                JOIN stocks s ON s.id = source_rank.stock_id
-                WHERE source_rank.rn = 1
-                ORDER BY source_rank.last_date DESC, source_rank.price_count DESC, s.stock_name ASC
-                LIMIT :limit
+                    price_summary.price_count,
+                    price_summary.first_date,
+                    price_summary.last_date,
+                    NULL AS source
+                FROM price_summary
+                JOIN stocks s ON s.id = price_summary.stock_id
+                {search_filter}
+                ORDER BY s.stock_name COLLATE NOCASE ASC, s.stock_code ASC, s.id ASC
+                LIMIT :limit OFFSET :offset
                 """
             ),
             params,
         ).mappings().all()
-        return [dict(row) for row in rows]
+        return [dict(row) for row in rows], total_count
 
     def get_stock_by_code(self, stock_code: str) -> dict[str, Any] | None:
         row = self.db.execute(

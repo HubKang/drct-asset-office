@@ -14,6 +14,7 @@ from backend.app.schemas.market_theme_stock_schema import (
     MarketThemeStockMemoResponse,
     MarketThemeStockCreateRequest,
     MarketThemeStockResponse,
+    MarketThemeStockMemoUpdateRequest,
     MarketThemeStockSupplySummaryResponse,
     MarketThemeStockUpdateRequest,
 )
@@ -100,6 +101,16 @@ def create_market_theme_stock(
     result = MarketThemeStockService(db).create_theme_stock(theme_id, payload)
     invalidate_market_theme_flow_trend_cache()
     return result
+
+
+@router.patch("/market-themes/{theme_id}/stocks/{stock_id}/memo", response_model=MarketThemeStockResponse)
+def update_market_theme_stock_memo(
+    theme_id: int,
+    stock_id: int,
+    payload: MarketThemeStockMemoUpdateRequest,
+    db: Session = Depends(get_db),
+) -> MarketThemeStockResponse:
+    return MarketThemeStockService(db).update_theme_stock_memo(theme_id, stock_id, payload)
 
 
 @router.patch("/market-theme-stocks/{mapping_id}", response_model=MarketThemeStockResponse)

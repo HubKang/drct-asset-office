@@ -52,8 +52,16 @@ class TradeTrainingService:
         self.db = db
         self.repo = TradeTrainingRepository(db)
 
-    def list_stocks(self, q: str | None, limit: int) -> dict[str, Any]:
-        return {"items": self.repo.list_training_stocks(q=q, limit=limit), "limit": limit}
+    def list_stocks(self, q: str | None, page: int, page_size: int) -> dict[str, Any]:
+        items, total_count = self.repo.list_training_stocks(q=q, page=page, page_size=page_size)
+        total_pages = (total_count + page_size - 1) // page_size
+        return {
+            "items": items,
+            "page": page,
+            "page_size": page_size,
+            "total_count": total_count,
+            "total_pages": total_pages,
+        }
 
     @staticmethod
     def _clean_account_mas(values: list[int] | None) -> list[int]:

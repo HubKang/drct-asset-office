@@ -4,6 +4,7 @@ import type { CSSProperties, DragEvent } from "react";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import { StockFlowCompactCard } from "@/components/marketThemes/FlowSummaryCards";
+import MarketThemePriceFlowModal from "@/components/marketThemes/MarketThemePriceFlowModal";
 import { buildTreemapLayout, getTreemapLabelClass, getTreemapTextMetrics } from "@/utils/treemapLayout";
 import {
   buildNaverKoreaMarketChartUrl,
@@ -104,6 +105,11 @@ const formatDate = (value: string | null | undefined) => {
   if (Number.isNaN(d.getTime())) return String(value).replace("T", " ").slice(0, 10);
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
+
+const formatMonthDay = (value: string) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  return match ? `${Number(match[2])}/${Number(match[3])}` : value;
 };
 
 const getNaverChartImageUrl = (stockCode: string, period: "day" | "week" | "month", sidcode: number) => {
@@ -230,13 +236,12 @@ const HeatmapDetailStockChart = memo(function HeatmapDetailStockChart({
     <button
       type="button"
       className="theme-detail-daily-chart-button"
-      onClick={() => onOpen(url, `${stock.stock_name} ${periodLabel} 현재 차트`)}
-      aria-label={`${stock.stock_name} ${periodLabel} 현재 차트 확대`}
+      onClick={() => onOpen(url, `${stock.stock_name} ${periodLabel} 차트`)}
+      aria-label={`${stock.stock_name} ${periodLabel} 차트 확대`}
     >
-      <span className="monthly-cell-current-chart-note">현재 차트</span>
       <img
         src={url}
-        alt={`${stock.stock_name} ${periodLabel} 현재 차트`}
+        alt={`${stock.stock_name} ${periodLabel} 차트`}
         loading="lazy"
         onError={() => setHasError(true)}
       />
@@ -619,11 +624,26 @@ function MarketTrendsPage() {
   const [heatmapCellDetailLoading, setHeatmapCellDetailLoading] = useState(false);
   const [heatmapCellDetailError, setHeatmapCellDetailError] = useState("");
   const [isHeatmapCellDetailOpen, setIsHeatmapCellDetailOpen] = useState(false);
+  const [monthlyStockFlowModal, setMonthlyStockFlowModal] = useState<MonthlyThemeCellDetailStock | null>(null);
+  const sortedHeatmapDetailStocks = useMemo(() => {
+    return [...(heatmapCellDetail?.stocks ?? [])].sort((a, b) => {
+      const aMemo = (a.stock_memo ?? "").trim();
+      const bMemo = (b.stock_memo ?? "").trim();
+      if (!aMemo && bMemo) return 1;
+      if (aMemo && !bMemo) return -1;
+      const memoCompare = aMemo.localeCompare(bMemo, "ko-KR");
+      if (memoCompare) return memoCompare;
+      const tradingCompare = (b.trading_value_100m ?? Number.NEGATIVE_INFINITY) - (a.trading_value_100m ?? Number.NEGATIVE_INFINITY);
+      return tradingCompare || a.stock_name.localeCompare(b.stock_name, "ko-KR") || a.stock_id - b.stock_id;
+    });
+  }, [heatmapCellDetail]);
   const heatmapCellDetailAbortRef = useRef<AbortController | null>(null);
   const heatmapCellDetailRequestIdRef = useRef(0);
   const heatmapCellDetailCacheRef = useRef(new Map<string, MonthlyThemeCellDetailResponse>());
   const heatmapCellDetailTriggerRef = useRef<HTMLElement | null>(null);
   const heatmapCellDetailCloseButtonRef = useRef<HTMLButtonElement | null>(null);
+  const monthlyStockFlowTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const monthlyStockFlowModalOpenRef = useRef(false);
   const [selectedDayDetailTab, setSelectedDayDetailTab] = useState<SelectedDayDetailTab>("themes");
   const [monthlyLoading, setMonthlyLoading] = useState<boolean>(false);
   const monthlyRequestIdRef = useRef(0);
@@ -1466,15 +1486,23 @@ ${tableRows}
   const closeMonthlyHeatmapCellDetail = useCallback(() => {
     heatmapCellDetailAbortRef.current?.abort();
     heatmapCellDetailAbortRef.current = null;
+    monthlyStockFlowModalOpenRef.current = false;
+    setMonthlyStockFlowModal(null);
     setIsHeatmapCellDetailOpen(false);
     window.setTimeout(() => heatmapCellDetailTriggerRef.current?.focus(), 0);
+  }, []);
+
+  const closeMonthlyStockFlowModal = useCallback(() => {
+    monthlyStockFlowModalOpenRef.current = false;
+    setMonthlyStockFlowModal(null);
+    window.setTimeout(() => monthlyStockFlowTriggerRef.current?.focus(), 0);
   }, []);
 
   const openMonthlyHeatmapCellDetail = useCallback(
     (row: MonthlySupplyHeatmapRow, date: string, point: MonthlyThemeFlowTrendPoint) => {
       const periodTo = todayInKst();
       const periodFrom = subtractOneMonth(periodTo);
-      const cacheKey = `${row.marketThemeId}:${date}:${periodFrom}:${periodTo}`;
+      const cacheKey = `${row.marketThemeId}:${date}:${periodFrom}:${periodTo}:memo-v1`;
       const cached = heatmapCellDetailCacheRef.current.get(cacheKey);
       const requestId = ++heatmapCellDetailRequestIdRef.current;
       heatmapCellDetailTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -1499,12 +1527,30 @@ ${tableRows}
       heatmapCellDetailAbortRef.current = controller;
       setHeatmapCellDetail(null);
       setHeatmapCellDetailLoading(true);
-      void repositories.marketTrends
-        .getMonthlyThemeCellDetail(row.marketThemeId, date, periodFrom, periodTo, controller.signal)
-        .then((detail) => {
+      void Promise.all([
+        repositories.marketTrends.getMonthlyThemeCellDetail(
+          row.marketThemeId,
+          date,
+          periodFrom,
+          periodTo,
+          controller.signal,
+        ),
+        repositories.marketThemes.listThemeStocks(row.marketThemeId).catch(() => []),
+      ])
+        .then(([detail, themeStocks]) => {
           if (requestId !== heatmapCellDetailRequestIdRef.current) return;
-          heatmapCellDetailCacheRef.current.set(cacheKey, detail);
-          setHeatmapCellDetail(detail);
+          const memoByStockId = new Map(
+            themeStocks.map((stock) => [stock.stock_id, stock.stock_memo?.trim() || null] as const),
+          );
+          const mergedDetail: MonthlyThemeCellDetailResponse = {
+            ...detail,
+            stocks: detail.stocks.map((stock) => ({
+              ...stock,
+              stock_memo: stock.stock_memo?.trim() || memoByStockId.get(stock.stock_id) || null,
+            })),
+          };
+          heatmapCellDetailCacheRef.current.set(cacheKey, mergedDetail);
+          setHeatmapCellDetail(mergedDetail);
         })
         .catch((reason: unknown) => {
           if (reason instanceof Error && reason.name === "AbortError") return;
@@ -1523,7 +1569,7 @@ ${tableRows}
     const periodTo = todayInKst();
     const periodFrom = subtractOneMonth(periodTo);
     heatmapCellDetailCacheRef.current.delete(
-      `${selectedHeatmapCell.themeId}:${selectedHeatmapCell.date}:${periodFrom}:${periodTo}`,
+      `${selectedHeatmapCell.themeId}:${selectedHeatmapCell.date}:${periodFrom}:${periodTo}:memo-v1`,
     );
     const trigger = heatmapCellDetailTriggerRef.current;
     const point: MonthlyThemeFlowTrendPoint = {
@@ -1561,7 +1607,8 @@ ${tableRows}
     window.setTimeout(() => heatmapCellDetailCloseButtonRef.current?.focus(), 0);
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        if (zoomedChart) setZoomedChart(null);
+        if (monthlyStockFlowModalOpenRef.current) closeMonthlyStockFlowModal();
+        else if (zoomedChart) setZoomedChart(null);
         else closeMonthlyHeatmapCellDetail();
         return;
       }
@@ -1588,7 +1635,7 @@ ${tableRows}
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [closeMonthlyHeatmapCellDetail, isHeatmapCellDetailOpen, zoomedChart]);
+  }, [closeMonthlyHeatmapCellDetail, closeMonthlyStockFlowModal, isHeatmapCellDetailOpen, zoomedChart]);
 
   useEffect(
     () => () => {
@@ -3151,7 +3198,18 @@ ${tableRows}
                       <span>최근 출현일</span>
                       <strong>
                         {heatmapCellDetail.summary.recent_appearance_dates.length
-                          ? heatmapCellDetail.summary.recent_appearance_dates.join(", ")
+                          ? heatmapCellDetail.summary.recent_appearance_dates.map((date, index) => (
+                            <Fragment key={date}>
+                              {index > 0 ? ", " : null}
+                              <span
+                                className="monthly-cell-detail-date"
+                                title={date}
+                                aria-label={`최근 출현일 ${date}`}
+                              >
+                                {formatMonthDay(date)}
+                              </span>
+                            </Fragment>
+                          ))
                           : "-"}
                       </strong>
                     </div>
@@ -3160,7 +3218,7 @@ ${tableRows}
                   <div className="monthly-cell-detail-stock-heading">
                     <div>
                       <h4>선택일 저장 이벤트 종목</h4>
-                      <p>선택일 당시 저장된 이벤트·테마 연결 기준입니다. 가격과 수급은 {heatmapCellDetail.selected_date} 기준입니다.</p>
+                      <p>히트맵 셀 집계에 포함된 저장 이벤트 종목입니다. 현재 활성 테마 분류와 {heatmapCellDetail.selected_date} 가격·수급을 적용합니다.</p>
                     </div>
                     <span className={`monthly-cell-flow-readiness ${heatmapCellDetail.summary.flow_ready_count === heatmapCellDetail.summary.flow_total_count ? "is-ready" : "is-partial"}`}>
                       수급 {heatmapCellDetail.summary.flow_ready_count}/{heatmapCellDetail.summary.flow_total_count}종목
@@ -3168,19 +3226,24 @@ ${tableRows}
                   </div>
 
                   {heatmapCellDetail.stocks.length ? (
+                    <>
+                    <div className="theme-detail-stock-sortbar">
+                      <label><span>종목 정렬</span><select className="select-control" value="memo" disabled aria-label="종목 정렬"><option value="memo">메모+거래대금</option></select></label>
+                    </div>
                     <div className="theme-detail-stock-list monthly-cell-detail-stock-list" role="table" aria-label={`${heatmapCellDetail.theme.name} 선택일 종목`}>
                       <div className="theme-detail-stock-header" role="row">
                         <span role="columnheader">종목명</span>
                         <span role="columnheader">거래대금(억)</span>
                         <span role="columnheader">등락률(%)</span>
                         <span role="columnheader">개외기 수급</span>
-                        <span role="columnheader" className="theme-detail-daily-heading" title="네이버에서 제공하는 현재 기준 차트입니다.">일봉 · 현재</span>
-                        <span role="columnheader" className="theme-detail-daily-heading" title="네이버에서 제공하는 현재 기준 차트입니다.">주봉 · 현재</span>
+                        <span role="columnheader" className="theme-detail-daily-heading">일봉</span>
+                        <span role="columnheader" className="theme-detail-daily-heading">주봉</span>
                       </div>
-                      {heatmapCellDetail.stocks.map((stock) => (
+                      {sortedHeatmapDetailStocks.map((stock) => (
                         <div className="theme-detail-stock-row" role="row" key={`${stock.stock_id}-${stock.stock_code}`}>
                           <div className="stock-cell" role="cell">
                             <strong>{stock.stock_name || stock.stock_code || "-"}</strong>
+                            {stock.stock_memo?.trim() ? <small className="theme-detail-stock-memo" title={stock.stock_memo}>{stock.stock_memo}</small> : null}
                             {stock.stock_code ? <span>{normalizeStockCode(stock.stock_code) || stock.stock_code}</span> : null}
                             {stock.data_status !== "success" ? <small className="theme-return-fail-text">선택일 가격 없음</small> : null}
                           </div>
@@ -3192,6 +3255,11 @@ ${tableRows}
                             <StockFlowCompactCard
                               summary={stock.flow_summary}
                               baseDate={heatmapCellDetail.selected_date}
+                              onClick={(event) => {
+                                monthlyStockFlowTriggerRef.current = event.currentTarget;
+                                monthlyStockFlowModalOpenRef.current = true;
+                                setMonthlyStockFlowModal(stock);
+                              }}
                             />
                           </div>
                           <div className="theme-detail-daily-chart-cell" role="cell">
@@ -3213,19 +3281,28 @@ ${tableRows}
                         </div>
                       ))}
                     </div>
+                    </>
                   ) : (
                     <div className="monthly-cell-detail-empty">
-                      선택일 이벤트에 저장된 종목이 없습니다. 현재 연결 종목으로 대체하지 않았습니다.
+                      선택한 히트맵 셀 집계에 포함된 저장 이벤트 종목이 없습니다.
                     </div>
                   )}
-                  <p className="monthly-cell-detail-chart-note">
-                    일봉·주봉 이미지는 과거 선택일 차트가 아니라 현재 네이버 차트입니다. 확대하려면 이미지를 클릭하세요.
-                  </p>
                 </div>
               ) : null}
             </div>
           </aside>
         </div>
+      ) : null}
+
+      {monthlyStockFlowModal && heatmapCellDetail ? (
+        <MarketThemePriceFlowModal
+          stockId={monthlyStockFlowModal.stock_id}
+          stockName={monthlyStockFlowModal.stock_name || monthlyStockFlowModal.stock_code || "종목"}
+          themeId={heatmapCellDetail.theme.id}
+          focusDate={heatmapCellDetail.selected_date}
+          onClose={closeMonthlyStockFlowModal}
+          className="monthly-cell-stock-flow-modal"
+        />
       ) : null}
 
       {zoomedChart ? (

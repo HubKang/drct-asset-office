@@ -16,6 +16,10 @@ class MarketThemeStockUpdateRequest(BaseModel):
     confidence_score: float | None = None
 
 
+class MarketThemeStockMemoUpdateRequest(BaseModel):
+    stock_memo: str | None = Field(default=None, max_length=100)
+
+
 class MarketThemeStockResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -29,6 +33,7 @@ class MarketThemeStockResponse(BaseModel):
     confidence_score: float | None
     is_primary: int
     is_active: int
+    stock_memo: str | None = None
     supply_day_count: int = 0
     recent_30d_supply_day_count: int = 0
     first_supply_date: str | None = None

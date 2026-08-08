@@ -10,6 +10,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from backend.app.main import app
+from backend.app.clients.kiwoom import KiwoomApiError, KiwoomErrorCode
 from backend.app.providers.market_data.kiwoom_rest_investor_flow_provider import KiwoomRestInvestorFlowProvider
 from backend.app.repositories.stock_investor_flow_repository import StockInvestorFlowRepository
 from backend.app.schemas.external_kiwoom_schema import MarketThemeReturnRefreshRequest
@@ -174,6 +175,62 @@ def test_common_price_provider_error_stops_repeated_calls() -> None:
     assert calls == [1]
     assert [item["status"] for item in result] == ["FAILED", "FAILED"]
     assert result[1]["attempted"] is False
+
+
+def test_kiwoom_auth_failure_stops_theme_price_sweep_after_first_stock() -> None:
+    service = object.__new__(StockPriceService)
+    stocks = [
+        SimpleNamespace(id=1, stock_code="000001", stock_name="A", market="KOSPI"),
+        SimpleNamespace(id=2, stock_code="000002", stock_name="B", market="KOSDAQ"),
+        SimpleNamespace(id=3, stock_code="000003", stock_name="C", market="KOSPI"),
+    ]
+    service.db = SimpleNamespace(rollback=lambda: None)
+    service.stock_repo = SimpleNamespace(get_by_ids=lambda ids: stocks)
+    service.price_repo = SimpleNamespace(get_latest_trade_dates=lambda ids: {})
+    calls: list[int] = []
+
+    def fail_authentication(stock, *args, **kwargs):
+        calls.append(stock.id)
+        raise KiwoomApiError(
+            code=KiwoomErrorCode.KIWOOM_API_ERROR,
+            message="3:인증에 실패했습니다[8050:지정단말기 인증에 실패했습니다]",
+            status_code=200,
+        )
+
+    service._collect_and_upsert_with_stats = fail_authentication
+
+    result = service.refresh_theme_stock_price_ranges(stock_ids=[1, 2, 3], end_date=date(2026, 8, 3))
+
+    assert calls == [1]
+    assert [item["attempted"] for item in result] == [True, False, False]
+    assert all(item["skip_reason"] == "COMMON_PROVIDER_ERROR" for item in result)
+
+
+def test_common_provider_failure_aborts_followup_collection_stages() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        MarketThemePriceFlowCollectionService._raise_for_common_provider_failure([
+            {
+                "stock_id": 1,
+                "status": "FAILED",
+                "skip_reason": "COMMON_PROVIDER_ERROR",
+                "error_message": "KIWOOM_API_ERROR:3:인증에 실패했습니다[8050:지정단말기 인증에 실패했습니다]",
+            }
+        ])
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail["code"] == "KIWOOM_AUTH_ERROR"
+    assert "전체 갱신 작업을 종료" in exc_info.value.detail["message"]
+
+
+def test_flow_stage_auth_message_aborts_instead_of_continuing_next_stock() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        MarketThemePriceFlowCollectionService._raise_for_common_provider_error(
+            "Kiwoom investor flow failed: KIWOOM_API_ERROR:3:인증에 실패했습니다"
+            "[8050:지정단말기 인증에 실패했습니다] (status=200)"
+        )
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail["code"] == "KIWOOM_AUTH_ERROR"
 
 
 def test_stage_summary_distinguishes_success_latest_no_data_skip_and_failure() -> None:

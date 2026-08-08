@@ -34,6 +34,8 @@ from backend.app.schemas.external_kiwoom_schema import (
     MarketThemePriceFlowJobStatusResponse,
     MarketThemePriceFlowRefreshResponse,
     MarketThemeReturnRefreshRequest,
+    MarketThemeReturnRecalculationPreview,
+    MarketThemeReturnRecalculationResponse,
     MarketThemeReturnRefreshResponse,
     MonthlyThemeFlowCalendarResponse,
     MonthlyThemeFlowTrendResponse,
@@ -273,6 +275,30 @@ def get_market_theme_price_flow_chart(
 @router.get("/external/kiwoom/market-themes/{theme_id}/returns/latest", response_model=MarketThemeLatestReturnResponse)
 def get_market_theme_latest_return(theme_id: int, db: Session = Depends(get_db)) -> MarketThemeLatestReturnResponse:
     return ExternalKiwoomService(db).get_market_theme_latest_return(theme_id=theme_id)
+
+
+@router.get(
+    "/external/kiwoom/market-themes/{theme_id}/recalculate-returns/preview",
+    response_model=MarketThemeReturnRecalculationPreview,
+)
+def get_market_theme_return_recalculation_preview(
+    theme_id: int,
+    db: Session = Depends(get_db),
+) -> MarketThemeReturnRecalculationPreview:
+    return ExternalKiwoomService(db).get_market_theme_return_recalculation_preview(theme_id)
+
+
+@router.post(
+    "/external/kiwoom/market-themes/{theme_id}/recalculate-returns",
+    response_model=MarketThemeReturnRecalculationResponse,
+)
+def recalculate_market_theme_returns(
+    theme_id: int,
+    db: Session = Depends(get_db),
+) -> MarketThemeReturnRecalculationResponse:
+    result = ExternalKiwoomService(db).recalculate_market_theme_returns(theme_id)
+    invalidate_market_theme_flow_trend_cache()
+    return result
 
 
 @router.get("/external/kiwoom/market-themes/returns/monthly", response_model=MarketThemeMonthlyReturnResponse)

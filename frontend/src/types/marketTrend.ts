@@ -695,6 +695,7 @@ export type MonthlyThemeCellDetailStock = {
   stock_id: number;
   stock_code: string | null;
   stock_name: string;
+  stock_memo?: string | null;
   trading_value_100m: number | null;
   change_rate: number | null;
   current_price: number | null;

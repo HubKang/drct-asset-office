@@ -18,7 +18,10 @@ class TrainingStockItem(BaseModel):
 
 class TrainingStockListResponse(BaseModel):
     items: list[TrainingStockItem] = Field(default_factory=list)
-    limit: int
+    page: int
+    page_size: int
+    total_count: int
+    total_pages: int
 
 
 class TradeTrainingPriceCollectRequest(BaseModel):

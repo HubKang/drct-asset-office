@@ -18,9 +18,12 @@ import type {
   MarketThemeFlowTrendResponse,
   MarketThemeRangeReturnParams,
   MarketThemeReturnRefreshRequest,
+  MarketThemeReturnRecalculationPreview,
+  MarketThemeReturnRecalculationResponse,
   MarketThemeReturnRefreshResponse,
   MarketThemeStock,
   MarketThemeStockCreateInput,
+  MarketThemeStockMemoUpdateInput,
   MarketThemeStockMemoResponse,
   MarketThemeStockSupplySummary,
   MarketThemeStockUpdateInput,
@@ -173,6 +176,30 @@ export const marketThemeMockRepository = {
     const detail = await this.getLatestReturn(themeId);
     return { ...detail, return_date: date };
   },
+  async getReturnRecalculationPreview(themeId: number): Promise<MarketThemeReturnRecalculationPreview> {
+    const row = themes.find((theme) => theme.id === themeId);
+    if (!row) throw new Error("market theme not found");
+    return {
+      theme_id: row.id,
+      theme_name: row.theme_name,
+      connected_stock_count: row.stock_count,
+      period_from: null,
+      period_to: null,
+      data_source: "STORED_STOCK_DAILY_PRICES",
+    };
+  },
+  async recalculateReturns(themeId: number): Promise<MarketThemeReturnRecalculationResponse> {
+    const preview = await this.getReturnRecalculationPreview(themeId);
+    return {
+      ...preview,
+      success: true,
+      processed_date_count: 0,
+      inserted_count: 0,
+      updated_count: 0,
+      skipped_date_count: 0,
+      recalculated_at: new Date().toISOString(),
+    };
+  },
   async listMonthlyReturns(params: MarketThemeMonthlyReturnParams): Promise<MarketThemeMonthlyReturnResponse> {
     const [year, month] = params.month.split("-").map(Number);
     const endDate = new Date(year, month, 0).getDate();
@@ -248,6 +275,9 @@ export const marketThemeMockRepository = {
   },
   async createThemeStock(_themeId: number, _payload: MarketThemeStockCreateInput): Promise<MarketThemeStock> {
     throw new Error("mock mode: createThemeStock not implemented");
+  },
+  async updateThemeStockMemo(_themeId: number, _stockId: number, _payload: MarketThemeStockMemoUpdateInput): Promise<MarketThemeStock> {
+    throw new Error("mock mode: updateThemeStockMemo not implemented");
   },
   async updateThemeStock(_mappingId: number, _payload: MarketThemeStockUpdateInput): Promise<MarketThemeStock> {
     throw new Error("mock mode: updateThemeStock not implemented");

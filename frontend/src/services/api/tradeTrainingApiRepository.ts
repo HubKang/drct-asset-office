@@ -70,10 +70,11 @@ export const tradeTrainingApiRepository = {
     apiRequest<TradeTrainingAccountDeleteResponse>(`/trade-training/accounts/${accountId}`, { method: "DELETE" }),
   getCalendar: (month: string) =>
     apiRequest<TrainingCalendarResponse>(`/trade-training/calendar?month=${encodeURIComponent(month)}`),
-  listStocks: (params?: { q?: string; limit?: number }) => {
+  listStocks: (params?: { q?: string; page?: number; page_size?: number }) => {
     const search = new URLSearchParams();
     if (params?.q) search.set("q", params.q);
-    if (params?.limit !== undefined) search.set("limit", String(params.limit));
+    if (params?.page !== undefined) search.set("page", String(params.page));
+    if (params?.page_size !== undefined) search.set("page_size", String(params.page_size));
     const query = search.toString();
     return apiRequest<TrainingStockListResponse>(`/trade-training/stocks${query ? `?${query}` : ""}`);
   },

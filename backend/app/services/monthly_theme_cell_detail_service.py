@@ -90,8 +90,16 @@ class MonthlyThemeCellDetailService:
             period_from=period_from,
             period_to=period_to,
         )
-        event_rows = [row for row in historical_period_rows if str(row["trade_date"]) == event_date]
-        stocks = self._build_stock_items(event_rows=event_rows, event_date=event_date)
+        # The heatmap is classified with the current active stock-theme mapping.
+        # Use the exact saved event rows that contributed to the selected cell so
+        # the drawer cannot disagree with a visible heatmap value after a stock is
+        # reclassified. Historical appearance dates intentionally remain based on
+        # the event-time theme links below.
+        stocks = self._build_stock_items(
+            theme_id=theme_id,
+            event_rows=selected_heatmap_records,
+            event_date=event_date,
+        )
 
         appearance_dates = sorted({str(row["trade_date"]) for row in historical_period_rows})
         unique_stock_keys = {
@@ -131,7 +139,7 @@ class MonthlyThemeCellDetailService:
             flow_total_count=len(stocks),
             first_appearance_date=appearance_dates[0] if appearance_dates else None,
             latest_appearance_date=appearance_dates[-1] if appearance_dates else None,
-            recent_appearance_dates=appearance_dates[-5:],
+            recent_appearance_dates=appearance_dates,
             monthly_avg_change_rate=monthly_avg,
         )
         return MonthlyThemeCellDetailResponse(
@@ -183,7 +191,13 @@ class MonthlyThemeCellDetailService:
         ).mappings().all()
         return [dict(row) for row in rows]
 
-    def _build_stock_items(self, *, event_rows: list[dict[str, Any]], event_date: str) -> list[MarketThemeReturnStockItem]:
+    def _build_stock_items(
+        self,
+        *,
+        theme_id: int,
+        event_rows: list[dict[str, Any]],
+        event_date: str,
+    ) -> list[MarketThemeReturnStockItem]:
         grouped: dict[str, dict[str, Any]] = {}
         for row in event_rows:
             code = normalize_stock_code(row.get("stock_code"))
@@ -208,18 +222,19 @@ class MonthlyThemeCellDetailService:
         context: dict[int, dict[str, Any]] = {}
         if stock_ids:
             placeholders = ",".join(f":stock_{index}" for index in range(len(stock_ids)))
-            params: dict[str, Any] = {"event_date": event_date}
+            params: dict[str, Any] = {"event_date": event_date, "theme_id": theme_id}
             params.update({f"stock_{index}": stock_id for index, stock_id in enumerate(stock_ids)})
             rows = self.db.execute(
                 text(
                     f"""
-                    SELECT s.id AS stock_id, s.stock_code, s.stock_name,
+                    SELECT s.id AS stock_id, s.stock_code, s.stock_name, mts.stock_memo,
                            p.close_price, p.change_rate AS price_change_rate, p.trading_value AS price_trading_value,
                            f.individual_net_amount, f.foreign_net_amount,
                            f.institution_net_amount, f.program_net_amount
                     FROM stocks s
                     LEFT JOIN stock_daily_prices p ON p.stock_id=s.id AND p.trade_date=:event_date
                     LEFT JOIN stock_investor_flows f ON f.stock_id=s.id AND f.flow_date=:event_date
+                    LEFT JOIN market_theme_stocks mts ON mts.theme_id=:theme_id AND mts.stock_id=s.id
                     WHERE s.id IN ({placeholders})
                     """
                 ),
@@ -264,6 +279,7 @@ class MonthlyThemeCellDetailService:
                     stock_id=int(stock_id or 0),
                     stock_code=str(saved.get("stock_code") or bucket["stock_code"] or "") or None,
                     stock_name=str(saved.get("stock_name") or bucket["stock_name"]),
+                    stock_memo=str(saved["stock_memo"]).strip() if saved.get("stock_memo") else None,
                     trading_value_100m=self._to_100m(trading_value),
                     change_rate=change_rate,
                     current_price=int(saved["close_price"]) if saved.get("close_price") is not None else None,
@@ -271,5 +287,13 @@ class MonthlyThemeCellDetailService:
                     flow_summary=flow_summary,
                 )
             )
-        items.sort(key=lambda item: (item.trading_value_100m is not None, item.trading_value_100m or 0), reverse=True)
+        items.sort(
+            key=lambda item: (
+                not bool((item.stock_memo or "").strip()),
+                (item.stock_memo or "").strip(),
+                -(item.trading_value_100m or 0),
+                item.stock_name,
+                item.stock_id,
+            )
+        )
         return items

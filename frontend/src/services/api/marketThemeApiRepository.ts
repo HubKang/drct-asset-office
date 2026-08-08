@@ -21,9 +21,12 @@ import type {
   MarketThemeFlowTrendResponse,
   MarketThemeRangeReturnParams,
   MarketThemeReturnRefreshRequest,
+  MarketThemeReturnRecalculationPreview,
+  MarketThemeReturnRecalculationResponse,
   MarketThemeReturnRefreshResponse,
   MarketThemeStock,
   MarketThemeStockCreateInput,
+  MarketThemeStockMemoUpdateInput,
   MarketThemeStockMemoResponse,
   MarketThemeStockSupplySummary,
   MarketThemeStockUpdateInput,
@@ -93,6 +96,10 @@ export const marketThemeApiRepository = {
   },
   getLatestReturn: (themeId: number) => apiRequest<MarketThemeLatestReturnDetail>(`/external/kiwoom/market-themes/${themeId}/returns/latest`),
   getDailyReturn: (themeId: number, date: string) => apiRequest<MarketThemeLatestReturnDetail>(`/external/kiwoom/market-themes/${themeId}/returns/daily?date=${encodeURIComponent(date)}`),
+  getReturnRecalculationPreview: (themeId: number) =>
+    apiRequest<MarketThemeReturnRecalculationPreview>(`/external/kiwoom/market-themes/${themeId}/recalculate-returns/preview`),
+  recalculateReturns: (themeId: number) =>
+    apiRequest<MarketThemeReturnRecalculationResponse>(`/external/kiwoom/market-themes/${themeId}/recalculate-returns`, { method: "POST" }),
   listMonthlyReturns: (params: MarketThemeMonthlyReturnParams) => {
     const search = new URLSearchParams();
     search.set("month", params.month);
@@ -119,6 +126,8 @@ export const marketThemeApiRepository = {
     apiRequest<MarketThemeStockSupplySummary>(`/market-themes/${themeId}/stocks/${stockId}/supply-summary`),
   createThemeStock: (themeId: number, payload: MarketThemeStockCreateInput) =>
     apiRequest<MarketThemeStock>(`/market-themes/${themeId}/stocks`, { method: "POST", body: JSON.stringify(payload) }),
+  updateThemeStockMemo: (themeId: number, stockId: number, payload: MarketThemeStockMemoUpdateInput) =>
+    apiRequest<MarketThemeStock>(`/market-themes/${themeId}/stocks/${stockId}/memo`, { method: "PATCH", body: JSON.stringify(payload) }),
   updateThemeStock: (mappingId: number, payload: MarketThemeStockUpdateInput) =>
     apiRequest<MarketThemeStock>(`/market-theme-stocks/${mappingId}`, { method: "PATCH", body: JSON.stringify(payload) }),
   deactivateThemeStock: (mappingId: number) =>

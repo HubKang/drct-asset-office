@@ -4,6 +4,7 @@ import { ArrowDown, ArrowUp, ArrowUpDown, Info, RefreshCw } from "lucide-react";
 import SectionCard from "@/components/common/SectionCard";
 import StatusBadge from "@/components/common/StatusBadge";
 import MarketThemePriceFlowPanel from "@/components/marketThemes/MarketThemePriceFlowPanel";
+import MarketThemePriceFlowModal from "@/components/marketThemes/MarketThemePriceFlowModal";
 import MarketThemeFlowChartPanel from "@/components/marketThemes/MarketThemeFlowChartPanel";
 import MarketThemeFlowTrendPanel, { invalidateMarketThemeFlowTrendFrontendCache } from "@/components/marketThemes/MarketThemeFlowTrendPanel";
 import { StockFlowCompactCard, ThemeFlowOverview, type FlowActor } from "@/components/marketThemes/FlowSummaryCards";
@@ -28,6 +29,8 @@ import type {
   MarketThemeFlowTrendTheme,
   MarketThemeMonthlyReturnResponse,
   MarketThemeMonthlyReturnThemeItem,
+  MarketThemeReturnRecalculationPreview,
+  MarketThemeReturnRecalculationResponse,
   MarketThemeReturnRefreshResponse,
   MarketThemeCandidateStatus,
   MarketThemeLevel,
@@ -41,9 +44,11 @@ import type { Stock } from "@/types/stock";
 type ActiveTab = "themes" | "mapping" | "candidates";
 type ThemeViewMode = "group" | "theme" | "trend" | "flowTrend";
 type ThemeReturnSort = "default" | "desc" | "asc";
+type ThemeStockSort = "default" | "name" | "memo";
+type MemoSaveStatus = "idle" | "saving" | "saved" | "error";
 type ThemeReturnTrendViewMode = "heatmap" | "line";
 type TrendSortMode = "CURRENT_STRENGTH" | "ROLLING_30D_RETURN";
-const THEME_PAGE_SIZE = 20;
+const THEME_PAGE_SIZE = 50;
 const THEME_RETURN_LINE_COLORS = [
   "#2563eb",
   "#16a34a",
@@ -502,6 +507,15 @@ function MarketThemesPage() {
   const [themes, setThemes] = useState<MarketTheme[]>([]);
   const [selectedThemeId, setSelectedThemeId] = useState<number | null>(null);
   const [themeStocks, setThemeStocks] = useState<MarketThemeStock[]>([]);
+  const [themeStockSort, setThemeStockSort] = useState<ThemeStockSort>("default");
+  const [returnStockSort, setReturnStockSort] = useState<ThemeStockSort>("memo");
+  const [memoDrafts, setMemoDrafts] = useState<Record<number, string>>({});
+  const [memoSaveStatuses, setMemoSaveStatuses] = useState<Record<number, MemoSaveStatus>>({});
+  const memoSavedRef = useRef<Record<number, string>>({});
+  const memoPendingRef = useRef<Record<number, string | undefined>>({});
+  const memoSaveSequenceRef = useRef<Record<number, number>>({});
+  const memoSaveChainsRef = useRef<Record<number, Promise<void>>>({});
+  const memoSavedTimersRef = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
   const [candidates, setCandidates] = useState<MarketThemeCandidate[]>([]);
 
   const [themeFilterType, setThemeFilterType] = useState<"all" | MarketThemeType>("all");
@@ -535,13 +549,19 @@ function MarketThemesPage() {
   const [trendEndDate, setTrendEndDate] = useState(getDateInputValue());
   const [trendThemeGroupId, setTrendThemeGroupId] = useState<"all" | string>("all");
   const [trendKeyword, setTrendKeyword] = useState("");
-  const [trendLimit, setTrendLimit] = useState<"all" | string>("20");
+  const [trendLimit, setTrendLimit] = useState<"all" | string>("all");
   const [trendViewMode, setTrendViewMode] = useState<ThemeReturnTrendViewMode>("heatmap");
   const [trendSortMode, setTrendSortMode] = useState<TrendSortMode>("CURRENT_STRENGTH");
   const [trendStrengthInfoOpen, setTrendStrengthInfoOpen] = useState(false);
   const [hoveredTrendThemeId, setHoveredTrendThemeId] = useState<number | null>(null);
   const [trendLoading, setTrendLoading] = useState(false);
   const [trendData, setTrendData] = useState<MarketThemeMonthlyReturnResponse | null>(null);
+  const [returnRecalculationTheme, setReturnRecalculationTheme] = useState<{ themeId: number; themeName: string } | null>(null);
+  const [returnRecalculationPreview, setReturnRecalculationPreview] = useState<MarketThemeReturnRecalculationPreview | null>(null);
+  const [returnRecalculationResult, setReturnRecalculationResult] = useState<MarketThemeReturnRecalculationResponse | null>(null);
+  const [returnRecalculationLoading, setReturnRecalculationLoading] = useState(false);
+  const [returnRecalculationRunning, setReturnRecalculationRunning] = useState(false);
+  const [returnRecalculationError, setReturnRecalculationError] = useState("");
   const [returnDrawerOpen, setReturnDrawerOpen] = useState(false);
   const [returnDetailLoading, setReturnDetailLoading] = useState(false);
   const [returnDetailError, setReturnDetailError] = useState("");
@@ -561,7 +581,21 @@ function MarketThemesPage() {
 
   useEffect(() => () => {
     refreshPollingTokenRef.current += 1;
+    Object.values(memoSavedTimersRef.current).forEach(clearTimeout);
   }, []);
+
+  useEffect(() => {
+    setMemoDrafts((previous) => {
+      const next = { ...previous };
+      themeStocks.forEach((row) => {
+        if (next[row.mapping_id] === undefined) next[row.mapping_id] = row.stock_memo ?? "";
+        if (memoPendingRef.current[row.mapping_id] === undefined) {
+          memoSavedRef.current[row.mapping_id] = row.stock_memo ?? "";
+        }
+      });
+      return next;
+    });
+  }, [themeStocks]);
   const [showAllSupplyDates, setShowAllSupplyDates] = useState(false);
   const [supplyCountSort, setSupplyCountSort] = useState<SupplyCountSort>("default");
   const [supplyCountInfoOpen, setSupplyCountInfoOpen] = useState(false);
@@ -583,15 +617,29 @@ function MarketThemesPage() {
   const [isActive, setIsActive] = useState(1);
 
   const sortedThemes = useMemo(
-    () =>
-      [...themes].sort((a, b) => {
-        if (a.is_active !== b.is_active) return b.is_active - a.is_active;
-        const groupCompare = themeGroupSortName(a).localeCompare(themeGroupSortName(b), "ko-KR");
-        if (groupCompare !== 0) return groupCompare;
-        if (a.is_supply_theme !== b.is_supply_theme) return b.is_supply_theme - a.is_supply_theme;
+    () => {
+      const groupById = new Map(
+        themes
+          .filter((theme) => theme.theme_level === "THEME_GROUP")
+          .map((theme) => [theme.id, theme] as const),
+      );
+      const groupSortOrder = (theme: MarketTheme) => {
+        if (theme.theme_level === "THEME_GROUP") return theme.sort_order;
+        return theme.parent_theme_id == null
+          ? Number.MAX_SAFE_INTEGER
+          : groupById.get(theme.parent_theme_id)?.sort_order ?? Number.MAX_SAFE_INTEGER;
+      };
+      return [...themes].sort((a, b) => {
+        const groupOrderCompare = groupSortOrder(a) - groupSortOrder(b);
+        if (groupOrderCompare !== 0) return groupOrderCompare;
+        const groupNameCompare = themeGroupSortName(a).localeCompare(themeGroupSortName(b), "ko-KR");
+        if (groupNameCompare !== 0) return groupNameCompare;
+        if (a.theme_level !== b.theme_level) return a.theme_level === "THEME_GROUP" ? -1 : 1;
         if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
-        return a.theme_name.localeCompare(b.theme_name, "ko-KR");
-      }),
+        const nameCompare = a.theme_name.localeCompare(b.theme_name, "ko-KR");
+        return nameCompare !== 0 ? nameCompare : a.id - b.id;
+      });
+    },
     [themes],
   );
   const themeGroups = useMemo(
@@ -680,9 +728,36 @@ function MarketThemesPage() {
   );
   const activeThemeStocks = useMemo(() => themeStocks.filter((x) => x.is_active === 1), [themeStocks]);
   const displayedThemeStocks = useMemo(() => {
+    if (themeStockSort === "name") {
+      return [...activeThemeStocks].sort((a, b) => a.stock_name.localeCompare(b.stock_name, "ko-KR") || a.stock_id - b.stock_id);
+    }
+    if (themeStockSort === "memo") {
+      return [...activeThemeStocks].sort((a, b) => {
+        const aMemo = (a.stock_memo ?? "").trim();
+        const bMemo = (b.stock_memo ?? "").trim();
+        if (!aMemo && bMemo) return 1;
+        if (aMemo && !bMemo) return -1;
+        return aMemo.localeCompare(bMemo, "ko-KR") || a.stock_name.localeCompare(b.stock_name, "ko-KR") || a.stock_id - b.stock_id;
+      });
+    }
     if (supplyCountSort === "default") return activeThemeStocks;
     return [...activeThemeStocks].sort((a, b) => compareThemeStocksBySupplyCount(a, b, supplyCountSort));
-  }, [activeThemeStocks, supplyCountSort]);
+  }, [activeThemeStocks, supplyCountSort, themeStockSort]);
+  const displayedReturnStocks = useMemo(() => {
+    const stocks = selectedReturnDetail?.stocks ?? [];
+    if (returnStockSort === "default") return stocks;
+    return [...stocks].sort((a, b) => {
+      if (returnStockSort === "name") return a.stock_name.localeCompare(b.stock_name, "ko-KR") || a.stock_id - b.stock_id;
+      const aMemo = (a.stock_memo ?? "").trim();
+      const bMemo = (b.stock_memo ?? "").trim();
+      if (!aMemo && bMemo) return 1;
+      if (aMemo && !bMemo) return -1;
+      const memoCompare = aMemo.localeCompare(bMemo, "ko-KR");
+      if (memoCompare) return memoCompare;
+      const tradingCompare = (b.trading_value_100m ?? Number.NEGATIVE_INFINITY) - (a.trading_value_100m ?? Number.NEGATIVE_INFINITY);
+      return tradingCompare || a.stock_name.localeCompare(b.stock_name, "ko-KR") || a.stock_id - b.stock_id;
+    });
+  }, [returnStockSort, selectedReturnDetail]);
   const isMappingAllThemesSelected = mappingAllThemesSelected && !selectedThemeId && mappingThemeGroupId === "all";
   const chartSidcode = useMemo(() => createNaverChartSidcode(), [selectedThemeId, activeThemeStocks.length]);
   const selectedLinkedStockCode = useMemo(() => normalizeNaverStockCode(selectedLinkedStock?.stock_code), [selectedLinkedStock?.stock_code]);
@@ -874,6 +949,46 @@ function MarketThemesPage() {
       setTrendLoading(false);
     }
   };
+  const openReturnRecalculation = async (theme: MarketThemeMonthlyReturnThemeItem) => {
+    setReturnRecalculationTheme({ themeId: theme.theme_id, themeName: theme.theme_name });
+    setReturnRecalculationPreview(null);
+    setReturnRecalculationResult(null);
+    setReturnRecalculationError("");
+    setReturnRecalculationLoading(true);
+    try {
+      const preview = await repositories.marketThemes.getReturnRecalculationPreview(theme.theme_id);
+      setReturnRecalculationPreview(preview);
+    } catch (e) {
+      setReturnRecalculationError(toErrorMessage(e, "테마등락률 재계산 정보를 불러오지 못했습니다."));
+    } finally {
+      setReturnRecalculationLoading(false);
+    }
+  };
+  const closeReturnRecalculation = () => {
+    if (returnRecalculationRunning) return;
+    setReturnRecalculationTheme(null);
+    setReturnRecalculationPreview(null);
+    setReturnRecalculationResult(null);
+    setReturnRecalculationError("");
+  };
+  const runReturnRecalculation = async () => {
+    if (!returnRecalculationTheme || returnRecalculationRunning) return;
+    setReturnRecalculationRunning(true);
+    setReturnRecalculationError("");
+    try {
+      const result = await repositories.marketThemes.recalculateReturns(returnRecalculationTheme.themeId);
+      setReturnRecalculationResult(result);
+      setReturnRecalculationPreview(result);
+      setMessage(
+        `${result.theme_name} 테마등락률 재계산 완료 · ${result.period_from ?? "-"} ~ ${result.period_to ?? "-"} · 갱신 ${result.updated_count}건 · 신규 ${result.inserted_count}건`,
+      );
+      await loadThemeReturnTrend();
+    } catch (e) {
+      setReturnRecalculationError(toErrorMessage(e, "테마등락률 재계산에 실패했습니다."));
+    } finally {
+      setReturnRecalculationRunning(false);
+    }
+  };
   const openThemeReturnDetail = async (
     theme: MarketTheme | MarketThemeMonthlyReturnThemeItem | MarketThemeFlowTrendTheme,
     returnDate?: string,
@@ -885,6 +1000,7 @@ function MarketThemesPage() {
     setReturnDrawerOpen(true);
     setReturnDetailLoading(true);
     setReturnDetailError("");
+    setReturnStockSort("memo");
     setSelectedReturnDetail(null);
     try {
       const detail = returnDate ? await repositories.marketThemes.getDailyReturn(themeId, returnDate) : await repositories.marketThemes.getLatestReturn(themeId);
@@ -949,7 +1065,59 @@ function MarketThemesPage() {
   };
 
   const toggleSupplyCountSort = () => {
+    setThemeStockSort("default");
     setSupplyCountSort((prev) => (prev === "default" ? "desc" : prev === "desc" ? "asc" : "default"));
+  };
+
+  const saveThemeStockMemo = (row: MarketThemeStock) => {
+    const mappingId = row.mapping_id;
+    const normalized = (memoDrafts[mappingId] ?? row.stock_memo ?? "").trim();
+    const saved = (memoSavedRef.current[mappingId] ?? row.stock_memo ?? "").trim();
+    if (normalized === saved || memoPendingRef.current[mappingId] === normalized) return;
+
+    const sequence = (memoSaveSequenceRef.current[mappingId] ?? 0) + 1;
+    memoSaveSequenceRef.current[mappingId] = sequence;
+    memoPendingRef.current[mappingId] = normalized;
+    setMemoSaveStatuses((previous) => ({ ...previous, [mappingId]: "saving" }));
+    clearTimeout(memoSavedTimersRef.current[mappingId]);
+
+    const previousSave = memoSaveChainsRef.current[mappingId] ?? Promise.resolve();
+    const nextSave = previousSave.catch(() => undefined).then(async () => {
+      try {
+        const updated = await repositories.marketThemes.updateThemeStockMemo(
+          row.theme_id,
+          row.stock_id,
+          { stock_memo: normalized || null },
+        );
+        memoSavedRef.current[mappingId] = updated.stock_memo ?? "";
+        setThemeStocks((previous) => previous.map((item) => item.mapping_id === mappingId ? updated : item));
+        if (memoSaveSequenceRef.current[mappingId] === sequence) {
+          setMemoDrafts((previous) => {
+            const currentDraft = previous[mappingId] ?? "";
+            return currentDraft.trim() === normalized
+              ? { ...previous, [mappingId]: updated.stock_memo ?? "" }
+              : previous;
+          });
+          setMemoSaveStatuses((previous) => ({ ...previous, [mappingId]: "saved" }));
+          memoSavedTimersRef.current[mappingId] = setTimeout(() => {
+            setMemoSaveStatuses((previous) => ({ ...previous, [mappingId]: "idle" }));
+          }, 1200);
+        }
+      } catch {
+        if (memoSaveSequenceRef.current[mappingId] === sequence) {
+          setMemoSaveStatuses((previous) => ({ ...previous, [mappingId]: "error" }));
+        }
+      } finally {
+        if (memoPendingRef.current[mappingId] === normalized) delete memoPendingRef.current[mappingId];
+      }
+    });
+    memoSaveChainsRef.current[mappingId] = nextSave;
+  };
+
+  const cancelThemeStockMemo = (row: MarketThemeStock) => {
+    const saved = memoSavedRef.current[row.mapping_id] ?? row.stock_memo ?? "";
+    setMemoDrafts((previous) => ({ ...previous, [row.mapping_id]: saved }));
+    setMemoSaveStatuses((previous) => ({ ...previous, [row.mapping_id]: "idle" }));
   };
   const loadCandidates = async () => {
     try {
@@ -1548,7 +1716,15 @@ function MarketThemesPage() {
                     return (
                       <Fragment key={theme.theme_id}>
                         <div className="theme-return-heatmap__theme-cell" title={`${theme.theme_group_name ?? "미지정"} / ${theme.theme_name} / 거래대금 ${fmtEok(theme.total_trading_value_100m)}억`}>
-                          <strong>{theme.theme_name}</strong>
+                          <button
+                            type="button"
+                            className="theme-return-recalculate-trigger"
+                            title={`${theme.theme_name} 현재 연결 종목 기준 과거 등락률 재계산`}
+                            onClick={() => void openReturnRecalculation(theme)}
+                          >
+                            <strong>{theme.theme_name}</strong>
+                            <RefreshCw size={12} aria-hidden="true" />
+                          </button>
                           <span className="theme-strength-row-meta">
                             <b className="theme-strength-score">강도 {theme.theme_strength_score == null ? "-" : Math.round(theme.theme_strength_score)}점</b>
                             <i>·</i>
@@ -1742,7 +1918,7 @@ function MarketThemesPage() {
           </div>
           <div className="pagination-bar">
             <span className="pagination-info">
-              {`이번 페이지 ${themePageStart}-${themePageEnd} / 전체 ${filteredThemes.length}건 - 20개씩 표시`}
+              {`이번 페이지 ${themePageStart}-${themePageEnd} / 전체 ${filteredThemes.length}건 - 50개씩 표시`}
             </span>
             <div className="pagination-actions">
               <button
@@ -1887,6 +2063,11 @@ function MarketThemesPage() {
           </SectionCard>
 
           <SectionCard title={`연결 종목 목록${selectedTheme ? ` - ${selectedThemeGroup ? `${selectedThemeGroup.theme_name} / ` : ""}${selectedTheme.theme_name}` : isMappingAllThemesSelected ? " - 테마 전체" : ""} (${activeThemeStocks.length}종목 · 대표 ${primaryCount})`}>
+            <div className="theme-linked-stock-sortbar">
+              <label><span>정렬</span><select className="select-control" value={themeStockSort} onChange={(event) => { setThemeStockSort(event.target.value as ThemeStockSort); setSupplyCountSort("default"); }}>
+                <option value="default">기본순</option><option value="name">종목명</option><option value="memo">종목메모</option>
+              </select></label>
+            </div>
             <div className="table-shell theme-linked-stock-table-shell">
               <table className="data-table compact-table theme-linked-stock-table">
                 <colgroup>
@@ -1947,7 +2128,14 @@ function MarketThemesPage() {
                           void openLinkedStockDrawer(row);
                         }}
                       >
-                        <td><div className="stock-cell theme-linked-stock-name"><strong>{row.stock_name}</strong><span>{stockCode || row.stock_code}</span></div></td>
+                        <td><div className="stock-cell theme-linked-stock-name">
+                          <strong>{row.stock_name}</strong>
+                          <div className="theme-stock-memo-editor">
+                            <input type="text" maxLength={100} value={memoDrafts[row.mapping_id] ?? row.stock_memo ?? ""} placeholder="세부분야 메모" aria-label={`${row.stock_name} 세부분야 메모`} title={memoDrafts[row.mapping_id] ?? row.stock_memo ?? ""} onChange={(event) => setMemoDrafts((previous) => ({ ...previous, [row.mapping_id]: event.target.value }))} onBlur={() => saveThemeStockMemo(row)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); saveThemeStockMemo(row); } else if (event.key === "Escape") { event.preventDefault(); cancelThemeStockMemo(row); } }} />
+                            <small className={`theme-stock-memo-status is-${memoSaveStatuses[row.mapping_id] ?? "idle"}`} aria-live="polite">{memoSaveStatuses[row.mapping_id] === "saving" ? "저장 중" : memoSaveStatuses[row.mapping_id] === "saved" ? "저장됨 ✓" : memoSaveStatuses[row.mapping_id] === "error" ? "저장 실패" : ""}</small>
+                          </div>
+                          <span>{stockCode || row.stock_code}</span>
+                        </div></td>
                         <td>{row.market ?? "-"}</td>
                         <td><label className="theme-linked-stock-primary"><input type="checkbox" checked={row.is_primary === 1} disabled={updatingPrimaryMappingId === row.mapping_id} onChange={(e) => void onTogglePrimary(row.mapping_id, e.target.checked)} /><span>{row.is_primary === 1 ? "대표" : "일반"}</span></label></td>
                         <td><span className={`badge ${row.is_active === 1 ? "badge-emerald" : "badge-slate"}`}>{row.is_active === 1 ? "활성" : "비활성"}</span></td>
@@ -2250,6 +2438,8 @@ function MarketThemesPage() {
                         />
                       ) : null}
                       {selectedReturnDetail.stocks.length > 0 ? (
+                        <>
+                        <div className="theme-detail-stock-sortbar"><label><span>종목 정렬</span><select className="select-control" value={returnStockSort} onChange={(event) => setReturnStockSort(event.target.value as ThemeStockSort)}><option value="memo">메모+거래대금</option><option value="name">종목명</option><option value="default">기존순</option></select></label></div>
                         <div className="theme-detail-stock-list" role="table" aria-label={`${selectedReturnDetail.theme_name} 연결 종목`}>
                           <div className="theme-detail-stock-header" role="row">
                             <span role="columnheader">종목명</span>
@@ -2271,12 +2461,13 @@ function MarketThemesPage() {
                               주봉 <Info size={13} aria-hidden="true" />
                             </span>
                           </div>
-                          {selectedReturnDetail.stocks.map((stock) => {
+                          {displayedReturnStocks.map((stock) => {
                             const stockCode = normalizeNaverStockCode(stock.stock_code);
                             return (
                               <div className="theme-detail-stock-row" role="row" key={`${stock.stock_id}-${stock.stock_code}`}>
                                 <div className="stock-cell" role="cell">
                                   <strong>{stock.stock_name || stock.stock_code || "-"}</strong>
+                                  {stock.stock_memo?.trim() ? <small className="theme-detail-stock-memo" title={stock.stock_memo}>{stock.stock_memo}</small> : null}
                                   {stock.stock_code ? <span>{stockCode || stock.stock_code}</span> : null}
                                   {stock.data_status !== "success" ? <small className="theme-return-fail-text">조회 실패</small> : null}
                                 </div>
@@ -2323,6 +2514,7 @@ function MarketThemesPage() {
                             );
                           })}
                         </div>
+                        </>
                       ) : (
                         <p className="selected-empty-message">이 테마에 연결된 종목이 없습니다.</p>
                       )}
@@ -2339,18 +2531,91 @@ function MarketThemesPage() {
         </div>
       ) : null}
 
-      {stockFlowModal ? (
-        <div className="market-flow-modal-backdrop" onClick={() => setStockFlowModal(null)}>
-          <section className="market-flow-modal" role="dialog" aria-modal="true" aria-label={`${stockFlowModal.stockName} 가격·수급 추이`} onClick={(event) => event.stopPropagation()}>
-            <header className="market-flow-modal-header">
-              <div><h3>{stockFlowModal.stockName}</h3><p>가격·수급 추이</p></div>
-              <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => setStockFlowModal(null)}>닫기</button>
-            </header>
-            <div className="market-flow-modal-body">
-              <MarketThemePriceFlowPanel stockId={stockFlowModal.stockId} themeId={stockFlowModal.themeId} focusDate={stockFlowModal.focusDate} />
+      {returnRecalculationTheme ? (
+        <div className="modal-backdrop" onClick={closeReturnRecalculation}>
+          <section
+            className="modal-card theme-return-recalculation-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="theme-return-recalculation-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="trade-journal-detail-header">
+              <div>
+                <h3 id="theme-return-recalculation-title">테마등락률 재계산</h3>
+                <p>{returnRecalculationTheme.themeName}</p>
+              </div>
+              <button type="button" className="btn btn-secondary btn-table-sm" onClick={closeReturnRecalculation} disabled={returnRecalculationRunning}>닫기</button>
+            </div>
+
+            {returnRecalculationLoading ? <p className="theme-return-recalculation-loading">재계산 범위를 확인하는 중입니다.</p> : null}
+            {!returnRecalculationLoading && returnRecalculationPreview ? (
+              <>
+                <p className="theme-return-recalculation-description">
+                  현재 연결된 종목 구성을 기준으로 과거 테마등락률을 다시 계산합니다.
+                  <strong> 과거 당시의 종목 구성은 복원하지 않습니다.</strong>
+                </p>
+                <p className="theme-return-recalculation-source">
+                  외부 API를 호출하지 않고 DrCT DB에 기존 수집된 종목별 일간 가격·등락률 데이터만 사용합니다.
+                </p>
+                <dl className="theme-return-recalculation-summary">
+                  <div><dt>현재 연결 종목</dt><dd>{returnRecalculationPreview.connected_stock_count}종목</dd></div>
+                  <div><dt>재계산 범위</dt><dd>{returnRecalculationPreview.period_from ?? "-"} ~ {returnRecalculationPreview.period_to ?? "-"}</dd></div>
+                </dl>
+                {!returnRecalculationResult ? (
+                  <div className="theme-return-recalculation-warning">
+                    <p>기존에 저장된 테마등락률은 현재 종목 구성 기준으로 갱신됩니다.</p>
+                    <p>종목 가격 데이터가 없는 날짜에는 해당 종목을 평균 계산에서 제외합니다.</p>
+                    <strong>계속 진행하시겠습니까?</strong>
+                  </div>
+                ) : (
+                  <div className="theme-return-recalculation-result" role="status">
+                    <strong>테마등락률 재계산 완료</strong>
+                    <dl>
+                      <div><dt>계산 날짜</dt><dd>{returnRecalculationResult.processed_date_count}일</dd></div>
+                      <div><dt>갱신</dt><dd>{returnRecalculationResult.updated_count}건</dd></div>
+                      <div><dt>신규 생성</dt><dd>{returnRecalculationResult.inserted_count}건</dd></div>
+                      <div><dt>결측 날짜</dt><dd>{returnRecalculationResult.skipped_date_count}건</dd></div>
+                    </dl>
+                  </div>
+                )}
+              </>
+            ) : null}
+            {returnRecalculationError ? <p className="form-error">{returnRecalculationError}</p> : null}
+
+            <div className="watchlist-theme-modal-actions">
+              <button type="button" className="btn btn-secondary" onClick={closeReturnRecalculation} disabled={returnRecalculationRunning}>
+                {returnRecalculationResult ? "닫기" : "취소"}
+              </button>
+              {!returnRecalculationResult ? (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => void runReturnRecalculation()}
+                  disabled={
+                    returnRecalculationLoading
+                    || returnRecalculationRunning
+                    || !returnRecalculationPreview?.connected_stock_count
+                    || !returnRecalculationPreview.period_from
+                    || !returnRecalculationPreview.period_to
+                  }
+                >
+                  {returnRecalculationRunning ? "테마등락률 재계산 중..." : "재계산 진행"}
+                </button>
+              ) : null}
             </div>
           </section>
         </div>
+      ) : null}
+
+      {stockFlowModal ? (
+        <MarketThemePriceFlowModal
+          stockId={stockFlowModal.stockId}
+          stockName={stockFlowModal.stockName}
+          themeId={stockFlowModal.themeId}
+          focusDate={stockFlowModal.focusDate}
+          onClose={() => setStockFlowModal(null)}
+        />
       ) : null}
 
       {themeFlowModal ? (

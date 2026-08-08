@@ -9,7 +9,7 @@ def test_daily_return_falls_back_to_saved_price_and_flow_when_theme_snapshot_is_
     with engine.begin() as conn:
         conn.exec_driver_sql("CREATE TABLE market_themes (id INTEGER PRIMARY KEY, theme_name TEXT, parent_theme_id INTEGER)")
         conn.exec_driver_sql("CREATE TABLE stocks (id INTEGER PRIMARY KEY, stock_code TEXT, stock_name TEXT, is_active INTEGER)")
-        conn.exec_driver_sql("CREATE TABLE market_theme_stocks (theme_id INTEGER, stock_id INTEGER, is_active INTEGER, is_primary INTEGER)")
+        conn.exec_driver_sql("CREATE TABLE market_theme_stocks (theme_id INTEGER, stock_id INTEGER, is_active INTEGER, is_primary INTEGER, stock_memo TEXT)")
         conn.exec_driver_sql("""CREATE TABLE market_theme_daily_returns (
             id INTEGER PRIMARY KEY, theme_id INTEGER, return_date TEXT, avg_change_rate REAL,
             stock_count INTEGER, success_stock_count INTEGER, failed_stock_count INTEGER,
@@ -29,7 +29,7 @@ def test_daily_return_falls_back_to_saved_price_and_flow_when_theme_snapshot_is_
         )""")
         conn.exec_driver_sql("INSERT INTO market_themes VALUES (1, '테스트 테마', NULL)")
         conn.exec_driver_sql("INSERT INTO stocks VALUES (10, '000010', '테스트 종목', 1)")
-        conn.exec_driver_sql("INSERT INTO market_theme_stocks VALUES (1, 10, 1, 1)")
+        conn.exec_driver_sql("INSERT INTO market_theme_stocks VALUES (1, 10, 1, 1, '변압기')")
         conn.exec_driver_sql("INSERT INTO stock_daily_prices VALUES (10, '2026-07-01', 12300, 2.5, 1500)")
         conn.exec_driver_sql("INSERT INTO stock_investor_flows VALUES (10, '2026-07-01', -10, 20, 30, 5)")
 
@@ -42,6 +42,6 @@ def test_daily_return_falls_back_to_saved_price_and_flow_when_theme_snapshot_is_
     assert result.avg_change_rate == 2.5
     assert result.total_trading_value_100m == 123.0
     assert result.stocks[0].stock_name == "테스트 종목"
+    assert result.stocks[0].stock_memo == "변압기"
     assert result.stocks[0].flow_summary.foreign_net_amount == 20
     assert result.flow_summary.connected_stock_count == 1
-

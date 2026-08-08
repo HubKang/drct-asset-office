@@ -102,8 +102,17 @@ function performanceResultSelection(trade: TradeTrainingPerformancePoint): Resul
 }
 
 const DEFAULT_MA_TEXT = "5,10,20,60,120";
-const STOCKS_PAGE_SIZE = 6;
+const STOCKS_PAGE_SIZE = 8;
 const MARKET_INDEX_LABELS: Record<MarketIndexCode, string> = { KOSPI: "\ucf54\uc2a4\ud53c", KOSDAQ: "\ucf54\uc2a4\ub2e5" };
+
+function trainingStockMarketLabel(market: string | null): string {
+  const marketCode = market?.toUpperCase();
+  if (marketCode === "KOSPI" || marketCode === "KOSDAQ") {
+    return MARKET_INDEX_LABELS[marketCode];
+  }
+  return market || "-";
+}
+
 const BUY_REVIEW_TAGS = [
   { value: "planned", label: "계획 매수" },
   { value: "confirmation", label: "확인 매수" },
@@ -3105,6 +3114,9 @@ function SettingsModal({
   q,
   setQ,
   stocks,
+  stockPage,
+  stockTotalCount,
+  stockTotalPages,
   selectedStock,
   setSelectedStock,
   tradeMethods,
@@ -3127,6 +3139,7 @@ function SettingsModal({
   priceCollectingMode,
   priceCollectionNotice,
   onSearch,
+  onPageChange,
   onCollectPrices,
   onStart,
   onClose,
@@ -3139,6 +3152,9 @@ function SettingsModal({
   q: string;
   setQ: (value: string) => void;
   stocks: TrainingStockItem[];
+  stockPage: number;
+  stockTotalCount: number;
+  stockTotalPages: number;
   selectedStock: TrainingStockItem | null;
   setSelectedStock: (stock: TrainingStockItem) => void;
   tradeMethods: TradeMethod[];
@@ -3161,26 +3177,17 @@ function SettingsModal({
   priceCollectingMode: TradeTrainingPriceCollectionMode | null;
   priceCollectionNotice: { tone: "success" | "error" | "info"; text: string } | null;
   onSearch: () => Promise<void>;
+  onPageChange: (page: number) => Promise<void>;
   onCollectPrices: (mode: TradeTrainingPriceCollectionMode) => Promise<void>;
   onStart: () => Promise<void>;
   onClose: () => void;
 }) {
-  const [stockPage, setStockPage] = useState(1);
-  const totalStockPages = Math.max(1, Math.ceil(stocks.length / STOCKS_PAGE_SIZE));
-  const safeStockPage = Math.min(stockPage, totalStockPages);
-  const pagedStocks = stocks.slice((safeStockPage - 1) * STOCKS_PAGE_SIZE, safeStockPage * STOCKS_PAGE_SIZE);
-
-  useEffect(() => {
-    setStockPage(1);
-  }, [q]);
-
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (priceCollectingMode) return;
     await onStart();
   };
   const searchStocks = async () => {
-    setStockPage(1);
     await onSearch();
   };
 
@@ -3209,7 +3216,6 @@ function SettingsModal({
             value={q}
             onChange={(event) => {
               setQ(event.target.value);
-              setStockPage(1);
             }}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.nativeEvent.isComposing) {
@@ -3238,28 +3244,32 @@ function SettingsModal({
         </div>
         {methodLoadError ? <p className="training-method-load-error">{methodLoadError}</p> : null}
 
-        <div className="training-stock-list training-settings-stock-list">
+        <div className="training-stock-list training-settings-stock-list" aria-label={`훈련 가능 종목 ${stockTotalCount}개`}>
           {stocks.length === 0 ? <EmptyState message="가격 데이터가 있는 종목이 없습니다." /> : null}
-          {pagedStocks.map((stock) => (
+          {stocks.map((stock) => (
             <button
               type="button"
               className={`training-stock-item ${selectedStock?.stock_id === stock.stock_id ? "selected" : ""}`}
               key={stock.stock_id}
               disabled={Boolean(priceCollectingMode)}
+              aria-pressed={selectedStock?.stock_id === stock.stock_id}
               onClick={() => setSelectedStock(stock)}
             >
-              <strong>{stock.stock_name}</strong>
-              <span>{stock.stock_code} · {stock.market || "-"} · 일봉 {fmtNumber(stock.price_count)}개 · 가격 범위 {stock.first_date || "-"}~{stock.last_date || "-"}</span>
+              <strong className="training-stock-card-name">{stock.stock_name}</strong>
+              <span className="training-stock-card-separator">·</span>
+              <span className="training-stock-card-market">{trainingStockMarketLabel(stock.market)}</span>
+              <span className="training-stock-card-separator">·</span>
+              <span className="training-stock-card-date">{stock.first_date || "-"}~{stock.last_date || "-"}</span>
             </button>
           ))}
         </div>
-        {stocks.length > STOCKS_PAGE_SIZE ? (
+        {stockTotalPages > 1 ? (
           <div className="training-stock-pagination">
-            <button type="button" className="training-stock-page-button" disabled={safeStockPage <= 1} onClick={() => setStockPage((prev) => Math.max(1, prev - 1))}>
+            <button type="button" className="training-stock-page-button" disabled={stockPage <= 1 || loading} onClick={() => void onPageChange(stockPage - 1)}>
               이전
             </button>
-            <span>{safeStockPage} / {totalStockPages}</span>
-            <button type="button" className="training-stock-page-button" disabled={safeStockPage >= totalStockPages} onClick={() => setStockPage((prev) => Math.min(totalStockPages, prev + 1))}>
+            <span>{stockPage} / {stockTotalPages}</span>
+            <button type="button" className="training-stock-page-button" disabled={stockPage >= stockTotalPages || loading} onClick={() => void onPageChange(stockPage + 1)}>
               다음
             </button>
           </div>
@@ -5169,6 +5179,9 @@ function TradeTrainingPage() {
   const handledCalendarLocationRef = useRef("");
   const [q, setQ] = useState("");
   const [stocks, setStocks] = useState<TrainingStockItem[]>([]);
+  const [stockPage, setStockPage] = useState(1);
+  const [stockTotalCount, setStockTotalCount] = useState(0);
+  const [stockTotalPages, setStockTotalPages] = useState(0);
   const [selectedStock, setSelectedStock] = useState<TrainingStockItem | null>(null);
   const [tradeMethods, setTradeMethods] = useState<TradeMethod[]>([]);
   const [selectedMethodId, setSelectedMethodId] = useState<number | null>(null);
@@ -5352,16 +5365,26 @@ function TradeTrainingPage() {
     previousPendingAlertIdsRef.current = new Set(pendingRiskAlerts.map((item) => item.reach_event_id));
   }, [pendingRiskAlertKey]);
 
-  const loadStocks = async (keyword = q) => {
+  const loadStocks = async (keyword = q, page = 1) => {
     setLoading(true);
     setError("");
     try {
-      const response = await repositories.tradeTraining.listStocks({ q: keyword.trim() || undefined, limit: 30 });
+      const response = await repositories.tradeTraining.listStocks({
+        q: keyword.trim() || undefined,
+        page,
+        page_size: STOCKS_PAGE_SIZE,
+      });
       setStocks(response.items);
+      setStockPage(response.page);
+      setStockTotalCount(response.total_count);
+      setStockTotalPages(response.total_pages);
       setSelectedStock((prev) => prev ?? response.items[0] ?? null);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "훈련 가능 종목을 불러오지 못했습니다.");
       setStocks([]);
+      setStockPage(1);
+      setStockTotalCount(0);
+      setStockTotalPages(0);
     } finally {
       setLoading(false);
     }
@@ -5383,7 +5406,7 @@ function TradeTrainingPage() {
   };
 
   useEffect(() => {
-    void loadStocks("");
+    void loadStocks("", 1);
     void loadTradeMethods();
   }, []);
 
@@ -6011,8 +6034,14 @@ function TradeTrainingPage() {
           availableCash={linkedTrainingAccount?.cash_balance ?? null}
           accountCommissionRate={linkedTrainingAccount?.commission_rate ?? null}
           q={q}
-          setQ={setQ}
+          setQ={(value) => {
+            setQ(value);
+            setStockPage(1);
+          }}
           stocks={stocks}
+          stockPage={stockPage}
+          stockTotalCount={stockTotalCount}
+          stockTotalPages={stockTotalPages}
           selectedStock={selectedStock}
           setSelectedStock={setSelectedStock}
           tradeMethods={tradeMethods}
@@ -6034,7 +6063,8 @@ function TradeTrainingPage() {
           loading={loading}
           priceCollectingMode={priceCollectingMode}
           priceCollectionNotice={priceCollectionNotice}
-          onSearch={() => loadStocks()}
+          onSearch={() => loadStocks(q, 1)}
+          onPageChange={(page) => loadStocks(q, page)}
           onCollectPrices={collectSelectedTrainingStockPrices}
           onStart={startSession}
           onClose={() => {

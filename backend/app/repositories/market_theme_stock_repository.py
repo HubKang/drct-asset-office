@@ -100,6 +100,7 @@ class MarketThemeStockRepository:
                     mapping.confidence_score,
                     mapping.is_primary,
                     mapping.is_active,
+                    mapping.stock_memo,
                     mapping.created_at,
                     mapping.updated_at,
                     COALESCE(summary.supply_day_count, 0) AS supply_day_count,

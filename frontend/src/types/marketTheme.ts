@@ -12,6 +12,7 @@ export type MarketThemeReturnStock = {
   stock_id: number;
   stock_code: string | null;
   stock_name: string;
+  stock_memo?: string | null;
   trading_value_100m: number | null;
   change_rate: number | null;
   current_price?: number | null;
@@ -266,6 +267,24 @@ export type MarketThemeReturnRefreshResponse = {
   }>;
   items: MarketThemeReturnRefreshItem[];
   message?: string | null;
+};
+
+export type MarketThemeReturnRecalculationPreview = {
+  theme_id: number;
+  theme_name: string;
+  connected_stock_count: number;
+  period_from: string | null;
+  period_to: string | null;
+  data_source: "STORED_STOCK_DAILY_PRICES";
+};
+
+export type MarketThemeReturnRecalculationResponse = MarketThemeReturnRecalculationPreview & {
+  success: boolean;
+  processed_date_count: number;
+  inserted_count: number;
+  updated_count: number;
+  skipped_date_count: number;
+  recalculated_at: string;
 };
 
 export type MarketThemePriceFlowJobStartResponse = {
@@ -575,6 +594,7 @@ export type MarketThemeStock = {
   confidence_score: number | null;
   is_primary: number;
   is_active: number;
+  stock_memo: string | null;
   supply_day_count: number;
   recent_30d_supply_day_count: number;
   first_supply_date: string | null;
@@ -652,6 +672,10 @@ export type MarketThemeStockUpdateInput = {
   is_primary?: boolean;
   is_active?: number;
   confidence_score?: number | null;
+};
+
+export type MarketThemeStockMemoUpdateInput = {
+  stock_memo: string | null;
 };
 
 export type MarketThemeByStockItem = {

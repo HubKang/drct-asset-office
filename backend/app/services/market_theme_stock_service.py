@@ -17,6 +17,7 @@ from backend.app.schemas.market_theme_stock_schema import (
     MarketThemeByStockResponse,
     MarketThemeStockMemoItem,
     MarketThemeStockMemoResponse,
+    MarketThemeStockMemoUpdateRequest,
     MarketThemeStockCreateRequest,
     MarketThemeStockResponse,
     MarketThemeStockSupplySummaryResponse,
@@ -47,6 +48,7 @@ class MarketThemeStockService:
             confidence_score=row.confidence_score,
             is_primary=row.is_primary,
             is_active=row.is_active,
+            stock_memo=row.stock_memo,
             created_at=row.created_at,
             updated_at=row.updated_at,
         )
@@ -152,6 +154,24 @@ class MarketThemeStockService:
             row.is_active = 1 if data["is_active"] else 0
         if "confidence_score" in data:
             row.confidence_score = data["confidence_score"]
+        row.updated_at = now_kst()
+        updated = self.repo.update(row)
+        return self._to_response(updated, stock.stock_code, stock.stock_name, stock.market)
+
+    def update_theme_stock_memo(
+        self,
+        theme_id: int,
+        stock_id: int,
+        payload: MarketThemeStockMemoUpdateRequest,
+    ) -> MarketThemeStockResponse:
+        row = self.repo.get_by_theme_stock(theme_id, stock_id)
+        if not row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="market theme stock mapping not found")
+        stock = self.stock_repo.get_by_id(stock_id)
+        if not stock:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="stock not found")
+        normalized = (payload.stock_memo or "").strip()
+        row.stock_memo = normalized or None
         row.updated_at = now_kst()
         updated = self.repo.update(row)
         return self._to_response(updated, stock.stock_code, stock.stock_name, stock.market)

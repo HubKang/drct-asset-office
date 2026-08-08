@@ -13,7 +13,10 @@ export type TrainingStockItem = {
 
 export type TrainingStockListResponse = {
   items: TrainingStockItem[];
-  limit: number;
+  page: number;
+  page_size: number;
+  total_count: number;
+  total_pages: number;
 };
 
 export type TradeTrainingPriceCollectionMode = "RECENT_7D" | "FULL";

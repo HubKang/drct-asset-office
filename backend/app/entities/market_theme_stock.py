@@ -16,6 +16,7 @@ class MarketThemeStock(Base):
     confidence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     is_primary: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     is_active: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    stock_memo: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
 

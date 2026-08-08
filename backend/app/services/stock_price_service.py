@@ -9,6 +9,7 @@ from typing import Callable
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from backend.app.clients.kiwoom import is_kiwoom_global_provider_error
 from backend.app.collectors.prices.mock_price_collector import MockPriceCollector
 from backend.app.collectors.prices.pykrx_price_collector import PykrxPriceCollector
 from backend.app.providers.market_data.kiwoom_rest_provider import KiwoomRestMarketDataProvider
@@ -301,12 +302,8 @@ class StockPriceService:
         return expected
 
     @staticmethod
-    def _is_common_provider_error(message: str) -> bool:
-        normalized = (message or "").upper()
-        return any(token in normalized for token in (
-            "/OAUTH2/TOKEN", "KIWOOM_AUTH", "WINERROR 10013", "CONNECTION REFUSED",
-            "NAME OR SERVICE NOT KNOWN", "TEMPORARY FAILURE IN NAME RESOLUTION",
-        ))
+    def _is_common_provider_error(error: BaseException | str) -> bool:
+        return is_kiwoom_global_provider_error(error)
 
     def refresh_theme_stock_price_ranges(
         self,
@@ -384,16 +381,18 @@ class StockPriceService:
             except Exception as exc:  # noqa: BLE001
                 self.db.rollback()
                 logger.exception("theme stock price refresh failed: stock_id=%s", stock_id)
+                common_provider_error = self._is_common_provider_error(exc)
                 results.append({
                     "stock_id": stock.id, "stock_code": stock.stock_code, "stock_name": stock.stock_name,
                     "market": stock.market, "provider": source, "attempted": True,
                     "status": "FAILED", "collection_mode": mode,
                     "collect_start_date": start_date.isoformat(), "collect_end_date": end_date.isoformat(),
                     "collected_count": 0, "saved_count": 0, "inserted_count": 0, "updated_count": 0,
-                    "latest_trade_date": latest_text, "skip_reason": None,
+                    "latest_trade_date": latest_text,
+                    "skip_reason": "COMMON_PROVIDER_ERROR" if common_provider_error else None,
                     "error_message": self._truncate_message(str(exc)),
                 })
-                if self._is_common_provider_error(str(exc)):
+                if common_provider_error:
                     common_message = self._truncate_message(f"COMMON_PROVIDER_ERROR: {exc}")
                     for remaining_id in unique_ids[stock_index + 1:]:
                         remaining_stock = stocks_by_id.get(remaining_id)
@@ -411,7 +410,7 @@ class StockPriceService:
                             "error_message": common_message,
                         })
                     if progress_callback:
-                        progress_callback(len(results), len(unique_ids))
+                        progress_callback(stock_index + 1, len(unique_ids))
                     break
             if progress_callback:
                 progress_callback(len(results), len(unique_ids))

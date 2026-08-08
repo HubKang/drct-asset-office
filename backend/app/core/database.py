@@ -1298,6 +1298,7 @@ def ensure_runtime_schema() -> None:
                 confidence_score REAL,
                 is_primary INTEGER NOT NULL DEFAULT 0,
                 is_active INTEGER NOT NULL DEFAULT 1,
+                stock_memo TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 UNIQUE(theme_id, stock_id),
@@ -1306,6 +1307,11 @@ def ensure_runtime_schema() -> None:
             )
             """
         )
+        market_theme_stock_columns = {
+            str(row[1]) for row in conn.exec_driver_sql("PRAGMA table_info(market_theme_stocks)").fetchall()
+        }
+        if "stock_memo" not in market_theme_stock_columns:
+            conn.exec_driver_sql("ALTER TABLE market_theme_stocks ADD COLUMN stock_memo TEXT")
         conn.exec_driver_sql(
             """
             CREATE TABLE IF NOT EXISTS market_theme_stock_candidates (

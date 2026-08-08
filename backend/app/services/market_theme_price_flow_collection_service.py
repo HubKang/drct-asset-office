@@ -9,6 +9,7 @@ from typing import Any, Callable
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from backend.app.clients.kiwoom import is_kiwoom_authentication_error, is_kiwoom_global_provider_error
 from backend.app.core.config import now_kst
 from backend.app.core.database import SessionLocal
 from backend.app.repositories.collection_run_repository import CollectionRunRepository
@@ -94,6 +95,36 @@ class MarketThemePriceFlowCollectionService:
             failed_count=statuses.count("FAILED"),
             inserted_rows=sum(int(item.get(inserted_key) or 0) for item in results),
             updated_rows=sum(int(item.get(updated_key) or 0) for item in results),
+        )
+
+    @staticmethod
+    def _raise_for_common_provider_failure(price_results: list[dict[str, object]]) -> None:
+        failure = next(
+            (item for item in price_results if item.get("skip_reason") == "COMMON_PROVIDER_ERROR"),
+            None,
+        )
+        if failure is None:
+            return
+        provider_error = str(failure.get("error_message") or "Kiwoom provider error")
+        MarketThemePriceFlowCollectionService._raise_for_common_provider_error(provider_error)
+
+    @staticmethod
+    def _raise_for_common_provider_error(provider_error: BaseException | str) -> None:
+        if not is_kiwoom_global_provider_error(provider_error):
+            return
+        provider_error_text = str(provider_error or "Kiwoom provider error")
+        is_auth_error = is_kiwoom_authentication_error(provider_error)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={
+                "code": "KIWOOM_AUTH_ERROR" if is_auth_error else "KIWOOM_PROVIDER_UNAVAILABLE",
+                "message": (
+                    "Kiwoom API 인증 실패를 감지하여 첫 오류 이후 전체 갱신 작업을 종료했습니다."
+                    if is_auth_error
+                    else "Kiwoom 공통 장애를 감지하여 첫 오류 이후 전체 갱신 작업을 종료했습니다."
+                ),
+                "provider_error": provider_error_text[:500],
+            },
         )
 
     @staticmethod
@@ -246,6 +277,7 @@ class MarketThemePriceFlowCollectionService:
                     else None
                 ),
             )
+            self._raise_for_common_provider_failure(price_results)
             price_stage = self._stage_summary(
                 price_results, inserted_key="inserted_count", updated_key="updated_count"
             )
@@ -355,8 +387,11 @@ class MarketThemePriceFlowCollectionService:
                         stock=unique_stocks[probe_stock_id],
                         expected_trade_date=expected_trade_date,
                     )
-                except Exception:  # noqa: BLE001
+                except Exception as exc:  # noqa: BLE001
+                    self._raise_for_common_provider_error(exc)
                     flow_probe = {"should_skip": False}
+                for probe_error in dict(flow_probe.get("errors") or {}).values():
+                    self._raise_for_common_provider_error(str(probe_error))
             for flow_index, stock_id in enumerate(stock_ids, start=1):
                 latest = latest_before.get(stock_id, {})
                 investor_latest = latest.get("investor_latest_date")
@@ -429,6 +464,7 @@ class MarketThemePriceFlowCollectionService:
                         include_foreign_holding=False,
                     ))
                     item = response.items[0]
+                    self._raise_for_common_provider_error(item.message or "")
                     after_dates = self.flow_repo.get_dates_in_window(
                         stock_id, start_date.isoformat(), end_date.isoformat()
                     )
@@ -478,8 +514,11 @@ class MarketThemePriceFlowCollectionService:
                         failure = self._failure(unique_stocks.get(stock_id), "PROGRAM_FLOW", item.message or "program flow incomplete")
                         failures.append(failure)
                         target_results[stock_id].update({"error_code": failure.error_code, "error_message": failure.user_message})
+                except HTTPException:
+                    raise
                 except Exception as exc:  # noqa: BLE001
                     self.db.rollback()
+                    self._raise_for_common_provider_error(exc)
                     investor_results.append({"stock_id": stock_id, "status": "FAILED", "attempted": True})
                     program_results.append({"stock_id": stock_id, "status": "FAILED", "attempted": True})
                     failure = self._failure(unique_stocks.get(stock_id), "INVESTOR_FLOW", str(exc))
@@ -752,13 +791,16 @@ class MarketThemePriceFlowJobManager:
                     "result": result.model_dump(),
                 })
         except Exception as exc:  # noqa: BLE001
+            detail = getattr(exc, "detail", exc)
+            error_message = str(detail.get("message") or detail) if isinstance(detail, dict) else str(detail)
+            error_message = error_message[:1000]
             with cls._lock:
                 if job_id in cls._jobs:
                     cls._jobs[job_id].update({
                         "status": "FAILED",
                         "stage": "FAILED",
-                        "message": str(getattr(exc, "detail", exc))[:1000],
-                        "error": str(getattr(exc, "detail", exc))[:1000],
+                        "message": error_message,
+                        "error": error_message,
                         "finished_at": now_kst(),
                     })
         finally:

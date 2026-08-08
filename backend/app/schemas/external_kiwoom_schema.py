@@ -281,6 +281,24 @@ class MarketThemeReturnRefreshResponse(BaseModel):
     message: str | None = None
 
 
+class MarketThemeReturnRecalculationPreview(BaseModel):
+    theme_id: int
+    theme_name: str
+    connected_stock_count: int = 0
+    period_from: str | None = None
+    period_to: str | None = None
+    data_source: str = "STORED_STOCK_DAILY_PRICES"
+
+
+class MarketThemeReturnRecalculationResponse(MarketThemeReturnRecalculationPreview):
+    success: bool = True
+    processed_date_count: int = 0
+    inserted_count: int = 0
+    updated_count: int = 0
+    skipped_date_count: int = 0
+    recalculated_at: str
+
+
 class MarketThemePriceFlowFailureItem(BaseModel):
     stock_id: int | None = None
     stock_code: str | None = None
@@ -397,6 +415,7 @@ class MarketThemeReturnStockItem(BaseModel):
     stock_id: int
     stock_code: str | None = None
     stock_name: str
+    stock_memo: str | None = None
     trading_value_100m: float | None = None
     change_rate: float | None = None
     current_price: int | None = None

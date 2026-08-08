@@ -115,10 +115,11 @@ def get_training_calendar(month: str = Query(..., pattern=r"^\d{4}-\d{2}$"), db:
 @router.get("/trade-training/stocks", response_model=TrainingStockListResponse)
 def list_training_stocks(
     q: str | None = Query(default=None),
-    limit: int = Query(default=30, ge=1, le=100),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=8, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> dict:
-    return TradeTrainingService(db).list_stocks(q=q, limit=limit)
+    return TradeTrainingService(db).list_stocks(q=q, page=page, page_size=page_size)
 
 
 @router.post("/trade-training/stocks/{stock_id}/collect-prices", response_model=TradeTrainingPriceCollectResponse)
