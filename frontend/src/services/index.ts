@@ -26,6 +26,7 @@ import { stockTrackingApiRepository } from "@/services/api/stockTrackingApiRepos
 import { tradeJournalApiRepository } from "@/services/api/tradeJournalApiRepository";
 import { tradeReviewApiRepository } from "@/services/api/tradeReviewApiRepository";
 import { tradeTrainingApiRepository } from "@/services/api/tradeTrainingApiRepository";
+import { chartMarkerApiRepository } from "@/services/api/chartMarkerApiRepository";
 import { watchlistApiRepository } from "@/services/api/watchlistApiRepository";
 import { watchlistEvaluationApiRepository } from "@/services/api/watchlistEvaluationApiRepository";
 import { advisoryPackageMockRepository } from "@/services/mock/advisoryPackageMockRepository";
@@ -78,6 +79,7 @@ export const repositories = {
   tradeJournals: tradeJournalApiRepository,
   tradeReviews: tradeReviewApiRepository,
   tradeTraining: tradeTrainingApiRepository,
+  chartMarkers: chartMarkerApiRepository,
   patternResearch: patternResearchApiRepository,
 };
 

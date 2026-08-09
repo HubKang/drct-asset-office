@@ -1,0 +1,49 @@
+from __future__ import annotations
+
+from datetime import date, datetime
+
+from pydantic import BaseModel, Field
+
+
+class MarkerGroupWrite(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=2000)
+    color: str = Field(default="#64748b", pattern=r"^#[0-9A-Fa-f]{6}$")
+    sort_order: int = 0
+    is_active: bool = True
+
+
+class MarkerGroupPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=2000)
+    color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    sort_order: int | None = None
+    is_active: bool | None = None
+
+
+class MarkerWrite(BaseModel):
+    marker_group_id: int
+    name: str = Field(min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=2000)
+    symbol: str = Field(default="◆", min_length=1, max_length=12)
+    sort_order: int = 0
+    is_active: bool = True
+
+
+class MarkerPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=2000)
+    symbol: str | None = Field(default=None, min_length=1, max_length=12)
+    sort_order: int | None = None
+    is_active: bool | None = None
+
+
+class MarkerEventWrite(BaseModel):
+    stock_id: int
+    marker_id: int
+    marker_date: date
+    memo: str | None = Field(default=None, max_length=4000)
+
+
+class MarkerEventMemoPatch(BaseModel):
+    memo: str | None = Field(default=None, max_length=4000)

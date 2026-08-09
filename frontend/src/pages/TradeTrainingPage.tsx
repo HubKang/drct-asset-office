@@ -9,6 +9,7 @@ import ScenarioHabitsPanel from "@/components/tradeTraining/ScenarioHabitsPanel"
 import PeriodTrendAnalysisDrawer from "@/components/tradeTraining/PeriodTrendAnalysisDrawer";
 import { repositories } from "@/services";
 import type { MarketIndexDailyPriceItem } from "@/types/marketIndex";
+import type { ChartMarkerEvent, ChartMarkerGroup } from "@/types/chartMarker";
 import type { MultiPeriodTechnicalAnalysis } from "@/types/multiPeriodTechnicalAnalysis";
 import type { TradeMethod, TradeMethodSaveRequest } from "@/types/tradeJournal";
 import type {
@@ -461,6 +462,8 @@ function maStyle(key: string): { color: string; width: number } {
 
 function CandleChart({
   sessionId,
+  stockId,
+  stockName,
   candles,
   trades,
   avgPriceLine,
@@ -487,6 +490,8 @@ function CandleChart({
   onRetryTechnical,
 }: {
   sessionId?: number | string | null;
+  stockId?: number | null;
+  stockName?: string | null;
   candles: TrainingCandle[];
   trades: TrainingTrade[];
   avgPriceLine?: number | null;
@@ -519,6 +524,16 @@ function CandleChart({
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
   const [pendingTrendStart, setPendingTrendStart] = useState<TrendPoint | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [chartMarkerGroups, setChartMarkerGroups] = useState<ChartMarkerGroup[]>([]);
+  const [chartMarkerEvents, setChartMarkerEvents] = useState<ChartMarkerEvent[]>([]);
+  const [showExistingChartMarkers, setShowExistingChartMarkers] = useState(false);
+  const [newChartMarkerIds, setNewChartMarkerIds] = useState<Set<number>>(new Set());
+  const [chartMarkerMenu, setChartMarkerMenu] = useState<{date:string;x:number;y:number}|null>(null);
+  const [chartMarkerModal, setChartMarkerModal] = useState<{date:string;event?:ChartMarkerEvent}|null>(null);
+  const [chartMarkerGroupId, setChartMarkerGroupId] = useState<number|null>(null);
+  const [chartMarkerId, setChartMarkerId] = useState<number|null>(null);
+  const [chartMarkerMemo, setChartMarkerMemo] = useState("");
+  const [chartMarkerError, setChartMarkerError] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const previousViewportRef = useRef<number | null>(null);
   const fallbackWidth = 1080;
@@ -576,6 +591,53 @@ function CandleChart({
   const maKeys = Array.from(new Set(candles.flatMap((candle) => Object.keys(candle.moving_averages || {})))).sort(
     (a, b) => Number(a.replace("ma", "")) - Number(b.replace("ma", "")),
   );
+  const activeChartMarkerGroups = chartMarkerGroups.filter((group) => group.is_active && group.markers.some((marker) => marker.is_active));
+  const selectedChartMarkerGroup = activeChartMarkerGroups.find((group) => group.id === chartMarkerGroupId) ?? activeChartMarkerGroups[0];
+  const availableChartMarkers = selectedChartMarkerGroup?.markers.filter((marker) => marker.is_active) ?? [];
+  const visibleChartMarkerEvents = chartMarkerEvents.filter((event) => showExistingChartMarkers || newChartMarkerIds.has(event.id));
+
+  useEffect(() => {
+    setShowExistingChartMarkers(false);
+    setNewChartMarkerIds(new Set());
+    setChartMarkerMenu(null);
+  }, [sessionId, stockId]);
+
+  useEffect(() => {
+    if (!stockId || !candles.length) { setChartMarkerEvents([]); return; }
+    const endDate = candles[candles.length - 1]?.trade_date;
+    Promise.all([repositories.chartMarkers.catalog(true), repositories.chartMarkers.listStockEvents(stockId, endDate)])
+      .then(([catalog, events]) => { setChartMarkerGroups(catalog.items); setChartMarkerEvents(events.items); })
+      .catch((error) => setChartMarkerError(error instanceof Error ? error.message : "차트마커를 불러오지 못했습니다."));
+  }, [sessionId, stockId, candles[candles.length - 1]?.trade_date]);
+
+  useEffect(() => {
+    if (selectedChartMarkerGroup && chartMarkerGroupId !== selectedChartMarkerGroup.id) setChartMarkerGroupId(selectedChartMarkerGroup.id);
+  }, [selectedChartMarkerGroup?.id]);
+  useEffect(() => {
+    if (!availableChartMarkers.some((marker) => marker.id === chartMarkerId)) setChartMarkerId(availableChartMarkers[0]?.id ?? null);
+  }, [chartMarkerGroupId, chartMarkerGroups]);
+
+  const openNewChartMarker = (date:string) => {
+    setChartMarkerModal({date}); setChartMarkerMemo(""); setChartMarkerError("");
+    const group=activeChartMarkerGroups[0]; setChartMarkerGroupId(group?.id??null); setChartMarkerId(group?.markers.find(marker=>marker.is_active)?.id??null); setChartMarkerMenu(null);
+  };
+  const openEditChartMarker = (event:ChartMarkerEvent) => {
+    setChartMarkerModal({date:event.marker_date,event}); setChartMarkerGroupId(event.marker_group_id); setChartMarkerId(event.marker_id); setChartMarkerMemo(event.memo??""); setChartMarkerError(""); setChartMarkerMenu(null);
+  };
+  const saveChartMarker = async (event:FormEvent) => {
+    event.preventDefault(); if(!stockId||!chartMarkerModal)return;
+    try {
+      const saved=chartMarkerModal.event
+        ? await repositories.chartMarkers.updateEvent(chartMarkerModal.event.id,chartMarkerMemo||null)
+        : await repositories.chartMarkers.upsertEvent({stock_id:stockId,marker_id:Number(chartMarkerId),marker_date:chartMarkerModal.date,memo:chartMarkerMemo||null});
+      setChartMarkerEvents(current=>[...current.filter(item=>item.id!==saved.id),saved]);
+      setNewChartMarkerIds(current=>new Set(current).add(saved.id)); setChartMarkerModal(null);
+    } catch(error){setChartMarkerError(error instanceof Error?error.message:"차트마커를 저장하지 못했습니다.")}
+  };
+  const deleteChartMarker = async (event:ChartMarkerEvent) => {
+    if(!window.confirm(`'${event.marker_name}' 마커를 삭제하시겠습니까?`))return;
+    await repositories.chartMarkers.deleteEvent(event.id); setChartMarkerEvents(current=>current.filter(item=>item.id!==event.id)); setNewChartMarkerIds(current=>{const next=new Set(current);next.delete(event.id);return next}); setChartMarkerMenu(null);
+  };
 
   const yPrice = (value: number | null) => {
     if (value === null || !Number.isFinite(value)) return pad.top + priceHeight;
@@ -812,6 +874,11 @@ function CandleChart({
           </div>
         </div>
 
+        <div className="training-chart-tool-separator" />
+        <label className="training-chart-marker-toggle" title="과거 훈련에서 등록한 마커 표시 여부">
+          <input type="checkbox" checked={showExistingChartMarkers} onChange={(event)=>setShowExistingChartMarkers(event.target.checked)}/>
+          기존 차트마커 표시
+        </label>
       </div>
       {technicalEnabled ? <div className="training-technical-strip" aria-live="polite">
         <strong>자동 추세분석</strong><span>최근 80봉 간편 분석</span>
@@ -915,9 +982,20 @@ function CandleChart({
                 fill="transparent"
                 onMouseEnter={() => !drawingTool && setTooltip({ candle, x, y: yPrice(high), changeRate })}
                 onMouseMove={() => !drawingTool && setTooltip({ candle, x, y: yPrice(high), changeRate })}
+                onContextMenu={(event) => {
+                  event.preventDefault(); if(drawingTool)return;
+                  setChartMarkerMenu({date:candle.trade_date,x:event.clientX,y:event.clientY}); setTooltip(null); setMarkerTooltip(null);
+                }}
               />
             </g>
           );
+        })}
+
+        {visibleChartMarkerEvents.map((event) => {
+          const index=candles.findIndex(candle=>candle.trade_date===event.marker_date); if(index<0)return null;
+          const sameDay=visibleChartMarkerEvents.filter(item=>item.marker_date===event.marker_date), stack=sameDay.findIndex(item=>item.id===event.id);
+          const candle=candles[index], markerY=Math.max(pad.top+12,yPrice(Number(candle.high||0))-18-stack*20);
+          return <g key={`chart-marker-${event.id}`} transform={`translate(${xAt(index)},${markerY})`} pointerEvents="none"><circle r="8" fill={event.group_color} stroke="#fff" strokeWidth="1.5"/><text y="3.5" textAnchor="middle" fill="#fff" fontSize="9" fontWeight="800">{event.symbol||"◆"}</text><title>{event.group_name}{"\n"}{event.marker_name}{"\n\n"}{event.marker_date}{event.memo?`\n\n메모:\n${event.memo}`:""}</title></g>;
         })}
 
         {chartDrawings.map((drawing) => {
@@ -1107,6 +1185,17 @@ function CandleChart({
           </svg>
         </div>
       </div>
+      {chartMarkerMenu ? <div className="training-chart-marker-menu" style={{left:chartMarkerMenu.x+392<window.innerWidth?chartMarkerMenu.x+12:Math.max(12,chartMarkerMenu.x-392),top:Math.max(12,Math.min(chartMarkerMenu.y-8,window.innerHeight-420))}}>
+        <header><div><strong>{chartMarkerMenu.date}</strong><span>선택한 캔들</span></div><button type="button" onClick={()=>setChartMarkerMenu(null)}>×</button></header>
+        <button type="button" className="training-chart-marker-primary-action" onClick={()=>openNewChartMarker(chartMarkerMenu.date)}><span>+</span><div><strong>차트마커 기록</strong><small>이 캔들에서 발견한 현상을 기록합니다.</small></div></button>
+        {chartMarkerEvents.some(event=>event.marker_date===chartMarkerMenu.date)?<section><h4>등록된 마커</h4>{chartMarkerEvents.filter(event=>event.marker_date===chartMarkerMenu.date).map(event=><article key={event.id}><span className="training-chart-marker-symbol" style={{color:event.group_color,background:`${event.group_color}12`}}>{event.symbol}</span><div><small>{event.group_name}</small><strong>{event.marker_name}</strong></div><footer><button type="button" onClick={()=>openEditChartMarker(event)}>수정</button><button type="button" className="danger" onClick={()=>void deleteChartMarker(event)}>삭제</button></footer></article>)}</section>:<p className="training-chart-marker-menu-empty">이 캔들에 등록된 마커가 없습니다.</p>}
+      </div>:null}
+      {chartMarkerModal?<div className="training-chart-marker-modal-backdrop" onMouseDown={()=>setChartMarkerModal(null)}><form className="training-chart-marker-modal" onSubmit={saveChartMarker} onMouseDown={event=>event.stopPropagation()}>
+        <header><div><h3>차트마커 {chartMarkerModal.event?"수정":"기록"}</h3><p>{stockName||"종목"} · {chartMarkerModal.date}</p></div><button type="button" onClick={()=>setChartMarkerModal(null)}>×</button></header>
+        {chartMarkerModal.event?<><label>마커그룹<input className="input-control" readOnly value={chartMarkerModal.event.group_name}/></label><label>마커<input className="input-control" readOnly value={chartMarkerModal.event.marker_name}/></label></>:<><label>마커그룹<select className="input-control" value={selectedChartMarkerGroup?.id??""} onChange={event=>setChartMarkerGroupId(Number(event.target.value))}>{activeChartMarkerGroups.map(group=><option key={group.id} value={group.id}>{group.name}</option>)}</select></label><label>마커<select className="input-control" value={chartMarkerId??""} onChange={event=>setChartMarkerId(Number(event.target.value))}>{availableChartMarkers.map(marker=><option key={marker.id} value={marker.id}>{marker.name}</option>)}</select></label></>}
+        <label>메모<textarea className="input-control" rows={4} maxLength={4000} value={chartMarkerMemo} onChange={event=>setChartMarkerMemo(event.target.value)} placeholder="이 현상을 판단한 근거나 특징을 짧게 기록해 주세요."/></label>
+        {chartMarkerError?<p className="inline-result inline-error">{chartMarkerError}</p>:null}<footer><button type="button" className="btn btn-secondary" onClick={()=>setChartMarkerModal(null)}>취소</button><button className="btn btn-primary" disabled={!chartMarkerModal.event&&!chartMarkerId}>{chartMarkerModal.event?"수정":"저장"}</button></footer>
+      </form></div>:null}
     </div>
   );
 }
@@ -5894,6 +5983,8 @@ function TradeTrainingPage() {
               />
               <CandleChart
                 sessionId={detail.session.id}
+                stockId={detail.session.stock_id}
+                stockName={detail.session.stock_name}
                 candles={detail.candles}
                 trades={detail.trades}
                 avgPriceLine={showAvgPriceLine && detail.session.position_qty > 0 ? detail.session.avg_price : null}

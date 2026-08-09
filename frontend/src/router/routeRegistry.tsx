@@ -19,6 +19,7 @@ import TradeJournalsPage from "@/pages/TradeJournalsPage";
 import TradeReviewsPage from "@/pages/TradeReviewsPage";
 import TradeTrainingCalendarPage from "@/pages/TradeTrainingCalendarPage";
 import TradeTrainingPage from "@/pages/TradeTrainingPage";
+import ChartMarkerReviewPage from "@/pages/ChartMarkerReviewPage";
 import MarketCalendarPage from "@/pages/MarketCalendarPage";
 import MarketIndexesPage from "@/pages/MarketIndexesPage";
 import MarketSignalsPage from "@/pages/MarketSignalsPage";
@@ -83,6 +84,7 @@ export const routeRegistry: RouteItem[] = [
   { routeKey: "trade-reviews", path: "/trade-reviews", title: "매매일지 복기", description: "매매일지 데이터를 기반으로 원칙 준수와 반복 실수를 점검", component: <TradeReviewsPage /> },
   { routeKey: "trade-training", path: "/trading/training", title: "매매훈련", description: "과거 일봉을 하루씩 넘기며 매수·매도 판단을 훈련", component: <TradeTrainingPage /> },
   { routeKey: "trade-training-calendar", path: "/trade-training-calendar", title: "매매훈련 캘린더", description: "일별 매매훈련 기록과 복기 상태, 훈련점수 추이", component: <TradeTrainingCalendarPage /> },
+  { routeKey: "chart-marker-review", path: "/trading/chart-markers", title: "매매훈련 차트마커 복기", description: "차트마커 관리와 실제 사례 복기", component: <ChartMarkerReviewPage /> },
   { routeKey: "backtest", path: "/trading/backtest", title: "매매기준 백테스트", description: "계산 가능한 기준을 과거 일봉에 적용해 성과와 손실 구조를 검증", component: <BacktestPage /> },
   { routeKey: "pattern-research", path: "/trading/pattern-research", title: "매매패턴 AI연구", description: "자연어 목표를 성공/실패 샘플과 GPT 연구 패키지로 변환", component: <PatternResearchPage /> },
   { routeKey: "settings", path: "/settings", title: "설정", description: "GPT 분석 프롬프트 설정 관리", component: <GptPromptSettingsPage /> },

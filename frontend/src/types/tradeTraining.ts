@@ -545,6 +545,7 @@ export type TrainingOrderRequest = {
 
 export type TrainingSession = {
   id: number;
+  stock_id?: number | null;
   stock_code: string;
   stock_name: string | null;
   method_id?: number | null;

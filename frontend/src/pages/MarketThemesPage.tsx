@@ -7,6 +7,7 @@ import MarketThemePriceFlowPanel from "@/components/marketThemes/MarketThemePric
 import MarketThemePriceFlowModal from "@/components/marketThemes/MarketThemePriceFlowModal";
 import MarketThemeFlowChartPanel from "@/components/marketThemes/MarketThemeFlowChartPanel";
 import MarketThemeFlowTrendPanel, { invalidateMarketThemeFlowTrendFrontendCache } from "@/components/marketThemes/MarketThemeFlowTrendPanel";
+import MarketThemeReturnPredictionPanel from "@/components/marketThemes/MarketThemeReturnPredictionPanel";
 import { StockFlowCompactCard, ThemeFlowOverview, type FlowActor } from "@/components/marketThemes/FlowSummaryCards";
 import { repositories } from "@/services";
 import { ApiError } from "@/services/api/apiClient";
@@ -42,7 +43,8 @@ import type {
 import type { Stock } from "@/types/stock";
 
 type ActiveTab = "themes" | "mapping" | "candidates";
-type ThemeViewMode = "group" | "theme" | "trend" | "flowTrend";
+type ThemeViewMode = "group" | "theme" | "trend" | "flowTrend" | "prediction";
+type PredictionSort = "default" | "desc" | "asc";
 type ThemeReturnSort = "default" | "desc" | "asc";
 type ThemeStockSort = "default" | "name" | "memo";
 type MemoSaveStatus = "idle" | "saving" | "saved" | "error";
@@ -310,6 +312,15 @@ const heatmapTextClass = (rate: number | null | undefined) => {
   if (Number(rate) > 0) return "theme-return-heatmap__value-text--positive";
   return "theme-return-heatmap__value-text--empty";
 };
+const getRelativeStrengthColor = (value: number | null | undefined): string => {
+  if (value == null || Number.isNaN(Number(value))) return "#F8FAFC";
+  if (value < 20) return "#DBEAFE";
+  if (value < 40) return "#EFF6FF";
+  if (value < 60) return "#F1F5F9";
+  if (value < 80) return "#FEE2E2";
+  return "#F87171";
+};
+const relativeStrengthTextClass = (value: number | null | undefined) => value == null ? "theme-return-heatmap__value-text--empty" : Number(value) >= 80 ? "theme-return-heatmap__value-text--positive-strong" : Number(value) >= 60 ? "theme-return-heatmap__value-text--positive" : Number(value) < 40 ? "theme-return-heatmap__value-text--negative" : "theme-return-heatmap__value-text--empty";
 const returnToneClass = (value: number | null | undefined) => {
   if (value == null || Number.isNaN(Number(value))) return "theme-return-empty";
   if (Number(value) > 0) return "theme-return-positive";
@@ -556,6 +567,7 @@ function MarketThemesPage() {
   const [hoveredTrendThemeId, setHoveredTrendThemeId] = useState<number | null>(null);
   const [trendLoading, setTrendLoading] = useState(false);
   const [trendData, setTrendData] = useState<MarketThemeMonthlyReturnResponse | null>(null);
+  const [predictionSort, setPredictionSort] = useState<PredictionSort>("default");
   const [returnRecalculationTheme, setReturnRecalculationTheme] = useState<{ themeId: number; themeName: string } | null>(null);
   const [returnRecalculationPreview, setReturnRecalculationPreview] = useState<MarketThemeReturnRecalculationPreview | null>(null);
   const [returnRecalculationResult, setReturnRecalculationResult] = useState<MarketThemeReturnRecalculationResponse | null>(null);
@@ -685,9 +697,21 @@ function MarketThemesPage() {
 
 
   const trendDates = useMemo(
-    () => (trendData ? getDateRange(trendData.display_start_date, trendData.display_end_date) : []),
+    () => (trendData ? getDateRange(trendData.display_start_date, trendData.display_end_date).slice(-29) : []),
     [trendData],
   );
+  const trendThemes = useMemo(() => {
+    const rows = trendData?.themes ?? [];
+    if (predictionSort === "default") return rows;
+    const values = trendData?.prediction?.values ?? {};
+    return [...rows].sort((a, b) => {
+      const av = values[a.theme_id];
+      const bv = values[b.theme_id];
+      if (av == null) return bv == null ? 0 : 1;
+      if (bv == null) return -1;
+      return predictionSort === "desc" ? bv - av : av - bv;
+    });
+  }, [predictionSort, trendData]);
   const trendSummaryCards = useMemo(() => {
     const summary = trendData?.summary;
     return [
@@ -783,7 +807,7 @@ function MarketThemesPage() {
     }, null);
   }, [manageableThemes]);
   const themeGroupCount = useMemo(() => themes.filter((x) => x.theme_level === "THEME_GROUP").length, [themes]);
-  const themeManagementTitle = themeViewMode === "group" ? "테마그룹 관리" : themeViewMode === "trend" ? "테마등락추이" : themeViewMode === "flowTrend" ? "테마수급추이" : "테마별 관리";
+  const themeManagementTitle = themeViewMode === "group" ? "테마그룹 관리" : themeViewMode === "trend" ? "테마등락추이" : themeViewMode === "flowTrend" ? "테마수급추이" : themeViewMode === "prediction" ? "테마관찰우선순위" : "테마별 관리";
 
   const resetForm = () => {
     setFormThemeId(null);
@@ -1195,6 +1219,20 @@ function MarketThemesPage() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [zoomedChart]);
+
+  useEffect(() => {
+    if (!returnDrawerOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeReturnDrawer();
+    };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [returnDrawerOpen]);
 
   useEffect(() => {
     if (!stockFlowModal && !themeFlowModal) return;
@@ -1613,6 +1651,9 @@ function MarketThemesPage() {
             <button type="button" className={`theme-view-mode-tab ${themeViewMode === "flowTrend" ? "active" : ""}`} onClick={() => setThemeViewMode("flowTrend")}>
               테마수급추이
             </button>
+            <button type="button" className={`theme-view-mode-tab ${themeViewMode === "prediction" ? "active" : ""}`} onClick={() => setThemeViewMode("prediction")}>
+              테마관찰우선순위
+            </button>
           </div>
           {themeViewMode === "trend" ? (
             <div className="theme-return-trend-panel">
@@ -1706,12 +1747,18 @@ function MarketThemesPage() {
               ) : null}
               {trendViewMode === "heatmap" ? (
               <div className="theme-return-heatmap-wrap">
-                <div className="theme-return-heatmap" style={{ gridTemplateColumns: `minmax(200px, 220px) repeat(${Math.max(trendDates.length, 1)}, minmax(0, 1fr))` }}>
+                <div className="theme-return-heatmap" style={{ gridTemplateColumns: `minmax(200px, 220px) repeat(${Math.max(trendDates.length + 1, 1)}, minmax(0, 1fr))` }}>
                   <div className="theme-return-heatmap__theme-cell theme-return-heatmap__header-cell">테마</div>
                   {trendDates.map((day) => <div key={day} className="theme-return-heatmap__date-cell" title={day}>{formatHeatmapDayLabel(day)}</div>)}
+                  <button
+                    type="button"
+                    className="theme-return-heatmap__date-cell theme-return-heatmap__prediction-header"
+                    title={trendData?.prediction?.run ? `${trendData.prediction.mode === "PROBABILITY" ? "D+1 실제 Top20 상대강도 확률" : "D+1 관찰 상대강도 점수(확률 아님)"}\n${trendData.prediction.run.calculation_mode === "REFRESHED_MARKET_DATA" ? "시장지표 보정관찰" : "기존 시장지표 기준"}\n대상일 ${trendData.prediction.run.target_date}\n테마·종목 기준일 ${trendData.prediction.run.data_cutoff_date}\n시장지표 갱신 ${trendData.prediction.run.market_indicator_refreshed_at ?? "-"}\n방법 ${trendData.prediction.method}\n계산 ${trendData.prediction.calculated_at}` : "저장된 D+1 관찰 우선순위가 없습니다."}
+                    onClick={() => setPredictionSort((current) => current === "default" ? "desc" : current === "desc" ? "asc" : "default")}
+                  >D+1<small>{trendData?.prediction?.run?.target_date?.slice(5).replace("-", "/") ?? ""}</small></button>
                   {trendLoading ? <div className="theme-return-heatmap__empty-row">테마등락추이를 조회 중입니다.</div> : null}
                   {!trendLoading && (!trendData || trendData.themes.length === 0) ? <div className="theme-return-heatmap__empty-row">조회된 테마등락추이 데이터가 없습니다.</div> : null}
-                  {!trendLoading && trendData?.themes.map((theme) => {
+                  {!trendLoading && trendThemes.map((theme) => {
                     const dailyMap = new Map(theme.daily_returns.map((item) => [item.return_date, item]));
                     return (
                       <Fragment key={theme.theme_id}>
@@ -1749,6 +1796,17 @@ function MarketThemesPage() {
                             </button>
                           );
                         })}
+                        {(() => {
+                          const predicted = trendData?.prediction?.values?.[theme.theme_id] ?? null;
+                          return <button
+                            key={`${theme.theme_id}-prediction`}
+                            type="button"
+                            className={`theme-return-heatmap__value-cell theme-return-heatmap__prediction-cell ${predicted == null ? "theme-return-heatmap__value-cell--empty" : ""}`}
+                            style={{ background: predicted == null ? undefined : getRelativeStrengthColor(predicted), borderStyle: predicted != null && predicted < 40 ? "dashed" : undefined }}
+                            title={`${theme.theme_name} / D+1 ${trendData?.prediction?.run?.target_date ?? "-"} / ${trendData?.prediction?.mode === "PROBABILITY" ? `실제 Top20 상대강도 확률 ${predicted == null ? "-" : `${predicted.toFixed(1)}%`}` : `관찰 상대강도 점수 ${predicted == null ? "-" : predicted.toFixed(1)} (확률 아님)`} / 관찰 순위 ${trendData?.prediction?.ranks?.[theme.theme_id] ?? "-"}\n${trendData?.prediction?.run?.calculation_mode === "REFRESHED_MARKET_DATA" ? "시장지표 보정관찰" : "기존 시장지표 기준"} / 테마·종목 기준일 ${trendData?.prediction?.run?.data_cutoff_date ?? "-"} / 시장지표 ${trendData?.prediction?.run?.market_indicator_refreshed_at ?? "-"} / 방법 ${trendData?.prediction?.method ?? "-"} / 계산 ${trendData?.prediction?.calculated_at ?? "-"}`}
+                            onClick={() => predicted != null ? void openThemeReturnDetail(theme, trendData?.prediction?.run?.data_cutoff_date) : undefined}
+                          ><span className={relativeStrengthTextClass(predicted)}>{predicted == null ? "-" : trendData?.prediction?.mode === "PROBABILITY" ? `${Math.round(predicted)}%` : Math.round(predicted)}</span></button>;
+                        })()}
                       </Fragment>
                     );
                   })}
@@ -1770,6 +1828,14 @@ function MarketThemesPage() {
               onLimitChange={setTrendLimit}
               themeGroups={themeGroups}
               onCellClick={(theme, date, actor, metric, attribution) => void openThemeReturnDetail(theme, date, { actor, metric, attribution })}
+            />
+          ) : themeViewMode === "prediction" ? (
+            <MarketThemeReturnPredictionPanel
+              themeGroups={themeGroups}
+              onThemeClick={(themeId) => {
+                const theme = manageableThemes.find((row) => row.id === themeId);
+                if (theme) void openThemeReturnDetail(theme);
+              }}
             />
           ) : (
             <>

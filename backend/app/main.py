@@ -40,6 +40,7 @@ from backend.app.api.routes_stock_investor_flows import router as stock_investor
 from backend.app.api.routes_stock_tracking import router as stock_tracking_router
 from backend.app.api.routes_telegram import router as telegram_router
 from backend.app.api.routes_trade_training import router as trade_training_router
+from backend.app.api.routes_chart_markers import router as chart_markers_router
 from backend.app.api.routes_trade_journals import router as trade_journals_router
 from backend.app.api.routes_trade_reviews import router as trade_reviews_router
 from backend.app.api.routes_watchlist import router as watchlist_router
@@ -102,6 +103,7 @@ app.include_router(external_kiwoom_router)
 app.include_router(economic_briefing_router)
 app.include_router(telegram_router)
 app.include_router(trade_training_router)
+app.include_router(chart_markers_router)
 app.include_router(backtest_router)
 app.include_router(pattern_research_router)
 app.include_router(trade_journals_router)

@@ -19,6 +19,7 @@ from backend.app.clients.kiwoom.kiwoom_rest_client import KiwoomRestClient
 from backend.app.core.config import now_kst
 from backend.app.providers.market_data.kiwoom_rest_condition_provider import KiwoomRestConditionProvider
 from backend.app.providers.market_data.kiwoom_rest_market_indicator_provider import KiwoomRestMarketIndicatorProvider
+from backend.app.services.market_theme_return_prediction_service import MarketThemeReturnPredictionService
 from backend.app.schemas.external_kiwoom_schema import (
     DailyThemeFlowStockItem,
     DailyThemeRanksUpdateRequest,
@@ -3311,6 +3312,11 @@ class ExternalKiwoomService:
             theme_items.sort(key=lambda theme: (theme.theme_strength_score is None, -(theme.theme_strength_score or 0), theme.theme_name))
         if limit and limit > 0:
             theme_items = theme_items[:limit]
+        from backend.app.services.market_theme_observation_service import MarketThemeObservationService
+        observation_cutoff = self.db.execute(text(
+            "SELECT MAX(return_date) FROM market_theme_daily_returns WHERE return_date<=:end_date"
+        ), {"end_date": end.isoformat()}).scalar()
+        prediction = MarketThemeObservationService(self.db).prediction_for_cutoff(str(observation_cutoff)) if observation_cutoff else None
         return MarketThemeMonthlyReturnResponse(
             month=end.isoformat()[:7],
             end_date=end.isoformat(),
@@ -3321,6 +3327,7 @@ class ExternalKiwoomService:
             sort_by=normalized_sort,
             themes=theme_items,
             summary=summary,
+            prediction=prediction,
         )
     def get_market_theme_daily_return(self, theme_id: int, return_date: str) -> MarketThemeLatestReturnResponse:
         theme = self.db.execute(

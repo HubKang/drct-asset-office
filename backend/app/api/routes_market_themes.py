@@ -18,11 +18,137 @@ from backend.app.schemas.market_theme_stock_schema import (
     MarketThemeStockSupplySummaryResponse,
     MarketThemeStockUpdateRequest,
 )
+from backend.app.schemas.market_theme_return_prediction_schema import (
+    MarketThemeReturnPredictionRequest,
+    MarketThemeReturnPredictionResponse,
+    MarketThemeReturnValidationRequest,
+    MarketThemeReturnMLRequest,
+    MarketThemeReturnMLSelectRequest,
+    MarketThemeReturnMLStatusResponse,
+    MarketThemeReturnMLTrainResponse,
+)
+from backend.app.schemas.market_theme_observation_schema import (
+    MarketThemeObservationRequest,
+    MarketThemeObservationResponse,
+    MarketThemeObservationMLTrainResponse,
+    MarketThemeObservationDiagnosticsResponse,
+)
 from backend.app.services.market_theme_service import MarketThemeService
+from backend.app.services.market_theme_return_prediction_service import MarketThemeReturnPredictionService
+from backend.app.services.market_theme_return_ml_service import MarketThemeReturnMLService
+from backend.app.services.market_theme_return_rank_ml_service import MarketThemeReturnRankMLService
+from backend.app.services.market_theme_observation_service import MarketThemeObservationService
+from backend.app.services.market_theme_observation_ml_service import MarketThemeObservationMLService
+from backend.app.services.market_theme_observation_validation_service import MarketThemeObservationValidationService
 from backend.app.services.market_theme_stock_service import MarketThemeStockService
 from backend.app.services.market_theme_flow_trend_service import invalidate_market_theme_flow_trend_cache
 
 router = APIRouter()
+
+
+@router.get("/market-themes/observation-priorities/latest", response_model=MarketThemeObservationResponse)
+def get_latest_market_theme_observation(db: Session = Depends(get_db)) -> MarketThemeObservationResponse:
+    return MarketThemeObservationService(db).latest()
+
+
+@router.get("/market-themes/observation-priorities", response_model=MarketThemeObservationResponse)
+def get_market_theme_observation(
+    target_date: str = Query(..., description="YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+) -> MarketThemeObservationResponse:
+    return MarketThemeObservationService(db).get(target_date)
+
+
+@router.post("/market-themes/observation-priorities/calculate", response_model=MarketThemeObservationResponse)
+def calculate_market_theme_observation(
+    payload: MarketThemeObservationRequest,
+    db: Session = Depends(get_db),
+) -> MarketThemeObservationResponse:
+    return MarketThemeObservationService(db).calculate_with_market_option(
+        payload.target_date,
+        refresh_market_indicators=payload.refresh_market_indicators,
+    )
+
+
+@router.post("/market-themes/observation-priorities/validate", response_model=MarketThemeObservationResponse)
+def validate_market_theme_observation(
+    payload: MarketThemeObservationRequest,
+    db: Session = Depends(get_db),
+) -> MarketThemeObservationResponse:
+    return MarketThemeObservationService(db).validate(payload.target_date)
+
+
+@router.post("/market-themes/observation-priorities/ml/train", response_model=MarketThemeObservationMLTrainResponse)
+def train_market_theme_observation_ml(db: Session = Depends(get_db)) -> MarketThemeObservationMLTrainResponse:
+    return MarketThemeObservationMLService(db).train()
+
+
+@router.get("/market-themes/observation-priorities/diagnostics", response_model=MarketThemeObservationDiagnosticsResponse)
+def get_market_theme_observation_diagnostics(db: Session = Depends(get_db)) -> MarketThemeObservationDiagnosticsResponse:
+    return MarketThemeObservationValidationService(db).diagnostics()
+
+
+@router.get("/market-themes/return-predictions/ml/status", response_model=MarketThemeReturnMLStatusResponse)
+def get_market_theme_return_ml_status(db: Session = Depends(get_db)) -> MarketThemeReturnMLStatusResponse:
+    return MarketThemeReturnRankMLService(db).status()
+
+
+@router.post("/market-themes/return-predictions/ml/train-rank-candidates", response_model=MarketThemeReturnMLTrainResponse)
+@router.post("/api/market-themes/return-predictions/ml/train-rank-candidates", response_model=MarketThemeReturnMLTrainResponse, include_in_schema=False)
+def train_market_theme_return_rank_candidates(db: Session = Depends(get_db)) -> MarketThemeReturnMLTrainResponse:
+    return MarketThemeReturnRankMLService(db).train_rank_candidates()
+
+
+@router.post("/market-themes/return-predictions/ml/select-shadow", response_model=MarketThemeReturnMLStatusResponse)
+@router.post("/api/market-themes/return-predictions/ml/select-shadow", response_model=MarketThemeReturnMLStatusResponse, include_in_schema=False)
+def select_market_theme_return_shadow(
+    payload: MarketThemeReturnMLSelectRequest,
+    db: Session = Depends(get_db),
+) -> MarketThemeReturnMLStatusResponse:
+    return MarketThemeReturnRankMLService(db).select_shadow(payload.model_version)
+
+
+@router.post("/market-themes/return-predictions/ml/train-shadow", response_model=MarketThemeReturnMLTrainResponse)
+def train_market_theme_return_ml_shadow(db: Session = Depends(get_db)) -> MarketThemeReturnMLTrainResponse:
+    return MarketThemeReturnMLService(db).train_shadow()
+
+
+@router.post("/market-themes/return-predictions/ml/predict-shadow", response_model=MarketThemeReturnPredictionResponse)
+def predict_market_theme_return_ml_shadow(
+    payload: MarketThemeReturnMLRequest,
+    db: Session = Depends(get_db),
+) -> MarketThemeReturnPredictionResponse:
+    return MarketThemeReturnMLService(db).predict_shadow(payload.target_date)
+
+
+@router.get("/market-themes/return-predictions/latest", response_model=MarketThemeReturnPredictionResponse)
+def get_latest_market_theme_return_prediction(db: Session = Depends(get_db)) -> MarketThemeReturnPredictionResponse:
+    return MarketThemeReturnPredictionService(db).latest()
+
+
+@router.get("/market-themes/return-predictions", response_model=MarketThemeReturnPredictionResponse)
+def get_market_theme_return_prediction(
+    target_date: str = Query(..., description="YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+) -> MarketThemeReturnPredictionResponse:
+    return MarketThemeReturnPredictionService(db).get(target_date)
+
+
+@router.post("/market-themes/return-predictions/predict", response_model=MarketThemeReturnPredictionResponse)
+def predict_market_theme_returns(
+    payload: MarketThemeReturnPredictionRequest,
+    db: Session = Depends(get_db),
+) -> MarketThemeReturnPredictionResponse:
+    # theme_group_id is intentionally a presentation filter; official storage always covers every active leaf theme.
+    return MarketThemeReturnPredictionService(db).predict(payload.target_date)
+
+
+@router.post("/market-themes/return-predictions/validate", response_model=MarketThemeReturnPredictionResponse)
+def validate_market_theme_returns(
+    payload: MarketThemeReturnValidationRequest,
+    db: Session = Depends(get_db),
+) -> MarketThemeReturnPredictionResponse:
+    return MarketThemeReturnPredictionService(db).validate(payload.target_date)
 
 
 @router.get("/market-themes", response_model=list[MarketThemeResponse])

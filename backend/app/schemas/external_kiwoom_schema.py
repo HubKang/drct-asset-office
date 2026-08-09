@@ -4,6 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 from backend.app.schemas.market_theme_stock_schema import StockDailyFlowSummary, ThemeDailyFlowSummary
+from backend.app.schemas.market_theme_return_prediction_schema import MarketThemeReturnTrendPrediction
 
 
 class KiwoomConditionItemIn(BaseModel):
@@ -527,6 +528,7 @@ class MarketThemeMonthlyReturnResponse(BaseModel):
     sort_by: str | None = None
     themes: list[MarketThemeMonthlyReturnThemeItem] = Field(default_factory=list)
     summary: MarketThemeMonthlyReturnSummary
+    prediction: MarketThemeReturnTrendPrediction | None = None
 
 class DailyThemeFlowSummaryItem(BaseModel):
     market_theme_id: int

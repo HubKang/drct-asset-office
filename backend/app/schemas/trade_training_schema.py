@@ -542,6 +542,7 @@ class TrainingOrderRequest(BaseModel):
 
 class TrainingSessionResponse(BaseModel):
     id: int
+    stock_id: int | None = None
     stock_code: str
     stock_name: str | None = None
     method_id: int | None = None

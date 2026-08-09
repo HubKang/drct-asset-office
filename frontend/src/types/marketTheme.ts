@@ -501,6 +501,191 @@ export type MarketThemeMonthlyReturnResponse = {
     trading_value_top?: MarketThemeMonthlyReturnSummaryTopItem | null;
     persistence_top?: MarketThemeMonthlyReturnSummaryTopItem | null;
   };
+  prediction?: MarketThemeReturnTrendPrediction | null;
+};
+
+export type MarketThemeReturnPredictionRun = {
+  id: number;
+  target_date: string;
+  data_cutoff_date: string;
+  data_cutoff_at: string | null;
+  prediction_stage: string;
+  prediction_horizon: string;
+  official_method: string;
+  status: "DRAFT" | "PREDICTED" | "WAITING_ACTUAL" | "EVALUATED" | "CANCELLED";
+  revision_count: number;
+  rule_version: string;
+  model_version: string | null;
+  first_predicted_at: string;
+  last_predicted_at: string;
+  evaluated_at: string | null;
+};
+
+export type MarketThemeReturnPredictionItem = {
+  theme_id: number; theme_name: string; theme_group_id: number | null; theme_group_name: string | null;
+  prediction_method: string; is_official: boolean; model_version: string | null; base_change_rate: number | null;
+  predicted_change_rate: number | null; prediction_score: number | null; predicted_rank: number | null;
+  top5_probability: number | null;
+  price_score: number | null; flow_score: number | null; breadth_score: number | null;
+  alignment_score: number | null; liquidity_score: number | null; market_environment_score: number | null;
+  penalty_score: number; data_coverage_rate: number; actual_change_rate: number | null; actual_rank: number | null;
+  signed_gap: number | null; absolute_gap: number | null; rank_gap: number | null; direction_hit: boolean | null;
+  baseline_absolute_error: number | null; prediction_effect: number | null; evaluation_status: string;
+};
+
+export type MarketThemeReturnPredictionMetrics = {
+  theme_count: number; evaluable_theme_count: number; return_mae: number | null; return_rmse: number | null;
+  mean_signed_gap: number | null; mean_rank_error: number | null; top1_hit: number | null;
+  precision_at_3: number | null; precision_at_5: number | null; precision_at_10: number | null;
+  direction_accuracy: number | null; spearman_rank_correlation: number | null; ndcg_at_5: number | null;
+  baseline_mae: number | null; mae_improvement: number | null; baseline_precision_at_5: number | null;
+  improved_theme_count: number; evaluation_status: string; evaluated_at: string;
+};
+
+export type MarketThemeReturnPredictionAdvice = {
+  code: string; diagnosis: string; impact: string; evidence: string; current_setting: string;
+  suggested_range: string; expected_effect: string; parameter_code: string;
+};
+
+export type MarketThemeReturnPredictionResponse = {
+  status: string; message: string | null; data_cutoff_date: string | null; default_target_date: string | null;
+  run: MarketThemeReturnPredictionRun | null; items: MarketThemeReturnPredictionItem[];
+  shadow_items: MarketThemeReturnPredictionItem[];
+  metrics: MarketThemeReturnPredictionMetrics | null; recommendations: MarketThemeReturnPredictionAdvice[];
+  method_metrics: MarketThemeReturnMethodMetrics[];
+};
+
+export type MarketThemeObservationRun = {
+  id: number; target_date: string; data_cutoff_date: string; status: string; method: string;
+  model_version: string | null; feature_version: string; display_mode: "PROBABILITY" | "SCORE";
+  calculated_at: string; evaluated_at: string | null;
+  calculation_mode: "CURRENT_MARKET_DATA" | "REFRESHED_MARKET_DATA";
+  market_refresh_requested: boolean; market_refresh_status: "NOT_REQUESTED" | "SUCCESS" | "PARTIAL" | "FAILED";
+  market_indicator_refreshed_at: string | null; market_indicator_data_asof_at: string | null;
+  market_indicator_updated_count: number | null; market_indicator_failed_count: number | null;
+  market_collection_run_id: number | null; revision_count: number;
+};
+
+export type MarketThemeObservationItem = {
+  theme_id: number; theme_name: string; theme_group_id: number | null; theme_group_name: string | null;
+  observation_rank: number | null; relative_strength_probability: number | null; relative_strength_score: number | null;
+  top20_probability: number | null; status_code: "FLOW_LEADING" | "STRONG_CONTINUATION" | "REVERSAL_WATCH" | "NEUTRAL" | "OVERHEAT_RISK" | "FLOW_EXIT";
+  confidence_level: "HIGH" | "MEDIUM" | "LOW"; data_coverage_rate: number; base_change_rate: number | null;
+  price_score: number | null; flow_score: number | null; breadth_score: number | null; liquidity_score: number | null;
+  technical_score: number | null; market_environment_score: number | null; penalty_score: number;
+  actual_change_rate: number | null; actual_rank: number | null; actual_top20: boolean | null;
+  actual_relative_strength: number | null; relative_strength_gap: number | null;
+  current_score: number | null; refreshed_score: number | null;
+  rank_gap: number | null; probability_error: number | null; evaluation_status: string;
+};
+
+export type MarketThemeObservationMetrics = {
+  theme_count: number; evaluable_theme_count: number; precision_top20: number | null; recall_top20: number | null;
+  f1_top20: number | null; precision_at_5: number | null; ndcg_at_5: number | null;
+  spearman_rank_correlation: number | null; mean_rank_error: number | null; brier_score: number | null;
+  log_loss: number | null; calibration_error: number | null; evaluation_status: string; evaluated_at: string;
+};
+
+export type MarketThemeObservationResponse = {
+  status: string; message: string | null; data_cutoff_date: string | null; default_target_date: string | null;
+  run: MarketThemeObservationRun | null; items: MarketThemeObservationItem[]; metrics: MarketThemeObservationMetrics | null;
+  actual_universe_count: number | null;
+  market_indicator_latest_refreshed_at: string | null;
+  pre_validation_status?: string | null; pre_validation_target_date?: string | null;
+  pre_validation_modes?: string[]; pre_validation_quality_status?: string | null;
+  pre_validation_message?: string | null; diagnostic_status?: string | null;
+};
+
+export type MarketThemeObservationDiagnosticMetricSummary = {
+  evaluated_days: number; precision_top20: number | null; precision_at_5: number | null;
+  ndcg_at_5: number | null; spearman: number | null; mean_rank_error: number | null;
+};
+export type MarketThemeObservationDiagnosticPeriod = {
+  quality_days: number; current: MarketThemeObservationDiagnosticMetricSummary; refreshed: MarketThemeObservationDiagnosticMetricSummary;
+};
+export type MarketThemeObservationDiagnosticsResponse = {
+  quality_evaluated_days: number;
+  recent_5: MarketThemeObservationDiagnosticPeriod;
+  recent_20: MarketThemeObservationDiagnosticPeriod;
+  all: MarketThemeObservationDiagnosticPeriod;
+  paired_correction: {
+    paired_days: number; mean_rank_error_current: number | null; mean_rank_error_refreshed: number | null;
+    mean_refresh_effect: number | null; improved_theme_count: number; worsened_theme_count: number; unchanged_theme_count: number;
+  };
+  status_performance: Array<{ status_code: string | null; sample_count: number; top20_hit_rate: number | null; mean_actual_rank: number | null; mean_rank_error: number | null; }>;
+  score_bucket_performance: Array<{ score_bucket: string; sample_count: number; top20_entry_rate: number | null; mean_actual_rank_percentile: number | null; }>;
+  diagnostic_status: string;
+  messages: Array<{ code: string; severity: string; title: string; message: string; }>;
+  ml_quality_days_since_training: number;
+};
+
+export type MarketThemeObservationMLTrainResponse = {
+  status: string; message: string; feature_version: string; train_start_date: string | null; train_end_date: string | null;
+  distinct_base_dates: number; train_row_count: number; qualified_date_count: number; excluded_universe_dates: number;
+  validation_fold_count: number; candidates: Array<{ model_type: string; model_version: string | null; target_type: string;
+    selection_gate_status: string; calibration_status: string; probability_display_mode: string; improving_fold_count: number;
+    validation_fold_count: number; metrics: { precision_top20: number | null; recall_top20: number | null; f1_top20: number | null;
+      precision_at_5: number | null; ndcg_at_5: number | null; spearman: number | null; mean_rank_error: number | null;
+      brier: number | null; log_loss: number | null; calibration_error: number | null; raw_brier: number | null;
+      raw_log_loss: number | null; raw_calibration_error: number | null; }; }>;
+};
+
+export type MarketThemeReturnMethodMetrics = {
+  prediction_method: string; model_version: string; theme_count: number; evaluable_theme_count: number;
+  return_mae: number | null; return_rmse: number | null; mean_signed_gap: number | null;
+  mean_rank_error: number | null; precision_at_5: number | null; direction_accuracy: number | null; ndcg_at_5: number | null;
+};
+
+export type MarketThemeReturnMLMetrics = {
+  mae: number | null; rmse: number | null; mean_signed_gap: number | null; direction_accuracy: number | null;
+  precision_at_3: number | null; precision_at_5: number | null; precision_at_10: number | null;
+  spearman: number | null; ndcg_at_5: number | null; mean_rank_error: number | null;
+};
+
+export type MarketThemeReturnMLStatus = {
+  status: string; available: boolean; model_version: string | null; model_type: string | null; feature_version: string | null;
+  trained_at: string | null; train_start_date: string | null; train_end_date: string | null; distinct_train_dates: number;
+  train_row_count: number; validation_fold_count: number; validation_metrics: MarketThemeReturnMLMetrics | null;
+  rule_metrics: MarketThemeReturnMLMetrics | null; baseline_metrics: MarketThemeReturnMLMetrics | null; artifact_path: string | null;
+  common_evaluated_runs: number; cumulative_rule_mae: number | null; cumulative_ml_mae: number | null;
+  cumulative_rule_precision_at_5: number | null; cumulative_ml_precision_at_5: number | null;
+  cumulative_rule_ndcg_at_5: number | null; cumulative_ml_ndcg_at_5: number | null; promotion_readiness: string;
+  target_type: string | null; selection_gate_status: string; selection_reason: string | null;
+  readiness: "NOT_READY" | "OBSERVE" | "ELIGIBLE_FOR_REVIEW"; drift_status: "STABLE" | "WATCH" | "DEGRADED";
+  recent_5: MarketThemeReturnMLPerformanceWindow | null; recent_20: MarketThemeReturnMLPerformanceWindow | null;
+  all_common: MarketThemeReturnMLPerformanceWindow | null; remaining_runs_for_review: number;
+  advice_code: string; advice_message: string;
+};
+
+export type MarketThemeReturnMLPerformanceWindow = {
+  sample_size: number; sufficient: boolean; rule_metrics: MarketThemeReturnMLMetrics | null;
+  ml_metrics: MarketThemeReturnMLMetrics | null; ndcg_difference: number | null;
+  precision_at_5_difference: number | null; mean_rank_error_difference: number | null;
+};
+
+export type MarketThemeReturnMLTrainResponse = {
+  status: string; message: string; feature_version: string; train_start_date: string | null; train_end_date: string | null;
+  distinct_base_dates: number; train_row_count: number; theme_count: number; excluded_missing_label: number;
+  excluded_low_coverage: number; validation_fold_count: number; candidates: Array<{
+    model_type: string; model_version: string | null; target_type: string; selection_gate_status: string;
+    selection_reason: string | null; improving_fold_count: number; validation_fold_count: number;
+    metrics: MarketThemeReturnMLMetrics;
+  }>;
+  baseline_metrics: MarketThemeReturnMLMetrics | null; rule_metrics: MarketThemeReturnMLMetrics | null;
+  selected_model_type: string | null; model_version: string | null; artifact_path: string | null; sklearn_version: string | null;
+  proposed_shadow_model_version: string | null; metric_version: string;
+};
+
+export type MarketThemeReturnTrendPrediction = {
+  run: { id: number; target_date: string; data_cutoff_date: string; method: string; feature_version: string;
+    display_mode: "PROBABILITY" | "SCORE"; calculated_at: string; calculation_mode: "CURRENT_MARKET_DATA" | "REFRESHED_MARKET_DATA";
+    market_refresh_status: string; market_indicator_refreshed_at: string | null; market_indicator_data_asof_at: string | null } | null;
+  values: Record<number, number | null>;
+  ranks: Record<number, number | null>;
+  mode: "PROBABILITY" | "SCORE" | null;
+  method: string | null;
+  feature_version: string | null;
+  calculated_at: string | null;
 };
 
 export type MarketThemeMonthlyReturnParams = {

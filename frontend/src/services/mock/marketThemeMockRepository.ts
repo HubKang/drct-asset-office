@@ -21,6 +21,12 @@ import type {
   MarketThemeReturnRecalculationPreview,
   MarketThemeReturnRecalculationResponse,
   MarketThemeReturnRefreshResponse,
+  MarketThemeReturnPredictionResponse,
+  MarketThemeReturnMLStatus,
+  MarketThemeReturnMLTrainResponse,
+  MarketThemeObservationResponse,
+  MarketThemeObservationMLTrainResponse,
+  MarketThemeObservationDiagnosticsResponse,
   MarketThemeStock,
   MarketThemeStockCreateInput,
   MarketThemeStockMemoUpdateInput,
@@ -35,6 +41,57 @@ const mappings: MarketThemeStock[] = [];
 const candidates: MarketThemeCandidate[] = [];
 
 export const marketThemeMockRepository = {
+  async getObservationDiagnostics(): Promise<MarketThemeObservationDiagnosticsResponse> {
+    const empty = { evaluated_days: 0, precision_top20: null, precision_at_5: null, ndcg_at_5: null, spearman: null, mean_rank_error: null };
+    return { quality_evaluated_days: 0, recent_5: { quality_days: 0, current: empty, refreshed: empty },
+      recent_20: { quality_days: 0, current: empty, refreshed: empty }, all: { quality_days: 0, current: empty, refreshed: empty },
+      paired_correction: { paired_days: 0, mean_rank_error_current: null, mean_rank_error_refreshed: null, mean_refresh_effect: null, improved_theme_count: 0, worsened_theme_count: 0, unchanged_theme_count: 0 },
+      status_performance: [], score_bucket_performance: [], diagnostic_status: "INSUFFICIENT_DATA",
+      messages: [{ code: "INSUFFICIENT_DATA", severity: "INFO", title: "데이터 축적 중", message: "아직 로직 변경을 판단하기에는 데이터가 부족합니다." }], ml_quality_days_since_training: 0 };
+  },
+  async getLatestObservationPriority(): Promise<MarketThemeObservationResponse> {
+    return { status: "DRAFT", message: "저장된 관찰 우선순위가 없습니다.", data_cutoff_date: null, default_target_date: null, run: null, items: [], metrics: null, actual_universe_count: null, market_indicator_latest_refreshed_at: null };
+  },
+  async getObservationPriority(_targetDate: string): Promise<MarketThemeObservationResponse> { return this.getLatestObservationPriority(); },
+  async calculateObservationPriority(_targetDate: string, _refreshMarketIndicators = false): Promise<MarketThemeObservationResponse> { return this.getLatestObservationPriority(); },
+  async validateObservationPriority(_targetDate: string): Promise<MarketThemeObservationResponse> { return this.getLatestObservationPriority(); },
+  async trainObservationML(): Promise<MarketThemeObservationMLTrainResponse> {
+    return { status: "INSUFFICIENT_DATA", message: "Mock 데이터가 없습니다.", feature_version: "THEME_OBSERVATION_FEATURE_V1", train_start_date: null, train_end_date: null, distinct_base_dates: 0, train_row_count: 0, qualified_date_count: 0, excluded_universe_dates: 0, validation_fold_count: 0, candidates: [] };
+  },
+  async getLatestReturnPrediction(): Promise<MarketThemeReturnPredictionResponse> {
+    return { status: "DRAFT", message: "저장된 예측이 없습니다.", data_cutoff_date: null, default_target_date: null, run: null, items: [], shadow_items: [], metrics: null, recommendations: [], method_metrics: [] };
+  },
+  async getReturnPrediction(_targetDate: string): Promise<MarketThemeReturnPredictionResponse> {
+    return this.getLatestReturnPrediction();
+  },
+  async predictReturns(_targetDate: string): Promise<MarketThemeReturnPredictionResponse> {
+    throw new Error("mock mode: predictReturns not implemented");
+  },
+  async validateReturnPrediction(_targetDate: string): Promise<MarketThemeReturnPredictionResponse> {
+    throw new Error("mock mode: validateReturnPrediction not implemented");
+  },
+  async getReturnMLStatus(): Promise<MarketThemeReturnMLStatus> {
+    return { status: "UNAVAILABLE", available: false, model_version: null, model_type: null, feature_version: null, trained_at: null,
+      train_start_date: null, train_end_date: null, distinct_train_dates: 0, train_row_count: 0, validation_fold_count: 0,
+      validation_metrics: null, rule_metrics: null, baseline_metrics: null, artifact_path: null, common_evaluated_runs: 0,
+      cumulative_rule_mae: null, cumulative_ml_mae: null, cumulative_rule_precision_at_5: null,
+      cumulative_ml_precision_at_5: null, cumulative_rule_ndcg_at_5: null, cumulative_ml_ndcg_at_5: null,
+      promotion_readiness: "NOT_READY", target_type: null, selection_gate_status: "NOT_EVALUATED", selection_reason: null,
+      readiness: "NOT_READY", drift_status: "WATCH", recent_5: null, recent_20: null, all_common: null,
+      remaining_runs_for_review: 20, advice_code: "ML_SAMPLE_INSUFFICIENT", advice_message: "실전 공통 검증 데이터가 부족합니다." };
+  },
+  async trainReturnMLShadow(): Promise<MarketThemeReturnMLTrainResponse> {
+    throw new Error("mock mode: trainReturnMLShadow not implemented");
+  },
+  async trainReturnMLRankCandidates(): Promise<MarketThemeReturnMLTrainResponse> {
+    throw new Error("mock mode: trainReturnMLRankCandidates not implemented");
+  },
+  async selectReturnMLShadow(_modelVersion: string): Promise<MarketThemeReturnMLStatus> {
+    throw new Error("mock mode: selectReturnMLShadow not implemented");
+  },
+  async predictReturnMLShadow(_targetDate: string): Promise<MarketThemeReturnPredictionResponse> {
+    throw new Error("mock mode: predictReturnMLShadow not implemented");
+  },
   async list(_params?: MarketThemeListParams): Promise<MarketTheme[]> {
     return themes;
   },

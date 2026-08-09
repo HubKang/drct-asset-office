@@ -65,6 +65,8 @@ archive/cleanup/
 *.session-journal
 backend/.local/
 backend/.local/telegram_sessions/
+backend/model_artifacts/theme_return_prediction/**
+!backend/model_artifacts/theme_return_prediction/.gitkeep
 
 # Kiwoom legacy agent runtime outputs
 kiwoom-rest-agent/data/**

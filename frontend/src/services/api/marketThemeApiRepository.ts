@@ -24,6 +24,12 @@ import type {
   MarketThemeReturnRecalculationPreview,
   MarketThemeReturnRecalculationResponse,
   MarketThemeReturnRefreshResponse,
+  MarketThemeReturnPredictionResponse,
+  MarketThemeReturnMLStatus,
+  MarketThemeReturnMLTrainResponse,
+  MarketThemeObservationResponse,
+  MarketThemeObservationMLTrainResponse,
+  MarketThemeObservationDiagnosticsResponse,
   MarketThemeStock,
   MarketThemeStockCreateInput,
   MarketThemeStockMemoUpdateInput,
@@ -34,6 +40,36 @@ import type {
 } from "@/types/marketTheme";
 
 export const marketThemeApiRepository = {
+  getLatestObservationPriority: (signal?: AbortSignal) =>
+    apiRequest<MarketThemeObservationResponse>("/market-themes/observation-priorities/latest", { signal }),
+  getObservationDiagnostics: (signal?: AbortSignal) =>
+    apiRequest<MarketThemeObservationDiagnosticsResponse>("/market-themes/observation-priorities/diagnostics", { signal }),
+  getObservationPriority: (targetDate: string, signal?: AbortSignal) =>
+    apiRequest<MarketThemeObservationResponse>(`/market-themes/observation-priorities?target_date=${encodeURIComponent(targetDate)}`, { signal }),
+  calculateObservationPriority: (targetDate: string, refreshMarketIndicators = false, signal?: AbortSignal) =>
+    apiRequest<MarketThemeObservationResponse>("/market-themes/observation-priorities/calculate", { method: "POST", body: JSON.stringify({ target_date: targetDate, refresh_market_indicators: refreshMarketIndicators }), signal, timeoutMs: 600_000 }),
+  validateObservationPriority: (targetDate: string, signal?: AbortSignal) =>
+    apiRequest<MarketThemeObservationResponse>("/market-themes/observation-priorities/validate", { method: "POST", body: JSON.stringify({ target_date: targetDate }), signal }),
+  trainObservationML: (signal?: AbortSignal) =>
+    apiRequest<MarketThemeObservationMLTrainResponse>("/market-themes/observation-priorities/ml/train", { method: "POST", signal, timeoutMs: 600_000 }),
+  getLatestReturnPrediction: (signal?: AbortSignal) =>
+    apiRequest<MarketThemeReturnPredictionResponse>("/market-themes/return-predictions/latest", { signal }),
+  getReturnPrediction: (targetDate: string, signal?: AbortSignal) =>
+    apiRequest<MarketThemeReturnPredictionResponse>(`/market-themes/return-predictions?target_date=${encodeURIComponent(targetDate)}`, { signal }),
+  predictReturns: (targetDate: string, signal?: AbortSignal) =>
+    apiRequest<MarketThemeReturnPredictionResponse>("/market-themes/return-predictions/predict", { method: "POST", body: JSON.stringify({ target_date: targetDate }), signal }),
+  validateReturnPrediction: (targetDate: string, signal?: AbortSignal) =>
+    apiRequest<MarketThemeReturnPredictionResponse>("/market-themes/return-predictions/validate", { method: "POST", body: JSON.stringify({ target_date: targetDate }), signal }),
+  getReturnMLStatus: (signal?: AbortSignal) =>
+    apiRequest<MarketThemeReturnMLStatus>("/market-themes/return-predictions/ml/status", { signal }),
+  trainReturnMLShadow: (signal?: AbortSignal) =>
+    apiRequest<MarketThemeReturnMLTrainResponse>("/market-themes/return-predictions/ml/train-shadow", { method: "POST", signal, timeoutMs: 300_000 }),
+  trainReturnMLRankCandidates: (signal?: AbortSignal) =>
+    apiRequest<MarketThemeReturnMLTrainResponse>("/market-themes/return-predictions/ml/train-rank-candidates", { method: "POST", signal, timeoutMs: 600_000 }),
+  selectReturnMLShadow: (modelVersion: string, signal?: AbortSignal) =>
+    apiRequest<MarketThemeReturnMLStatus>("/market-themes/return-predictions/ml/select-shadow", { method: "POST", body: JSON.stringify({ model_version: modelVersion }), signal }),
+  predictReturnMLShadow: (targetDate: string, signal?: AbortSignal) =>
+    apiRequest<MarketThemeReturnPredictionResponse>("/market-themes/return-predictions/ml/predict-shadow", { method: "POST", body: JSON.stringify({ target_date: targetDate }), signal, timeoutMs: 120_000 }),
   list: (params?: MarketThemeListParams) => {
     const search = new URLSearchParams();
     if (params?.is_active !== undefined) search.set("is_active", String(params.is_active));

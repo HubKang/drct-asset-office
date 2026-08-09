@@ -136,6 +136,10 @@
       {
         "title": "매매훈련 캘린더",
         "routeKey": "trade-training-calendar"
+      },
+      {
+        "title": "매매훈련 차트마커 복기",
+        "routeKey": "chart-marker-review"
       }
     ]
   },

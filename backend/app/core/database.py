@@ -211,6 +211,34 @@ def ensure_runtime_schema() -> None:
         return
 
     with engine.begin() as conn:
+        conn.exec_driver_sql("""
+            CREATE TABLE IF NOT EXISTS chart_marker_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, description TEXT,
+                color TEXT NOT NULL DEFAULT '#64748b', sort_order INTEGER NOT NULL DEFAULT 0,
+                is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.exec_driver_sql("""
+            CREATE TABLE IF NOT EXISTS chart_markers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, marker_group_id INTEGER NOT NULL, name TEXT NOT NULL,
+                description TEXT, symbol TEXT NOT NULL DEFAULT '◆', sort_order INTEGER NOT NULL DEFAULT 0,
+                is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(marker_group_id, name),
+                FOREIGN KEY(marker_group_id) REFERENCES chart_marker_groups(id) ON DELETE RESTRICT
+            )
+        """)
+        conn.exec_driver_sql("""
+            CREATE TABLE IF NOT EXISTS chart_marker_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, stock_id INTEGER NOT NULL, marker_id INTEGER NOT NULL,
+                marker_date TEXT NOT NULL, memo TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(stock_id, marker_id, marker_date),
+                FOREIGN KEY(stock_id) REFERENCES stocks(id) ON DELETE CASCADE,
+                FOREIGN KEY(marker_id) REFERENCES chart_markers(id) ON DELETE RESTRICT
+            )
+        """)
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_chart_marker_events_stock_date ON chart_marker_events(stock_id, marker_date)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_chart_marker_events_marker_stock_date ON chart_marker_events(marker_id, stock_id, marker_date DESC)")
         conn.exec_driver_sql(
             """
             CREATE TABLE IF NOT EXISTS app_images (
@@ -1393,6 +1421,342 @@ def ensure_runtime_schema() -> None:
         )
         conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_market_theme_stock_daily_returns_theme_date ON market_theme_stock_daily_returns(theme_id, return_date)"
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_theme_return_prediction_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                target_date TEXT NOT NULL,
+                data_cutoff_date TEXT NOT NULL,
+                data_cutoff_at TEXT,
+                prediction_stage TEXT NOT NULL DEFAULT 'PREMARKET',
+                prediction_horizon TEXT NOT NULL DEFAULT 'NEXT_SELECTED_DATE',
+                official_method TEXT NOT NULL DEFAULT 'RULE',
+                status TEXT NOT NULL DEFAULT 'DRAFT',
+                revision_count INTEGER NOT NULL DEFAULT 1,
+                rule_version TEXT NOT NULL,
+                model_version TEXT,
+                first_predicted_at TEXT NOT NULL,
+                last_predicted_at TEXT NOT NULL,
+                evaluated_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(target_date, prediction_stage, prediction_horizon)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_theme_return_prediction_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id INTEGER NOT NULL,
+                theme_id INTEGER NOT NULL,
+                prediction_method TEXT NOT NULL DEFAULT 'RULE',
+                is_official INTEGER NOT NULL DEFAULT 1,
+                model_version TEXT,
+                base_change_rate REAL,
+                predicted_change_rate REAL,
+                prediction_score REAL,
+                predicted_rank INTEGER,
+                price_score REAL,
+                flow_score REAL,
+                breadth_score REAL,
+                alignment_score REAL,
+                liquidity_score REAL,
+                market_environment_score REAL,
+                penalty_score REAL NOT NULL DEFAULT 0,
+                data_coverage_rate REAL NOT NULL DEFAULT 0,
+                actual_change_rate REAL,
+                actual_rank INTEGER,
+                signed_gap REAL,
+                absolute_gap REAL,
+                rank_gap INTEGER,
+                direction_hit INTEGER,
+                baseline_absolute_error REAL,
+                prediction_effect REAL,
+                evaluation_status TEXT NOT NULL DEFAULT 'NOT_EVALUATED',
+                evaluated_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(run_id, theme_id, prediction_method),
+                FOREIGN KEY (run_id) REFERENCES market_theme_return_prediction_runs(id) ON DELETE CASCADE,
+                FOREIGN KEY (theme_id) REFERENCES market_themes(id) ON DELETE CASCADE
+            )
+            """
+        )
+        _ensure_column(conn, "market_theme_return_prediction_items", "model_version", "TEXT")
+        _ensure_column(conn, "market_theme_return_prediction_items", "top5_probability", "REAL")
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_theme_return_prediction_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id INTEGER NOT NULL UNIQUE,
+                theme_count INTEGER NOT NULL,
+                evaluable_theme_count INTEGER NOT NULL,
+                return_mae REAL,
+                return_rmse REAL,
+                mean_signed_gap REAL,
+                mean_rank_error REAL,
+                top1_hit REAL,
+                precision_at_3 REAL,
+                precision_at_5 REAL,
+                precision_at_10 REAL,
+                direction_accuracy REAL,
+                spearman_rank_correlation REAL,
+                ndcg_at_5 REAL,
+                baseline_mae REAL,
+                mae_improvement REAL,
+                baseline_precision_at_5 REAL,
+                improved_theme_count INTEGER NOT NULL DEFAULT 0,
+                evaluation_status TEXT NOT NULL,
+                evaluated_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (run_id) REFERENCES market_theme_return_prediction_runs(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_theme_return_prediction_rule_sets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_version TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'ACTIVE',
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_theme_return_prediction_rule_parameters (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_set_id INTEGER NOT NULL,
+                parameter_code TEXT NOT NULL,
+                parameter_value REAL NOT NULL,
+                description TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(rule_set_id, parameter_code),
+                FOREIGN KEY (rule_set_id) REFERENCES market_theme_return_prediction_rule_sets(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_theme_prediction_runs_cutoff ON market_theme_return_prediction_runs(data_cutoff_date, status)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_theme_prediction_items_run_rank ON market_theme_return_prediction_items(run_id, predicted_rank)")
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_theme_return_prediction_models (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                model_version TEXT NOT NULL UNIQUE,
+                model_type TEXT NOT NULL,
+                feature_version TEXT NOT NULL,
+                status TEXT NOT NULL,
+                trained_at TEXT NOT NULL,
+                train_start_date TEXT NOT NULL,
+                train_end_date TEXT NOT NULL,
+                distinct_train_dates INTEGER NOT NULL,
+                train_row_count INTEGER NOT NULL,
+                validation_fold_count INTEGER NOT NULL,
+                validation_mae REAL,
+                validation_rmse REAL,
+                validation_mean_signed_gap REAL,
+                validation_direction_accuracy REAL,
+                validation_precision_at_3 REAL,
+                validation_precision_at_5 REAL,
+                validation_precision_at_10 REAL,
+                validation_spearman REAL,
+                validation_ndcg_at_5 REAL,
+                validation_mean_rank_error REAL,
+                rule_validation_mae REAL,
+                rule_validation_precision_at_5 REAL,
+                rule_validation_ndcg_at_5 REAL,
+                baseline_validation_mae REAL,
+                baseline_validation_precision_at_5 REAL,
+                baseline_validation_ndcg_at_5 REAL,
+                artifact_path TEXT NOT NULL,
+                sklearn_version TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_theme_return_prediction_method_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id INTEGER NOT NULL,
+                prediction_method TEXT NOT NULL,
+                model_version TEXT NOT NULL DEFAULT '',
+                theme_count INTEGER NOT NULL,
+                evaluable_theme_count INTEGER NOT NULL,
+                return_mae REAL,
+                return_rmse REAL,
+                mean_signed_gap REAL,
+                mean_rank_error REAL,
+                top1_hit REAL,
+                precision_at_3 REAL,
+                precision_at_5 REAL,
+                precision_at_10 REAL,
+                direction_accuracy REAL,
+                spearman_rank_correlation REAL,
+                ndcg_at_5 REAL,
+                evaluated_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(run_id, prediction_method, model_version),
+                FOREIGN KEY (run_id) REFERENCES market_theme_return_prediction_runs(id) ON DELETE CASCADE
+            )
+            """
+        )
+        _ensure_column(conn, "market_theme_return_prediction_models", "target_type", "TEXT NOT NULL DEFAULT 'RAW_RETURN'")
+        _ensure_column(conn, "market_theme_return_prediction_models", "parent_model_version", "TEXT")
+        _ensure_column(conn, "market_theme_return_prediction_models", "selection_gate_status", "TEXT NOT NULL DEFAULT 'NOT_EVALUATED'")
+        _ensure_column(conn, "market_theme_return_prediction_models", "selection_reason", "TEXT")
+        _ensure_column(conn, "market_theme_return_prediction_models", "shadow_selected_at", "TEXT")
+        _ensure_column(conn, "market_theme_return_prediction_models", "validation_improving_fold_count", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(conn, "market_theme_return_prediction_models", "metric_version", "TEXT NOT NULL DEFAULT 'THEME_RETURN_METRIC_V1'")
+        _ensure_column(conn, "market_theme_return_prediction_models", "validation_precision_top20", "REAL")
+        _ensure_column(conn, "market_theme_return_prediction_models", "validation_recall_top20", "REAL")
+        _ensure_column(conn, "market_theme_return_prediction_models", "validation_f1_top20", "REAL")
+        _ensure_column(conn, "market_theme_return_prediction_models", "validation_brier", "REAL")
+        _ensure_column(conn, "market_theme_return_prediction_models", "validation_log_loss", "REAL")
+        _ensure_column(conn, "market_theme_return_prediction_models", "validation_calibration_error", "REAL")
+        _ensure_column(conn, "market_theme_return_prediction_models", "raw_validation_brier", "REAL")
+        _ensure_column(conn, "market_theme_return_prediction_models", "raw_validation_log_loss", "REAL")
+        _ensure_column(conn, "market_theme_return_prediction_models", "raw_validation_calibration_error", "REAL")
+        _ensure_column(conn, "market_theme_return_prediction_models", "calibration_status", "TEXT NOT NULL DEFAULT 'NOT_EVALUATED'")
+        _ensure_column(conn, "market_theme_return_prediction_models", "probability_display_mode", "TEXT NOT NULL DEFAULT 'SCORE'")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_theme_prediction_models_status ON market_theme_return_prediction_models(status, trained_at)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_theme_prediction_models_gate ON market_theme_return_prediction_models(selection_gate_status, validation_ndcg_at_5 DESC)")
+        _ensure_column(conn, "market_theme_return_prediction_method_metrics", "metric_version", "TEXT NOT NULL DEFAULT 'THEME_RETURN_METRIC_V1'")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_theme_prediction_method_metrics_run ON market_theme_return_prediction_method_metrics(run_id, prediction_method)")
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_theme_observation_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, target_date TEXT NOT NULL UNIQUE,
+                data_cutoff_date TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'DRAFT', method TEXT NOT NULL,
+                model_version TEXT, feature_version TEXT NOT NULL, display_mode TEXT NOT NULL,
+                calculated_at TEXT NOT NULL, evaluated_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_theme_observation_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER NOT NULL, theme_id INTEGER NOT NULL,
+                observation_rank INTEGER, relative_strength_probability REAL, relative_strength_score REAL,
+                top20_probability REAL, status_code TEXT NOT NULL, confidence_level TEXT NOT NULL,
+                data_coverage_rate REAL NOT NULL DEFAULT 0, base_change_rate REAL, price_score REAL,
+                flow_score REAL, breadth_score REAL, liquidity_score REAL, technical_score REAL,
+                market_environment_score REAL, penalty_score REAL NOT NULL DEFAULT 0, actual_change_rate REAL,
+                actual_rank INTEGER, actual_top20 INTEGER, rank_gap INTEGER, probability_error REAL,
+                evaluation_status TEXT NOT NULL DEFAULT 'PENDING', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                UNIQUE(run_id,theme_id), FOREIGN KEY(run_id) REFERENCES market_theme_observation_runs(id) ON DELETE CASCADE,
+                FOREIGN KEY(theme_id) REFERENCES market_themes(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_theme_observation_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER NOT NULL UNIQUE, theme_count INTEGER NOT NULL,
+                evaluable_theme_count INTEGER NOT NULL, precision_top20 REAL, recall_top20 REAL, f1_top20 REAL,
+                precision_at_5 REAL, ndcg_at_5 REAL, spearman_rank_correlation REAL, mean_rank_error REAL,
+                brier_score REAL, log_loss REAL, calibration_error REAL, evaluation_status TEXT NOT NULL,
+                evaluated_at TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                FOREIGN KEY(run_id) REFERENCES market_theme_observation_runs(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_theme_observation_runs_cutoff ON market_theme_observation_runs(data_cutoff_date,status)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_theme_observation_items_rank ON market_theme_observation_items(run_id,observation_rank)")
+        _ensure_column(conn, "market_theme_observation_runs", "calculation_mode", "TEXT NOT NULL DEFAULT 'CURRENT_MARKET_DATA'")
+        _ensure_column(conn, "market_theme_observation_runs", "market_refresh_requested", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(conn, "market_theme_observation_runs", "market_refresh_status", "TEXT NOT NULL DEFAULT 'NOT_REQUESTED'")
+        _ensure_column(conn, "market_theme_observation_runs", "market_indicator_refreshed_at", "TEXT")
+        _ensure_column(conn, "market_theme_observation_runs", "market_indicator_data_asof_at", "TEXT")
+        _ensure_column(conn, "market_theme_observation_runs", "market_indicator_updated_count", "INTEGER")
+        _ensure_column(conn, "market_theme_observation_runs", "market_indicator_failed_count", "INTEGER")
+        _ensure_column(conn, "market_theme_observation_runs", "market_collection_run_id", "INTEGER")
+        _ensure_column(conn, "market_theme_observation_runs", "revision_count", "INTEGER NOT NULL DEFAULT 0")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_theme_observation_runs_mode ON market_theme_observation_runs(calculation_mode,status)")
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_theme_observation_validation_samples (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, target_date TEXT NOT NULL, theme_id INTEGER NOT NULL,
+                calculation_mode TEXT NOT NULL, observation_rule_version TEXT NOT NULL,
+                model_version TEXT NOT NULL DEFAULT '', metric_version TEXT NOT NULL,
+                observation_score REAL, observation_rank INTEGER NOT NULL, status_code TEXT,
+                data_coverage_rate REAL, actual_rank INTEGER, actual_top20 INTEGER, rank_error INTEGER,
+                rank_gap INTEGER, top20_hit INTEGER, refresh_score_delta REAL,
+                refresh_rank_improvement INTEGER, refresh_effect INTEGER,
+                evaluation_status TEXT NOT NULL DEFAULT 'PENDING', evaluated_at TEXT,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                UNIQUE(target_date,theme_id,calculation_mode,observation_rule_version,model_version),
+                FOREIGN KEY(theme_id) REFERENCES market_themes(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_theme_observation_validation_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, target_date TEXT NOT NULL, calculation_mode TEXT NOT NULL,
+                observation_rule_version TEXT NOT NULL, model_version TEXT NOT NULL DEFAULT '', metric_version TEXT NOT NULL,
+                total_theme_count INTEGER NOT NULL, evaluable_theme_count INTEGER NOT NULL,
+                evaluation_coverage_rate REAL NOT NULL, precision_top20 REAL, recall_top20 REAL, f1_top20 REAL,
+                precision_at_5 REAL, ndcg_at_5 REAL, spearman REAL, mean_rank_error REAL,
+                top5_actual_top20_count INTEGER NOT NULL DEFAULT 0, improved_theme_count INTEGER,
+                worsened_theme_count INTEGER, unchanged_theme_count INTEGER, mean_rank_error_current REAL,
+                mean_rank_error_refreshed REAL, mean_refresh_effect REAL, current_precision_top20 REAL,
+                refreshed_precision_top20 REAL, current_ndcg_at_5 REAL, refreshed_ndcg_at_5 REAL,
+                evaluation_status TEXT NOT NULL, evaluated_at TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                UNIQUE(target_date,calculation_mode,observation_rule_version,model_version)
+            )
+            """
+        )
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_theme_observation_validation_samples_date ON market_theme_observation_validation_samples(target_date)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_theme_observation_validation_samples_theme_date ON market_theme_observation_validation_samples(theme_id,target_date)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_theme_observation_validation_samples_date_mode ON market_theme_observation_validation_samples(target_date,calculation_mode)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_theme_observation_validation_metrics_date ON market_theme_observation_validation_metrics(target_date)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_theme_observation_validation_metrics_mode_date ON market_theme_observation_validation_metrics(calculation_mode,target_date)")
+        conn.exec_driver_sql(
+            """
+            INSERT OR IGNORE INTO market_theme_return_prediction_rule_sets
+            (rule_version, name, status, is_active, created_at, updated_at)
+            VALUES ('RULE_V1', '규칙 기반 테마등락예측 V1', 'ACTIVE', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """
+        )
+        prediction_rule_set_id = conn.exec_driver_sql(
+            "SELECT id FROM market_theme_return_prediction_rule_sets WHERE rule_version='RULE_V1'"
+        ).scalar()
+        prediction_parameters = [
+            ("PRICE_WEIGHT", 0.25, "가격 모멘텀 가중치"),
+            ("FLOW_WEIGHT", 0.25, "수급 강도 가중치"),
+            ("BREADTH_WEIGHT", 0.15, "연결 종목 확산도 가중치"),
+            ("ALIGNMENT_WEIGHT", 0.15, "가격·수급 결합 가중치"),
+            ("LIQUIDITY_WEIGHT", 0.10, "거래대금 가중치"),
+            ("MARKET_ENVIRONMENT_WEIGHT", 0.10, "시장환경 가중치"),
+            ("OVERHEAT_PENALTY_MAX", 15.0, "최근 급등 과열 최대 감점"),
+            ("CONCENTRATION_PENALTY_MAX", 10.0, "단일 종목 집중 최대 감점"),
+            ("LOW_COVERAGE_PENALTY_MAX", 20.0, "낮은 수집률 최대 감점"),
+            ("FLOW_DIVERGENCE_PENALTY_MAX", 10.0, "가격·수급 이탈 최대 감점"),
+            ("MIN_DATA_COVERAGE", 0.70, "공식 순위 최소 데이터 수집률"),
+            ("PREDICTION_SCALE", 1.0, "예상 등락률 변동성 배율"),
+            ("PREDICTION_BIAS", 0.0, "예상 등락률 편향 보정"),
+            ("PREDICTION_MIN", -20.0, "예상 등락률 하한"),
+            ("PREDICTION_MAX", 20.0, "예상 등락률 상한"),
+            ("DIRECTION_NEUTRAL_BAND", 0.5, "방향 평가 중립 구간"),
+        ]
+        conn.exec_driver_sql(
+            """
+            INSERT OR IGNORE INTO market_theme_return_prediction_rule_parameters
+            (rule_set_id, parameter_code, parameter_value, description, created_at, updated_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """,
+            [(prediction_rule_set_id, code, value, description) for code, value, description in prediction_parameters],
         )
         conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_market_themes_active_sort ON market_themes(is_active, sort_order)"

@@ -1210,6 +1210,7 @@ class TradeTrainingService:
         data["training_account_id"] = int(account_id) if account_id else None
         data["training_account_name"] = options.get("training_account_name")
         data["is_account_linked"] = data["training_account_id"] is not None
+        data["stock_id"] = int(options.get("stock_id")) if options.get("stock_id") else None
         data["options"] = options
         data.pop("options_json", None)
         return data

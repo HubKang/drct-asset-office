@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from threading import Lock
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -12,6 +13,8 @@ from backend.app.services.market_indicator_service import MarketIndicatorService
 
 
 class MarketDataCollectionService:
+    _incremental_all_lock = Lock()
+
     def __init__(self, db: Session) -> None:
         self.db = db
 
@@ -19,6 +22,19 @@ class MarketDataCollectionService:
         mode = str(getattr(payload, "mode", "SELECTED") or "SELECTED").upper()
         if mode not in {"SELECTED", "BACKFILL", "INCREMENTAL_ALL"}:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="mode must be SELECTED, BACKFILL, or INCREMENTAL_ALL")
+        if mode == "INCREMENTAL_ALL":
+            if not self._incremental_all_lock.acquire(blocking=False):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={"code": "MARKET_REFRESH_ALREADY_RUNNING", "message": "시장지표 전체갱신이 이미 진행 중입니다."},
+                )
+            try:
+                return self._collect(payload, mode)
+            finally:
+                self._incremental_all_lock.release()
+        return self._collect(payload, mode)
+
+    def _collect(self, payload: Any, mode: str) -> dict[str, Any]:
         targets = self._targets(mode, getattr(payload, "items", None))
         if mode in {"SELECTED", "BACKFILL"} and not targets:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="items are required for selected collection modes")

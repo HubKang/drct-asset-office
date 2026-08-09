@@ -82,13 +82,20 @@ export async function apiRequest<T>(path: string, options?: ApiRequestOptions): 
     const rawError = payload && typeof payload === "object" ? (payload as Record<string, any>).raw_error : null;
     const validationMessage = payload && typeof payload === "object" ? (payload as Record<string, any>).validation_message : null;
     const serverMessage = Array.isArray(detail)
-      ? "요청 형식이 맞지 않습니다. goal_text, gpt_result_text, parsed_goal 필드를 확인해 주세요."
+      ? detail
+          .map((item: unknown) => {
+            if (!item || typeof item !== "object") return String(item);
+            const validation = item as Record<string, any>;
+            const location = Array.isArray(validation.loc) ? validation.loc.filter((part: unknown) => part !== "body").join(".") : "";
+            return `${location ? `${location}: ` : ""}${validation.msg || "요청 값이 올바르지 않습니다."}`;
+          })
+          .join(" / ")
       : detail && typeof detail === "object"
         ? ((detail as Record<string, any>).message || JSON.stringify(detail))
         : detail;
     const statusMessages: Record<number, string> = {
-      404: "GPT 결과 검증 API 경로를 찾을 수 없습니다. 라우터 등록 또는 프론트 API 경로를 확인해 주세요.",
-      422: "요청 형식이 맞지 않습니다. goal_text, gpt_result_text, parsed_goal 필드를 확인해 주세요.",
+      404: "요청한 API 경로를 찾을 수 없습니다. 백엔드가 최신 코드로 재시작되었는지 확인해 주세요.",
+      422: "요청 값이 올바르지 않습니다. 입력값과 요청 형식을 확인해 주세요.",
       500: "서버 내부 오류가 발생했습니다. 백엔드 로그를 확인해 주세요.",
     };
     const message = validationMessage || rawError || serverMessage || statusMessages[response.status] || `HTTP ${response.status}`;
