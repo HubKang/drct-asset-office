@@ -26,16 +26,24 @@ export default function MarketThemeReturnPredictionPanel(props: {
   const [groupId, setGroupId] = useState("all");
   const [keyword, setKeyword] = useState("");
   const [loading, setLoading] = useState(false); const [action, setAction] = useState(""); const [error, setError] = useState("");
+  const [calculateDateError, setCalculateDateError] = useState("");
   const [mlResult, setMLResult] = useState<MarketThemeObservationMLTrainResponse | null>(null);
   const [diagnostics, setDiagnostics] = useState<MarketThemeObservationDiagnosticsResponse | null>(null);
   const [marketChoiceOpen, setMarketChoiceOpen] = useState(false);
   const [progressMessage, setProgressMessage] = useState("");
   const abortRef = useRef<AbortController | null>(null);
 
-  const request = async (work: (signal: AbortSignal) => Promise<MarketThemeObservationResponse>) => {
+  const request = async (work: (signal: AbortSignal) => Promise<MarketThemeObservationResponse>, options?: { preserveTargetDate?: boolean }) => {
     abortRef.current?.abort(); const controller = new AbortController(); abortRef.current = controller;
     setLoading(true); setError("");
-    try { const result = await work(controller.signal); setData(result); if (result.default_target_date) setTargetDate(result.default_target_date); return result; }
+    try {
+      const result = await work(controller.signal); setData(result);
+      if (!options?.preserveTargetDate) {
+        const responseTargetDate = result.run?.target_date ?? result.default_target_date;
+        if (responseTargetDate) setTargetDate(responseTargetDate);
+      }
+      return result;
+    }
     catch (reason) { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "관찰 우선순위 요청에 실패했습니다."); return null; }
     finally { if (!controller.signal.aborted) setLoading(false); }
   };
@@ -62,9 +70,28 @@ export default function MarketThemeReturnPredictionPanel(props: {
     top5: data?.items.filter((item) => (item.observation_rank ?? 999) <= 5).length ?? 0,
     leading: data?.items.filter((item) => item.status_code === "FLOW_LEADING" || item.status_code === "STRONG_CONTINUATION").length ?? 0,
     coverage: data?.items.length ? data.items.reduce((sum, item) => sum + item.data_coverage_rate, 0) / data.items.length : null }), [data?.items]);
-  const invalid = !targetDate || Boolean(data?.data_cutoff_date && targetDate <= data.data_cutoff_date) || [0, 6].includes(new Date(`${targetDate}T00:00:00`).getDay());
+  const calculationDateError = () => {
+    if (!targetDate) return "관찰 대상일을 선택해 주세요.";
+    const day = new Date(`${targetDate}T00:00:00`).getDay();
+    if ([0, 6].includes(day)) return "신규 관찰순위의 관찰 대상일은 평일이어야 합니다.";
+    const cutoff = data?.calculation_data_cutoff_date;
+    if (cutoff && targetDate <= cutoff) return "과거 대상일은 신규 관찰순위를 계산할 수 없습니다.";
+    return "";
+  };
+  const queryExisting = async () => {
+    setCalculateDateError("");
+    setProgressMessage("");
+    await request((signal) => repositories.marketThemes.getObservationPriority(targetDate, signal), { preserveTargetDate: true });
+  };
+  const prepareCalculation = () => {
+    const validationError = calculationDateError();
+    setCalculateDateError(validationError);
+    if (!validationError) setMarketChoiceOpen(true);
+  };
   const calculate = async (refreshMarketIndicators: boolean) => {
-    if (invalid || action) return;
+    const validationError = calculationDateError();
+    if (validationError || action) { setCalculateDateError(validationError); return; }
+    setCalculateDateError("");
     setAction(refreshMarketIndicators ? "refresh-calculate" : "calculate");
     setProgressMessage(refreshMarketIndicators
       ? "1/3 최근 관찰결과를 실측 데이터로 검증하고 있습니다...\n2/3 시장지표를 갱신하고 있습니다...\n3/3 최신 시장환경으로 D+1 관찰순위를 계산하고 있습니다..."
@@ -81,15 +108,16 @@ export default function MarketThemeReturnPredictionPanel(props: {
   return <div className="theme-prediction-panel observation-priority-panel">
     <div className="theme-prediction-toolbar">
       <label><span>데이터 기준일</span><strong>{data?.data_cutoff_date ?? "-"}</strong></label>
-      <label><span>관찰 대상일</span><input className="input-control" type="date" value={targetDate} onChange={(event) => setTargetDate(event.target.value)} /></label>
+      <label><span>관찰 대상일</span><input className="input-control" type="date" value={targetDate} onChange={(event) => { setTargetDate(event.target.value); setCalculateDateError(""); }} /></label>
       <label><span>테마그룹</span><select className="select-control" value={groupId} onChange={(event) => setGroupId(event.target.value)}><option value="all">전체</option>{props.themeGroups.map((group) => <option key={group.id} value={group.id}>{group.theme_name}</option>)}</select></label>
       <label><span>검색</span><input className="input-control" value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="테마명" /></label>
       <label><span>표시</span><select className="select-control" value="10" disabled aria-label="표시"><option value="10">상위 10</option></select></label>
-      <button className="btn btn-secondary" type="button" disabled={loading} onClick={() => void request((signal) => repositories.marketThemes.getObservationPriority(targetDate, signal))}>조회</button>
-      <button className="btn btn-primary" type="button" disabled={invalid || Boolean(action)} onClick={() => setMarketChoiceOpen(true)}>{action.includes("calculate") ? "계산 중..." : "관찰순위 계산"}</button>
+      <button className="btn btn-secondary" type="button" disabled={loading || !targetDate} onClick={() => void queryExisting()}>조회</button>
+      <button className="btn btn-primary" type="button" disabled={!targetDate || Boolean(action)} onClick={prepareCalculation}>{action.includes("calculate") ? "계산 중..." : "관찰순위 계산"}</button>
       {data?.run ? <button className="btn btn-secondary" type="button" disabled={Boolean(action)} title="저장된 실측 데이터를 기준으로 선택일의 관찰결과를 다시 검증합니다." onClick={() => void validate()}>{action === "validate" ? "재검증 중..." : "재검증"}</button> : null}
     </div>
-    {invalid && targetDate ? <p className="form-error">관찰 대상일은 데이터 기준일 이후의 평일이어야 합니다.</p> : null}
+    <p className="theme-observation-date-help">관찰 대상일은 해당 날짜의 저장 결과를 조회합니다. 데이터 기준일은 관찰순위 계산에 사용된 마지막 실측일입니다.</p>
+    {calculateDateError ? <p className="form-error">{calculateDateError}</p> : null}
     {error ? <div className="inline-result inline-error">{error}</div> : null}{data?.message ? <div className="inline-result">{data.message}</div> : null}
     {progressMessage ? <div className="inline-result theme-observation-progress">{progressMessage}</div> : null}
     <div className="theme-prediction-meta"><span className={`theme-prediction-status status-${(data?.status ?? "draft").toLowerCase()}`}>{data?.status ?? "DRAFT"}</span>
@@ -133,7 +161,7 @@ export default function MarketThemeReturnPredictionPanel(props: {
     {marketChoiceOpen ? <div className="theme-observation-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target && !action) setMarketChoiceOpen(false); }}><section className="theme-observation-modal" role="dialog" aria-modal="true" aria-labelledby="market-refresh-choice-title">
       <header><div><small>관찰순위 계산</small><h3 id="market-refresh-choice-title">시장지표를 갱신한 후 계산할까요?</h3></div><button type="button" aria-label="닫기" disabled={Boolean(action)} onClick={() => setMarketChoiceOpen(false)}>×</button></header>
       <p>직전 관찰결과를 최신 실측으로 먼저 검증한 후 D+1 관찰순위를 계산합니다. 최신 시장환경 반영 여부를 선택해 주세요.</p>
-      <dl><dt>현재 시장지표 최근 갱신</dt><dd>{dateTime(data?.market_indicator_latest_refreshed_at)}</dd><dt>테마·종목 기준일</dt><dd>{data?.data_cutoff_date ?? "-"}</dd><dt>관찰 대상일</dt><dd>{targetDate}</dd></dl>
+      <dl><dt>현재 시장지표 최근 갱신</dt><dd>{dateTime(data?.market_indicator_latest_refreshed_at)}</dd><dt>테마·종목 기준일</dt><dd>{data?.calculation_data_cutoff_date ?? data?.data_cutoff_date ?? "-"}</dd><dt>관찰 대상일</dt><dd>{targetDate}</dd></dl>
       {progressMessage && action ? <div className="theme-observation-modal-progress" role="status">{progressMessage}</div> : null}
       <div className="theme-observation-modal-actions"><button className="btn btn-secondary" type="button" disabled={Boolean(action)} onClick={() => void calculate(false)}>현재 지표로 계산</button><button className="btn btn-primary" type="button" disabled={Boolean(action)} onClick={() => void calculate(true)}>전체지표 갱신 후 계산<small>시장지표 전체갱신 후 관찰순위를 계산합니다.</small></button></div>
     </section></div> : null}

@@ -22,20 +22,24 @@ class ChartMarkerService:
                 "sort_order": row.sort_order, "is_active": row.is_active, "created_at": row.created_at, "updated_at": row.updated_at}
 
     @staticmethod
-    def _marker(row: ChartMarker) -> dict[str, Any]:
+    def _marker(row: ChartMarker, stock_count: int = 0, marker_count: int = 0) -> dict[str, Any]:
         return {"id": row.id, "marker_group_id": row.marker_group_id, "name": row.name, "description": row.description,
                 "symbol": row.symbol, "sort_order": row.sort_order, "is_active": row.is_active,
+                "stock_count": stock_count, "marker_count": marker_count,
                 "created_at": row.created_at, "updated_at": row.updated_at}
 
     def list_catalog(self, active_only: bool = False) -> dict[str, Any]:
         groups = self.db.scalars(select(ChartMarkerGroup).order_by(ChartMarkerGroup.sort_order, ChartMarkerGroup.name)).all()
         markers = self.db.scalars(select(ChartMarker).order_by(ChartMarker.sort_order, ChartMarker.name)).all()
+        count_rows = self.db.execute(text("""SELECT marker_id, COUNT(DISTINCT stock_id) stock_count, COUNT(*) marker_count
+            FROM chart_marker_events GROUP BY marker_id""")).all()
+        counts = {row.marker_id: (row.stock_count, row.marker_count) for row in count_rows}
         result = []
         for group in groups:
             if active_only and not group.is_active:
                 continue
             item = self._group(group)
-            item["markers"] = [self._marker(marker) for marker in markers if marker.marker_group_id == group.id and (not active_only or marker.is_active)]
+            item["markers"] = [self._marker(marker, *counts.get(marker.id, (0, 0))) for marker in markers if marker.marker_group_id == group.id and (not active_only or marker.is_active)]
             result.append(item)
         return {"items": result}
 
@@ -137,18 +141,30 @@ class ChartMarkerService:
         """), {"marker_id": marker_id}).all()
         return {"items": [dict(row._mapping) for row in rows]}
 
-    def review_chart(self, stock_id: int, marker_date: date, before: int, after: int) -> dict[str, Any]:
-        params = {"stock_id": stock_id, "marker_date": marker_date.isoformat(), "before": before, "after": after}
-        before_rows = self.db.execute(text("""SELECT * FROM stock_daily_prices WHERE stock_id=:stock_id AND trade_date < :marker_date
-            ORDER BY trade_date DESC LIMIT :before"""), params).all()[::-1]
-        after_rows = self.db.execute(text("""SELECT * FROM stock_daily_prices WHERE stock_id=:stock_id AND trade_date > :marker_date
-            ORDER BY trade_date ASC LIMIT :after"""), params).all()
+    def review_chart(self, stock_id: int, marker_date: date, candle_count: int = 81) -> dict[str, Any]:
+        params = {"stock_id": stock_id, "marker_date": marker_date.isoformat(), "side_limit": max(0, candle_count - 1)}
         center = self.db.execute(text("SELECT * FROM stock_daily_prices WHERE stock_id=:stock_id AND trade_date=:marker_date"), params).first()
-        rows = [*before_rows, *([center] if center else []), *after_rows]
+        if not center:
+            return {"stock_id": stock_id, "marker_date": marker_date, "marker_index": None, "total_candles": 0,
+                    "available_before": 0, "available_after": 0, "candles": []}
+
+        before_available = self.db.execute(text("""SELECT * FROM stock_daily_prices WHERE stock_id=:stock_id AND trade_date < :marker_date
+            ORDER BY trade_date DESC LIMIT :side_limit"""), params).all()
+        after_available = self.db.execute(text("""SELECT * FROM stock_daily_prices WHERE stock_id=:stock_id AND trade_date > :marker_date
+            ORDER BY trade_date ASC LIMIT :side_limit"""), params).all()
+        target_before = candle_count // 2
+        target_after = candle_count - target_before - 1
+        before_count = min(target_before, len(before_available))
+        after_count = min(target_after, len(after_available))
+
+        before_rows = before_available[:before_count][::-1]
+        after_rows = after_available[:after_count]
+        rows = [*before_rows, center, *after_rows]
         candles = [{"trade_date": r.trade_date, "open": r.open_price, "high": r.high_price, "low": r.low_price,
                     "close": r.close_price, "volume": r.volume, "moving_averages": {f"ma{n}": getattr(r, f"ma{n}") for n in (5,10,20,60,120)}} for r in rows]
-        return {"stock_id": stock_id, "marker_date": marker_date, "before_trading_days": len(before_rows),
-                "after_trading_days": len(after_rows), "candles": candles}
+        return {"stock_id": stock_id, "marker_date": marker_date, "marker_index": len(before_rows),
+                "total_candles": len(candles), "available_before": len(before_rows),
+                "available_after": len(after_rows), "candles": candles}
 
     def _event_detail(self, row: ChartMarkerEvent) -> dict[str, Any]:
         marker = self.db.get(ChartMarker, row.marker_id); group = self.db.get(ChartMarkerGroup, marker.marker_group_id) if marker else None

@@ -588,6 +588,7 @@ export type MarketThemeObservationMetrics = {
 
 export type MarketThemeObservationResponse = {
   status: string; message: string | null; data_cutoff_date: string | null; default_target_date: string | null;
+  calculation_data_cutoff_date: string | null;
   run: MarketThemeObservationRun | null; items: MarketThemeObservationItem[]; metrics: MarketThemeObservationMetrics | null;
   actual_universe_count: number | null;
   market_indicator_latest_refreshed_at: string | null;

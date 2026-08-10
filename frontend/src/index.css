@@ -36369,6 +36369,21 @@ button.chip-light {
 .theme-flow-filter-row { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
 .theme-flow-filter-group { display: flex; align-items: center; gap: 7px; }
 .theme-flow-filter-group > span { color: #64748b; font-size: 11px; font-weight: 800; }
+.theme-flow-metric-filter { position: relative; }
+.theme-flow-filter-label { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+.theme-flow-metric-info-button { display: inline-grid; width: 20px; height: 20px; place-items: center; border: 0; border-radius: 50%; padding: 0; background: transparent; color: #64748b; cursor: pointer; }
+.theme-flow-metric-info-button:hover, .theme-flow-metric-info-button[aria-expanded="true"] { background: #e2e8f0; color: #1d4ed8; }
+.theme-flow-metric-info-button:focus-visible { outline: 2px solid #2563eb; outline-offset: 1px; }
+.theme-flow-metric-popover { position: absolute; z-index: 30; top: calc(100% + 8px); left: 0; display: grid; gap: 10px; width: min(520px, calc(100vw - 48px)); border: 1px solid #cbd5e1; border-radius: 12px; padding: 13px; background: #fff; box-shadow: 0 16px 40px rgba(15,23,42,.2); color: #475569; }
+.theme-flow-metric-popover > strong { color: #0f172a; font-size: 13px; }
+.theme-flow-metric-popover-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; padding-top: 9px; border-top: 1px solid #e2e8f0; }
+.theme-flow-metric-popover section { display: grid; align-content: start; gap: 5px; min-width: 0; border: 1px solid #e2e8f0; border-radius: 9px; padding: 9px; background: #f8fafc; }
+.theme-flow-metric-popover h4 { margin: 0; color: #0f172a; font-size: 11px; }
+.theme-flow-metric-popover section > b { color: #1d4ed8; font-size: 9px; }
+.theme-flow-metric-popover code { overflow-wrap: anywhere; border-radius: 5px; padding: 5px; background: #e2e8f0; color: #334155; font-size: 8px; line-height: 1.45; white-space: normal; }
+.theme-flow-metric-popover p, .theme-flow-metric-popover small, .theme-flow-metric-popover footer { margin: 0; font-size: 8px; line-height: 1.5; }
+.theme-flow-metric-popover small { color: #64748b; font-weight: 750; }
+.theme-flow-metric-popover footer { border-radius: 7px; padding: 7px 8px; background: #eff6ff; color: #1e40af; }
 .theme-flow-segmented { display: inline-flex; padding: 3px; border: 1px solid #dbe3ef; border-radius: 9px; background: #f1f5f9; }
 .theme-flow-segmented button { border: 0; border-radius: 7px; padding: 7px 10px; background: transparent; color: #64748b; font-size: 11px; font-weight: 800; cursor: pointer; }
 .theme-flow-segmented button.active { background: #fff; color: #0f172a; box-shadow: 0 1px 4px rgba(15,23,42,.14); }
@@ -36401,6 +36416,10 @@ button.chip-light {
 
 @media (max-width: 1000px) {
   .theme-flow-top-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+}
+@media (max-width: 680px) {
+  .theme-flow-metric-popover { position: fixed; top: 50%; right: 16px; left: 16px; width: auto; max-height: calc(100vh - 32px); overflow-y: auto; transform: translateY(-50%); }
+  .theme-flow-metric-popover-grid { grid-template-columns: 1fr; }
 }
 
 .theme-detail-stock-row {
@@ -36640,7 +36659,8 @@ button.chip-light {
 .observation-gap-legend { display: flex; align-items: center; gap: 12px; color: #475569; font-size: 10px; font-weight: 800; }
 .observation-gap-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .observation-gap-legend span::before { width: 9px; height: 9px; border: 2px solid #6366f1; border-radius: 50%; background: #fff; content: ""; }
-.observation-gap-legend .is-actual::before { border: 0; border-radius: 2px; background: #0f766e; transform: rotate(45deg); }
+.observation-gap-legend .is-actual::before { display: none; }
+.observation-gap-legend .is-actual svg { color: #64748b; }
 .observation-gap-axis { display: grid; grid-template-columns: repeat(5, 1fr); margin: 0 72px 0 234px; color: #94a3b8; font-size: 9px; font-variant-numeric: tabular-nums; }
 .observation-gap-axis span { text-align: center; }
 .observation-gap-axis span:first-child { text-align: left; }
@@ -36656,16 +36676,19 @@ button.chip-light {
 .observation-gap-plot { display: grid; gap: 5px; min-width: 0; }
 .observation-gap-rail { position: relative; display: block; height: 8px; border-radius: 999px; background: linear-gradient(90deg, transparent 24.8%, #dbe3ef 24.8% 25.2%, transparent 25.2% 49.8%, #cbd5e1 49.8% 50.2%, transparent 50.2% 74.8%, #dbe3ef 74.8% 75.2%, transparent 75.2%), #eef2f7; box-shadow: inset 0 1px 2px rgba(15,23,42,.08); }
 .observation-gap-range { position: absolute; top: 1px; bottom: 1px; left: var(--gap-left); width: var(--gap-width); min-width: 0; border-radius: 999px; background: #64748b; }
-.observation-gap-row.is-positive .observation-gap-range { background: #dc2626; }
-.observation-gap-row.is-negative .observation-gap-range { background: #2563eb; }
+.observation-gap-row.is-actual-higher .observation-gap-range { background: #dc2626; }
+.observation-gap-row.is-actual-lower .observation-gap-range { background: #2563eb; }
 .observation-gap-marker { position: absolute; z-index: 2; top: 50%; display: block; width: 13px; height: 13px; border: 3px solid #6366f1; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(15,23,42,.24); transform: translate(-50%, -50%); }
 .observation-gap-marker.is-predicted { left: var(--predicted-position); }
-.observation-gap-marker.is-actual { left: var(--actual-position); width: 11px; height: 11px; border: 2px solid #fff; border-radius: 2px; background: #0f766e; transform: translate(-50%, -50%) rotate(45deg); }
+.observation-gap-marker.is-actual { left: var(--actual-position); display: grid; box-sizing: border-box; width: 20px; height: 20px; place-items: center; border: 2px solid #fff; border-radius: 50%; background: #64748b; color: #fff; box-shadow: 0 2px 6px rgba(15,23,42,.28), 0 0 0 1px rgba(100,116,139,.18); transform: translate(-50%, -50%); }
+.observation-gap-marker.is-actual svg { display: block; }
+.observation-gap-row.is-actual-higher .observation-gap-marker.is-actual { background: #dc2626; color: #fff; }
+.observation-gap-row.is-actual-lower .observation-gap-marker.is-actual { background: #2563eb; color: #fff; }
 .observation-gap-plot > small { display: flex; justify-content: space-between; gap: 12px; color: #64748b; font-size: 9px; font-weight: 750; font-variant-numeric: tabular-nums; }
 .observation-gap-row > strong { display: grid; min-width: 54px; height: 26px; place-items: center; border-radius: 7px; background: #f1f5f9; color: #64748b; font-size: 11px; font-variant-numeric: tabular-nums; }
-.observation-gap-row.is-positive > strong { background: #fef2f2; color: #b91c1c; }
-.observation-gap-row.is-negative > strong { background: #eff6ff; color: #1d4ed8; }
-.observation-gap-row.is-neutral > strong { color: #334155; }
+.observation-gap-row.is-actual-higher > strong { background: #fef2f2; color: #b91c1c; }
+.observation-gap-row.is-actual-lower > strong { background: #eff6ff; color: #1d4ed8; }
+.observation-gap-row.is-equal > strong { color: #334155; }
 
 .observation-radar-section { display: grid; gap: 10px; }
 .observation-radar-section > header > span { color: #64748b; font-size: 10px; font-weight: 800; }
@@ -36756,6 +36779,29 @@ button.chip-light {
 @media (max-width: 560px) { .theme-prediction-summary { grid-template-columns: 1fr; } }
 @media (max-width: 1440px) { .theme-flow-heatmap { --theme-flow-theme-column-width: 232px; --theme-flow-date-cell-min-width: 31px; } }
 @media (max-width: 1180px) { .theme-flow-heatmap { --theme-flow-theme-column-width: 216px; --theme-flow-date-cell-min-width: 30px; } .theme-flow-filter-row { align-items: flex-start; } }
+
+/* Theme daily flow trend line view */
+.theme-flow-line-panel .theme-return-line-header { align-items: flex-start; justify-content: space-between; }
+.theme-flow-line-panel .theme-return-line-header > small { border-radius: 999px; padding: 5px 9px; background: #eff6ff; color: #1d4ed8; font-size: 10px; font-weight: 800; white-space: nowrap; }
+.theme-flow-line-chart { position: relative; }
+.theme-flow-line-series { opacity: .7; transition: opacity .14s ease; }
+.theme-flow-line-series.is-active { opacity: 1; }
+.theme-flow-line-series .theme-return-line-path { opacity: .72; }
+.theme-flow-line-series.is-active .theme-return-line-path { stroke-width: 2.8; opacity: 1; }
+.theme-flow-line-series.is-muted { opacity: .12; }
+.theme-flow-line-point { cursor: crosshair; outline: none; pointer-events: all; }
+.theme-flow-line-point:focus { stroke: #0f172a; stroke-width: 1.5; }
+.theme-flow-line-tooltip { position: absolute; z-index: 8; display: grid; gap: 3px; width: max-content; max-width: 230px; border: 1px solid #cbd5e1; border-radius: 9px; padding: 9px 10px; background: rgba(255,255,255,.97); box-shadow: 0 8px 22px rgba(15,23,42,.16); color: #475569; font-size: 10px; line-height: 1.35; pointer-events: none; transform: translate(10px, calc(-100% - 10px)); }
+.theme-flow-line-tooltip strong { color: #0f172a; font-size: 12px; }
+.theme-flow-line-tooltip b { color: #1d4ed8; font-size: 11px; }
+.theme-flow-line-tooltip span { display: block; }
+.theme-flow-line-tooltip em { border-radius: 5px; padding: 3px 5px; background: #eff6ff; color: #1e40af; font-size: 9px; font-style: normal; font-weight: 750; }
+@media (max-width: 900px) {
+  .theme-flow-line-panel .theme-return-line-header { display: grid; }
+  .theme-flow-line-panel .theme-return-line-header > small { width: fit-content; white-space: normal; }
+  .theme-flow-line-tooltip { transform: translate(6px, calc(-100% - 6px)); }
+}
+.theme-observation-date-help { margin: 7px 0 0; color: #64748b; font-size: 11px; line-height: 1.5; }
 
 /* Current signal evaluation empty state */
 .market-signal-today-empty {
@@ -37079,3 +37125,21 @@ button.chip-light {
 
 /* Chart marker review typography and case deletion */
 .chart-marker-tabs button,.chart-marker-section-intro h2,.chart-marker-review-intro h2,.chart-marker-filters label,.chart-marker-filters .input-control,.chart-marker-case-panel header h3,.chart-marker-review-detail header p,.chart-marker-review-detail header p>span{font-size:14px;font-weight:600}.chart-marker-filters label{gap:7px;color:#334155}.chart-marker-filters .input-control{font-weight:600}.chart-marker-review-detail header p>span{padding:5px 9px}.chart-marker-case-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;margin:1px 0;border-left:3px solid transparent;border-radius:0 7px 7px 0;transition:.15s ease}.chart-marker-case-row:hover{background:#f8fafc}.chart-marker-case-row.active{border-left-color:#2563eb;background:#eff6ff}.chart-marker-stock .chart-marker-case-date{display:flex;align-items:center;gap:9px;min-width:0;margin:0;padding:9px 10px;border:0;border-radius:0;background:transparent;color:#475569;font-size:13px;text-align:left}.chart-marker-case-row.active .chart-marker-case-date{color:#1d4ed8;font-weight:700}.chart-marker-stock .chart-marker-case-delete{min-height:34px;margin:0 7px 0 0;padding:5px 8px;border:0;border-radius:6px;background:transparent;color:#dc2626;font-size:11px;font-weight:700}.chart-marker-stock .chart-marker-case-delete:hover{background:#fee2e2}.chart-marker-case-row .chart-marker-case-date i{width:5px;height:5px;border-radius:50%;background:#cbd5e1}.chart-marker-case-row.active .chart-marker-case-date i{background:#2563eb}
+
+/* Chart marker review navigation and bounded case browser */
+.chart-marker-review-grid{grid-template-columns:minmax(240px,300px) minmax(0,1fr);align-items:stretch}.chart-marker-case-panel{display:grid;grid-template-rows:auto auto minmax(0,1fr);align-self:stretch;height:100%;max-height:720px;padding:0!important;overflow:hidden}.chart-marker-case-panel>header{position:static;padding:14px 14px 12px}.chart-marker-case-panel header h3{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chart-marker-case-panel header span{flex-shrink:0}.chart-marker-case-search{padding:9px 10px;border-bottom:1px solid #e2e8f0;background:#fff}.chart-marker-case-search .input-control{height:36px;padding:7px 10px;font-size:12px}.chart-marker-case-scroll{min-height:0;max-height:none;overflow-y:auto;padding:6px;scrollbar-gutter:stable}.chart-marker-search-empty{padding:22px 10px;text-align:center;color:#94a3b8;font-size:12px}.chart-marker-stock{margin-bottom:7px}.chart-marker-stock>div{gap:8px;min-width:0;padding:7px 7px 4px}.chart-marker-stock>div strong{min-width:0;padding:0;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chart-marker-stock>div span{flex-shrink:0}.chart-marker-case-row{gap:5px;padding-right:5px}.chart-marker-stock .chart-marker-case-date{padding:8px 7px}.chart-marker-stock .chart-marker-case-delete{flex-shrink:0;min-height:30px;margin:0;padding:4px 6px}
+@media(max-width:900px){.chart-marker-review-grid{grid-template-columns:minmax(0,1fr);align-items:start}.chart-marker-case-panel{height:340px;max-height:340px}.chart-marker-case-scroll{max-height:none}}
+
+/* Chart marker review compact workspace v2 */
+.chart-marker-review-intro{margin-bottom:9px}.chart-marker-filters{display:flex;align-items:center;gap:12px;min-height:66px;padding:12px 14px}.chart-marker-filters label{display:flex;align-items:center;gap:9px;min-width:0;font-size:12px;white-space:nowrap}.chart-marker-filters label>span{flex-shrink:0;color:#475569}.chart-marker-filters label .input-control{width:210px;height:40px;min-width:0;padding-top:7px;padding-bottom:7px}.chart-marker-filters .chart-marker-filter-marker .input-control{width:320px}.chart-marker-filter-count{margin-left:auto;padding:6px 10px;border-radius:999px;background:#f1f5f9;color:#475569;font-size:12px;white-space:nowrap}.chart-marker-review-grid{grid-template-columns:minmax(240px,300px) minmax(0,1fr);align-items:start}.chart-marker-case-panel{height:var(--chart-marker-detail-height,720px);max-height:none}.chart-marker-case-panel>header{gap:10px;padding:14px 14px 10px;border-bottom:0}.chart-marker-case-search{position:relative;display:flex;align-items:center;padding:0 10px 11px}.chart-marker-case-search>svg{position:absolute;z-index:1;left:21px;color:#94a3b8;pointer-events:none}.chart-marker-case-search .input-control{height:38px;padding-left:33px;border-color:#dbe3ef;background:#fbfdff}.chart-marker-stock{padding:2px 3px 7px;border-bottom:1px solid #f1f5f9}.chart-marker-stock:last-child{border-bottom:0}.chart-marker-stock>div{padding:9px 8px 6px}.chart-marker-stock>div strong{color:#1e293b;font-size:14px;font-weight:700}.chart-marker-case-row{min-height:38px}.chart-marker-stock .chart-marker-case-date{min-height:38px}.chart-marker-stock .chart-marker-case-delete{margin-right:3px;font-size:11px}.chart-marker-review-detail{padding:18px!important}.chart-marker-review-detail>header{align-items:center;gap:18px;padding-bottom:13px}.chart-marker-review-context{min-width:0}.chart-marker-review-title{display:flex;align-items:baseline;gap:6px;min-width:0}.chart-marker-review-title h2{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chart-marker-review-title time{flex-shrink:0;margin:0!important;font-size:12px!important}.chart-marker-review-detail header p{margin-top:7px}.chart-marker-review-nav{flex-shrink:0;gap:6px;padding:4px;border:1px solid #e2e8f0;border-radius:9px;background:#f8fafc}.chart-marker-review-nav .btn{min-height:32px;border-color:transparent;background:#fff}.chart-marker-review-nav>strong{min-width:44px}.chart-marker-chart-heading{margin:14px 0 8px}.chart-marker-chart-heading>span{align-self:center}.chart-marker-memo{margin-top:12px}
+@media(max-width:900px){.chart-marker-filters{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);height:auto}.chart-marker-filters label{display:grid;grid-template-columns:auto minmax(0,1fr)}.chart-marker-filters label .input-control,.chart-marker-filters .chart-marker-filter-marker .input-control{width:100%}.chart-marker-filter-count{grid-column:1/-1;justify-self:end;margin-left:0}.chart-marker-review-grid{grid-template-columns:minmax(0,1fr)}.chart-marker-case-panel{width:100%;height:340px;max-height:340px}.chart-marker-review-detail>header{align-items:stretch}.chart-marker-review-nav{width:fit-content;max-width:100%}}
+@media(max-width:520px){.chart-marker-filters{grid-template-columns:1fr}.chart-marker-filter-count{grid-column:auto}.chart-marker-review-title{align-items:flex-start;flex-direction:column;gap:2px}.chart-marker-review-nav{width:100%}}
+
+/* Make the full review case row selectable except for its delete action. */
+.chart-marker-case-row{cursor:pointer}.chart-marker-stock .chart-marker-case-date{width:100%;cursor:pointer}.chart-marker-stock .chart-marker-case-delete{cursor:pointer}
+
+/* Keep tooltip text crisp while allowing chart candles to show through. */
+.chart-marker-chart-tooltip{background:rgba(15,23,42,.7)}.chart-marker-chart-tooltip b.up{color:#fecaca}.chart-marker-chart-tooltip b.down{color:#bfdbfe}.chart-marker-chart-tooltip b.flat{color:#fff}
+
+/* Use marker row space for registration counts and a single state action. */
+.chart-marker-card-list article{grid-template-columns:42px minmax(0,1fr) auto auto}.chart-marker-card-title{display:flex;align-items:center;gap:6px;min-width:0}.chart-marker-card-title>strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chart-marker-card-title>span{flex-shrink:0;padding:3px 7px;border-radius:999px;background:#f1f5f9;color:#64748b;font-size:10px;font-weight:700}.chart-marker-card-actions button.state-change{border-radius:6px;padding:6px 8px;background:#f1f5f9;color:#475569}.chart-marker-card-actions button.state-change:hover{background:#e2e8f0;color:#0f172a}

@@ -50,7 +50,7 @@ export const marketThemeMockRepository = {
       messages: [{ code: "INSUFFICIENT_DATA", severity: "INFO", title: "데이터 축적 중", message: "아직 로직 변경을 판단하기에는 데이터가 부족합니다." }], ml_quality_days_since_training: 0 };
   },
   async getLatestObservationPriority(): Promise<MarketThemeObservationResponse> {
-    return { status: "DRAFT", message: "저장된 관찰 우선순위가 없습니다.", data_cutoff_date: null, default_target_date: null, run: null, items: [], metrics: null, actual_universe_count: null, market_indicator_latest_refreshed_at: null };
+    return { status: "DRAFT", message: "저장된 관찰 우선순위가 없습니다.", data_cutoff_date: null, calculation_data_cutoff_date: null, default_target_date: null, run: null, items: [], metrics: null, actual_universe_count: null, market_indicator_latest_refreshed_at: null };
   },
   async getObservationPriority(_targetDate: string): Promise<MarketThemeObservationResponse> { return this.getLatestObservationPriority(); },
   async calculateObservationPriority(_targetDate: string, _refreshMarketIndicators = false): Promise<MarketThemeObservationResponse> { return this.getLatestObservationPriority(); },

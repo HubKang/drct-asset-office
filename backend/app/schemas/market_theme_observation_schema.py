@@ -83,6 +83,7 @@ class MarketThemeObservationResponse(BaseModel):
     status: str
     message: str | None = None
     data_cutoff_date: str | None = None
+    calculation_data_cutoff_date: str | None = None
     default_target_date: str | None = None
     run: MarketThemeObservationRun | None = None
     items: list[MarketThemeObservationItem] = Field(default_factory=list)

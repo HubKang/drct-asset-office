@@ -32,11 +32,31 @@ class MarketThemeObservationService:
             current += timedelta(days=1)
         return current.isoformat()
 
-    def _cutoff(self) -> str:
+    def _latest_cutoff(self) -> str | None:
         value = self.db.execute(text("SELECT MAX(return_date) FROM market_theme_daily_returns")).scalar()
+        return str(value) if value else None
+
+    def _cutoff(self) -> str:
+        value = self._latest_cutoff()
         if not value:
             raise HTTPException(status_code=409, detail="테마 등락 데이터가 없어 관찰 순위를 계산할 수 없습니다.")
-        return str(value)
+        return value
+
+    @staticmethod
+    def validate_observation_query_date(target_date: str) -> date:
+        try:
+            return date.fromisoformat(target_date)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="관찰 대상일은 YYYY-MM-DD 형식이어야 합니다.") from exc
+
+    @classmethod
+    def validate_observation_calculate_date(cls, target_date: str, cutoff: str) -> date:
+        parsed = cls.validate_observation_query_date(target_date)
+        if parsed <= date.fromisoformat(cutoff):
+            raise HTTPException(status_code=422, detail="과거 대상일은 신규 관찰순위를 계산할 수 없습니다.")
+        if parsed.weekday() >= 5:
+            raise HTTPException(status_code=422, detail="관찰 대상일은 평일이어야 합니다.")
+        return parsed
 
     def _run(self, target_date: str) -> dict[str, Any] | None:
         row = self.db.execute(text("SELECT * FROM market_theme_observation_runs WHERE target_date=:target_date"), {"target_date": target_date}).mappings().first()
@@ -74,10 +94,15 @@ class MarketThemeObservationService:
         return round(actual_strength - predicted_score, 4)
 
     def get(self, target_date: str) -> MarketThemeObservationResponse:
+        self.validate_observation_query_date(target_date)
         run = self._run(target_date)
-        cutoff = self._cutoff()
+        calculation_cutoff = self._latest_cutoff()
         if not run:
-            return MarketThemeObservationResponse(status="DRAFT", data_cutoff_date=cutoff, default_target_date=self.next_weekday(cutoff), message="저장된 관찰 우선순위가 없습니다.", market_indicator_latest_refreshed_at=self._latest_market_refresh_at())
+            return MarketThemeObservationResponse(
+                status="DRAFT", data_cutoff_date=None, calculation_data_cutoff_date=calculation_cutoff,
+                default_target_date=None, message=f"{target_date}에 저장된 관찰결과가 없습니다.",
+                market_indicator_latest_refreshed_at=self._latest_market_refresh_at(),
+            )
         items = [dict(row) for row in self.db.execute(text("""
             SELECT i.*,t.theme_name,t.parent_theme_id AS theme_group_id,p.theme_name AS theme_group_name
               FROM market_theme_observation_items i JOIN market_themes t ON t.id=i.theme_id
@@ -113,6 +138,7 @@ class MarketThemeObservationService:
         metrics_row = self.db.execute(text("SELECT * FROM market_theme_observation_metrics WHERE run_id=:run_id"), {"run_id": run["id"]}).mappings().first()
         return MarketThemeObservationResponse(
             status=str(run["status"]), data_cutoff_date=str(run["data_cutoff_date"]),
+            calculation_data_cutoff_date=calculation_cutoff,
             default_target_date=self.next_weekday(str(run["data_cutoff_date"])), run=run, items=items,
             metrics=dict(metrics_row) if metrics_row else None, actual_universe_count=actual_universe_count or None,
             market_indicator_latest_refreshed_at=self._latest_market_refresh_at(),
@@ -123,7 +149,8 @@ class MarketThemeObservationService:
         if target:
             return self.get(str(target))
         cutoff = self._cutoff()
-        return MarketThemeObservationResponse(status="DRAFT", data_cutoff_date=cutoff, default_target_date=self.next_weekday(cutoff), market_indicator_latest_refreshed_at=self._latest_market_refresh_at())
+        return MarketThemeObservationResponse(status="DRAFT", data_cutoff_date=cutoff, calculation_data_cutoff_date=cutoff,
+            default_target_date=self.next_weekday(cutoff), market_indicator_latest_refreshed_at=self._latest_market_refresh_at())
 
     def calculate(
         self,
@@ -138,8 +165,7 @@ class MarketThemeObservationService:
         market_collection_run_id: int | None = None,
     ) -> MarketThemeObservationResponse:
         cutoff = self._cutoff()
-        if date.fromisoformat(target_date) <= date.fromisoformat(cutoff) or date.fromisoformat(target_date).weekday() >= 5:
-            raise HTTPException(status_code=422, detail="예측 대상일은 데이터 기준일 이후의 평일이어야 합니다.")
+        self.validate_observation_calculate_date(target_date, cutoff)
         calculated_at = datetime.now().isoformat(timespec="seconds")
         self.db.expire_all()
         rows = MarketThemeObservationFeatureService(self.db).build_for_date(cutoff, target_date, operational_asof_at=calculated_at)

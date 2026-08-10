@@ -32,5 +32,5 @@ def delete_event(event_id: int, db: Session = Depends(get_db)): return ChartMark
 @router.get("/review/events")
 def review_events(marker_id: int, db: Session = Depends(get_db)): return ChartMarkerService(db).review_events(marker_id)
 @router.get("/review/chart")
-def review_chart(stock_id: int, marker_date: date, before_trading_days: int = Query(20, ge=1, le=120), after_trading_days: int = Query(20, ge=1, le=120), db: Session = Depends(get_db)):
-    return ChartMarkerService(db).review_chart(stock_id, marker_date, before_trading_days, after_trading_days)
+def review_chart(stock_id: int, marker_date: date, candle_count: int = Query(81, ge=3, le=201), db: Session = Depends(get_db)):
+    return ChartMarkerService(db).review_chart(stock_id, marker_date, candle_count)
