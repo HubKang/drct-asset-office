@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown, Info, RefreshCw } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Info, Pencil, RefreshCw } from "lucide-react";
 import SectionCard from "@/components/common/SectionCard";
 import StatusBadge from "@/components/common/StatusBadge";
 import MarketThemePriceFlowPanel from "@/components/marketThemes/MarketThemePriceFlowPanel";
@@ -522,6 +522,7 @@ function MarketThemesPage() {
   const [returnStockSort, setReturnStockSort] = useState<ThemeStockSort>("memo");
   const [memoDrafts, setMemoDrafts] = useState<Record<number, string>>({});
   const [memoSaveStatuses, setMemoSaveStatuses] = useState<Record<number, MemoSaveStatus>>({});
+  const [editingMemoMappingId, setEditingMemoMappingId] = useState<number | null>(null);
   const memoSavedRef = useRef<Record<number, string>>({});
   const memoPendingRef = useRef<Record<number, string | undefined>>({});
   const memoSaveSequenceRef = useRef<Record<number, number>>({});
@@ -676,8 +677,9 @@ function MarketThemesPage() {
       if (!keyword) return true;
       return row.theme_name.toLowerCase().includes(keyword) || row.keywords.join(" ").toLowerCase().includes(keyword);
     });
-    if (themeViewMode !== "theme" || themeReturnSort === "default") return rows;
-    return [...rows].sort((a, b) => {
+    const activeFirstRows = [...rows].sort((a, b) => b.is_active - a.is_active);
+    if (themeViewMode !== "theme" || themeReturnSort === "default") return activeFirstRows;
+    return activeFirstRows.sort((a, b) => {
       const av = a.latest_return?.avg_change_rate;
       const bv = b.latest_return?.avg_change_rate;
       const aMissing = av == null;
@@ -1093,11 +1095,25 @@ function MarketThemesPage() {
     setSupplyCountSort((prev) => (prev === "default" ? "desc" : prev === "desc" ? "asc" : "default"));
   };
 
+  const beginThemeStockMemoEdit = (row: MarketThemeStock) => {
+    const mappingId = row.mapping_id;
+    const saved = memoSavedRef.current[mappingId] ?? row.stock_memo ?? "";
+    setMemoDrafts((previous) => ({ ...previous, [mappingId]: previous[mappingId] ?? saved }));
+    setMemoSaveStatuses((previous) => ({ ...previous, [mappingId]: "idle" }));
+    setEditingMemoMappingId(mappingId);
+  };
+
   const saveThemeStockMemo = (row: MarketThemeStock) => {
     const mappingId = row.mapping_id;
     const normalized = (memoDrafts[mappingId] ?? row.stock_memo ?? "").trim();
     const saved = (memoSavedRef.current[mappingId] ?? row.stock_memo ?? "").trim();
-    if (normalized === saved || memoPendingRef.current[mappingId] === normalized) return;
+    if (normalized === saved) {
+      setMemoDrafts((previous) => ({ ...previous, [mappingId]: saved }));
+      setMemoSaveStatuses((previous) => ({ ...previous, [mappingId]: "idle" }));
+      setEditingMemoMappingId((current) => current === mappingId ? null : current);
+      return;
+    }
+    if (memoPendingRef.current[mappingId] === normalized) return;
 
     const sequence = (memoSaveSequenceRef.current[mappingId] ?? 0) + 1;
     memoSaveSequenceRef.current[mappingId] = sequence;
@@ -1123,6 +1139,7 @@ function MarketThemesPage() {
               : previous;
           });
           setMemoSaveStatuses((previous) => ({ ...previous, [mappingId]: "saved" }));
+          setEditingMemoMappingId((current) => current === mappingId ? null : current);
           memoSavedTimersRef.current[mappingId] = setTimeout(() => {
             setMemoSaveStatuses((previous) => ({ ...previous, [mappingId]: "idle" }));
           }, 1200);
@@ -1142,6 +1159,7 @@ function MarketThemesPage() {
     const saved = memoSavedRef.current[row.mapping_id] ?? row.stock_memo ?? "";
     setMemoDrafts((previous) => ({ ...previous, [row.mapping_id]: saved }));
     setMemoSaveStatuses((previous) => ({ ...previous, [row.mapping_id]: "idle" }));
+    setEditingMemoMappingId((current) => current === row.mapping_id ? null : current);
   };
   const loadCandidates = async () => {
     try {
@@ -1889,7 +1907,9 @@ function MarketThemesPage() {
                 ) : null}
                 {themeViewMode === "group" ? pagedThemes.map((row) => {
                   const isExpanded = expandedThemeGroupIds.has(row.id);
-                  const childThemes = sortedThemes.filter((theme) => theme.parent_theme_id === row.id && theme.theme_level !== "THEME_GROUP");
+                  const childThemes = sortedThemes
+                    .filter((theme) => theme.parent_theme_id === row.id && theme.theme_level !== "THEME_GROUP")
+                    .sort((a, b) => b.is_active - a.is_active);
                   return (
                     <Fragment key={row.id}>
                       <tr className="theme-group-row" onClick={() => toggleThemeGroupExpanded(row.id)}>
@@ -2128,7 +2148,7 @@ function MarketThemesPage() {
             </div>
           </SectionCard>
 
-          <SectionCard title={`연결 종목 목록${selectedTheme ? ` - ${selectedThemeGroup ? `${selectedThemeGroup.theme_name} / ` : ""}${selectedTheme.theme_name}` : isMappingAllThemesSelected ? " - 테마 전체" : ""} (${activeThemeStocks.length}종목 · 대표 ${primaryCount})`}>
+          <SectionCard title={`연결 종목 목록${selectedTheme ? ` : ${selectedThemeGroup ? `${selectedThemeGroup.theme_name} ▶ ` : ""}${selectedTheme.theme_name}` : isMappingAllThemesSelected ? " : 테마 전체" : ""} (${activeThemeStocks.length}종목 · 대표 ${primaryCount})`}>
             <div className="theme-linked-stock-sortbar">
               <label><span>정렬</span><select className="select-control" value={themeStockSort} onChange={(event) => { setThemeStockSort(event.target.value as ThemeStockSort); setSupplyCountSort("default"); }}>
                 <option value="default">기본순</option><option value="name">종목명</option><option value="memo">종목메모</option>
@@ -2190,17 +2210,21 @@ function MarketThemesPage() {
                         key={row.mapping_id}
                         className={`market-theme-stock-row ${selectedLinkedStock?.mapping_id === row.mapping_id ? "selected" : ""}`}
                         onClick={(e) => {
-                          if ((e.target as HTMLElement).closest("button,input,label")) return;
+                          if ((e.target as HTMLElement).closest("button,input,textarea,label")) return;
                           void openLinkedStockDrawer(row);
                         }}
                       >
                         <td><div className="stock-cell theme-linked-stock-name">
                           <strong>{row.stock_name}</strong>
-                          <div className="theme-stock-memo-editor">
-                            <input type="text" maxLength={100} value={memoDrafts[row.mapping_id] ?? row.stock_memo ?? ""} placeholder="세부분야 메모" aria-label={`${row.stock_name} 세부분야 메모`} title={memoDrafts[row.mapping_id] ?? row.stock_memo ?? ""} onChange={(event) => setMemoDrafts((previous) => ({ ...previous, [row.mapping_id]: event.target.value }))} onBlur={() => saveThemeStockMemo(row)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); saveThemeStockMemo(row); } else if (event.key === "Escape") { event.preventDefault(); cancelThemeStockMemo(row); } }} />
+                          <span className="theme-linked-stock-code">{stockCode || row.stock_code}</span>
+                          <div className="theme-stock-memo-line">
+                            {editingMemoMappingId === row.mapping_id ? <div className="theme-stock-memo-editor">
+                              <input autoFocus type="text" maxLength={100} value={memoDrafts[row.mapping_id] ?? row.stock_memo ?? ""} placeholder="세부분야 메모" aria-label={`${row.stock_name} 세부분야 메모 수정`} title={memoDrafts[row.mapping_id] ?? row.stock_memo ?? ""} onFocus={(event) => { const length = event.currentTarget.value.length; event.currentTarget.setSelectionRange(length, length); }} onChange={(event) => setMemoDrafts((previous) => ({ ...previous, [row.mapping_id]: event.target.value }))} onBlur={() => saveThemeStockMemo(row)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); saveThemeStockMemo(row); } else if (event.key === "Escape") { event.preventDefault(); cancelThemeStockMemo(row); } }} />
+                            </div> : <button type="button" className={`theme-stock-memo-view${(memoDrafts[row.mapping_id] ?? row.stock_memo ?? "").trim() ? "" : " is-empty"}`} aria-label={`${row.stock_name} 세부분야 메모 ${(memoDrafts[row.mapping_id] ?? row.stock_memo ?? "").trim() ? "수정" : "추가"}`} title={(memoDrafts[row.mapping_id] ?? row.stock_memo ?? "").trim() || `${row.stock_name} 세부분야 메모 추가`} onClick={() => beginThemeStockMemoEdit(row)}>
+                              <span>{(memoDrafts[row.mapping_id] ?? row.stock_memo ?? "").trim() || "+ 세부분야 메모"}</span><Pencil className="theme-stock-memo-edit-icon" aria-hidden="true" size={11} />
+                            </button>}
                             <small className={`theme-stock-memo-status is-${memoSaveStatuses[row.mapping_id] ?? "idle"}`} aria-live="polite">{memoSaveStatuses[row.mapping_id] === "saving" ? "저장 중" : memoSaveStatuses[row.mapping_id] === "saved" ? "저장됨 ✓" : memoSaveStatuses[row.mapping_id] === "error" ? "저장 실패" : ""}</small>
                           </div>
-                          <span>{stockCode || row.stock_code}</span>
                         </div></td>
                         <td>{row.market ?? "-"}</td>
                         <td><label className="theme-linked-stock-primary"><input type="checkbox" checked={row.is_primary === 1} disabled={updatingPrimaryMappingId === row.mapping_id} onChange={(e) => void onTogglePrimary(row.mapping_id, e.target.checked)} /><span>{row.is_primary === 1 ? "대표" : "일반"}</span></label></td>

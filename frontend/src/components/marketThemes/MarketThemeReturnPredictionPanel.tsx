@@ -1,17 +1,34 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, Info } from "lucide-react";
 import { repositories } from "@/services";
 import type { MarketTheme, MarketThemeObservationDiagnosticsResponse, MarketThemeObservationItem, MarketThemeObservationMLTrainResponse, MarketThemeObservationResponse } from "@/types/marketTheme";
 import ObservationGapChart from "@/components/marketThemes/ObservationGapChart";
 import ObservationRadarGrid from "@/components/marketThemes/ObservationRadarGrid";
 
-const nextBusinessDay = () => {
-  const value = new Date(); value.setDate(value.getDate() + 1);
-  while (value.getDay() === 0 || value.getDay() === 6) value.setDate(value.getDate() + 1);
-  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+const kstToday = () => new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Seoul" }).format(new Date());
+const shiftBusinessDay = (dateValue: string, direction: -1 | 1) => {
+  const value = new Date(`${dateValue}T00:00:00Z`);
+  do value.setUTCDate(value.getUTCDate() + direction);
+  while (value.getUTCDay() === 0 || value.getUTCDay() === 6);
+  return value.toISOString().slice(0, 10);
 };
+const nextBusinessDay = () => shiftBusinessDay(kstToday(), 1);
 const n = (value: number | null | undefined, digits = 1) => value == null ? "-" : value.toFixed(digits);
 const percent = (value: number | null | undefined) => value == null ? "-" : `${(value * 100).toFixed(1)}%`;
 const dateTime = (value: string | null | undefined) => value ? value.replace("T", " ").slice(0, 16) : "-";
+const shortDateTime = (value: string | null | undefined) => {
+  const formatted = dateTime(value);
+  return formatted === "-" ? formatted : formatted.slice(5);
+};
+const observationStatusLabel = (status: string | null | undefined) => {
+  if (status === "PREDICTED") return "예측 완료";
+  if (status === "EVALUATED") return "검증 완료";
+  return "결과 대기";
+};
+const featureVersionLabel = (value: string | null | undefined) => {
+  const match = value?.match(/_V(\d+)$/i);
+  return match ? `Feature V${match[1]}` : "Feature V1";
+};
 const stateName: Record<string, string> = {
   FLOW_LEADING: "수급 선도", STRONG_CONTINUATION: "강세 지속", REVERSAL_WATCH: "반전 관찰",
   NEUTRAL: "중립", OVERHEAT_RISK: "과열 위험", FLOW_EXIT: "수급 이탈",
@@ -32,6 +49,7 @@ export default function MarketThemeReturnPredictionPanel(props: {
   const [marketChoiceOpen, setMarketChoiceOpen] = useState(false);
   const [progressMessage, setProgressMessage] = useState("");
   const abortRef = useRef<AbortController | null>(null);
+  const today = kstToday();
 
   const request = async (work: (signal: AbortSignal) => Promise<MarketThemeObservationResponse>, options?: { preserveTargetDate?: boolean }) => {
     abortRef.current?.abort(); const controller = new AbortController(); abortRef.current = controller;
@@ -78,10 +96,16 @@ export default function MarketThemeReturnPredictionPanel(props: {
     if (cutoff && targetDate <= cutoff) return "과거 대상일은 신규 관찰순위를 계산할 수 없습니다.";
     return "";
   };
-  const queryExisting = async () => {
+  const queryExisting = async (date = targetDate) => {
+    if (!date) return;
     setCalculateDateError("");
     setProgressMessage("");
-    await request((signal) => repositories.marketThemes.getObservationPriority(targetDate, signal), { preserveTargetDate: true });
+    await request((signal) => repositories.marketThemes.getObservationPriority(date, signal), { preserveTargetDate: true });
+  };
+  const navigateObservationDate = async (nextDate: string) => {
+    setTargetDate(nextDate);
+    setCalculateDateError("");
+    await queryExisting(nextDate);
   };
   const prepareCalculation = () => {
     const validationError = calculationDateError();
@@ -104,30 +128,49 @@ export default function MarketThemeReturnPredictionPanel(props: {
   };
   const validate = async () => { if (!data?.run) return; setAction("validate"); await request((signal) => repositories.marketThemes.validateObservationPriority(data.run!.target_date, signal)); await loadDiagnostics(); setAction(""); };
   const train = async () => { setAction("train"); setError(""); try { setMLResult(await repositories.marketThemes.trainObservationML()); } catch (reason) { setError(reason instanceof Error ? reason.message : "ML 학습에 실패했습니다."); } finally { setAction(""); } };
+  const featureVersion = data?.run?.feature_version ?? "THEME_OBSERVATION_FEATURE_V1";
+  const marketIndicatorAt = data?.run?.market_indicator_refreshed_at ?? data?.market_indicator_latest_refreshed_at;
+  const diagnosticDays = diagnostics?.quality_evaluated_days ?? 0;
+  const diagnosticGoalDays = 20;
+  const diagnosticProgress = Math.min(100, Math.round((diagnosticDays / diagnosticGoalDays) * 100));
+  const diagnosticReady = diagnosticDays >= diagnosticGoalDays;
 
   return <div className="theme-prediction-panel observation-priority-panel">
-    <div className="theme-prediction-toolbar">
-      <label><span>데이터 기준일</span><strong>{data?.data_cutoff_date ?? "-"}</strong></label>
-      <label><span>관찰 대상일</span><input className="input-control" type="date" value={targetDate} onChange={(event) => { setTargetDate(event.target.value); setCalculateDateError(""); }} /></label>
-      <label><span>테마그룹</span><select className="select-control" value={groupId} onChange={(event) => setGroupId(event.target.value)}><option value="all">전체</option>{props.themeGroups.map((group) => <option key={group.id} value={group.id}>{group.theme_name}</option>)}</select></label>
-      <label><span>검색</span><input className="input-control" value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="테마명" /></label>
-      <label><span>표시</span><select className="select-control" value="10" disabled aria-label="표시"><option value="10">상위 10</option></select></label>
-      <button className="btn btn-secondary" type="button" disabled={loading || !targetDate} onClick={() => void queryExisting()}>조회</button>
-      <button className="btn btn-primary" type="button" disabled={!targetDate || Boolean(action)} onClick={prepareCalculation}>{action.includes("calculate") ? "계산 중..." : "관찰순위 계산"}</button>
-      {data?.run ? <button className="btn btn-secondary" type="button" disabled={Boolean(action)} title="저장된 실측 데이터를 기준으로 선택일의 관찰결과를 다시 검증합니다." onClick={() => void validate()}>{action === "validate" ? "재검증 중..." : "재검증"}</button> : null}
-    </div>
-    <p className="theme-observation-date-help">관찰 대상일은 해당 날짜의 저장 결과를 조회합니다. 데이터 기준일은 관찰순위 계산에 사용된 마지막 실측일입니다.</p>
+    <section className="theme-observation-query-panel" aria-label="관찰순위 조회 조건">
+      <div className="theme-observation-query-fields">
+        <div className="theme-observation-cutoff"><span>데이터 기준일</span><strong>{data?.calculation_data_cutoff_date ?? data?.data_cutoff_date ?? "-"}</strong></div>
+        <label className="theme-observation-date-field"><span>관찰 대상일</span><div className="theme-observation-date-navigation">
+          <button className="btn btn-secondary" type="button" aria-label="이전 관찰 대상일" title="이전 평일" onClick={() => void navigateObservationDate(shiftBusinessDay(targetDate || today, -1))}><ChevronLeft size={17} aria-hidden="true" /></button>
+          <input className="input-control" type="date" value={targetDate} aria-label="관찰 대상일" onChange={(event) => { const nextDate = event.target.value; setTargetDate(nextDate); setCalculateDateError(""); if (nextDate) void queryExisting(nextDate); }} />
+          <button className="btn btn-secondary" type="button" aria-label="다음 관찰 대상일" title="다음 평일" onClick={() => void navigateObservationDate(shiftBusinessDay(targetDate || today, 1))}><ChevronRight size={17} aria-hidden="true" /></button>
+          <button className={`btn btn-secondary theme-observation-today${targetDate === today ? " is-active" : ""}`} type="button" aria-label="오늘 관찰 대상일" onClick={() => void navigateObservationDate(today)}>오늘</button>
+        </div></label>
+        <label><span>테마그룹</span><select className="select-control" value={groupId} onChange={(event) => setGroupId(event.target.value)}><option value="all">전체</option>{props.themeGroups.map((group) => <option key={group.id} value={group.id}>{group.theme_name}</option>)}</select></label>
+        <label className="theme-observation-search-field"><span>검색</span><input className="input-control" value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="테마명" /></label>
+        <label><span>표시</span><select className="select-control" value="10" disabled aria-label="표시"><option value="10">상위 10</option></select></label>
+      </div>
+      <div className="theme-observation-query-actions">
+        <p className="theme-observation-date-help">관찰 대상일은 저장 결과 조회 기준이며, 데이터 기준일은 신규 계산에 사용되는 마지막 실측일입니다.</p>
+        <div><button className="btn btn-secondary" type="button" disabled={loading || !targetDate} onClick={() => void queryExisting()}>조회</button>
+          <button className="btn btn-primary" type="button" disabled={!targetDate || Boolean(action)} onClick={prepareCalculation}>{action.includes("calculate") ? "계산 중..." : "관찰순위 계산"}</button>
+          {data?.run ? <button className="btn btn-secondary" type="button" disabled={Boolean(action)} title="저장된 실측 데이터를 기준으로 선택일의 관찰결과를 다시 검증합니다." onClick={() => void validate()}>{action === "validate" ? "재검증 중..." : "재검증"}</button> : null}</div>
+      </div>
+    </section>
     {calculateDateError ? <p className="form-error">{calculateDateError}</p> : null}
-    {error ? <div className="inline-result inline-error">{error}</div> : null}{data?.message ? <div className="inline-result">{data.message}</div> : null}
+    {loading ? <div className="theme-observation-loading" role="status">선택한 날짜의 관찰순위를 조회하고 있습니다.</div> : null}
+    {error ? <div className="inline-result inline-error">{error}</div> : null}{!loading && data?.message ? <div className="inline-result">{data.message}</div> : null}
     {progressMessage ? <div className="inline-result theme-observation-progress">{progressMessage}</div> : null}
-    <div className="theme-prediction-meta"><span className={`theme-prediction-status status-${(data?.status ?? "draft").toLowerCase()}`}>{data?.status ?? "DRAFT"}</span>
-      <span>방법 {data?.run?.method ?? "OBSERVATION_RULE"}</span><span>{data?.run?.feature_version ?? "THEME_OBSERVATION_FEATURE_V1"}</span>
-      <span>{data?.run?.display_mode === "PROBABILITY" ? "보정 확률" : "관찰 점수(확률 아님)"}</span>
-      <span>{data?.run?.calculation_mode === "REFRESHED_MARKET_DATA" ? "시장지표 보정관찰" : "기존 시장지표 기준"}</span>
-      <span>시장지표 {dateTime(data?.run?.market_indicator_refreshed_at ?? data?.market_indicator_latest_refreshed_at)}</span>
-      <button className="btn btn-secondary btn-table-sm" type="button" disabled={Boolean(action)} onClick={() => void train()}>{action === "train" ? "ML 학습 중..." : "ML 후보 연구"}</button>
-    </div>
-    <p className="theme-observation-disclaimer">관찰 우선순위는 다음 거래일 상대강도 관찰을 위한 연구 지표이며 매수 추천이 아닙니다.</p>
+    <section className="theme-observation-statusbar" aria-label="현재 분석 상태">
+      <div className="theme-observation-statusbar-main"><span className={`theme-prediction-status status-${(data?.status ?? "draft").toLowerCase()}`} title={data?.status ?? "DRAFT"}>● {observationStatusLabel(data?.status)}</span>
+        <span className="theme-observation-method"><small>분석 방식</small><b>{data?.run?.method ?? "OBSERVATION_RULE"}</b></span>
+        <span className="theme-observation-feature" title={featureVersion}>{featureVersionLabel(featureVersion)}</span>
+        <button className="btn btn-secondary btn-table-sm" type="button" disabled={Boolean(action)} onClick={() => void train()}>{action === "train" ? "ML 학습 중..." : "ML 후보 연구"}</button>
+      </div>
+      <div className="theme-observation-statusbar-detail"><span>{data?.run?.display_mode === "PROBABILITY" ? "보정확률" : "관찰점수 · 확률 아님"}</span><i aria-hidden="true" />
+        <span>{data?.run?.calculation_mode === "REFRESHED_MARKET_DATA" ? "시장지표 보정관찰" : "기존 시장지표 기준"}</span><i aria-hidden="true" />
+        <span title={dateTime(marketIndicatorAt)}>시장지표 {shortDateTime(marketIndicatorAt)} 기준</span></div>
+    </section>
+    <p className="theme-observation-disclaimer"><Info size={14} aria-hidden="true" /> 관찰우선순위는 다음 거래일 상대강도 관찰용 연구지표이며 매수·매도 추천이 아닙니다.</p>
     {data?.pre_validation_status ? <div className="theme-observation-auto-validation">
       <span>최근 자동검증 <b>{data.pre_validation_target_date ?? "대상 없음"}</b></span>
       <span>상태 <b>{data.pre_validation_quality_status ?? data.pre_validation_status}</b></span>
@@ -135,13 +178,13 @@ export default function MarketThemeReturnPredictionPanel(props: {
       <span>시장보정 <b>{data.run?.calculation_mode === "REFRESHED_MARKET_DATA" ? "적용" : "미적용"}</b></span>
     </div> : null}
     {diagnostics ? <section className={`theme-observation-diagnostics status-${diagnostics.diagnostic_status.toLowerCase()}`}>
-      <header><h3>실전검증 진단</h3><span className="theme-observation-diagnostic-badge">{diagnostics.messages[0]?.title ?? "관찰 로직 상태"}</span><strong>{diagnostics.quality_evaluated_days} / 20일</strong></header>
+      <header><div><h3>실전검증 진단</h3><span className="theme-observation-diagnostic-badge">{diagnosticReady ? "검증 가능" : "데이터 축적 중"}</span></div><div className="theme-observation-diagnostic-progress"><strong>{diagnosticDays} / {diagnosticGoalDays}일</strong><span role="progressbar" aria-label="실전검증 데이터 축적률" aria-valuemin={0} aria-valuemax={diagnosticGoalDays} aria-valuenow={Math.min(diagnosticDays, diagnosticGoalDays)}><i style={{ width: `${diagnosticProgress}%` }} /></span></div></header>
       <div className="theme-observation-diagnostic-grid">
-        <article><span>최근 CURRENT</span><p>Top20 <b>{percent(diagnostics.recent_20.current.precision_top20)}</b><i>·</i>NDCG@5 <b>{n(diagnostics.recent_20.current.ndcg_at_5, 3)}</b></p></article>
-        <article><span>시장보정</span><p>paired <b>{diagnostics.paired_correction.paired_days}일</b><i>·</i>효과 <b>{n(diagnostics.paired_correction.mean_refresh_effect)}</b></p></article>
-        <article><span>ML 재학습</span><p>학습 후 <b>{diagnostics.ml_quality_days_since_training}일</b><i>·</i>자동학습 안 함</p></article>
+        <article><span>순위 품질</span><dl><dt>Top20 적중</dt><dd>{percent(diagnostics.recent_20.current.precision_top20)}</dd><dt>NDCG@5</dt><dd>{n(diagnostics.recent_20.current.ndcg_at_5, 3)}</dd></dl><small title="CURRENT">최근 검증</small></article>
+        <article><span>시장보정</span><dl><dt>비교일</dt><dd>{diagnostics.paired_correction.paired_days}일</dd><dt>효과</dt><dd>{n(diagnostics.paired_correction.mean_refresh_effect)}</dd></dl></article>
+        <article><span>ML 학습</span><dl><dt>학습 후</dt><dd>{diagnostics.ml_quality_days_since_training}일</dd><dt>상태</dt><dd>자동학습 안 함</dd></dl></article>
       </div>
-      <footer>{diagnostics.messages[0]?.message ?? "현재 진단 상태를 유지합니다."}</footer>
+      <footer><Info size={13} aria-hidden="true" /> {diagnosticReady ? diagnostics.messages[0]?.message ?? "축적된 검증 데이터를 기준으로 현재 진단 상태를 확인할 수 있습니다." : `검증 데이터가 아직 ${diagnosticDays}/${diagnosticGoalDays}일입니다. 로직 변경 여부를 판단하기에는 데이터가 부족합니다.`}</footer>
     </section> : null}
     <div className="theme-prediction-summary theme-observation-summary">
       <article><span>관찰 1위</span><div><strong>{summary.top?.theme_name ?? "-"}</strong><em>{summary.top ? valueLabel(summary.top) : "-"}</em></div></article>
