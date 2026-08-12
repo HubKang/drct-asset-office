@@ -13,6 +13,7 @@ from backend.app.api.routes_collectors import router as collectors_router
 from backend.app.api.routes_collection_runs import router as collection_runs_router
 from backend.app.api.routes_classification_rules import router as classification_rules_router
 from backend.app.api.routes_disclosures import router as disclosures_router
+from backend.app.api.routes_dashboard import router as dashboard_router
 from backend.app.api.routes_economic_briefing import router as economic_briefing_router
 from backend.app.api.routes_external_kiwoom import router as external_kiwoom_router
 from backend.app.api.routes_gpt_prompt_templates import router as gpt_prompt_templates_router
@@ -91,6 +92,7 @@ app.include_router(news_router)
 app.include_router(kiwoom_router)
 app.include_router(kms_router)
 app.include_router(disclosures_router)
+app.include_router(dashboard_router)
 app.include_router(collectors_router)
 app.include_router(collection_runs_router)
 app.include_router(classification_rules_router)

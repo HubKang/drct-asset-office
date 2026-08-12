@@ -10,6 +10,7 @@ import { newsApiRepository } from "@/services/api/newsApiRepository";
 import { patternResearchApiRepository } from "@/services/api/patternResearchApiRepository";
 import { telegramApiRepository } from "@/services/api/telegramApiRepository";
 import { marketCalendarApiRepository } from "@/services/api/marketCalendarApiRepository";
+import { dashboardApiRepository } from "@/services/api/dashboardApiRepository";
 import { marketIndexApiRepository } from "@/services/api/marketIndexApiRepository";
 import { marketDataApiRepository } from "@/services/api/marketDataApiRepository";
 import { marketIndicatorApiRepository } from "@/services/api/marketIndicatorApiRepository";
@@ -50,6 +51,7 @@ import { appConfig } from "@/services/config/appConfig";
 const useMock = appConfig.dataSource !== "api";
 
 export const repositories = {
+  dashboard: dashboardApiRepository,
   analysisIndicators: analysisIndicatorApiRepository,
   architecture: architectureApiRepository,
   backtest: backtestApiRepository,

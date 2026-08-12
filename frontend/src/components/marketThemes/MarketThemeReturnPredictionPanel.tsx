@@ -37,6 +37,7 @@ const stateName: Record<string, string> = {
 export default function MarketThemeReturnPredictionPanel(props: {
   themeGroups: MarketTheme[];
   onThemeClick: (themeId: number) => void;
+  initialTargetDate?: string | null;
 }) {
   const [data, setData] = useState<MarketThemeObservationResponse | null>(null);
   const [targetDate, setTargetDate] = useState(nextBusinessDay);
@@ -67,7 +68,16 @@ export default function MarketThemeReturnPredictionPanel(props: {
   };
 
   const loadDiagnostics = async () => { try { setDiagnostics(await repositories.marketThemes.getObservationDiagnostics()); } catch { /* 관찰 결과 조회는 진단 실패와 독립적으로 유지한다. */ } };
-  useEffect(() => { void request((signal) => repositories.marketThemes.getLatestObservationPriority(signal)).then(() => loadDiagnostics()); return () => abortRef.current?.abort(); }, []);
+  useEffect(() => {
+    const initialDate = props.initialTargetDate?.trim();
+    void request((signal) => initialDate
+      ? repositories.marketThemes.getObservationPriority(initialDate, signal)
+      : repositories.marketThemes.getLatestObservationPriority(signal)
+    ).then(() => {
+      void loadDiagnostics();
+    });
+    return () => abortRef.current?.abort();
+  }, []);
   useEffect(() => {
     if (!marketChoiceOpen || action) return;
     const close = (event: KeyboardEvent) => { if (event.key === "Escape") setMarketChoiceOpen(false); };
