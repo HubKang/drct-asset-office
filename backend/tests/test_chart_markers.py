@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
-from backend.app.schemas.chart_marker_schema import MarkerEventWrite, MarkerGroupWrite, MarkerWrite
+from backend.app.schemas.chart_marker_schema import MarkerEventPatch, MarkerEventWrite, MarkerGroupWrite, MarkerWrite
 from backend.app.services.chart_marker_service import ChartMarkerService
 
 
@@ -23,7 +23,8 @@ def _db() -> Session:
           description TEXT,symbol TEXT NOT NULL,sort_order INTEGER NOT NULL,is_active INTEGER NOT NULL,created_at DATETIME,updated_at DATETIME,
           UNIQUE(marker_group_id,name))""")
         conn.exec_driver_sql("""CREATE TABLE chart_marker_events(id INTEGER PRIMARY KEY AUTOINCREMENT,stock_id INTEGER NOT NULL,marker_id INTEGER NOT NULL,
-          marker_date DATE NOT NULL,memo TEXT,created_at DATETIME,updated_at DATETIME,UNIQUE(stock_id,marker_id,marker_date))""")
+          marker_date DATE NOT NULL,memo TEXT,review_result TEXT,reviewed_at DATETIME,created_at DATETIME,updated_at DATETIME,
+          CHECK(review_result IS NULL OR review_result IN ('SUCCESS','FAILURE')),UNIQUE(stock_id,marker_id,marker_date))""")
         conn.exec_driver_sql("INSERT INTO stocks VALUES(1,'005930','삼성전자')")
         start = date(2026, 5, 1)
         for index in range(120):
@@ -45,6 +46,7 @@ def test_marker_event_upsert_updates_memo_without_duplicate() -> None:
     assert next(item for item in events if item["marker_date"] == "2026-07-15")["memo"]=="수정"
     catalog_marker=service.list_catalog()["items"][0]["markers"][0]
     assert catalog_marker["stock_count"] == 1 and catalog_marker["marker_count"] == 2
+    assert catalog_marker["success_count"] == 0 and catalog_marker["failure_count"] == 0
     db.close()
 
 
@@ -55,6 +57,26 @@ def test_review_chart_centers_marker_between_forty_candles_on_each_side() -> Non
     assert result["available_before"] == 40 and result["available_after"] == 40
     assert result["candles"][40]["trade_date"] == "2026-07-10"
     assert [row["trade_date"] for row in result["candles"]] == sorted(row["trade_date"] for row in result["candles"])
+    db.close()
+
+
+def test_marker_event_review_result_updates_existing_event_and_can_be_cleared() -> None:
+    db = _db(); service = ChartMarkerService(db)
+    group = service.create_group(MarkerGroupWrite(name="반등", color="#2563eb"))
+    marker = service.create_marker(MarkerWrite(marker_group_id=group["id"], name="거래량 장대양봉"))
+    created = service.upsert_event(MarkerEventWrite(stock_id=1, marker_id=marker["id"], marker_date=date(2026, 7, 15), memo=None))
+
+    success = service.update_event(created["id"], MarkerEventPatch(review_result="SUCCESS"))
+    assert success["review_result"] == "SUCCESS"
+    assert success["reviewed_at"] is not None
+    assert service.review_events(marker["id"])["items"][0]["review_result"] == "SUCCESS"
+    reviewed_marker = service.list_catalog()["items"][0]["markers"][0]
+    assert reviewed_marker["success_count"] == 1 and reviewed_marker["failure_count"] == 0
+
+    cleared = service.update_event(created["id"], MarkerEventPatch(review_result=None))
+    assert cleared["review_result"] is None
+    assert cleared["reviewed_at"] is None
+    assert len(service.review_events(marker["id"])["items"]) == 1
     db.close()
 
 

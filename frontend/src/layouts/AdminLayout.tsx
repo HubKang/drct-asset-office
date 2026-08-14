@@ -34,6 +34,7 @@ const MENU_DISPLAY: Record<string, { label: string; short: string }> = {
   trade: { label: "\uB9E4\uB9E4 \uAD00\uB9AC", short: "\uB9E4" },
   kms: { label: "DrCT KMS", short: "K" },
   system: { label: "\uC2DC\uC2A4\uD15C", short: "\uC124" },
+  warehouse: { label: "\uCC3D\uACE0", short: "\uCC3D" },
 };
 
 const getMenuDisplay = (menuKey: string, fallback: string) => MENU_DISPLAY[menuKey] ?? { label: fallback, short: fallback.slice(0, 1) || "-" };

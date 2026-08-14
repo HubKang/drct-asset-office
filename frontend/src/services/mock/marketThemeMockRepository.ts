@@ -28,6 +28,9 @@ import type {
   MarketThemeObservationMLTrainResponse,
   MarketThemeObservationDiagnosticsResponse,
   MarketThemeStock,
+  RealtimeThemeRefreshResponse,
+  RealtimeThemeStocksResponse,
+  RealtimeThemeTreemapResponse,
   MarketThemeStockCreateInput,
   MarketThemeStockMemoUpdateInput,
   MarketThemeStockMemoResponse,
@@ -41,6 +44,15 @@ const mappings: MarketThemeStock[] = [];
 const candidates: MarketThemeCandidate[] = [];
 
 export const marketThemeMockRepository = {
+  async getRealtimeTreemap(): Promise<RealtimeThemeTreemapResponse> {
+    return { trade_date: new Date().toISOString().slice(0, 10), snapshot_at: null, theme_count: 0, linked_stock_count: 0, unique_stock_count: 0, valid_stock_count: 0, failed_stock_count: 0, themes: [] };
+  },
+  async refreshRealtimeTreemap(): Promise<RealtimeThemeRefreshResponse> {
+    return { ...(await this.getRealtimeTreemap()), success: true, price_api_call_count: 0, kiwoom_fetch_ms: 0, db_upsert_ms: 0, theme_aggregation_ms: 0, snapshot_response_ms: 0, stock_fetch_min_ms: null, stock_fetch_avg_ms: null, stock_fetch_max_ms: null, duration_ms: 0, message: "mock Snapshot" };
+  },
+  async getRealtimeThemeStocks(themeId: number): Promise<RealtimeThemeStocksResponse> {
+      return { theme_id: themeId, theme_name: "", theme_rank: 0, theme_change_rate: null, trade_date: new Date().toISOString().slice(0, 10), snapshot_at: null, linked_stock_count: 0, valid_stock_count: 0, stocks: [] };
+  },
   async getObservationDiagnostics(): Promise<MarketThemeObservationDiagnosticsResponse> {
     const empty = { evaluated_days: 0, precision_top20: null, precision_at_5: null, ndcg_at_5: null, spearman: null, mean_rank_error: null };
     return { quality_evaluated_days: 0, recent_5: { quality_days: 0, current: empty, refreshed: empty },
@@ -108,6 +120,9 @@ export const marketThemeMockRepository = {
   },
   async deactivate(_themeId: number): Promise<MarketTheme> {
     throw new Error("mock mode: deactivate not implemented");
+  },
+  async delete(_themeId: number) {
+    throw new Error("mock mode: delete not implemented");
   },
   async refreshReturns(_payload: MarketThemeReturnRefreshRequest): Promise<MarketThemeReturnRefreshResponse> {
     return {

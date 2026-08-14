@@ -20,6 +20,16 @@ export function createNaverChartSidcode(): number {
   return Date.now();
 }
 
+const naverChartSessionSidcode = createNaverChartSidcode();
+
+/**
+ * 화면 사이를 이동해도 같은 차트 URL을 유지해 브라우저 HTTP 캐시를 재사용합니다.
+ * 이미지 파일이나 응답 본문을 애플리케이션/DB에 저장하지 않습니다.
+ */
+export function getNaverChartSessionSidcode(): number {
+  return naverChartSessionSidcode;
+}
+
 export function buildNaverStockCandleChartUrl(
   stockCode: string | number | null | undefined,
   period: NaverStockCandlePeriod,

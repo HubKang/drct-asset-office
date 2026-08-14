@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.app.core.database import Base
@@ -46,7 +46,12 @@ class ChartMarkerEvent(Base):
     marker_id: Mapped[int] = mapped_column(ForeignKey("chart_markers.id", ondelete="RESTRICT"), nullable=False)
     marker_date: Mapped[date] = mapped_column(Date, nullable=False)
     memo: Mapped[str | None] = mapped_column(Text)
+    review_result: Mapped[str | None] = mapped_column(String(20))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
 
-    __table_args__ = (UniqueConstraint("stock_id", "marker_id", "marker_date", name="uq_chart_marker_event"),)
+    __table_args__ = (
+        UniqueConstraint("stock_id", "marker_id", "marker_date", name="uq_chart_marker_event"),
+        CheckConstraint("review_result IS NULL OR review_result IN ('SUCCESS', 'FAILURE')", name="ck_chart_marker_event_review_result"),
+    )

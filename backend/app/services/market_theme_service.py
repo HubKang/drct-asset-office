@@ -4,7 +4,8 @@ import json
 import re
 
 from fastapi import HTTPException, status
-from sqlalchemy import text
+from sqlalchemy import bindparam, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import now_kst
@@ -12,6 +13,7 @@ from backend.app.entities.market_theme import MarketTheme
 from backend.app.repositories.market_theme_repository import MarketThemeRepository
 from backend.app.schemas.market_theme_schema import (
     MarketThemeCreateRequest,
+    MarketThemeDeleteResponse,
     MarketThemeResponse,
     MarketThemeUpdateRequest,
     THEME_LEVEL_GROUP,
@@ -240,3 +242,96 @@ class MarketThemeService:
         row.updated_at = now_kst()
         updated = self.repo.update(row)
         return self._to_response(updated, stock_count=self.repo.get_stock_count(theme_id), stats=self._build_theme_stats())
+
+    def delete_theme(self, theme_id: int) -> MarketThemeDeleteResponse:
+        root = self.repo.get_by_id(theme_id)
+        if not root:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="market theme not found")
+        if root.is_active == 1:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="활성 테마는 삭제할 수 없습니다. 먼저 비활성화해 주세요.")
+
+        descendants: list[MarketTheme] = [root]
+        pending_parent_ids = [root.id]
+        while pending_parent_ids:
+            children = list(
+                self.db.scalars(
+                    select(MarketTheme).where(MarketTheme.parent_theme_id.in_(pending_parent_ids))
+                ).all()
+            )
+            descendants.extend(children)
+            pending_parent_ids = [child.id for child in children]
+
+        active_children = [row.theme_name for row in descendants[1:] if row.is_active == 1]
+        if active_children:
+            names = ", ".join(active_children[:3])
+            suffix = " 외" if len(active_children) > 3 else ""
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"활성 하위 테마가 있어 삭제할 수 없습니다: {names}{suffix}. 먼저 비활성화해 주세요.",
+            )
+
+        theme_ids = [row.id for row in descendants]
+        theme_ids_param = bindparam("theme_ids", expanding=True)
+        related_tables = (
+            ("market_theme_stock_daily_returns", "theme_id"),
+            ("market_theme_daily_returns", "theme_id"),
+            ("market_theme_realtime_returns", "theme_id"),
+            ("market_theme_return_prediction_items", "theme_id"),
+            ("market_theme_observation_items", "theme_id"),
+            ("market_theme_observation_validation_samples", "theme_id"),
+            ("market_calendar_events", "theme_id"),
+            ("daily_theme_flow_ranks", "market_theme_id"),
+            ("briefing_theme_links", "market_theme_id"),
+            ("market_trend_event_theme_links", "market_theme_id"),
+            ("market_theme_stock_candidates", "theme_id"),
+            ("market_theme_stocks", "theme_id"),
+        )
+
+        deleted_related_rows = 0
+        detached_event_references = 0
+        try:
+            for column in ("theme_id", "primary_theme_id"):
+                result = self.db.execute(
+                    text(f"UPDATE market_trend_events SET {column}=NULL WHERE {column} IN :theme_ids")
+                    .bindparams(theme_ids_param),
+                    {"theme_ids": theme_ids},
+                )
+                detached_event_references += max(int(result.rowcount or 0), 0)
+
+            mapping_result = self.db.execute(
+                text(
+                    "DELETE FROM market_index_theme_mappings "
+                    "WHERE theme_id IN :theme_ids OR theme_group_id IN :theme_ids"
+                ).bindparams(theme_ids_param),
+                {"theme_ids": theme_ids},
+            )
+            deleted_related_rows += max(int(mapping_result.rowcount or 0), 0)
+
+            for table_name, column_name in related_tables:
+                result = self.db.execute(
+                    text(f"DELETE FROM {table_name} WHERE {column_name} IN :theme_ids")
+                    .bindparams(theme_ids_param),
+                    {"theme_ids": theme_ids},
+                )
+                deleted_related_rows += max(int(result.rowcount or 0), 0)
+
+            for row in reversed(descendants):
+                self.db.delete(row)
+            self.db.commit()
+        except IntegrityError as exc:
+            self.db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="연결된 데이터 때문에 삭제할 수 없습니다. 관련 연결을 확인해 주세요.",
+            ) from exc
+        except Exception:
+            self.db.rollback()
+            raise
+
+        return MarketThemeDeleteResponse(
+            deleted_theme_id=root.id,
+            deleted_theme_name=root.theme_name,
+            deleted_theme_count=len(descendants),
+            deleted_related_row_count=deleted_related_rows,
+            detached_event_reference_count=detached_event_references,
+        )

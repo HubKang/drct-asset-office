@@ -12,11 +12,11 @@ import { repositories } from "@/services";
 import { ApiError } from "@/services/api/apiClient";
 import {
   buildNaverTraderChartUrl,
-  createNaverChartSidcode,
   normalizeNaverStockCode,
   type NaverTraderChartType,
 } from "@/utils/naverChart";
 import { compareThemeStocksBySupplyCount, type SupplyCountSort } from "@/utils/marketThemeStockSort";
+import { getThemeReturnHeatmapColor, THEME_RETURN_HEATMAP_COLORS } from "@/utils/marketThemeReturnColor";
 import type {
   MarketTheme,
   MarketThemeCandidate,
@@ -215,36 +215,6 @@ const fmtHeatmapCellPct = (value: number | null | undefined) => {
   const n = Number(value);
   return `${n > 0 ? "+" : ""}${n.toFixed(1)}`;
 };
-const THEME_RETURN_HEATMAP_COLORS = [
-  "#2563EB",
-  "#60A5FA",
-  "#93C5FD",
-  "#DBEAFE",
-  "#E5E7EB",
-  "#FEE2E2",
-  "#FCA5A5",
-  "#F87171",
-  "#DC2626",
-] as const;
-const THEME_RETURN_NEAR_ZERO_NEGATIVE_COLOR = "#EFF6FF";
-const THEME_RETURN_NEAR_ZERO_POSITIVE_COLOR = "#FFF1F2";
-
-const getThemeReturnHeatmapColor = (rate: number | null | undefined): string => {
-  if (rate == null || Number.isNaN(Number(rate))) return "#F8FAFC";
-  const value = Number(rate);
-  if (value <= -20) return THEME_RETURN_HEATMAP_COLORS[0];
-  if (value <= -15) return THEME_RETURN_HEATMAP_COLORS[1];
-  if (value <= -10) return THEME_RETURN_HEATMAP_COLORS[2];
-  if (value <= -5) return THEME_RETURN_HEATMAP_COLORS[3];
-  if (value < 0) return THEME_RETURN_NEAR_ZERO_NEGATIVE_COLOR;
-  if (value === 0) return THEME_RETURN_HEATMAP_COLORS[4];
-  if (value < 5) return THEME_RETURN_NEAR_ZERO_POSITIVE_COLOR;
-  if (value < 10) return THEME_RETURN_HEATMAP_COLORS[5];
-  if (value < 15) return THEME_RETURN_HEATMAP_COLORS[6];
-  if (value < 20) return THEME_RETURN_HEATMAP_COLORS[7];
-  return THEME_RETURN_HEATMAP_COLORS[8];
-};
-
 const heatmapTextClass = (rate: number | null | undefined) => {
   if (rate == null || Number.isNaN(Number(rate))) return "theme-return-heatmap__value-text--empty";
   if (Number(rate) <= -20) return "theme-return-heatmap__value-text--negative-strong";
@@ -461,6 +431,9 @@ function MarketThemesPage() {
   const [themes, setThemes] = useState<MarketTheme[]>([]);
   const [selectedThemeId, setSelectedThemeId] = useState<number | null>(null);
   const [themeStocks, setThemeStocks] = useState<MarketThemeStock[]>([]);
+  const themeStocksCacheRef = useRef(new Map<number, MarketThemeStock[]>());
+  const themeStocksInFlightRef = useRef(new Map<number, Promise<MarketThemeStock[]>>());
+  const themeStocksRequestRef = useRef(0);
   const [themeStockSort, setThemeStockSort] = useState<ThemeStockSort>("default");
   const [memoDrafts, setMemoDrafts] = useState<Record<number, string>>({});
   const [memoSaveStatuses, setMemoSaveStatuses] = useState<Record<number, MemoSaveStatus>>({});
@@ -554,6 +527,9 @@ function MarketThemesPage() {
   const trendStrengthInfoRef = useRef<HTMLDivElement | null>(null);
 
   const [themeModalOpen, setThemeModalOpen] = useState(false);
+  const [deleteThemeTarget, setDeleteThemeTarget] = useState<MarketTheme | null>(null);
+  const [deletingTheme, setDeletingTheme] = useState(false);
+  const [deleteThemeError, setDeleteThemeError] = useState("");
   const [formThemeId, setFormThemeId] = useState<number | null>(null);
   const [themeLevel, setThemeLevel] = useState<MarketThemeLevel>("THEME");
   const [parentThemeId, setParentThemeId] = useState<string>("");
@@ -706,7 +682,12 @@ function MarketThemesPage() {
     return [...activeThemeStocks].sort((a, b) => compareThemeStocksBySupplyCount(a, b, supplyCountSort));
   }, [activeThemeStocks, supplyCountSort, themeStockSort]);
   const isMappingAllThemesSelected = mappingAllThemesSelected && !selectedThemeId && mappingThemeGroupId === "all";
-  const chartSidcode = useMemo(() => createNaverChartSidcode(), [selectedThemeId, activeThemeStocks.length]);
+  const chartSidcode = useMemo(() => {
+    const freshnessKey = selectedTheme?.latest_return?.last_refreshed_at
+      ?? selectedTheme?.latest_return?.return_date
+      ?? getDateInputValue();
+    return String(freshnessKey).replace(/\D/g, "") || getDateInputValue().replace(/\D/g, "");
+  }, [selectedTheme?.latest_return?.last_refreshed_at, selectedTheme?.latest_return?.return_date]);
   const selectedLinkedStockCode = useMemo(() => normalizeNaverStockCode(selectedLinkedStock?.stock_code), [selectedLinkedStock?.stock_code]);
   const connectedStockIdSet = useMemo(() => new Set(activeThemeStocks.map((x) => x.stock_id)), [activeThemeStocks]);
   const primaryCount = useMemo(() => activeThemeStocks.filter((x) => x.is_primary === 1).length, [activeThemeStocks]);
@@ -762,11 +743,33 @@ function MarketThemesPage() {
     }
   };
 
-  const loadThemeStocks = async (themeId: number | null) => {
+  const fetchThemeStocks = async (themeId: number, force = false): Promise<MarketThemeStock[]> => {
+    const cached = themeStocksCacheRef.current.get(themeId);
+    if (!force && cached) return cached;
+    const inFlight = themeStocksInFlightRef.current.get(themeId);
+    if (!force && inFlight) return inFlight;
+
+    const request = repositories.marketThemes.listThemeStocks(themeId);
+    themeStocksInFlightRef.current.set(themeId, request);
+    try {
+      const rows = await request;
+      if (themeStocksInFlightRef.current.get(themeId) === request) {
+        themeStocksCacheRef.current.set(themeId, rows);
+      }
+      return rows;
+    } finally {
+      if (themeStocksInFlightRef.current.get(themeId) === request) {
+        themeStocksInFlightRef.current.delete(themeId);
+      }
+    }
+  };
+
+  const loadThemeStocks = async (themeId: number | null, force = false) => {
+    const requestId = ++themeStocksRequestRef.current;
     try {
       if (themeId) {
-        const rows = await repositories.marketThemes.listThemeStocks(themeId);
-        setThemeStocks(rows);
+        const rows = await fetchThemeStocks(themeId, force);
+        if (requestId === themeStocksRequestRef.current) setThemeStocks(rows);
         return;
       }
       if (!isMappingAllThemesSelected) {
@@ -778,7 +781,7 @@ function MarketThemesPage() {
         setThemeStocks([]);
         return;
       }
-      const results = await Promise.all(targetThemes.map((theme) => repositories.marketThemes.listThemeStocks(theme.id)));
+      const results = await Promise.all(targetThemes.map((theme) => fetchThemeStocks(theme.id)));
       const uniqueByStock = new Map<number, MarketThemeStock>();
       results.flat().forEach((row) => {
         if (row.is_active !== 1) return;
@@ -788,8 +791,9 @@ function MarketThemesPage() {
         }
       });
       const rows = Array.from(uniqueByStock.values()).sort((a, b) => a.stock_name.localeCompare(b.stock_name, "ko-KR"));
-      setThemeStocks(rows);
+      if (requestId === themeStocksRequestRef.current) setThemeStocks(rows);
     } catch (e) {
+      if (requestId !== themeStocksRequestRef.current) return;
       setError(toErrorMessage(e, "테마 연결 종목을 불러오지 못했습니다."));
       setThemeStocks([]);
     }
@@ -1036,7 +1040,11 @@ function MarketThemesPage() {
           { stock_memo: normalized || null },
         );
         memoSavedRef.current[mappingId] = updated.stock_memo ?? "";
-        setThemeStocks((previous) => previous.map((item) => item.mapping_id === mappingId ? updated : item));
+        setThemeStocks((previous) => {
+          const next = previous.map((item) => item.mapping_id === mappingId ? updated : item);
+          themeStocksCacheRef.current.set(row.theme_id, next);
+          return next;
+        });
         if (memoSaveSequenceRef.current[mappingId] === sequence) {
           setMemoDrafts((previous) => {
             const currentDraft = previous[mappingId] ?? "";
@@ -1318,6 +1326,53 @@ function MarketThemesPage() {
     }
   };
 
+  const onDeleteTheme = async () => {
+    if (!deleteThemeTarget || deletingTheme) return;
+    setDeletingTheme(true);
+    setDeleteThemeError("");
+    setMessage("");
+    setError("");
+    try {
+      const result = await repositories.marketThemes.delete(deleteThemeTarget.id);
+      invalidateMarketThemeFlowTrendFrontendCache();
+      const deletedIds = new Set([
+        deleteThemeTarget.id,
+        ...themes.filter((theme) => theme.parent_theme_id === deleteThemeTarget.id).map((theme) => theme.id),
+      ]);
+      deletedIds.forEach((themeId) => {
+        themeStocksCacheRef.current.delete(themeId);
+        themeStocksInFlightRef.current.delete(themeId);
+      });
+      if (selectedThemeId != null && deletedIds.has(selectedThemeId)) {
+        setSelectedThemeId(null);
+        setThemeStocks([]);
+      }
+      setExpandedThemeGroupIds((previous) => {
+        const next = new Set(previous);
+        next.delete(deleteThemeTarget.id);
+        return next;
+      });
+      setDeleteThemeTarget(null);
+      await loadThemes();
+      setMessage(
+        result.deleted_theme_count > 1
+          ? `테마그룹과 하위 테마 ${result.deleted_theme_count - 1}개가 완전히 삭제되었습니다.`
+          : `테마 '${result.deleted_theme_name}'이(가) 완전히 삭제되었습니다.`,
+      );
+    } catch (e) {
+      const nextError = toErrorMessage(e, "테마 삭제 중 오류가 발생했습니다.");
+      setDeleteThemeError(nextError);
+      setError(nextError);
+    } finally {
+      setDeletingTheme(false);
+    }
+  };
+
+  const openDeleteThemeModal = (theme: MarketTheme) => {
+    setDeleteThemeError("");
+    setDeleteThemeTarget(theme);
+  };
+
   const toggleThemeGroupExpanded = (themeGroupId: number) => {
     setExpandedThemeGroupIds((prev) => {
       const next = new Set(prev);
@@ -1407,7 +1462,7 @@ function MarketThemesPage() {
     try {
       await repositories.marketThemes.createThemeStock(selectedThemeId, { stock_id: stockId, is_primary: false });
       invalidateMarketThemeFlowTrendFrontendCache();
-      await Promise.all([loadThemeStocks(selectedThemeId), loadThemes()]);
+      await Promise.all([loadThemeStocks(selectedThemeId, true), loadThemes()]);
       setMessage("테마에 종목이 연결되었습니다.");
     } catch (e) {
       setError(toErrorMessage(e, "종목 연결 중 오류가 발생했습니다."));
@@ -1422,7 +1477,7 @@ function MarketThemesPage() {
       await repositories.marketThemes.deactivateThemeStock(mappingId);
       invalidateMarketThemeFlowTrendFrontendCache();
       if (selectedLinkedStock?.mapping_id === mappingId) closeStockDrawer();
-      await Promise.all([loadThemeStocks(selectedThemeId), loadThemes()]);
+      await Promise.all([loadThemeStocks(selectedThemeId, true), loadThemes()]);
       setMessage("테마 연결이 해제되었습니다.");
     } catch (e) {
       setError(toErrorMessage(e, "연결 해제 중 오류가 발생했습니다."));
@@ -1434,7 +1489,7 @@ function MarketThemesPage() {
     try {
       await repositories.marketThemes.updateThemeStock(mappingId, { is_primary: checked });
       invalidateMarketThemeFlowTrendFrontendCache();
-      await loadThemeStocks(selectedThemeId);
+      await loadThemeStocks(selectedThemeId, true);
       setMessage("대표 여부가 변경되었습니다.");
     } catch (e) {
       setError(toErrorMessage(e, "대표 변경 중 오류가 발생했습니다."));
@@ -1463,7 +1518,7 @@ function MarketThemesPage() {
 
   const onApproveCandidate = async (candidateId: number) => {
     await repositories.marketThemes.approveCandidate(candidateId);
-    await Promise.all([loadCandidates(), loadThemes(), loadThemeStocks(selectedThemeId)]);
+    await Promise.all([loadCandidates(), loadThemes(), loadThemeStocks(selectedThemeId, true)]);
   };
 
   const onRejectCandidate = async (candidateId: number) => {
@@ -1827,7 +1882,10 @@ function MarketThemesPage() {
                             {row.is_active === 1 ? (
                               <button type="button" className="btn btn-secondary btn-table-sm" onClick={(e) => { e.stopPropagation(); void onDeactivateTheme(row.id); }}>비활성화</button>
                             ) : (
-                              <button type="button" className="btn btn-secondary btn-table-sm" onClick={(e) => { e.stopPropagation(); void onActivateTheme(row); }}>활성화</button>
+                              <>
+                                <button type="button" className="btn btn-secondary btn-table-sm" onClick={(e) => { e.stopPropagation(); void onActivateTheme(row); }}>활성화</button>
+                                <button type="button" className="btn btn-danger btn-table-sm" onClick={(e) => { e.stopPropagation(); openDeleteThemeModal(row); }}>삭제</button>
+                              </>
                             )}
                           </div>
                         </td>
@@ -1854,7 +1912,10 @@ function MarketThemesPage() {
                               {child.is_active === 1 ? (
                                 <button type="button" className="btn btn-secondary btn-table-sm" onClick={(e) => { e.stopPropagation(); void onDeactivateTheme(child.id); }}>비활성화</button>
                               ) : (
-                                <button type="button" className="btn btn-secondary btn-table-sm" onClick={(e) => { e.stopPropagation(); void onActivateTheme(child); }}>활성화</button>
+                                <>
+                                  <button type="button" className="btn btn-secondary btn-table-sm" onClick={(e) => { e.stopPropagation(); void onActivateTheme(child); }}>활성화</button>
+                                  <button type="button" className="btn btn-danger btn-table-sm" onClick={(e) => { e.stopPropagation(); openDeleteThemeModal(child); }}>삭제</button>
+                                </>
                               )}
                             </div>
                           </td>
@@ -1885,7 +1946,10 @@ function MarketThemesPage() {
                         {row.is_active === 1 ? (
                           <button type="button" className="btn btn-secondary btn-table-sm" onClick={(e) => { e.stopPropagation(); void onDeactivateTheme(row.id); }}>비활성화</button>
                         ) : (
-                          <button type="button" className="btn btn-secondary btn-table-sm" onClick={(e) => { e.stopPropagation(); void onActivateTheme(row); }}>활성화</button>
+                          <>
+                            <button type="button" className="btn btn-secondary btn-table-sm" onClick={(e) => { e.stopPropagation(); void onActivateTheme(row); }}>활성화</button>
+                            <button type="button" className="btn btn-danger btn-table-sm" onClick={(e) => { e.stopPropagation(); openDeleteThemeModal(row); }}>삭제</button>
+                          </>
                         )}
                       </div>
                     </td>
@@ -2454,6 +2518,62 @@ function MarketThemesPage() {
           </section>
         </div>
       ) : null}
+
+      {deleteThemeTarget ? (() => {
+        const childThemes = themes.filter((theme) => theme.parent_theme_id === deleteThemeTarget.id);
+        const activeChildThemes = childThemes.filter((theme) => theme.is_active === 1);
+        const isGroup = deleteThemeTarget.theme_level === "THEME_GROUP";
+        return (
+          <div className="modal-backdrop" role="presentation">
+            <section
+              className="modal-card market-theme-delete-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="market-theme-delete-title"
+            >
+              <header className="market-theme-delete-modal__header">
+                <div>
+                  <span>{isGroup ? "테마그룹 영구 삭제" : "테마 영구 삭제"}</span>
+                  <h3 id="market-theme-delete-title">{deleteThemeTarget.theme_name}</h3>
+                </div>
+                <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => setDeleteThemeTarget(null)} disabled={deletingTheme}>닫기</button>
+              </header>
+              <div className="market-theme-delete-modal__warning">
+                <strong>삭제한 데이터는 복구할 수 없습니다.</strong>
+                <p>
+                  {isGroup
+                    ? `이 그룹과 하위 테마 ${childThemes.length}개를 함께 물리 삭제합니다.`
+                    : "이 테마를 물리 삭제합니다."}
+                </p>
+              </div>
+              <ul className="market-theme-delete-modal__scope">
+                <li>종목 연결과 후보 데이터</li>
+                <li>일별 등락률·실시간 Snapshot</li>
+                <li>예측·관찰·수급 순위 데이터</li>
+                <li>캘린더·브리핑·시장 이벤트의 테마 연결</li>
+              </ul>
+              {isGroup && childThemes.length > 0 ? (
+                <div className="market-theme-delete-modal__children">
+                  <strong>함께 삭제되는 하위 테마</strong>
+                  <p>{childThemes.map((theme) => theme.theme_name).join(", ")}</p>
+                </div>
+              ) : null}
+              {activeChildThemes.length > 0 ? (
+                <p className="form-error" role="alert">
+                  활성 하위 테마가 있습니다. 먼저 {activeChildThemes.map((theme) => theme.theme_name).join(", ")}을(를) 비활성화해 주세요.
+                </p>
+              ) : null}
+              {deleteThemeError ? <p className="form-error" role="alert">{deleteThemeError}</p> : null}
+              <footer className="watchlist-theme-modal-actions">
+                <button type="button" className="btn btn-secondary" onClick={() => setDeleteThemeTarget(null)} disabled={deletingTheme}>취소</button>
+                <button type="button" className="btn btn-danger" onClick={() => void onDeleteTheme()} disabled={deletingTheme || activeChildThemes.length > 0}>
+                  {deletingTheme ? "삭제 중..." : "완전히 삭제"}
+                </button>
+              </footer>
+            </section>
+          </div>
+        );
+      })() : null}
 
       {themeModalOpen ? (
         <div className="modal-backdrop">

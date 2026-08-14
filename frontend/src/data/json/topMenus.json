@@ -26,5 +26,9 @@
   {
     "menuKey": "system",
     "title": "시스템"
+  },
+  {
+    "menuKey": "warehouse",
+    "title": "창고"
   }
 ]

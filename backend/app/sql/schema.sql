@@ -394,6 +394,19 @@ CREATE TABLE IF NOT EXISTS market_theme_stock_candidates (
     FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS market_theme_realtime_returns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trade_date TEXT NOT NULL,
+    theme_id INTEGER NOT NULL,
+    stock_id INTEGER NOT NULL,
+    change_rate REAL NOT NULL,
+    trading_value INTEGER,
+    collected_at TEXT NOT NULL,
+    UNIQUE (trade_date, theme_id, stock_id),
+    FOREIGN KEY (theme_id) REFERENCES market_themes(id) ON DELETE CASCADE,
+    FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS schema_comments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     table_name TEXT NOT NULL,
@@ -759,6 +772,8 @@ CREATE INDEX IF NOT EXISTS idx_market_theme_stocks_theme_active ON market_theme_
 CREATE INDEX IF NOT EXISTS idx_market_theme_stocks_stock_active ON market_theme_stocks(stock_id, is_active);
 CREATE INDEX IF NOT EXISTS idx_market_theme_stock_candidates_status_updated ON market_theme_stock_candidates(status, updated_at);
 CREATE INDEX IF NOT EXISTS idx_market_theme_stock_candidates_theme_stock ON market_theme_stock_candidates(theme_id, stock_id);
+CREATE INDEX IF NOT EXISTS idx_market_theme_realtime_theme_date ON market_theme_realtime_returns(theme_id, trade_date);
+CREATE INDEX IF NOT EXISTS idx_market_theme_realtime_stock_date ON market_theme_realtime_returns(stock_id, trade_date);
 
 INSERT OR IGNORE INTO market_themes
 (theme_name, theme_code, theme_type, theme_level, description, keywords, parent_theme_id, is_supply_theme, is_active, sort_order, created_at, updated_at)

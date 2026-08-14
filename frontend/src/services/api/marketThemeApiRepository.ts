@@ -7,6 +7,7 @@ import type {
   MarketThemeCandidateGenerateResult,
   MarketThemeCandidateReviewInput,
   MarketThemeCreateInput,
+  MarketThemeDeleteResponse,
   MarketThemeByStockResponse,
   MarketThemeLatestReturnDetail,
   MarketThemeListParams,
@@ -37,9 +38,18 @@ import type {
   MarketThemeStockSupplySummary,
   MarketThemeStockUpdateInput,
   MarketThemeUpdateInput,
+  RealtimeThemeRefreshResponse,
+  RealtimeThemeStocksResponse,
+  RealtimeThemeTreemapResponse,
 } from "@/types/marketTheme";
 
 export const marketThemeApiRepository = {
+  getRealtimeTreemap: (signal?: AbortSignal) =>
+    apiRequest<RealtimeThemeTreemapResponse>("/market-themes/realtime/treemap", { signal }),
+  refreshRealtimeTreemap: (signal?: AbortSignal) =>
+    apiRequest<RealtimeThemeRefreshResponse>("/market-themes/realtime/refresh", { method: "POST", signal, timeoutMs: 600_000 }),
+  getRealtimeThemeStocks: (themeId: number, signal?: AbortSignal) =>
+    apiRequest<RealtimeThemeStocksResponse>(`/market-themes/realtime/${themeId}/stocks`, { signal }),
   getLatestObservationPriority: (signal?: AbortSignal) =>
     apiRequest<MarketThemeObservationResponse>("/market-themes/observation-priorities/latest", { signal }),
   getObservationDiagnostics: (signal?: AbortSignal) =>
@@ -90,6 +100,8 @@ export const marketThemeApiRepository = {
     apiRequest<MarketTheme>(`/market-themes/${themeId}`, { method: "PUT", body: JSON.stringify(payload) }),
   deactivate: (themeId: number) =>
     apiRequest<MarketTheme>(`/market-themes/${themeId}/deactivate`, { method: "PATCH" }),
+  delete: (themeId: number) =>
+    apiRequest<MarketThemeDeleteResponse>(`/market-themes/${themeId}`, { method: "DELETE" }),
   refreshReturns: (payload: MarketThemeReturnRefreshRequest = { scope: "all_active" }) =>
     apiRequest<MarketThemeReturnRefreshResponse>("/external/kiwoom/market-themes/returns-and-flows/refresh", { method: "POST", body: JSON.stringify(payload) }),
   startPriceFlowRefresh: (payload: MarketThemeReturnRefreshRequest = { scope: "all_active" }) =>

@@ -24,15 +24,14 @@ export type TreemapTextMetrics = {
   showSubtitle: boolean;
 };
 
-const normalizeTreemapItems = (items: TreemapLayoutInput[]) => {
+const normalizeTreemapItems = (items: TreemapLayoutInput[], preserveOrder = false) => {
   const positiveItems = items
     .map((item) => ({ id: item.id, value: Math.max(0, Number(item.value) || 0) }))
     .filter((item) => item.value > 0);
   const maxValue = positiveItems.reduce((max, item) => Math.max(max, item.value), 0);
   const minValue = maxValue > 0 ? maxValue * 0.018 : 1;
-  return positiveItems
-    .map((item) => ({ ...item, value: Math.max(item.value, minValue) }))
-    .sort((a, b) => b.value - a.value || a.id.localeCompare(b.id));
+  const normalized = positiveItems.map((item) => ({ ...item, value: Math.max(item.value, minValue) }));
+  return preserveOrder ? normalized : normalized.sort((a, b) => b.value - a.value || a.id.localeCompare(b.id));
 };
 
 const splitItems = (items: ReturnType<typeof normalizeTreemapItems>) => {
@@ -75,8 +74,8 @@ const layoutRecursive = (
   }
 };
 
-export const buildTreemapLayout = (items: TreemapLayoutInput[]): TreemapLayoutRect[] => {
-  const normalized = normalizeTreemapItems(items);
+export const buildTreemapLayout = (items: TreemapLayoutInput[], options: { preserveOrder?: boolean } = {}): TreemapLayoutRect[] => {
+  const normalized = normalizeTreemapItems(items, options.preserveOrder);
   const totalValue = normalized.reduce((sum, item) => sum + item.value, 0);
   const output: TreemapLayoutRect[] = [];
   layoutRecursive(normalized, { x: 0, y: 0, width: 100, height: 100 }, totalValue, output);

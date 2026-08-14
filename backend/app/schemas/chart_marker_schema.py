@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -45,5 +46,6 @@ class MarkerEventWrite(BaseModel):
     memo: str | None = Field(default=None, max_length=4000)
 
 
-class MarkerEventMemoPatch(BaseModel):
+class MarkerEventPatch(BaseModel):
     memo: str | None = Field(default=None, max_length=4000)
+    review_result: Literal["SUCCESS", "FAILURE"] | None = None

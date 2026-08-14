@@ -1,3 +1,5 @@
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { Info } from "lucide-react";
 import type { MarketThemeObservationItem } from "@/types/marketTheme";
 
 const AXES = [
@@ -7,6 +9,14 @@ const AXES = [
   { key: "technical_score", label: "기술" },
   { key: "data_coverage_rate", label: "완전성", ratio: true },
 ] as const;
+type AxisKey = (typeof AXES)[number]["key"];
+const AXIS_DESCRIPTIONS: Record<AxisKey, string> = {
+  price_score: "당일 및 최근 3·5·10일 등락 흐름과 단기 모멘텀을 활성 테마 간 상대점수로 나타냅니다.",
+  flow_score: "외국인·기관 합산 순매수 강도의 현재값, 최근 3·5일 흐름과 가속도를 활성 테마 간 비교합니다.",
+  breadth_score: "상승 종목 비율과 외국인·기관 합산 순매수가 양수인 종목 비율로 테마 내부 참여 폭을 나타냅니다.",
+  technical_score: "최근 3일·10일 수익률의 상대 위치와 특정 종목 쏠림이 낮은 정도를 평균해 나타냅니다.",
+  data_coverage_rate: "연결 종목 중 가격 등락률 수집에 성공해 계산에 포함된 종목 비율입니다. 강세·매수매력 점수가 아닙니다.",
+};
 const cx = 120;
 const cy = 96;
 const radius = 72;
@@ -23,8 +33,101 @@ export default function ObservationRadarGrid(props: {
   statusNames: Record<string, string>;
   onThemeClick: (themeId: number) => void;
 }) {
+  const [infoOpen, setInfoOpen] = useState(false);
+  const infoRef = useRef<HTMLDivElement | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const infoId = useId();
+
+  useEffect(() => {
+    if (!infoOpen) return;
+    const closeOnPointerDown = (event: MouseEvent) => {
+      if (!infoRef.current?.contains(event.target as Node)) setInfoOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setInfoOpen(false);
+    };
+    document.addEventListener("mousedown", closeOnPointerDown);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOnPointerDown);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [infoOpen]);
+
+  useLayoutEffect(() => {
+    if (!infoOpen) return;
+    const updatePopoverPosition = () => {
+      const anchor = infoRef.current;
+      const popover = popoverRef.current;
+      if (!anchor || !popover) return;
+
+      const margin = 12;
+      popover.style.top = "calc(100% + 8px)";
+      popover.style.bottom = "auto";
+      popover.style.maxHeight = "560px";
+      popover.style.transform = "none";
+
+      const anchorRect = anchor.getBoundingClientRect();
+      const naturalRect = popover.getBoundingClientRect();
+      const availableBelow = window.innerHeight - naturalRect.top - margin;
+      const availableAbove = anchorRect.top - margin;
+      if (availableBelow < Math.min(naturalRect.height, 240) && availableAbove > availableBelow) {
+        popover.style.top = "auto";
+        popover.style.bottom = "calc(100% + 8px)";
+        popover.style.maxHeight = `${Math.max(160, Math.min(560, availableAbove))}px`;
+      } else {
+        popover.style.maxHeight = `${Math.max(160, Math.min(560, availableBelow))}px`;
+      }
+
+      const positionedRect = popover.getBoundingClientRect();
+      const leftCorrection = Math.max(0, margin - positionedRect.left);
+      const rightCorrection = Math.min(0, window.innerWidth - margin - positionedRect.right);
+      popover.style.transform = `translateX(${leftCorrection + rightCorrection}px)`;
+    };
+
+    updatePopoverPosition();
+    window.addEventListener("resize", updatePopoverPosition);
+    window.addEventListener("scroll", updatePopoverPosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePopoverPosition);
+      window.removeEventListener("scroll", updatePopoverPosition, true);
+    };
+  }, [infoOpen]);
+
   return <section className="observation-radar-section" aria-labelledby="observation-radar-title">
-    <header><div><h3 id="observation-radar-title">테마 구조 비교</h3><p>가격·수급·확산·기술·완전성의 모양으로 관찰점수의 구조를 비교합니다.</p></div><span>동일 축 · 최대 100</span></header>
+    <header>
+      <div>
+        <div className="observation-radar-title-row" ref={infoRef}>
+          <h3 id="observation-radar-title">테마 구조 비교</h3>
+          <button
+            type="button"
+            className="observation-radar-info-button"
+            aria-label="테마 구조 비교 기준 설명"
+            aria-expanded={infoOpen}
+            aria-controls={infoId}
+            onClick={() => setInfoOpen((value) => !value)}
+          >
+            <Info size={14} aria-hidden="true" />
+          </button>
+          {infoOpen ? <div ref={popoverRef} id={infoId} className="observation-radar-info-popover" role="dialog" aria-label="테마 구조 비교 기준 설명">
+            <strong>테마 구조 비교 기준</strong>
+            <p>가격·수급·확산·기술은 활성 테마 간 상대점수이며, 완전성은 데이터 수집 성공 비율입니다.</p>
+            <dl>
+              {AXES.map((axis) => <div key={axis.key}>
+                <dt>{axis.label}</dt>
+                <dd>{AXIS_DESCRIPTIONS[axis.key]}</dd>
+              </div>)}
+            </dl>
+            <div className="observation-radar-info-note">
+              <p>각 축은 0~100 기준입니다. 완전성은 강세 정도가 아니라 데이터 충족 수준을 의미합니다.</p>
+              <p>레이더 차트는 관찰점수의 구성 상태를 이해하기 위한 보조지표이며, 관찰점수 자체와 동일한 계산식은 아닙니다.</p>
+            </div>
+          </div> : null}
+        </div>
+        <p>가격·수급·확산·기술·완전성의 모양으로 관찰점수의 구조를 비교합니다.</p>
+      </div>
+      <span>동일 축 · 최대 100</span>
+    </header>
     <div className="observation-radar-grid">
       {props.items.map((item) => {
         const values = AXES.map((axis) => {

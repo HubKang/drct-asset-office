@@ -2,7 +2,7 @@ import { type CSSProperties, FormEvent, useEffect, useLayoutEffect, useMemo, use
 import { ArrowLeft, ArrowRight, ChevronDown, ChevronUp, Pencil, Plus, Power, Search, X } from "lucide-react";
 import PageHeader from "@/components/common/PageHeader";
 import { repositories } from "@/services";
-import type { ChartMarker, ChartMarkerGroup, ChartMarkerReviewChart, ChartMarkerReviewEvent } from "@/types/chartMarker";
+import type { ChartMarker, ChartMarkerGroup, ChartMarkerReviewChart, ChartMarkerReviewEvent, ChartMarkerReviewResult } from "@/types/chartMarker";
 
 const SIDE_CANDLE_COUNT = 40;
 
@@ -80,7 +80,7 @@ function CatalogTab({ groups, reload }: { groups: ChartMarkerGroup[]; reload: ()
   return <>
     <div className="chart-marker-section-intro"><div><h2>마커그룹</h2><p>차트에서 사용할 관찰 기준을 그룹과 마커로 관리합니다.</p></div><button className="btn btn-primary" type="button" onClick={() => setEditor({ kind: "group" })}><Plus size={16} /> 새 그룹</button></div>
     <div className="chart-marker-master-detail"><aside className="panel chart-marker-group-panel"><div className="chart-marker-panel-title"><h3>마커그룹</h3><span>{groups.length}개</span></div><div className="chart-marker-group-list">{groups.map((item) => <button type="button" key={item.id} className={item.id === group?.id ? "active" : ""} onClick={() => setSelected(item.id)}><i style={{ background: item.color }} /><span><strong>{item.name}</strong><small>{item.is_active ? "활성" : "비활성"}</small></span><b>{item.markers.length}</b></button>)}</div></aside>
-      <main className="panel chart-marker-detail-panel">{group ? <><header className="chart-marker-detail-header"><div><div className="chart-marker-group-heading"><i style={{ background: group.color }} /><h2>{group.name}</h2><span className={`chart-marker-status ${group.is_active ? "active" : ""}`}>{group.is_active ? "활성" : "비활성"}</span></div><p>{group.description || "등록된 그룹 설명이 없습니다."}</p></div><div><button className="btn btn-secondary" type="button" onClick={() => setEditor({ kind: "group", group })}><Pencil size={15} /> 수정</button><button className="btn btn-secondary" type="button" onClick={() => void toggleGroup()}><Power size={15} /> {group.is_active ? "비활성" : "활성화"}</button></div></header><div className="chart-marker-detail-toolbar"><div><h3>등록 마커</h3><span>{group.markers.length}개</span></div><button className="btn btn-primary" type="button" onClick={() => setEditor({ kind: "marker" })}><Plus size={16} /> 마커 추가</button></div><div className="chart-marker-card-list">{group.markers.length ? group.markers.map((marker, index) => <article key={marker.id} className={!marker.is_active ? "inactive" : ""}><div className="chart-marker-symbol" style={{ color: group.color, background: `${group.color}12` }}>{marker.symbol}</div><div className="chart-marker-card-copy"><div className="chart-marker-card-title"><strong>{marker.name}</strong><span>종목수 {marker.stock_count}</span><span>마커수 {marker.marker_count}</span></div><p>{marker.description || "등록된 설명이 없습니다."}</p></div><div className="chart-marker-order-actions"><button title="위로 이동" disabled={index === 0} onClick={() => void moveMarker(marker, -1)}><ChevronUp size={16} /></button><button title="아래로 이동" disabled={index === group.markers.length - 1} onClick={() => void moveMarker(marker, 1)}><ChevronDown size={16} /></button></div><div className="chart-marker-card-actions"><button onClick={() => setEditor({ kind: "marker", marker })}>수정</button><button className={marker.is_active ? "danger" : "activate"} aria-label={`${marker.name}을 ${marker.is_active ? "비활성" : "활성"} 상태로 변경`} onClick={() => void toggleMarker(marker)}>{marker.is_active ? "비활성" : "활성"}</button></div></article>) : <div className="chart-marker-empty compact">등록된 마커가 없습니다.<br />마커 추가를 눌러 관찰 기준을 만들어 주세요.</div>}</div></> : <div className="chart-marker-empty">마커그룹을 먼저 등록해 주세요.</div>}</main>
+      <main className="panel chart-marker-detail-panel">{group ? <><header className="chart-marker-detail-header"><div><div className="chart-marker-group-heading"><i style={{ background: group.color }} /><h2>{group.name}</h2><span className={`chart-marker-status ${group.is_active ? "active" : ""}`}>{group.is_active ? "활성" : "비활성"}</span></div><p>{group.description || "등록된 그룹 설명이 없습니다."}</p></div><div><button className="btn btn-secondary" type="button" onClick={() => setEditor({ kind: "group", group })}><Pencil size={15} /> 수정</button><button className="btn btn-secondary" type="button" onClick={() => void toggleGroup()}><Power size={15} /> {group.is_active ? "비활성" : "활성화"}</button></div></header><div className="chart-marker-detail-toolbar"><div><h3>등록 마커</h3><span>{group.markers.length}개</span></div><button className="btn btn-primary" type="button" onClick={() => setEditor({ kind: "marker" })}><Plus size={16} /> 마커 추가</button></div><div className="chart-marker-card-list">{group.markers.length ? group.markers.map((marker, index) => <article key={marker.id} className={!marker.is_active ? "inactive" : ""}><div className="chart-marker-symbol" style={{ color: group.color, background: `${group.color}12` }}>{marker.symbol}</div><div className="chart-marker-card-copy"><div className="chart-marker-card-title"><strong>{marker.name}</strong></div><p>{marker.description || "등록된 설명이 없습니다."}</p></div><div className="chart-marker-card-metrics" aria-label={`${marker.name} 집계`}><span><small>종목</small><strong>{marker.stock_count}</strong></span><span><small>마커</small><strong>{marker.marker_count}</strong></span><span className="success"><small>성공</small><strong>{marker.success_count}</strong></span><span className="failure"><small>실패</small><strong>{marker.failure_count}</strong></span></div><div className="chart-marker-order-actions"><button title="위로 이동" disabled={index === 0} onClick={() => void moveMarker(marker, -1)}><ChevronUp size={16} /></button><button title="아래로 이동" disabled={index === group.markers.length - 1} onClick={() => void moveMarker(marker, 1)}><ChevronDown size={16} /></button></div><div className="chart-marker-card-actions"><button onClick={() => setEditor({ kind: "marker", marker })}>수정</button><button className={marker.is_active ? "danger" : "activate"} aria-label={`${marker.name}을 ${marker.is_active ? "비활성" : "활성"} 상태로 변경`} onClick={() => void toggleMarker(marker)}>{marker.is_active ? "비활성" : "활성"}</button></div></article>) : <div className="chart-marker-empty compact">등록된 마커가 없습니다.<br />마커 추가를 눌러 관찰 기준을 만들어 주세요.</div>}</div></> : <div className="chart-marker-empty">마커그룹을 먼저 등록해 주세요.</div>}</main>
     </div>
     {editor ? <div className="chart-marker-editor-backdrop" onMouseDown={() => setEditor(null)}><form className="chart-marker-editor" onSubmit={save} onMouseDown={(event) => event.stopPropagation()}><header><div><h3>{editor.kind === "group" ? `마커그룹 ${editor.group ? "수정" : "등록"}` : `차트마커 ${editor.marker ? "수정" : "등록"}`}</h3><p>{editor.kind === "group" ? "관찰 기준을 묶는 상위 그룹입니다." : `${group?.name || "선택 그룹"}에 사용할 마커입니다.`}</p></div><button type="button" onClick={() => setEditor(null)}><X size={20} /></button></header><label>{editor.kind === "group" ? "그룹명" : "마커명"}<input className="input-control" name="name" required autoFocus defaultValue={editor.kind === "group" ? editor.group?.name : editor.marker?.name} /></label>{editor.kind === "group" ? <label>대표 색상<div className="chart-marker-color-input"><input type="color" name="color" defaultValue={editor.group?.color ?? "#64748b"} /><span>차트에서 마커를 구분할 때 사용합니다.</span></div></label> : <label>표시 심볼<input className="input-control chart-marker-symbol-input" name="symbol" maxLength={12} defaultValue={editor.marker?.symbol ?? "◆"} /></label>}<label>설명<textarea className="input-control" name="description" rows={3} defaultValue={editor.kind === "group" ? editor.group?.description ?? "" : editor.marker?.description ?? ""} /></label><label className="chart-marker-active-check"><input name="is_active" type="checkbox" defaultChecked={editor.kind === "group" ? editor.group?.is_active ?? true : editor.marker?.is_active ?? true} /> 활성 상태로 사용</label>{error ? <p className="inline-result inline-error">{error}</p> : null}<footer><button className="btn btn-secondary" type="button" onClick={() => setEditor(null)}>취소</button><button className="btn btn-primary" disabled={saving}>{saving ? "저장 중…" : editor.group || editor.marker ? "수정" : "등록"}</button></footer></form></div> : null}
   </>;
@@ -88,6 +88,7 @@ function CatalogTab({ groups, reload }: { groups: ChartMarkerGroup[]; reload: ()
 
 export default function ChartMarkerReviewPage() {
   const [tab, setTab] = useState<"catalog" | "review">("catalog"), [groups, setGroups] = useState<ChartMarkerGroup[]>([]), [groupId, setGroupId] = useState<number | null>(null), [markerId, setMarkerId] = useState<number | null>(null), [events, setEvents] = useState<ChartMarkerReviewEvent[]>([]), [selected, setSelected] = useState<ChartMarkerReviewEvent | null>(null), [stockQuery, setStockQuery] = useState(""), [chart, setChart] = useState<ChartMarkerReviewChart | null>(null), [chartLoading, setChartLoading] = useState(false), [error, setError] = useState("");
+  const [resultFilter, setResultFilter] = useState<"ALL" | "SUCCESS" | "FAILURE">("ALL"), [savingReviewId, setSavingReviewId] = useState<number | null>(null);
   const [detailHeight, setDetailHeight] = useState<number | null>(null);
   const detailRef = useRef<HTMLElement | null>(null);
   const reload = async () => { try { setGroups((await repositories.chartMarkers.catalog()).items); } catch (nextError) { setError(nextError instanceof Error ? nextError.message : "마커를 불러오지 못했습니다."); } };
@@ -95,7 +96,7 @@ export default function ChartMarkerReviewPage() {
   const activeGroups = groups.filter((item) => item.is_active), group = activeGroups.find((item) => item.id === groupId) ?? activeGroups[0], markers = group?.markers.filter((item) => item.is_active) ?? [];
   useEffect(() => { if (group && group.id !== groupId) setGroupId(group.id); }, [group, groupId]);
   useEffect(() => { if (!markers.some((item) => item.id === markerId)) setMarkerId(markers[0]?.id ?? null); }, [groupId, groups]);
-  useEffect(() => { setStockQuery(""); }, [groupId, markerId]);
+  useEffect(() => { setStockQuery(""); setResultFilter("ALL"); }, [groupId, markerId]);
   useEffect(() => { if (tab !== "review" || !markerId) { setEvents([]); setSelected(null); return; } repositories.chartMarkers.reviewEvents(markerId).then((response) => { setEvents(response.items); setSelected(response.items[0] ?? null); }).catch((nextError) => setError(nextError.message)); }, [tab, markerId]);
   const selectedEventKey = selected ? `${selected.stock_id}-${selected.marker_date}-${selected.marker_id}-${selected.id}` : "";
   useEffect(() => {
@@ -118,13 +119,29 @@ export default function ChartMarkerReviewPage() {
     observer.observe(detail);
     return () => observer.disconnect();
   }, [selectedEventKey]);
-  const grouped = useMemo(() => Array.from(events.reduce((map, item) => { const rows = map.get(item.stock_id) ?? []; rows.push(item); map.set(item.stock_id, rows); return map; }, new Map<number, ChartMarkerReviewEvent[]>()).values()).map((rows) => [...rows].sort((a, b) => b.marker_date.localeCompare(a.marker_date))), [events]);
-  const filteredGrouped = useMemo(() => {
+  const visibleEvents = useMemo(() => {
     const query = stockQuery.trim().toLocaleLowerCase();
-    return query ? grouped.filter((rows) => rows[0].stock_name.toLocaleLowerCase().includes(query)) : grouped;
-  }, [grouped, stockQuery]);
-  const selectedIndex = selected ? events.findIndex((item) => item.id === selected.id) : -1;
-  const moveSelection = (offset: number) => { const next = events[selectedIndex + offset]; if (next) setSelected(next); };
+    return events.filter((item) => (!query || item.stock_name.toLocaleLowerCase().includes(query)) && (resultFilter === "ALL" || item.review_result === resultFilter));
+  }, [events, stockQuery, resultFilter]);
+  const filteredGrouped = useMemo(() => Array.from(visibleEvents.reduce((map, item) => { const rows = map.get(item.stock_id) ?? []; rows.push(item); map.set(item.stock_id, rows); return map; }, new Map<number, ChartMarkerReviewEvent[]>()).values()).map((rows) => [...rows].sort((a, b) => b.marker_date.localeCompare(a.marker_date))), [visibleEvents]);
+  const visibleEventIds = visibleEvents.map((item) => item.id).join(",");
+  useEffect(() => {
+    if (!visibleEvents.length) { setSelected(null); return; }
+    if (!selected || !visibleEvents.some((item) => item.id === selected.id)) setSelected(visibleEvents[0]);
+  }, [visibleEventIds]);
+  const selectedIndex = selected ? visibleEvents.findIndex((item) => item.id === selected.id) : -1;
+  const moveSelection = (offset: number) => { const next = visibleEvents[selectedIndex + offset]; if (next) setSelected(next); };
+  const updateReviewResult = async (item: ChartMarkerReviewEvent, nextResult: Exclude<ChartMarkerReviewResult, undefined>) => {
+    setSavingReviewId(item.id); setError("");
+    try {
+      const updated = await repositories.chartMarkers.updateEvent(item.id, { review_result: item.review_result === nextResult ? null : nextResult });
+      const merged = { ...item, ...updated } as ChartMarkerReviewEvent;
+      setEvents((current) => current.map((event) => event.id === item.id ? merged : event));
+      if (selected?.id === item.id) setSelected(merged);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "성공·실패 판정을 저장하지 못했습니다.");
+    } finally { setSavingReviewId(null); }
+  };
   const deleteReviewEvent = async (item: ChartMarkerReviewEvent) => {
     if (!window.confirm(`${item.stock_name} · ${item.marker_date} 마커 기록을 삭제하시겠습니까?`)) return;
     try {
@@ -151,26 +168,30 @@ export default function ChartMarkerReviewPage() {
       <div className="chart-marker-filters">
         <label><span>마커그룹</span><select className="input-control" value={group?.id ?? ""} onChange={(event) => setGroupId(Number(event.target.value))}>{activeGroups.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
         <label className="chart-marker-filter-marker"><span>차트마커</span><select className="input-control" value={markerId ?? ""} onChange={(event) => setMarkerId(Number(event.target.value))}>{markers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-        <strong className="chart-marker-filter-count">사례 {events.length}건</strong>
+        <strong className="chart-marker-filter-count">사례 {visibleEvents.length}건</strong>
       </div>
       {!groups.length ? <div className="chart-marker-empty">등록된 차트마커가 없습니다.<br />마커그룹 탭에서 먼저 마커를 등록해 주세요.</div> : !events.length ? <div className="chart-marker-empty">이 마커로 기록된 차트 사례가 없습니다.<br />종목매매훈련 차트에서 캔들을 우클릭하여 마커를 기록해 주세요.</div> : <div className="chart-marker-review-grid">
         <aside className="panel chart-marker-case-panel" style={{ "--chart-marker-detail-height": detailHeight ? `${detailHeight}px` : undefined } as CSSProperties}>
-          <header><h3>관련 종목 / 캔들일자</h3><span>{events.length}건</span></header>
-          <div className="chart-marker-case-search"><Search size={15} aria-hidden="true" /><input className="input-control" type="search" value={stockQuery} onChange={(event) => setStockQuery(event.target.value)} placeholder="종목명 검색" aria-label="종목명 검색" /></div>
+          <header><h3>관련 종목 / 캔들일자</h3><span>{visibleEvents.length}건</span></header>
+          <div className="chart-marker-case-tools"><div className="chart-marker-case-search"><Search size={15} aria-hidden="true" /><input className="input-control" type="search" value={stockQuery} onChange={(event) => setStockQuery(event.target.value)} placeholder="종목명 검색" aria-label="종목명 검색" /></div><div className="chart-marker-result-filter" aria-label="판정 상태 필터">{(["ALL", "SUCCESS", "FAILURE"] as const).map((value) => <button type="button" key={value} className={`${resultFilter === value ? "active" : ""} ${value.toLowerCase()}`} onClick={() => setResultFilter(value)}>{value === "ALL" ? "전체" : value === "SUCCESS" ? "성공" : "실패"}</button>)}</div></div>
           <div className="chart-marker-case-scroll">{filteredGrouped.length ? filteredGrouped.map((rows) => <div className="chart-marker-stock" key={rows[0].stock_id}>
             <div><strong>{rows[0].stock_name}</strong><span>{rows.length}건</span></div>
             {rows.map((item) => <div className={`chart-marker-case-row ${selected?.id === item.id ? "active" : ""}`} key={`${item.stock_id}-${item.marker_date}-${item.marker_id}-${item.id}`} onClick={() => setSelected(item)}>
               <button className="chart-marker-case-date"><i />{item.marker_date}</button>
+              <div className="chart-marker-case-results" onClick={(clickEvent) => clickEvent.stopPropagation()}>
+                <button type="button" className={item.review_result === "SUCCESS" ? "success active" : "success"} disabled={savingReviewId === item.id} title="선택된 판정을 다시 누르면 미평가로 돌아갑니다." onClick={() => void updateReviewResult(item, "SUCCESS")}>성공{item.review_result === "SUCCESS" ? " ✓" : ""}</button>
+                <button type="button" className={item.review_result === "FAILURE" ? "failure active" : "failure"} disabled={savingReviewId === item.id} title="선택된 판정을 다시 누르면 미평가로 돌아갑니다." onClick={() => void updateReviewResult(item, "FAILURE")}>실패{item.review_result === "FAILURE" ? " ✓" : ""}</button>
+              </div>
               <button className="chart-marker-case-delete" title={`${item.marker_date} 마커 삭제`} onClick={(clickEvent) => { clickEvent.stopPropagation(); void deleteReviewEvent(item); }}>삭제</button>
             </div>)}
           </div>) : <div className="chart-marker-search-empty">검색된 종목이 없습니다.</div>}</div>
         </aside>
         {selected ? <main className="panel chart-marker-review-detail" ref={detailRef}>
-          <header><div className="chart-marker-review-context"><div className="chart-marker-review-title"><h2>{selected.stock_name}</h2><time>· {selected.marker_date}</time></div><p><span style={{ color: selected.group_color, background: `${selected.group_color}12`, borderColor: `${selected.group_color}40` }}>{selected.group_name}</span><b style={{ color: selected.group_color }}>{selected.symbol}</b>{selected.marker_name}</p></div><div className="chart-marker-review-nav"><button className="btn btn-secondary" disabled={selectedIndex <= 0} onClick={() => moveSelection(-1)}><ArrowLeft size={15} /> 이전 사례</button><strong>{selectedIndex + 1} / {events.length}</strong><button className="btn btn-secondary" disabled={selectedIndex >= events.length - 1} onClick={() => moveSelection(1)}>다음 사례 <ArrowRight size={15} /></button></div></header>
+          <header><div className="chart-marker-review-context"><div className="chart-marker-review-title"><h2>{selected.stock_name}</h2><time>· {selected.marker_date}</time></div><p><span style={{ color: selected.group_color, background: `${selected.group_color}12`, borderColor: `${selected.group_color}40` }}>{selected.group_name}</span><b style={{ color: selected.group_color }}>{selected.symbol}</b>{selected.marker_name}</p></div><div className="chart-marker-review-nav"><button className="btn btn-secondary" disabled={selectedIndex <= 0} onClick={() => moveSelection(-1)}><ArrowLeft size={15} /> 이전 사례</button><strong>{selectedIndex + 1} / {visibleEvents.length}</strong><button className="btn btn-secondary" disabled={selectedIndex >= visibleEvents.length - 1} onClick={() => moveSelection(1)}>다음 사례 <ArrowRight size={15} /></button></div></header>
           <div className="chart-marker-chart-heading"><div><h3>마커 전후 가격 흐름</h3><p>이전 {SIDE_CANDLE_COUNT}개 · D0 · 이후 {SIDE_CANDLE_COUNT}개</p></div><span>D0 {selected.marker_date}</span></div>
           <ReviewChart data={chart} event={selected} loading={chartLoading} />
           <section className="chart-marker-memo"><strong>메모</strong><p>{selected.memo || "등록된 메모가 없습니다."}</p></section>
-        </main> : null}
+        </main> : <main className="panel chart-marker-review-detail"><div className="chart-marker-empty compact">조건에 맞는 복기 사례가 없습니다.</div></main>}
       </div>}
     </>}
   </div>;

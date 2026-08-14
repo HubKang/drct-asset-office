@@ -733,6 +733,14 @@ export type MarketTheme = {
   updated_at: string;
 };
 
+export type MarketThemeDeleteResponse = {
+  deleted_theme_id: number;
+  deleted_theme_name: string;
+  deleted_theme_count: number;
+  deleted_related_row_count: number;
+  detached_event_reference_count: number;
+};
+
 export type MarketThemeCreateInput = {
   theme_name: string;
   theme_code?: string;
@@ -922,4 +930,60 @@ export type MarketThemeCandidateApproveResult = {
 
 export type MarketThemeCandidateReviewInput = {
   review_memo?: string | null;
+};
+
+export type RealtimeThemeTreemapItem = {
+  theme_id: number;
+  theme_name: string;
+  rank: number;
+  avg_change_rate: number | null;
+  theme_strength: number | null;
+  linked_stock_count: number;
+  valid_stock_count: number;
+};
+
+export type RealtimeThemeTreemapResponse = {
+  trade_date: string;
+  snapshot_at: string | null;
+  theme_count: number;
+  linked_stock_count: number;
+  unique_stock_count: number;
+  valid_stock_count: number;
+  failed_stock_count: number;
+  themes: RealtimeThemeTreemapItem[];
+};
+
+export type RealtimeThemeRefreshResponse = RealtimeThemeTreemapResponse & {
+  success: boolean;
+  price_api_call_count: number;
+  kiwoom_fetch_ms: number;
+  db_upsert_ms: number;
+  theme_aggregation_ms: number;
+  snapshot_response_ms: number;
+  stock_fetch_min_ms: number | null;
+  stock_fetch_avg_ms: number | null;
+  stock_fetch_max_ms: number | null;
+  duration_ms: number;
+  message: string;
+};
+
+export type RealtimeThemeStockItem = {
+  stock_id: number;
+  stock_code: string;
+  stock_name: string;
+  memo: string | null;
+  change_rate: number | null;
+  collected_at: string | null;
+};
+
+export type RealtimeThemeStocksResponse = {
+  theme_id: number;
+  theme_name: string;
+  theme_rank: number;
+  theme_change_rate: number | null;
+  trade_date: string;
+  snapshot_at: string | null;
+  linked_stock_count: number;
+  valid_stock_count: number;
+  stocks: RealtimeThemeStockItem[];
 };

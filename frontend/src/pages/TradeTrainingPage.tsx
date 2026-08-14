@@ -628,7 +628,7 @@ function CandleChart({
     event.preventDefault(); if(!stockId||!chartMarkerModal)return;
     try {
       const saved=chartMarkerModal.event
-        ? await repositories.chartMarkers.updateEvent(chartMarkerModal.event.id,chartMarkerMemo||null)
+        ? await repositories.chartMarkers.updateEvent(chartMarkerModal.event.id,{memo:chartMarkerMemo||null})
         : await repositories.chartMarkers.upsertEvent({stock_id:stockId,marker_id:Number(chartMarkerId),marker_date:chartMarkerModal.date,memo:chartMarkerMemo||null});
       setChartMarkerEvents(current=>[...current.filter(item=>item.id!==saved.id),saved]);
       setNewChartMarkerIds(current=>new Set(current).add(saved.id)); setChartMarkerModal(null);

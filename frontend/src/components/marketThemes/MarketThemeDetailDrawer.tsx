@@ -5,28 +5,45 @@ import MarketThemeFlowChartPanel from "@/components/marketThemes/MarketThemeFlow
 import MarketThemePriceFlowModal from "@/components/marketThemes/MarketThemePriceFlowModal";
 import { repositories } from "@/services";
 import type { MarketThemeFlowTrendActor, MarketThemeLatestReturnDetail } from "@/types/marketTheme";
-import { buildNaverStockCandleChartUrl, createNaverChartSidcode, normalizeNaverStockCode, type NaverStockCandlePeriod } from "@/utils/naverChart";
+import { buildNaverStockCandleChartUrl, getNaverChartSessionSidcode, normalizeNaverStockCode, type NaverStockCandlePeriod } from "@/utils/naverChart";
 
 export type MarketThemeDetailFlowContext = { actor: MarketThemeFlowTrendActor } | null;
 type ThemeStockSort = "default" | "name" | "memo";
 type ZoomedChart = { url: string; alt: string; title?: string };
 const detailCache = new Map<string, MarketThemeLatestReturnDetail>();
+const loadedChartUrls = new Set<string>();
 
 const fmtPct = (value: number | null | undefined) => value == null || Number.isNaN(Number(value)) ? "-" : `${Number(value) > 0 ? "+" : ""}${Number(value).toFixed(2)}%`;
 const fmtEok = (value: number | null | undefined) => value == null || Number.isNaN(Number(value)) ? "-" : Number(value).toLocaleString("ko-KR", { maximumFractionDigits: 1 });
 const returnToneClass = (value: number | null | undefined) => value == null || Number.isNaN(Number(value)) ? "theme-return-empty" : Number(value) > 0 ? "theme-return-positive" : Number(value) < 0 ? "theme-return-negative" : "theme-return-neutral";
 
 export function ThemeLinkedStockChart({ stockCode, stockName, period, label, sidcode, onOpen, variant = "table" }: {
-  stockCode: string; stockName: string; period: NaverStockCandlePeriod; label: string; sidcode: number;
+  stockCode: string; stockName: string; period: NaverStockCandlePeriod; label: string; sidcode: string | number;
   onOpen: (chart: ZoomedChart) => void; variant?: "table" | "detail";
 }) {
-  const [hasError, setHasError] = useState(false);
-  useEffect(() => setHasError(false), [period, sidcode, stockCode]);
-  if (!stockCode || hasError) return <div className={`theme-linked-stock-chart-fallback${variant === "detail" ? " theme-detail-daily-chart-fallback" : ""}`}>{hasError ? "차트 불러오기 실패" : "차트 없음"}</div>;
   const url = buildNaverStockCandleChartUrl(stockCode, period, sidcode);
+  const [hasError, setHasError] = useState(false);
+  const [shouldLoad, setShouldLoad] = useState(() => loadedChartUrls.has(url));
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => setHasError(false), [url]);
+  useEffect(() => {
+    if (loadedChartUrls.has(url)) { setShouldLoad(true); return; }
+    setShouldLoad(false);
+    const element = buttonRef.current;
+    if (!element || !stockCode) return;
+    if (typeof IntersectionObserver === "undefined") { setShouldLoad(true); return; }
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      setShouldLoad(true);
+      observer.disconnect();
+    }, { rootMargin: "80px 0px" });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [stockCode, url]);
+  if (!stockCode || hasError) return <div className={`theme-linked-stock-chart-fallback${variant === "detail" ? " theme-detail-daily-chart-fallback" : ""}`}>{hasError ? "차트 불러오기 실패" : "차트 없음"}</div>;
   const alt = `${stockName || stockCode} ${label} 차트`;
-  return <button type="button" className={`theme-linked-stock-chart-button${variant === "detail" ? " theme-detail-daily-chart-button" : ""}`} aria-label={`${stockName || stockCode} ${label} 차트 크게 보기`} onClick={(event) => { event.stopPropagation(); onOpen({ url, alt, title: alt }); }}>
-    <img src={url} alt={alt} className={`theme-linked-stock-chart${variant === "detail" ? " theme-detail-daily-chart-image" : ""}`} loading="lazy" onError={() => setHasError(true)} />
+  return <button ref={buttonRef} type="button" className={`theme-linked-stock-chart-button${variant === "detail" ? " theme-detail-daily-chart-button" : ""}`} aria-label={`${stockName || stockCode} ${label} 차트 크게 보기`} onClick={(event) => { event.stopPropagation(); onOpen({ url, alt, title: alt }); }}>
+    {shouldLoad ? <img src={url} alt={alt} className={`theme-linked-stock-chart${variant === "detail" ? " theme-detail-daily-chart-image" : ""}`} loading="eager" decoding="async" onLoad={() => loadedChartUrls.add(url)} onError={() => setHasError(true)} /> : <span className={`theme-linked-stock-chart-deferred${variant === "detail" ? " theme-detail-daily-chart-image" : ""}`} aria-hidden="true">차트 준비</span>}
   </button>;
 }
 
@@ -44,7 +61,7 @@ export default function MarketThemeDetailDrawer({ open, themeId, dataDate, flowC
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const drawerRef = useRef<HTMLElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
-  const chartSidcode = useMemo(() => createNaverChartSidcode(), [themeId]);
+  const chartSidcode = getNaverChartSessionSidcode();
   const cacheKey = themeId ? `${themeId}:${dataDate || "latest"}` : "";
 
   const load = async (useCache = true) => {

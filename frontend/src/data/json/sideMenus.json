@@ -11,8 +11,8 @@
   },
   {
     "menuKey": "home",
-    "title": "GPT 자문 패키지",
-    "routeKey": "advisory-packages"
+    "title": "실시간 테마 트리맵",
+    "routeKey": "realtime-theme-treemap"
   },
   {
     "menuKey": "stocks",
@@ -178,5 +178,10 @@
         "routeKey": "schema-comments"
       }
     ]
+  },
+  {
+    "menuKey": "warehouse",
+    "title": "GPT 자문 패키지",
+    "routeKey": "advisory-packages"
   }
 ]

@@ -34,6 +34,7 @@ import WatchlistPage from "@/pages/WatchlistPage";
 import WatchlistSijeSuchaJaePage from "@/pages/WatchlistSijeSuchaJaePage";
 import PageHeader from "@/components/common/PageHeader";
 import PatternResearchPage from "@/pages/PatternResearchPage";
+import RealtimeThemeTreemapPage from "@/pages/RealtimeThemeTreemapPage";
 
 function ComingSoonPage({ title }: { title: string }) {
   return (
@@ -54,6 +55,7 @@ export type RouteItem = {
 export const routeRegistry: RouteItem[] = [
   { routeKey: "dashboard", path: "/dashboard", title: "대시보드", description: "투자 리서치 현황 요약", component: <DashboardPage /> },
   { routeKey: "market-calendar", path: "/market-calendar", title: "증시 캘린더", description: "테마별 뉴스와 일정을 월간 캘린더로 관리", component: <MarketCalendarPage /> },
+  { routeKey: "realtime-theme-treemap", path: "/realtime-theme-treemap", title: "실시간 테마 트리맵", description: "활성 테마와 연결 종목의 장중 등락률 Snapshot", component: <RealtimeThemeTreemapPage /> },
   { routeKey: "advisory-packages", path: "/advisory-packages", title: "GPT 자문 패키지", description: "최종 투자 자문용 패키지 생성", component: <AdvisoryPackagePage /> },
   { routeKey: "stocks", path: "/stocks", title: "종목 관리", description: "종목 마스터 관리", component: <StocksPage /> },
   { routeKey: "watchlist", path: "/watchlist", title: "관심 종목", description: "분석 우선 종목 Pool 관리", component: <WatchlistPage /> },

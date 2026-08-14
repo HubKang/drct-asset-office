@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from fastapi import HTTPException
@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.app.entities.chart_marker import ChartMarker, ChartMarkerEvent, ChartMarkerGroup
-from backend.app.schemas.chart_marker_schema import MarkerEventWrite, MarkerGroupPatch, MarkerGroupWrite, MarkerPatch, MarkerWrite
+from backend.app.schemas.chart_marker_schema import MarkerEventPatch, MarkerEventWrite, MarkerGroupPatch, MarkerGroupWrite, MarkerPatch, MarkerWrite
 
 
 class ChartMarkerService:
@@ -22,24 +22,33 @@ class ChartMarkerService:
                 "sort_order": row.sort_order, "is_active": row.is_active, "created_at": row.created_at, "updated_at": row.updated_at}
 
     @staticmethod
-    def _marker(row: ChartMarker, stock_count: int = 0, marker_count: int = 0) -> dict[str, Any]:
+    def _marker(
+        row: ChartMarker,
+        stock_count: int = 0,
+        marker_count: int = 0,
+        success_count: int = 0,
+        failure_count: int = 0,
+    ) -> dict[str, Any]:
         return {"id": row.id, "marker_group_id": row.marker_group_id, "name": row.name, "description": row.description,
                 "symbol": row.symbol, "sort_order": row.sort_order, "is_active": row.is_active,
                 "stock_count": stock_count, "marker_count": marker_count,
+                "success_count": success_count, "failure_count": failure_count,
                 "created_at": row.created_at, "updated_at": row.updated_at}
 
     def list_catalog(self, active_only: bool = False) -> dict[str, Any]:
         groups = self.db.scalars(select(ChartMarkerGroup).order_by(ChartMarkerGroup.sort_order, ChartMarkerGroup.name)).all()
         markers = self.db.scalars(select(ChartMarker).order_by(ChartMarker.sort_order, ChartMarker.name)).all()
-        count_rows = self.db.execute(text("""SELECT marker_id, COUNT(DISTINCT stock_id) stock_count, COUNT(*) marker_count
+        count_rows = self.db.execute(text("""SELECT marker_id, COUNT(DISTINCT stock_id) stock_count, COUNT(*) marker_count,
+            SUM(CASE WHEN review_result='SUCCESS' THEN 1 ELSE 0 END) success_count,
+            SUM(CASE WHEN review_result='FAILURE' THEN 1 ELSE 0 END) failure_count
             FROM chart_marker_events GROUP BY marker_id""")).all()
-        counts = {row.marker_id: (row.stock_count, row.marker_count) for row in count_rows}
+        counts = {row.marker_id: (row.stock_count, row.marker_count, row.success_count, row.failure_count) for row in count_rows}
         result = []
         for group in groups:
             if active_only and not group.is_active:
                 continue
             item = self._group(group)
-            item["markers"] = [self._marker(marker, *counts.get(marker.id, (0, 0))) for marker in markers if marker.marker_group_id == group.id and (not active_only or marker.is_active)]
+            item["markers"] = [self._marker(marker, *counts.get(marker.id, (0, 0, 0, 0))) for marker in markers if marker.marker_group_id == group.id and (not active_only or marker.is_active)]
             result.append(item)
         return {"items": result}
 
@@ -104,7 +113,7 @@ class ChartMarkerService:
 
     def list_stock_events(self, stock_id: int, end_date: date | None = None) -> dict[str, Any]:
         sql = """
-            SELECT e.id, e.stock_id, e.marker_id, e.marker_date, e.memo, e.created_at, e.updated_at,
+            SELECT e.id, e.stock_id, e.marker_id, e.marker_date, e.memo, e.review_result, e.reviewed_at, e.created_at, e.updated_at,
                    m.name marker_name, m.symbol, g.id marker_group_id, g.name group_name, g.color group_color
             FROM chart_marker_events e JOIN chart_markers m ON m.id=e.marker_id
             JOIN chart_marker_groups g ON g.id=m.marker_group_id WHERE e.stock_id=:stock_id
@@ -116,11 +125,16 @@ class ChartMarkerService:
         sql += " ORDER BY e.marker_date, g.sort_order, m.sort_order, e.id"
         return {"items": [dict(row._mapping) for row in self.db.execute(text(sql), params)]}
 
-    def update_event_memo(self, event_id: int, memo: str | None) -> dict[str, Any]:
+    def update_event(self, event_id: int, payload: MarkerEventPatch) -> dict[str, Any]:
         row = self.db.get(ChartMarkerEvent, event_id)
         if not row:
             raise HTTPException(404, "차트마커 기록을 찾을 수 없습니다.")
-        row.memo = memo
+        changes = payload.model_dump(exclude_unset=True)
+        if "memo" in changes:
+            row.memo = changes["memo"]
+        if "review_result" in changes:
+            row.review_result = changes["review_result"]
+            row.reviewed_at = datetime.now() if row.review_result else None
         self.db.commit(); self.db.refresh(row)
         return self._event_detail(row)
 
@@ -134,6 +148,7 @@ class ChartMarkerService:
     def review_events(self, marker_id: int) -> dict[str, Any]:
         rows = self.db.execute(text("""
             SELECT e.id, e.stock_id, s.stock_code, s.stock_name, e.marker_id, e.marker_date, e.memo,
+                   e.review_result, e.reviewed_at,
                    m.name marker_name, m.symbol, g.id marker_group_id, g.name group_name, g.color group_color
             FROM chart_marker_events e JOIN stocks s ON s.id=e.stock_id JOIN chart_markers m ON m.id=e.marker_id
             JOIN chart_marker_groups g ON g.id=m.marker_group_id WHERE e.marker_id=:marker_id
@@ -169,7 +184,8 @@ class ChartMarkerService:
     def _event_detail(self, row: ChartMarkerEvent) -> dict[str, Any]:
         marker = self.db.get(ChartMarker, row.marker_id); group = self.db.get(ChartMarkerGroup, marker.marker_group_id) if marker else None
         return {"id": row.id, "stock_id": row.stock_id, "marker_id": row.marker_id, "marker_date": row.marker_date,
-                "memo": row.memo, "marker_name": marker.name if marker else "", "symbol": marker.symbol if marker else "",
+                "memo": row.memo, "review_result": row.review_result, "reviewed_at": row.reviewed_at,
+                "marker_name": marker.name if marker else "", "symbol": marker.symbol if marker else "",
                 "marker_group_id": group.id if group else None, "group_name": group.name if group else "", "group_color": group.color if group else "#64748b",
                 "created_at": row.created_at, "updated_at": row.updated_at}
 

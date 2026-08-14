@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from backend.app.core.database import get_db
 from backend.app.schemas.market_theme_schema import (
     MarketThemeCreateRequest,
+    MarketThemeDeleteResponse,
     MarketThemeResponse,
     MarketThemeUpdateRequest,
 )
@@ -33,6 +34,11 @@ from backend.app.schemas.market_theme_observation_schema import (
     MarketThemeObservationMLTrainResponse,
     MarketThemeObservationDiagnosticsResponse,
 )
+from backend.app.schemas.realtime_theme_schema import (
+    RealtimeThemeRefreshResponse,
+    RealtimeThemeStocksResponse,
+    RealtimeThemeTreemapResponse,
+)
 from backend.app.services.market_theme_service import MarketThemeService
 from backend.app.services.market_theme_return_prediction_service import MarketThemeReturnPredictionService
 from backend.app.services.market_theme_return_ml_service import MarketThemeReturnMLService
@@ -42,8 +48,24 @@ from backend.app.services.market_theme_observation_ml_service import MarketTheme
 from backend.app.services.market_theme_observation_validation_service import MarketThemeObservationValidationService
 from backend.app.services.market_theme_stock_service import MarketThemeStockService
 from backend.app.services.market_theme_flow_trend_service import invalidate_market_theme_flow_trend_cache
+from backend.app.services.realtime_theme_service import RealtimeThemeService
 
 router = APIRouter()
+
+
+@router.post("/market-themes/realtime/refresh", response_model=RealtimeThemeRefreshResponse)
+def refresh_realtime_market_themes(db: Session = Depends(get_db)) -> RealtimeThemeRefreshResponse:
+    return RealtimeThemeService(db).refresh()
+
+
+@router.get("/market-themes/realtime/treemap", response_model=RealtimeThemeTreemapResponse)
+def get_realtime_market_theme_treemap(db: Session = Depends(get_db)) -> RealtimeThemeTreemapResponse:
+    return RealtimeThemeService(db).get_treemap()
+
+
+@router.get("/market-themes/realtime/{theme_id}/stocks", response_model=RealtimeThemeStocksResponse)
+def get_realtime_market_theme_stocks(theme_id: int, db: Session = Depends(get_db)) -> RealtimeThemeStocksResponse:
+    return RealtimeThemeService(db).get_theme_stocks(theme_id)
 
 
 @router.get("/market-themes/observation-priorities/latest", response_model=MarketThemeObservationResponse)
@@ -197,6 +219,13 @@ def update_market_theme(theme_id: int, payload: MarketThemeUpdateRequest, db: Se
 @router.patch("/market-themes/{theme_id}/deactivate", response_model=MarketThemeResponse)
 def deactivate_market_theme(theme_id: int, db: Session = Depends(get_db)) -> MarketThemeResponse:
     result = MarketThemeService(db).deactivate_theme(theme_id)
+    invalidate_market_theme_flow_trend_cache()
+    return result
+
+
+@router.delete("/market-themes/{theme_id}", response_model=MarketThemeDeleteResponse)
+def delete_market_theme(theme_id: int, db: Session = Depends(get_db)) -> MarketThemeDeleteResponse:
+    result = MarketThemeService(db).delete_theme(theme_id)
     invalidate_market_theme_flow_trend_cache()
     return result
 

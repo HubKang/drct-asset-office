@@ -64,3 +64,11 @@ class MarketThemeResponse(BaseModel):
     latest_return: MarketThemeLatestReturnSummary | None = None
     created_at: str
     updated_at: str
+
+
+class MarketThemeDeleteResponse(BaseModel):
+    deleted_theme_id: int
+    deleted_theme_name: str
+    deleted_theme_count: int
+    deleted_related_row_count: int
+    detached_event_reference_count: int

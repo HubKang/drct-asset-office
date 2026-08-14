@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from backend.app.core.database import get_db
-from backend.app.schemas.chart_marker_schema import MarkerEventMemoPatch, MarkerEventWrite, MarkerGroupPatch, MarkerGroupWrite, MarkerPatch, MarkerWrite
+from backend.app.schemas.chart_marker_schema import MarkerEventPatch, MarkerEventWrite, MarkerGroupPatch, MarkerGroupWrite, MarkerPatch, MarkerWrite
 from backend.app.services.chart_marker_service import ChartMarkerService
 
 router = APIRouter(prefix="/chart-markers", tags=["chart-markers"])
@@ -26,7 +26,7 @@ def upsert_event(payload: MarkerEventWrite, db: Session = Depends(get_db)): retu
 @router.get("/events")
 def stock_events(stock_id: int, end_date: date | None = None, db: Session = Depends(get_db)): return ChartMarkerService(db).list_stock_events(stock_id, end_date)
 @router.patch("/events/{event_id}")
-def update_event(event_id: int, payload: MarkerEventMemoPatch, db: Session = Depends(get_db)): return ChartMarkerService(db).update_event_memo(event_id, payload.memo)
+def update_event(event_id: int, payload: MarkerEventPatch, db: Session = Depends(get_db)): return ChartMarkerService(db).update_event(event_id, payload)
 @router.delete("/events/{event_id}")
 def delete_event(event_id: int, db: Session = Depends(get_db)): return ChartMarkerService(db).delete_event(event_id)
 @router.get("/review/events")

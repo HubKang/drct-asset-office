@@ -4,12 +4,12 @@ import type { CSSProperties, DragEvent } from "react";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import { StockFlowCompactCard } from "@/components/marketThemes/FlowSummaryCards";
+import { ThemeLinkedStockChart } from "@/components/marketThemes/MarketThemeDetailDrawer";
 import MarketThemePriceFlowModal from "@/components/marketThemes/MarketThemePriceFlowModal";
 import { buildTreemapLayout, getTreemapLabelClass, getTreemapTextMetrics } from "@/utils/treemapLayout";
 import {
   buildNaverKoreaMarketChartUrl,
-  buildNaverStockCandleChartUrl,
-  createNaverChartSidcode,
+  getNaverChartSessionSidcode,
   normalizeNaverStockCode as normalizeStockCode,
 } from "@/utils/naverChart";
 import { repositories } from "@/services";
@@ -112,10 +112,6 @@ const formatMonthDay = (value: string) => {
   return match ? `${Number(match[2])}/${Number(match[3])}` : value;
 };
 
-const getNaverChartImageUrl = (stockCode: string, period: "day" | "week" | "month", sidcode: number) => {
-  return buildNaverStockCandleChartUrl(stockCode, period, sidcode);
-};
-
 const getNaverMarketChartImageUrl = (market: "KOSPI" | "KOSDAQ", sidcode: number) =>
   buildNaverKoreaMarketChartUrl(market, sidcode);
 
@@ -205,47 +201,6 @@ const MonthlySupplyHeatmap = memo(function MonthlySupplyHeatmap({
         </div>
       </div>
     </div>
-  );
-});
-
-type HeatmapDetailStockChartProps = {
-  stock: MonthlyThemeCellDetailStock;
-  period: "day" | "week";
-  sidcode: number;
-  onOpen: (url: string, alt: string) => void;
-};
-
-const HeatmapDetailStockChart = memo(function HeatmapDetailStockChart({
-  stock,
-  period,
-  sidcode,
-  onOpen,
-}: HeatmapDetailStockChartProps) {
-  const [hasError, setHasError] = useState(false);
-  const code = normalizeStockCode(stock.stock_code ?? "");
-  const periodLabel = period === "day" ? "일봉" : "주봉";
-  const url = code ? getNaverChartImageUrl(code, period, sidcode) : "";
-
-  useEffect(() => setHasError(false), [url]);
-
-  if (!url || hasError) {
-    return <div className="theme-detail-daily-chart-fallback">{periodLabel} 차트 없음</div>;
-  }
-
-  return (
-    <button
-      type="button"
-      className="theme-detail-daily-chart-button"
-      onClick={() => onOpen(url, `${stock.stock_name} ${periodLabel} 차트`)}
-      aria-label={`${stock.stock_name} ${periodLabel} 차트 확대`}
-    >
-      <img
-        src={url}
-        alt={`${stock.stock_name} ${periodLabel} 차트`}
-        loading="lazy"
-        onError={() => setHasError(true)}
-      />
-    </button>
   );
 });
 
@@ -593,7 +548,7 @@ function MarketTrendsPage() {
   const [rankDraftItems, setRankDraftItems] = useState<DailyThemeFlowSummary[]>([]);
   const [draggingThemeId, setDraggingThemeId] = useState<number | null>(null);
   const [flowRankInfoOpen, setFlowRankInfoOpen] = useState(false);
-  const [chartSidcode, setChartSidcode] = useState<number>(createNaverChartSidcode());
+  const chartSidcode = getNaverChartSessionSidcode();
   const [brokenCharts, setBrokenCharts] = useState<Record<string, boolean>>({});
   const [zoomedChart, setZoomedChart] = useState<{ url: string; alt: string } | null>(null);
   const [monthlyBaseMonth, setMonthlyBaseMonth] = useState<string>(getMonthInput());
@@ -1353,7 +1308,6 @@ ${tableRows}
   const loadFlowStocks = async (theme: DailyThemeFlowSummary) => {
     setSelectedFlowTheme({ id: theme.market_theme_id, name: theme.theme_name });
     setFlowStocksLoading(true);
-    setChartSidcode(createNaverChartSidcode());
     setBrokenCharts({});
     try {
       const res = await repositories.marketTrends.getExternalDailyThemeFlowStocks(tradeDate, theme.market_theme_id);
@@ -2648,25 +2602,17 @@ ${tableRows}
                   </thead>
                   <tbody>
                     {flowStocks.map((row) => {
-                      const dayUrl = getNaverChartImageUrl(row.stock_code, "day", chartSidcode);
-                      const weekUrl = getNaverChartImageUrl(row.stock_code, "week", chartSidcode);
-                      const monthUrl = getNaverChartImageUrl(row.stock_code, "month", chartSidcode);
-
-                      const chartCell = (url: string, key: string) => (
+                      const stockCode = normalizeStockCode(row.stock_code);
+                      const chartCell = (period: "day" | "week" | "month", label: string) => (
                         <div className="w-[280px]">
-                          {brokenCharts[key] ? (
-                            <div className="h-[120px] w-[280px] border rounded flex items-center justify-center text-xs text-muted">차트 이미지 없음</div>
-                          ) : (
-                            <button type="button" className="block" onClick={() => setZoomedChart({ url, alt: `차트-${row.stock_code}` })}>
-                              <img
-                                src={url}
-                                alt={`차트-${row.stock_code}`}
-                                loading="lazy"
-                                className="h-auto w-[280px] border rounded"
-                                onError={() => onChartError(key)}
-                              />
-                            </button>
-                          )}
+                          <ThemeLinkedStockChart
+                            stockCode={stockCode}
+                            stockName={row.stock_name}
+                            period={period}
+                            label={label}
+                            sidcode={chartSidcode}
+                            onOpen={setZoomedChart}
+                          />
                         </div>
                       );
 
@@ -2682,9 +2628,9 @@ ${tableRows}
                               </div>
                             ) : null}
                           </td>
-                          <td>{chartCell(dayUrl, `${row.stock_code}-day`)}</td>
-                          <td>{chartCell(weekUrl, `${row.stock_code}-week`)}</td>
-                          <td>{chartCell(monthUrl, `${row.stock_code}-month`)}</td>
+                          <td>{chartCell("day", "일봉")}</td>
+                          <td>{chartCell("week", "주봉")}</td>
+                          <td>{chartCell("month", "월봉")}</td>
                         </tr>
                       );
                     })}
@@ -3263,19 +3209,25 @@ ${tableRows}
                             />
                           </div>
                           <div className="theme-detail-daily-chart-cell" role="cell">
-                            <HeatmapDetailStockChart
-                              stock={stock}
+                            <ThemeLinkedStockChart
+                              stockCode={normalizeStockCode(stock.stock_code)}
+                              stockName={stock.stock_name}
                               period="day"
+                              label="일봉"
                               sidcode={chartSidcode}
-                              onOpen={(url, alt) => setZoomedChart({ url, alt })}
+                              onOpen={setZoomedChart}
+                              variant="detail"
                             />
                           </div>
                           <div className="theme-detail-daily-chart-cell" role="cell">
-                            <HeatmapDetailStockChart
-                              stock={stock}
+                            <ThemeLinkedStockChart
+                              stockCode={normalizeStockCode(stock.stock_code)}
+                              stockName={stock.stock_name}
                               period="week"
+                              label="주봉"
                               sidcode={chartSidcode}
-                              onOpen={(url, alt) => setZoomedChart({ url, alt })}
+                              onOpen={setZoomedChart}
+                              variant="detail"
                             />
                           </div>
                         </div>

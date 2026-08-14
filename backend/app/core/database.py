@@ -231,12 +231,16 @@ def ensure_runtime_schema() -> None:
         conn.exec_driver_sql("""
             CREATE TABLE IF NOT EXISTS chart_marker_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, stock_id INTEGER NOT NULL, marker_id INTEGER NOT NULL,
-                marker_date TEXT NOT NULL, memo TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                marker_date TEXT NOT NULL, memo TEXT, review_result TEXT, reviewed_at TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(stock_id, marker_id, marker_date),
+                CHECK(review_result IS NULL OR review_result IN ('SUCCESS', 'FAILURE')),
                 FOREIGN KEY(stock_id) REFERENCES stocks(id) ON DELETE CASCADE,
                 FOREIGN KEY(marker_id) REFERENCES chart_markers(id) ON DELETE RESTRICT
             )
         """)
+        _ensure_column(conn, "chart_marker_events", "review_result", "TEXT")
+        _ensure_column(conn, "chart_marker_events", "reviewed_at", "TEXT")
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_chart_marker_events_stock_date ON chart_marker_events(stock_id, marker_date)")
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_chart_marker_events_marker_stock_date ON chart_marker_events(marker_id, stock_id, marker_date DESC)")
         conn.exec_driver_sql(
@@ -1421,6 +1425,29 @@ def ensure_runtime_schema() -> None:
         )
         conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_market_theme_stock_daily_returns_theme_date ON market_theme_stock_daily_returns(theme_id, return_date)"
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS market_theme_realtime_returns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                trade_date TEXT NOT NULL,
+                theme_id INTEGER NOT NULL,
+                stock_id INTEGER NOT NULL,
+                change_rate REAL NOT NULL,
+                trading_value INTEGER,
+                collected_at TEXT NOT NULL,
+                UNIQUE(trade_date, theme_id, stock_id),
+                FOREIGN KEY (theme_id) REFERENCES market_themes(id) ON DELETE CASCADE,
+                FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE CASCADE
+            )
+            """
+        )
+        _ensure_column(conn, "market_theme_realtime_returns", "trading_value", "INTEGER")
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_theme_realtime_theme_date ON market_theme_realtime_returns(theme_id, trade_date)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_market_theme_realtime_stock_date ON market_theme_realtime_returns(stock_id, trade_date)"
         )
         conn.exec_driver_sql(
             """
