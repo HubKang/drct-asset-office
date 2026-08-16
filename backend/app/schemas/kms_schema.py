@@ -291,6 +291,19 @@ class KmsKnowledgeItemResponse(BaseModel):
     extractions: list[KmsKnowledgeExtractionResponse] = []
 
 
+class KmsKnowledgeCategoryCount(BaseModel):
+    category_id: int
+    count: int
+
+
+class KmsKnowledgeItemPage(BaseModel):
+    items: list[KmsKnowledgeItemResponse]
+    total: int
+    limit: int
+    offset: int
+    category_counts: list[KmsKnowledgeCategoryCount] = Field(default_factory=list)
+
+
 class KmsKnowledgeItemCreate(BaseModel):
     title: str
     content: str

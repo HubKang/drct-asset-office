@@ -15,6 +15,7 @@ from backend.app.schemas.kms_schema import (
     KmsHomeSummary,
     KmsKnowledgeItemActiveUpdate,
     KmsKnowledgeItemCreate,
+    KmsKnowledgeItemPage,
     KmsKnowledgeItemResponse,
     KmsKnowledgeItemTagUpdate,
     KmsKnowledgeItemUpdate,
@@ -114,6 +115,40 @@ def list_kms_knowledge_items(
         source_type_id=source_type_id,
         tag_id=tag_id,
         tag=tag,
+        is_active=is_active,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/knowledge-items/page", response_model=KmsKnowledgeItemPage)
+def list_kms_knowledge_items_page(
+    keyword: str | None = None,
+    para_type_id: int | None = None,
+    category_id: int | None = None,
+    status_id: int | None = None,
+    importance_id: int | None = None,
+    usage_context_id: int | None = None,
+    source_type_id: int | None = None,
+    tag_names: list[str] | str = Query(default=[]),
+    tag_match_mode: str = Query(default="AND", pattern="^(AND|OR)$"),
+    recent_days: int | None = Query(default=None, ge=1, le=3650),
+    is_active: bool | None = True,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+) -> KmsKnowledgeItemPage:
+    return KmsService(db).list_knowledge_items_page(
+        keyword=keyword,
+        para_type_id=para_type_id,
+        category_id=category_id,
+        status_id=status_id,
+        importance_id=importance_id,
+        usage_context_id=usage_context_id,
+        source_type_id=source_type_id,
+        tag_names=tag_names,
+        tag_match_mode=tag_match_mode,
+        recent_days=recent_days,
         is_active=is_active,
         limit=limit,
         offset=offset,

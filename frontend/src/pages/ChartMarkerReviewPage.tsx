@@ -1,8 +1,10 @@
-import { type CSSProperties, FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, ChevronDown, ChevronUp, Pencil, Plus, Power, Search, X } from "lucide-react";
+import { type CSSProperties, FormEvent, type KeyboardEvent as ReactKeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, ArrowRight, ChevronDown, ChevronUp, ExternalLink, Pencil, Plus, Power, Search, X } from "lucide-react";
+import { Link } from "react-router-dom";
 import PageHeader from "@/components/common/PageHeader";
 import { repositories } from "@/services";
-import type { ChartMarker, ChartMarkerGroup, ChartMarkerReviewChart, ChartMarkerReviewEvent, ChartMarkerReviewResult } from "@/types/chartMarker";
+import type { ChartMarker, ChartMarkerGroup, ChartMarkerKnowledgeItem, ChartMarkerReviewChart, ChartMarkerReviewEvent, ChartMarkerReviewResult } from "@/types/chartMarker";
+import type { KmsKnowledgeItem, KmsSettingItem } from "@/types/kms";
 
 const SIDE_CANDLE_COUNT = 40;
 
@@ -49,15 +51,86 @@ function ReviewChart({ data, event, loading }: { data: ChartMarkerReviewChart | 
 type EditorState = { kind: "group"; group?: ChartMarkerGroup; marker?: never } | { kind: "marker"; marker?: ChartMarker; group?: never } | null;
 
 function CatalogTab({ groups, reload }: { groups: ChartMarkerGroup[]; reload: () => Promise<void> }) {
-  const [selected, setSelected] = useState<number | null>(groups[0]?.id ?? null), [editor, setEditor] = useState<EditorState>(null), [saving, setSaving] = useState(false), [error, setError] = useState("");
+  const [selected, setSelected] = useState<number | null>(groups[0]?.id ?? null);
+  const [editor, setEditor] = useState<EditorState>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [knowledgeCategories, setKnowledgeCategories] = useState<KmsSettingItem[]>([]);
+  const [knowledgeKeyword, setKnowledgeKeyword] = useState("");
+  const [knowledgeCategoryId, setKnowledgeCategoryId] = useState(0);
+  const [knowledgeResults, setKnowledgeResults] = useState<KmsKnowledgeItem[] | null>(null);
+  const [selectedKnowledge, setSelectedKnowledge] = useState<ChartMarkerKnowledgeItem[]>([]);
+  const [knowledgeSearching, setKnowledgeSearching] = useState(false);
+  const [knowledgeError, setKnowledgeError] = useState("");
   const group = groups.find((item) => item.id === selected) ?? groups[0];
+  const linkedKnowledge = group?.knowledge_items ?? [];
   useEffect(() => { if (!group && groups[0]) setSelected(groups[0].id); }, [groups, group]);
+
+  useEffect(() => {
+    if (editor?.kind !== "group") return;
+    let active = true;
+    setSelectedKnowledge(editor.group?.knowledge_items ?? []);
+    setKnowledgeKeyword("");
+    setKnowledgeCategoryId(0);
+    setKnowledgeResults(null);
+    setKnowledgeError("");
+    repositories.kms.listSettingItems({ group_code: "KNOWLEDGE_CATEGORY", include_inactive: false })
+      .then((rows) => {
+        if (!active) return;
+        setKnowledgeCategories(rows);
+        const chartCategory = rows.find((item) => item.item_code.toUpperCase() === "CHART" || item.item_name === "차트");
+        setKnowledgeCategoryId(chartCategory?.id ?? 0);
+      })
+      .catch((nextError) => { if (active) setKnowledgeError(nextError instanceof Error ? nextError.message : "지식 카테고리를 불러오지 못했습니다."); });
+    return () => { active = false; };
+  }, [editor?.kind, editor?.kind === "group" ? editor.group?.id : undefined]);
+
+  const searchKnowledge = async (categoryId = knowledgeCategoryId) => {
+    setKnowledgeSearching(true); setKnowledgeError("");
+    try {
+      setKnowledgeResults(await repositories.kms.listKnowledgeItems({
+        keyword: knowledgeKeyword.trim() || undefined,
+        category_id: categoryId || undefined,
+        is_active: true,
+        limit: 30,
+      }));
+    } catch (nextError) {
+      setKnowledgeError(nextError instanceof Error ? nextError.message : "지식을 검색하지 못했습니다.");
+    } finally {
+      setKnowledgeSearching(false);
+    }
+  };
+
+  const searchKnowledgeOnEnter = (event: ReactKeyboardEvent<HTMLSelectElement | HTMLInputElement>) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    event.stopPropagation();
+    void searchKnowledge();
+  };
+
+  const toLinkedKnowledge = (item: KmsKnowledgeItem): ChartMarkerKnowledgeItem => ({
+    id: item.id,
+    title: item.title,
+    summary: item.summary ?? null,
+    category_id: item.category_id ?? null,
+    category_name: item.category?.item_name ?? null,
+    knowledge_type_name: item.para_type?.item_name ?? null,
+    is_active: item.is_active,
+    sort_order: selectedKnowledge.length * 10,
+  });
+
+  const toggleKnowledge = (item: KmsKnowledgeItem) => {
+    setSelectedKnowledge((current) => current.some((row) => row.id === item.id)
+      ? current.filter((row) => row.id !== item.id)
+      : [...current, toLinkedKnowledge(item)]);
+  };
+
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); if (!editor) return; setSaving(true); setError("");
     const form = new FormData(event.currentTarget);
     try {
       if (editor.kind === "group") {
-        const current = editor.group, payload = { name: String(form.get("name")), description: String(form.get("description") || ""), color: String(form.get("color")), sort_order: current?.sort_order ?? Math.max(0, ...groups.map((item) => item.sort_order)) + 10, is_active: form.get("is_active") === "on" };
+        const current = editor.group, payload = { name: String(form.get("name")), description: String(form.get("description") || ""), color: String(form.get("color")), sort_order: current?.sort_order ?? Math.max(0, ...groups.map((item) => item.sort_order)) + 10, is_active: form.get("is_active") === "on", knowledge_item_ids: selectedKnowledge.map((item) => item.id) };
         if (current) await repositories.chartMarkers.updateGroup(current.id, payload); else await repositories.chartMarkers.createGroup(payload);
       } else if (group) {
         const current = editor.marker, payload = { name: String(form.get("name")), description: String(form.get("description") || ""), symbol: String(form.get("symbol") || "◆"), sort_order: current?.sort_order ?? Math.max(0, ...group.markers.map((item) => item.sort_order)) + 10, is_active: form.get("is_active") === "on" };
@@ -80,9 +153,9 @@ function CatalogTab({ groups, reload }: { groups: ChartMarkerGroup[]; reload: ()
   return <>
     <div className="chart-marker-section-intro"><div><h2>마커그룹</h2><p>차트에서 사용할 관찰 기준을 그룹과 마커로 관리합니다.</p></div><button className="btn btn-primary" type="button" onClick={() => setEditor({ kind: "group" })}><Plus size={16} /> 새 그룹</button></div>
     <div className="chart-marker-master-detail"><aside className="panel chart-marker-group-panel"><div className="chart-marker-panel-title"><h3>마커그룹</h3><span>{groups.length}개</span></div><div className="chart-marker-group-list">{groups.map((item) => <button type="button" key={item.id} className={item.id === group?.id ? "active" : ""} onClick={() => setSelected(item.id)}><i style={{ background: item.color }} /><span><strong>{item.name}</strong><small>{item.is_active ? "활성" : "비활성"}</small></span><b>{item.markers.length}</b></button>)}</div></aside>
-      <main className="panel chart-marker-detail-panel">{group ? <><header className="chart-marker-detail-header"><div><div className="chart-marker-group-heading"><i style={{ background: group.color }} /><h2>{group.name}</h2><span className={`chart-marker-status ${group.is_active ? "active" : ""}`}>{group.is_active ? "활성" : "비활성"}</span></div><p>{group.description || "등록된 그룹 설명이 없습니다."}</p></div><div><button className="btn btn-secondary" type="button" onClick={() => setEditor({ kind: "group", group })}><Pencil size={15} /> 수정</button><button className="btn btn-secondary" type="button" onClick={() => void toggleGroup()}><Power size={15} /> {group.is_active ? "비활성" : "활성화"}</button></div></header><div className="chart-marker-detail-toolbar"><div><h3>등록 마커</h3><span>{group.markers.length}개</span></div><button className="btn btn-primary" type="button" onClick={() => setEditor({ kind: "marker" })}><Plus size={16} /> 마커 추가</button></div><div className="chart-marker-card-list">{group.markers.length ? group.markers.map((marker, index) => <article key={marker.id} className={!marker.is_active ? "inactive" : ""}><div className="chart-marker-symbol" style={{ color: group.color, background: `${group.color}12` }}>{marker.symbol}</div><div className="chart-marker-card-copy"><div className="chart-marker-card-title"><strong>{marker.name}</strong></div><p>{marker.description || "등록된 설명이 없습니다."}</p></div><div className="chart-marker-card-metrics" aria-label={`${marker.name} 집계`}><span><small>종목</small><strong>{marker.stock_count}</strong></span><span><small>마커</small><strong>{marker.marker_count}</strong></span><span className="success"><small>성공</small><strong>{marker.success_count}</strong></span><span className="failure"><small>실패</small><strong>{marker.failure_count}</strong></span></div><div className="chart-marker-order-actions"><button title="위로 이동" disabled={index === 0} onClick={() => void moveMarker(marker, -1)}><ChevronUp size={16} /></button><button title="아래로 이동" disabled={index === group.markers.length - 1} onClick={() => void moveMarker(marker, 1)}><ChevronDown size={16} /></button></div><div className="chart-marker-card-actions"><button onClick={() => setEditor({ kind: "marker", marker })}>수정</button><button className={marker.is_active ? "danger" : "activate"} aria-label={`${marker.name}을 ${marker.is_active ? "비활성" : "활성"} 상태로 변경`} onClick={() => void toggleMarker(marker)}>{marker.is_active ? "비활성" : "활성"}</button></div></article>) : <div className="chart-marker-empty compact">등록된 마커가 없습니다.<br />마커 추가를 눌러 관찰 기준을 만들어 주세요.</div>}</div></> : <div className="chart-marker-empty">마커그룹을 먼저 등록해 주세요.</div>}</main>
+      <main className="panel chart-marker-detail-panel">{group ? <><header className="chart-marker-detail-header"><div><div className="chart-marker-group-heading"><i style={{ background: group.color }} /><h2>{group.name}</h2><span className={`chart-marker-status ${group.is_active ? "active" : ""}`}>{group.is_active ? "활성" : "비활성"}</span></div><p>{group.description || "등록된 그룹 설명이 없습니다."}</p></div><div><button className="btn btn-secondary" type="button" onClick={() => setEditor({ kind: "group", group })}><Pencil size={15} /> 수정</button><button className="btn btn-secondary" type="button" onClick={() => void toggleGroup()}><Power size={15} /> {group.is_active ? "비활성" : "활성화"}</button></div></header><section className="chart-marker-linked-knowledge"><div className="chart-marker-linked-heading"><div><h3>연결 지식</h3><span>{linkedKnowledge.length}개</span></div><p>마커를 판단할 때 함께 확인할 지식입니다.</p></div>{linkedKnowledge.length ? <div className="chart-marker-linked-list">{linkedKnowledge.map((item) => <Link key={item.id} to={`/kms/posts?item_id=${item.id}`}><span><strong>{item.title}</strong><small>{[item.category_name, item.knowledge_type_name].filter(Boolean).join(" · ") || "분류 없음"}</small>{item.summary ? <em>{item.summary}</em> : null}</span>{!item.is_active ? <b>비활성</b> : null}<ExternalLink size={14} /></Link>)}</div> : <div className="chart-marker-linked-empty">연결된 지식이 없습니다. 그룹 수정에서 지식을 연결할 수 있습니다.</div>}</section><div className="chart-marker-detail-toolbar"><div><h3>등록 마커</h3><span>{group.markers.length}개</span></div><button className="btn btn-primary" type="button" onClick={() => setEditor({ kind: "marker" })}><Plus size={16} /> 마커 추가</button></div><div className="chart-marker-card-list">{group.markers.length ? group.markers.map((marker, index) => <article key={marker.id} className={!marker.is_active ? "inactive" : ""}><div className="chart-marker-symbol" style={{ color: group.color, background: `${group.color}12` }}>{marker.symbol}</div><div className="chart-marker-card-copy"><div className="chart-marker-card-title"><strong>{marker.name}</strong></div><p>{marker.description || "등록된 설명이 없습니다."}</p></div><div className="chart-marker-card-metrics" aria-label={`${marker.name} 집계`}><span><small>종목</small><strong>{marker.stock_count}</strong></span><span><small>마커</small><strong>{marker.marker_count}</strong></span><span className="success"><small>성공</small><strong>{marker.success_count}</strong></span><span className="failure"><small>실패</small><strong>{marker.failure_count}</strong></span></div><div className="chart-marker-order-actions"><button title="위로 이동" disabled={index === 0} onClick={() => void moveMarker(marker, -1)}><ChevronUp size={16} /></button><button title="아래로 이동" disabled={index === group.markers.length - 1} onClick={() => void moveMarker(marker, 1)}><ChevronDown size={16} /></button></div><div className="chart-marker-card-actions"><button onClick={() => setEditor({ kind: "marker", marker })}>수정</button><button className={marker.is_active ? "danger" : "activate"} aria-label={`${marker.name}을 ${marker.is_active ? "비활성" : "활성"} 상태로 변경`} onClick={() => void toggleMarker(marker)}>{marker.is_active ? "비활성" : "활성"}</button></div></article>) : <div className="chart-marker-empty compact">등록된 마커가 없습니다.<br />마커 추가를 눌러 관찰 기준을 만들어 주세요.</div>}</div></> : <div className="chart-marker-empty">마커그룹을 먼저 등록해 주세요.</div>}</main>
     </div>
-    {editor ? <div className="chart-marker-editor-backdrop" onMouseDown={() => setEditor(null)}><form className="chart-marker-editor" onSubmit={save} onMouseDown={(event) => event.stopPropagation()}><header><div><h3>{editor.kind === "group" ? `마커그룹 ${editor.group ? "수정" : "등록"}` : `차트마커 ${editor.marker ? "수정" : "등록"}`}</h3><p>{editor.kind === "group" ? "관찰 기준을 묶는 상위 그룹입니다." : `${group?.name || "선택 그룹"}에 사용할 마커입니다.`}</p></div><button type="button" onClick={() => setEditor(null)}><X size={20} /></button></header><label>{editor.kind === "group" ? "그룹명" : "마커명"}<input className="input-control" name="name" required autoFocus defaultValue={editor.kind === "group" ? editor.group?.name : editor.marker?.name} /></label>{editor.kind === "group" ? <label>대표 색상<div className="chart-marker-color-input"><input type="color" name="color" defaultValue={editor.group?.color ?? "#64748b"} /><span>차트에서 마커를 구분할 때 사용합니다.</span></div></label> : <label>표시 심볼<input className="input-control chart-marker-symbol-input" name="symbol" maxLength={12} defaultValue={editor.marker?.symbol ?? "◆"} /></label>}<label>설명<textarea className="input-control" name="description" rows={3} defaultValue={editor.kind === "group" ? editor.group?.description ?? "" : editor.marker?.description ?? ""} /></label><label className="chart-marker-active-check"><input name="is_active" type="checkbox" defaultChecked={editor.kind === "group" ? editor.group?.is_active ?? true : editor.marker?.is_active ?? true} /> 활성 상태로 사용</label>{error ? <p className="inline-result inline-error">{error}</p> : null}<footer><button className="btn btn-secondary" type="button" onClick={() => setEditor(null)}>취소</button><button className="btn btn-primary" disabled={saving}>{saving ? "저장 중…" : editor.group || editor.marker ? "수정" : "등록"}</button></footer></form></div> : null}
+    {editor ? <div className="chart-marker-editor-backdrop" onMouseDown={() => setEditor(null)}><form className={`chart-marker-editor ${editor.kind === "group" ? "group-editor" : ""}`} onSubmit={save} onMouseDown={(event) => event.stopPropagation()}><header><div><h3>{editor.kind === "group" ? `마커그룹 ${editor.group ? "수정" : "등록"}` : `차트마커 ${editor.marker ? "수정" : "등록"}`}</h3><p>{editor.kind === "group" ? "관찰 기준과 함께 참고할 지식을 연결합니다." : `${group?.name || "선택 그룹"}에 사용할 마커입니다.`}</p></div><button type="button" onClick={() => setEditor(null)}><X size={20} /></button></header><div className="chart-marker-editor-body"><label>{editor.kind === "group" ? "그룹명" : "마커명"}<input className="input-control" name="name" required autoFocus defaultValue={editor.kind === "group" ? editor.group?.name : editor.marker?.name} /></label>{editor.kind === "group" ? <label>대표 색상<div className="chart-marker-color-input"><input type="color" name="color" defaultValue={editor.group?.color ?? "#64748b"} /><span>차트에서 마커를 구분할 때 사용합니다.</span></div></label> : <label>표시 심볼<input className="input-control chart-marker-symbol-input" name="symbol" maxLength={12} defaultValue={editor.marker?.symbol ?? "◆"} /></label>}<label>설명<textarea className="input-control" name="description" rows={3} defaultValue={editor.kind === "group" ? editor.group?.description ?? "" : editor.marker?.description ?? ""} /></label>{editor.kind === "group" ? <section className="chart-marker-knowledge-picker"><div className="chart-marker-picker-heading"><div><strong>연결 지식</strong><span>{selectedKnowledge.length}개 선택</span></div><p>활성 지식을 검색해 여러 개 연결할 수 있습니다.</p></div><div className="chart-marker-knowledge-search"><select aria-label="지식 카테고리" value={knowledgeCategoryId} onChange={(event) => { const nextCategoryId = Number(event.target.value); setKnowledgeCategoryId(nextCategoryId); void searchKnowledge(nextCategoryId); }} onKeyDown={searchKnowledgeOnEnter}><option value={0}>전체 카테고리</option>{knowledgeCategories.map((category) => <option key={category.id} value={category.id}>{category.item_name}</option>)}</select><input className="input-control" value={knowledgeKeyword} placeholder="지식 제목 검색" onChange={(event) => setKnowledgeKeyword(event.target.value)} onKeyDown={searchKnowledgeOnEnter} /><button className="btn btn-secondary" type="button" disabled={knowledgeSearching} onClick={() => void searchKnowledge()}><Search size={13} /> {knowledgeSearching ? "검색 중" : "검색"}</button></div><div className="chart-marker-knowledge-columns"><div><h4>검색 결과</h4><div className="chart-marker-knowledge-results">{knowledgeResults === null ? <p>카테고리나 제목을 입력하고 검색해 주세요.</p> : knowledgeResults.length ? knowledgeResults.map((item) => { const checked = selectedKnowledge.some((row) => row.id === item.id); return <label key={item.id}><input type="checkbox" checked={checked} onChange={() => toggleKnowledge(item)} /><span><strong>{item.title}</strong><small>{[item.category?.item_name, item.para_type?.item_name].filter(Boolean).join(" · ") || "분류 없음"}</small></span></label>; }) : <p>검색 결과가 없습니다.</p>}</div></div><div><h4>선택한 지식</h4><div className="chart-marker-selected-knowledge">{selectedKnowledge.length ? selectedKnowledge.map((item) => <div key={item.id}><span><strong>{item.title}</strong><small>{item.category_name || "분류 없음"}</small></span>{!item.is_active ? <b>비활성</b> : null}<button type="button" aria-label={`${item.title} 연결 해제`} onClick={() => setSelectedKnowledge((current) => current.filter((row) => row.id !== item.id))}><X size={14} /></button></div>) : <p>선택한 지식이 없습니다.</p>}</div></div></div>{knowledgeError ? <p className="inline-result inline-error">{knowledgeError}</p> : null}</section> : null}<label className="chart-marker-active-check"><input name="is_active" type="checkbox" defaultChecked={editor.kind === "group" ? editor.group?.is_active ?? true : editor.marker?.is_active ?? true} /> 활성 상태로 사용</label>{error ? <p className="inline-result inline-error">{error}</p> : null}</div><footer><button className="btn btn-secondary" type="button" onClick={() => setEditor(null)}>취소</button><button className="btn btn-primary" disabled={saving}>{saving ? "저장 중…" : editor.group || editor.marker ? "수정" : "등록"}</button></footer></form></div> : null}
   </>;
 }
 

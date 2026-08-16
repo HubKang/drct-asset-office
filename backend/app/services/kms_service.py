@@ -26,7 +26,9 @@ from backend.app.schemas.kms_schema import (
     KmsCategorySummary,
     KmsCategoryUpdate,
     KmsHomeSummary,
+    KmsKnowledgeCategoryCount,
     KmsKnowledgeItemCreate,
+    KmsKnowledgeItemPage,
     KmsKnowledgeItemResponse,
     KmsKnowledgeItemTagResponse,
     KmsKnowledgeItemTagUpdate,
@@ -269,8 +271,142 @@ class KmsService:
     ) -> list[KmsKnowledgeItemResponse]:
         self.sync_legacy_posts_to_knowledge_items()
         self.cleanup_knowledge_content_formats()
-        filters = []
-        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        filters, params = self._knowledge_item_filter_parts(
+            keyword=keyword,
+            para_type_id=para_type_id,
+            category_id=category_id,
+            status_id=status_id,
+            importance_id=importance_id,
+            usage_context_id=usage_context_id,
+            source_type_id=source_type_id,
+            tag_id=tag_id,
+            tag=tag,
+            is_active=is_active,
+        )
+        params.update({"limit": limit, "offset": offset})
+        where = f"WHERE {' AND '.join(filters)}" if filters else ""
+        rows = self.db.execute(
+            text(
+                f"""
+                SELECT k.*
+                FROM kms_knowledge_items k
+                {where}
+                ORDER BY k.updated_at DESC, k.id DESC
+                LIMIT :limit OFFSET :offset
+                """
+            ),
+            params,
+        ).mappings().all()
+        return self._knowledge_item_responses(rows)
+
+    def list_knowledge_items_page(
+        self,
+        keyword: str | None = None,
+        para_type_id: int | None = None,
+        category_id: int | None = None,
+        status_id: int | None = None,
+        importance_id: int | None = None,
+        usage_context_id: int | None = None,
+        source_type_id: int | None = None,
+        tag_names: list[str] | str | None = None,
+        tag_match_mode: str = "AND",
+        recent_days: int | None = None,
+        is_active: bool | None = True,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> KmsKnowledgeItemPage:
+        self.sync_legacy_posts_to_knowledge_items()
+        self.cleanup_knowledge_content_formats()
+        normalized_tags = self._normalize_tags(tag_names)
+        mode = tag_match_mode.upper()
+        if mode not in {"AND", "OR"}:
+            raise HTTPException(status_code=400, detail="tag_match_mode must be AND or OR")
+        filters, params = self._knowledge_item_filter_parts(
+            keyword=keyword,
+            para_type_id=para_type_id,
+            category_id=category_id,
+            status_id=status_id,
+            importance_id=importance_id,
+            usage_context_id=usage_context_id,
+            source_type_id=source_type_id,
+            tag_names=normalized_tags,
+            tag_match_mode=mode,
+            recent_days=recent_days,
+            is_active=is_active,
+        )
+        where = f"WHERE {' AND '.join(filters)}" if filters else ""
+        total = int(self.db.execute(text(f"SELECT COUNT(*) FROM kms_knowledge_items k {where}"), params).scalar() or 0)
+        page_params = {**params, "limit": limit, "offset": offset}
+        rows = self.db.execute(
+            text(
+                f"""
+                SELECT k.*
+                FROM kms_knowledge_items k
+                {where}
+                ORDER BY k.updated_at DESC, k.id DESC
+                LIMIT :limit OFFSET :offset
+                """
+            ),
+            page_params,
+        ).mappings().all()
+
+        count_filters, count_params = self._knowledge_item_filter_parts(
+            keyword=keyword,
+            para_type_id=para_type_id,
+            status_id=status_id,
+            importance_id=importance_id,
+            usage_context_id=usage_context_id,
+            source_type_id=source_type_id,
+            tag_names=normalized_tags,
+            tag_match_mode=mode,
+            recent_days=recent_days,
+            is_active=is_active,
+        )
+        count_where = f"WHERE {' AND '.join(count_filters)}" if count_filters else ""
+        count_rows = self.db.execute(
+            text(
+                f"""
+                SELECT k.category_id, COUNT(*) AS count
+                FROM kms_knowledge_items k
+                {count_where}
+                AND k.category_id IS NOT NULL
+                GROUP BY k.category_id
+                """ if count_where else """
+                SELECT k.category_id, COUNT(*) AS count
+                FROM kms_knowledge_items k
+                WHERE k.category_id IS NOT NULL
+                GROUP BY k.category_id
+                """
+            ),
+            count_params,
+        ).mappings().all()
+        return KmsKnowledgeItemPage(
+            items=self._knowledge_item_responses(rows),
+            total=total,
+            limit=limit,
+            offset=offset,
+            category_counts=[KmsKnowledgeCategoryCount(category_id=int(row["category_id"]), count=int(row["count"])) for row in count_rows],
+        )
+
+    def _knowledge_item_filter_parts(
+        self,
+        *,
+        keyword: str | None = None,
+        para_type_id: int | None = None,
+        category_id: int | None = None,
+        status_id: int | None = None,
+        importance_id: int | None = None,
+        usage_context_id: int | None = None,
+        source_type_id: int | None = None,
+        tag_id: int | None = None,
+        tag: str | None = None,
+        tag_names: list[str] | None = None,
+        tag_match_mode: str = "AND",
+        recent_days: int | None = None,
+        is_active: bool | None = True,
+    ) -> tuple[list[str], dict[str, Any]]:
+        filters: list[str] = []
+        params: dict[str, Any] = {}
         if keyword:
             filters.append("(k.title LIKE :keyword OR k.summary LIKE :keyword OR k.content LIKE :keyword OR k.one_line_conclusion LIKE :keyword)")
             params["keyword"] = f"%{keyword.strip()}%"
@@ -308,23 +444,32 @@ class KmsService:
                 """
             )
             params["tag"] = f"%{tag.strip().lstrip('#')}%"
+        if tag_names:
+            placeholders = ", ".join(f":tag_name_{index}" for index in range(len(tag_names)))
+            for index, tag_name in enumerate(tag_names):
+                params[f"tag_name_{index}"] = tag_name.casefold()
+            comparison = ">= 1" if tag_match_mode == "OR" else "= :tag_name_count"
+            if tag_match_mode == "AND":
+                params["tag_name_count"] = len(tag_names)
+            filters.append(
+                f"""
+                (
+                    SELECT COUNT(DISTINCT LOWER(t.name))
+                    FROM kms_knowledge_item_tags kit
+                    JOIN kms_tags t ON t.id = kit.tag_id AND t.is_active = 1
+                    WHERE kit.knowledge_item_id = k.id
+                      AND kit.is_confirmed = 1
+                      AND LOWER(t.name) IN ({placeholders})
+                ) {comparison}
+                """
+            )
         if is_active is not None:
             filters.append("k.is_active = :is_active")
             params["is_active"] = 1 if is_active else 0
-        where = f"WHERE {' AND '.join(filters)}" if filters else ""
-        rows = self.db.execute(
-            text(
-                f"""
-                SELECT k.*
-                FROM kms_knowledge_items k
-                {where}
-                ORDER BY k.updated_at DESC, k.id DESC
-                LIMIT :limit OFFSET :offset
-                """
-            ),
-            params,
-        ).mappings().all()
-        return [self._knowledge_item_response(row) for row in rows]
+        if recent_days:
+            filters.append("k.updated_at >= datetime('now', :recent_modifier, 'localtime')")
+            params["recent_modifier"] = f"-{max(1, int(recent_days))} days"
+        return filters, params
 
     def get_knowledge_item(self, item_id: int) -> KmsKnowledgeItemResponse:
         self.sync_legacy_posts_to_knowledge_items()
@@ -1117,18 +1262,24 @@ class KmsService:
         return self.delete_post(post_id)
 
     def list_tags(self, keyword: str | None = None, sort: str = "popular", limit: int = 100) -> list[KmsTagResponse]:
-        filters = ["is_active = 1"]
+        filters = ["t.is_active = 1"]
         params: dict[str, Any] = {"limit": limit}
         if keyword:
-            filters.append("name LIKE :keyword")
+            filters.append("t.name LIKE :keyword")
             params["keyword"] = f"%{keyword.strip().lstrip('#')}%"
-        order_by = "use_count DESC, name ASC" if sort != "name" else "name ASC"
+        order_by = "use_count DESC, t.name ASC" if sort != "name" else "t.name ASC"
+        having = "HAVING COUNT(DISTINCT k.id) > 0" if sort != "name" else ""
         rows = self.db.execute(
             text(
                 f"""
-                SELECT id, name, description, use_count, is_active, created_at, updated_at
-                FROM kms_tags
+                SELECT t.id, t.name, t.description, COUNT(DISTINCT k.id) AS use_count,
+                       t.is_active, t.created_at, t.updated_at
+                FROM kms_tags t
+                LEFT JOIN kms_knowledge_item_tags kit ON kit.tag_id = t.id AND kit.is_confirmed = 1
+                LEFT JOIN kms_knowledge_items k ON k.id = kit.knowledge_item_id AND k.is_active = 1
                 WHERE {' AND '.join(filters)}
+                GROUP BY t.id
+                {having}
                 ORDER BY {order_by}
                 LIMIT :limit
                 """
@@ -1234,26 +1385,76 @@ class KmsService:
         return [self._post_response(row) for row in rows]
 
     def get_home_summary(self) -> KmsHomeSummary:
-        self.ensure_default_categories()
+        self.sync_legacy_posts_to_knowledge_items()
         overall_row = self.db.execute(
             text(
                 """
                 SELECT
                     COUNT(*) AS total_posts,
-                    SUM(CASE WHEN learning_status = '蹂듭뒿 ?꾩슂' THEN 1 ELSE 0 END) AS review_needed_count,
-                    SUM(CASE WHEN learning_status = '?ㅼ쟾 ?곸슜 ?꾨낫' THEN 1 ELSE 0 END) AS practice_candidate_count,
-                    SUM(CASE WHEN importance = '?듭떖' THEN 1 ELSE 0 END) AS core_count,
-                    SUM(CASE WHEN updated_at >= datetime('now', '-7 days', 'localtime') THEN 1 ELSE 0 END) AS recent_7d_count
-                FROM kms_posts
-                WHERE is_active = 1
+                    SUM(CASE WHEN status_item.item_code = 'VERIFYING' THEN 1 ELSE 0 END) AS review_needed_count,
+                    SUM(CASE WHEN status_item.item_code = 'APPLIED' THEN 1 ELSE 0 END) AS practice_candidate_count,
+                    SUM(CASE WHEN importance_item.item_code = 'CORE' THEN 1 ELSE 0 END) AS core_count,
+                    SUM(CASE WHEN k.updated_at >= datetime('now', '-7 days', 'localtime') THEN 1 ELSE 0 END) AS recent_7d_count
+                FROM kms_knowledge_items k
+                LEFT JOIN kms_setting_items status_item ON status_item.id = k.status_id
+                LEFT JOIN kms_setting_items importance_item ON importance_item.id = k.importance_id
+                WHERE k.is_active = 1
                 """
             )
         ).mappings().first()
-        categories = self._category_summaries()
+        category_rows = self.db.execute(
+            text(
+                """
+                SELECT category.id AS category_id, category.item_name AS category_name,
+                       COUNT(k.id) AS total_posts,
+                       SUM(CASE WHEN importance_item.item_code = 'CORE' THEN 1 ELSE 0 END) AS core_count,
+                       SUM(CASE WHEN status_item.item_code = 'VERIFYING' THEN 1 ELSE 0 END) AS review_needed_count,
+                       SUM(CASE WHEN status_item.item_code = 'APPLIED' THEN 1 ELSE 0 END) AS practice_candidate_count,
+                       SUM(CASE WHEN k.updated_at >= datetime('now', '-7 days', 'localtime') THEN 1 ELSE 0 END) AS recent_7d_count,
+                       MAX(k.updated_at) AS last_updated_at
+                FROM kms_setting_items category
+                JOIN kms_setting_groups category_group ON category_group.id = category.group_id
+                LEFT JOIN kms_knowledge_items k ON k.category_id = category.id AND k.is_active = 1
+                LEFT JOIN kms_setting_items status_item ON status_item.id = k.status_id
+                LEFT JOIN kms_setting_items importance_item ON importance_item.id = k.importance_id
+                WHERE category_group.group_code = 'KNOWLEDGE_CATEGORY' AND category.is_active = 1
+                GROUP BY category.id
+                ORDER BY category.sort_order, category.id
+                """
+            )
+        ).mappings().all()
+        tag_rows = self.db.execute(
+            text(
+                """
+                SELECT k.category_id, t.name, COUNT(DISTINCT k.id) AS use_count
+                FROM kms_knowledge_items k
+                JOIN kms_knowledge_item_tags kit ON kit.knowledge_item_id = k.id AND kit.is_confirmed = 1
+                JOIN kms_tags t ON t.id = kit.tag_id AND t.is_active = 1
+                WHERE k.is_active = 1 AND k.category_id IS NOT NULL
+                GROUP BY k.category_id, t.id
+                ORDER BY k.category_id, use_count DESC, t.name ASC
+                """
+            )
+        ).mappings().all()
+        tags_by_category: dict[int, list[str]] = {}
+        for row in tag_rows:
+            tags_by_category.setdefault(int(row["category_id"]), []).append(str(row["name"]))
+        categories = [
+            KmsCategorySummary(
+                category_id=int(row["category_id"]), category_name=str(row["category_name"]),
+                total_posts=int(row["total_posts"] or 0), core_count=int(row["core_count"] or 0),
+                review_needed_count=int(row["review_needed_count"] or 0),
+                practice_candidate_count=int(row["practice_candidate_count"] or 0),
+                recent_7d_count=int(row["recent_7d_count"] or 0),
+                top_tags=tags_by_category.get(int(row["category_id"]), [])[:5],
+                last_updated_at=str(row["last_updated_at"]) if row["last_updated_at"] else None,
+            )
+            for row in category_rows
+        ]
         popular_tags = self.list_tags(sort="popular", limit=12)
-        recent_posts = self._recent_posts()
-        review_needed_posts = self._recent_posts("蹂듭뒿 ?꾩슂")
-        practice_candidate_posts = self._recent_posts("?ㅼ쟾 ?곸슜 ?꾨낫")
+        recent_posts = self._recent_knowledge_items()
+        review_needed_posts = self._recent_knowledge_items("VERIFYING")
+        practice_candidate_posts = self._recent_knowledge_items("APPLIED")
         return KmsHomeSummary(
             overall=KmsOverallSummary(
                 total_posts=int(overall_row["total_posts"] or 0),
@@ -1268,6 +1469,37 @@ class KmsService:
             review_needed_posts=review_needed_posts,
             practice_candidate_posts=practice_candidate_posts,
         )
+
+    def _recent_knowledge_items(self, status_code: str | None = None, limit: int = 6) -> list[KmsRecentPost]:
+        status_filter = "AND status_item.item_code = :status_code" if status_code else ""
+        params: dict[str, Any] = {"limit": limit}
+        if status_code:
+            params["status_code"] = status_code
+        rows = self.db.execute(
+            text(
+                f"""
+                SELECT k.id, k.title, category.item_name AS category_name,
+                       COALESCE(status_item.item_name, '-') AS learning_status,
+                       COALESCE(importance_item.item_name, '-') AS importance, k.updated_at
+                FROM kms_knowledge_items k
+                LEFT JOIN kms_setting_items category ON category.id = k.category_id
+                LEFT JOIN kms_setting_items status_item ON status_item.id = k.status_id
+                LEFT JOIN kms_setting_items importance_item ON importance_item.id = k.importance_id
+                WHERE k.is_active = 1 {status_filter}
+                ORDER BY k.updated_at DESC, k.id DESC
+                LIMIT :limit
+                """
+            ),
+            params,
+        ).mappings().all()
+        return [
+            KmsRecentPost(
+                post_id=int(row["id"]), title=str(row["title"]), category_name=row["category_name"],
+                learning_status=str(row["learning_status"]), importance=str(row["importance"]),
+                updated_at=str(row["updated_at"]),
+            )
+            for row in rows
+        ]
 
     def _extract_kms_image_refs(self, content: str | None) -> tuple[set[str], set[str]]:
         file_urls: set[str] = set()
@@ -1546,10 +1778,98 @@ class KmsService:
             )
         self.db.commit()
 
-    def _knowledge_item_response(self, row: Any) -> KmsKnowledgeItemResponse:
+    def _knowledge_item_responses(self, rows: list[Any]) -> list[KmsKnowledgeItemResponse]:
+        if not rows:
+            return []
+        item_ids = [int(row["id"]) for row in rows]
+        setting_ids = {
+            int(row[field])
+            for row in rows
+            for field in ("para_type_id", "category_id", "status_id", "importance_id", "usage_context_id", "source_type_id")
+            if row[field] is not None
+        }
+        setting_cache: dict[int, KmsSettingItemSummary] = {}
+        if setting_ids:
+            setting_rows = self.db.execute(
+                text(
+                    "SELECT id, item_code, item_name, color, icon FROM kms_setting_items WHERE id IN :item_ids"
+                ).bindparams(bindparam("item_ids", expanding=True)),
+                {"item_ids": tuple(setting_ids)},
+            ).mappings().all()
+            setting_cache = {
+                int(item["id"]): KmsSettingItemSummary(
+                    id=int(item["id"]),
+                    item_code=str(item["item_code"]),
+                    item_name=str(item["item_name"]),
+                    color=item["color"],
+                    icon=item["icon"],
+                )
+                for item in setting_rows
+            }
+
+        tags_cache: dict[int, list[KmsKnowledgeItemTagResponse]] = {item_id: [] for item_id in item_ids}
+        tag_rows = self.db.execute(
+            text(
+                """
+                SELECT kit.knowledge_item_id, kit.id, kit.tag_id, t.name AS tag_name,
+                       t.tag_type_id, type_item.item_name AS tag_type_name, kit.weight,
+                       kit.source, kit.is_confirmed
+                FROM kms_knowledge_item_tags kit
+                JOIN kms_tags t ON t.id = kit.tag_id AND COALESCE(t.is_active, 1) = 1
+                LEFT JOIN kms_setting_items type_item ON type_item.id = t.tag_type_id
+                WHERE kit.knowledge_item_id IN :item_ids
+                ORDER BY kit.knowledge_item_id, kit.is_confirmed DESC, t.name
+                """
+            ).bindparams(bindparam("item_ids", expanding=True)),
+            {"item_ids": tuple(item_ids)},
+        ).mappings().all()
+        for tag in tag_rows:
+            tags_cache[int(tag["knowledge_item_id"])].append(
+                KmsKnowledgeItemTagResponse(
+                    id=int(tag["id"]), tag_id=int(tag["tag_id"]), tag_name=str(tag["tag_name"]),
+                    tag_type_id=int(tag["tag_type_id"]) if tag["tag_type_id"] is not None else None,
+                    tag_type_name=str(tag["tag_type_name"]) if tag["tag_type_name"] is not None else None,
+                    weight=float(tag["weight"] or 1), source=str(tag["source"] or "USER"),
+                    is_confirmed=bool(tag["is_confirmed"]),
+                )
+            )
+
+        extractions_cache: dict[int, list[KmsKnowledgeExtractionResponse]] = {item_id: [] for item_id in item_ids}
+        extraction_rows = self.db.execute(
+            text(
+                """
+                SELECT knowledge_item_id, id, extraction_type, extraction_text, source,
+                       model_name, confidence_score, created_at, updated_at
+                FROM kms_knowledge_extractions
+                WHERE knowledge_item_id IN :item_ids
+                ORDER BY knowledge_item_id, created_at DESC, id DESC
+                """
+            ).bindparams(bindparam("item_ids", expanding=True)),
+            {"item_ids": tuple(item_ids)},
+        ).mappings().all()
+        for extraction in extraction_rows:
+            extractions_cache[int(extraction["knowledge_item_id"])].append(
+                KmsKnowledgeExtractionResponse(
+                    id=int(extraction["id"]), extraction_type=str(extraction["extraction_type"]),
+                    extraction_text=str(extraction["extraction_text"]), source=str(extraction["source"] or "USER"),
+                    model_name=extraction["model_name"],
+                    confidence_score=float(extraction["confidence_score"]) if extraction["confidence_score"] is not None else None,
+                    created_at=str(extraction["created_at"]), updated_at=str(extraction["updated_at"]),
+                )
+            )
+        return [self._knowledge_item_response(row, setting_cache, tags_cache, extractions_cache) for row in rows]
+
+    def _knowledge_item_response(
+        self,
+        row: Any,
+        setting_cache: dict[int, KmsSettingItemSummary] | None = None,
+        tags_cache: dict[int, list[KmsKnowledgeItemTagResponse]] | None = None,
+        extractions_cache: dict[int, list[KmsKnowledgeExtractionResponse]] | None = None,
+    ) -> KmsKnowledgeItemResponse:
         item_id = int(row["id"])
         raw_content = str(row["content"] or "")
         snippet_source = row["summary"] or raw_content
+        setting_summary = lambda value: setting_cache.get(int(value)) if setting_cache is not None and value is not None else self._setting_item_summary(value)
         return KmsKnowledgeItemResponse(
             id=item_id,
             legacy_post_id=int(row["legacy_post_id"]) if row["legacy_post_id"] is not None else None,
@@ -1574,14 +1894,14 @@ class KmsService:
             is_active=bool(row["is_active"]),
             created_at=str(row["created_at"]),
             updated_at=str(row["updated_at"]),
-            para_type=self._setting_item_summary(row["para_type_id"]),
-            category=self._setting_item_summary(row["category_id"]),
-            status=self._setting_item_summary(row["status_id"]),
-            importance=self._setting_item_summary(row["importance_id"]),
-            usage_context=self._setting_item_summary(row["usage_context_id"]),
-            source_type=self._setting_item_summary(row["source_type_id"]),
-            tags=self._knowledge_tags_for_item(item_id),
-            extractions=self._knowledge_extractions_for_item(item_id),
+            para_type=setting_summary(row["para_type_id"]),
+            category=setting_summary(row["category_id"]),
+            status=setting_summary(row["status_id"]),
+            importance=setting_summary(row["importance_id"]),
+            usage_context=setting_summary(row["usage_context_id"]),
+            source_type=setting_summary(row["source_type_id"]),
+            tags=tags_cache.get(item_id, []) if tags_cache is not None else self._knowledge_tags_for_item(item_id),
+            extractions=extractions_cache.get(item_id, []) if extractions_cache is not None else self._knowledge_extractions_for_item(item_id),
         )
 
     def _setting_item_summary(self, item_id: object) -> KmsSettingItemSummary | None:

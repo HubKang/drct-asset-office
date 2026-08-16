@@ -17,9 +17,10 @@ class ChartMarkerService:
         self.db = db
 
     @staticmethod
-    def _group(row: ChartMarkerGroup) -> dict[str, Any]:
+    def _group(row: ChartMarkerGroup, knowledge_items: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         return {"id": row.id, "name": row.name, "description": row.description, "color": row.color,
-                "sort_order": row.sort_order, "is_active": row.is_active, "created_at": row.created_at, "updated_at": row.updated_at}
+                "sort_order": row.sort_order, "is_active": row.is_active, "knowledge_items": knowledge_items or [],
+                "created_at": row.created_at, "updated_at": row.updated_at}
 
     @staticmethod
     def _marker(
@@ -38,6 +39,7 @@ class ChartMarkerService:
     def list_catalog(self, active_only: bool = False) -> dict[str, Any]:
         groups = self.db.scalars(select(ChartMarkerGroup).order_by(ChartMarkerGroup.sort_order, ChartMarkerGroup.name)).all()
         markers = self.db.scalars(select(ChartMarker).order_by(ChartMarker.sort_order, ChartMarker.name)).all()
+        knowledge_by_group = self._knowledge_items_by_group([group.id for group in groups])
         count_rows = self.db.execute(text("""SELECT marker_id, COUNT(DISTINCT stock_id) stock_count, COUNT(*) marker_count,
             SUM(CASE WHEN review_result='SUCCESS' THEN 1 ELSE 0 END) success_count,
             SUM(CASE WHEN review_result='FAILURE' THEN 1 ELSE 0 END) failure_count
@@ -47,27 +49,111 @@ class ChartMarkerService:
         for group in groups:
             if active_only and not group.is_active:
                 continue
-            item = self._group(group)
+            item = self._group(group, knowledge_by_group.get(group.id, []))
             item["markers"] = [self._marker(marker, *counts.get(marker.id, (0, 0, 0, 0))) for marker in markers if marker.marker_group_id == group.id and (not active_only or marker.is_active)]
             result.append(item)
         return {"items": result}
 
     def create_group(self, payload: MarkerGroupWrite) -> dict[str, Any]:
-        row = ChartMarkerGroup(**payload.model_dump())
-        self.db.add(row)
-        self._commit_unique("같은 이름의 마커그룹이 이미 있습니다.")
-        self.db.refresh(row)
-        return self._group(row)
+        values = payload.model_dump()
+        knowledge_item_ids = values.pop("knowledge_item_ids", [])
+        row = ChartMarkerGroup(**values)
+        try:
+            self.db.add(row)
+            self.db.flush()
+            self._sync_group_knowledge(row.id, knowledge_item_ids)
+            self.db.commit()
+            self.db.refresh(row)
+        except IntegrityError as exc:
+            self.db.rollback()
+            raise HTTPException(409, "같은 이름의 마커그룹이 이미 있습니다.") from exc
+        return self._group(row, self._knowledge_items_by_group([row.id]).get(row.id, []))
 
     def update_group(self, group_id: int, payload: MarkerGroupPatch) -> dict[str, Any]:
         row = self.db.get(ChartMarkerGroup, group_id)
         if not row:
             raise HTTPException(404, "마커그룹을 찾을 수 없습니다.")
-        for key, value in payload.model_dump(exclude_unset=True).items():
+        values = payload.model_dump(exclude_unset=True)
+        knowledge_item_ids = values.pop("knowledge_item_ids", None)
+        for key, value in values.items():
             setattr(row, key, value)
-        self._commit_unique("같은 이름의 마커그룹이 이미 있습니다.")
-        self.db.refresh(row)
-        return self._group(row)
+        try:
+            if knowledge_item_ids is not None:
+                self._sync_group_knowledge(group_id, knowledge_item_ids)
+            self.db.commit()
+            self.db.refresh(row)
+        except IntegrityError as exc:
+            self.db.rollback()
+            raise HTTPException(409, "같은 이름의 마커그룹이 이미 있습니다.") from exc
+        return self._group(row, self._knowledge_items_by_group([row.id]).get(row.id, []))
+
+    def _knowledge_items_by_group(self, group_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
+        if not group_ids:
+            return {}
+        placeholders = ", ".join(f":group_{index}" for index in range(len(group_ids)))
+        params = {f"group_{index}": group_id for index, group_id in enumerate(group_ids)}
+        rows = self.db.execute(text(f"""
+            SELECT link.marker_group_id, link.knowledge_item_id id, link.sort_order,
+                   knowledge.title, knowledge.summary, knowledge.is_active,
+                   category.id category_id, category.item_name category_name,
+                   para.item_name knowledge_type_name
+            FROM chart_marker_group_knowledge_links link
+            JOIN kms_knowledge_items knowledge ON knowledge.id = link.knowledge_item_id
+            LEFT JOIN kms_setting_items category ON category.id = knowledge.category_id
+            LEFT JOIN kms_setting_items para ON para.id = knowledge.para_type_id
+            WHERE link.marker_group_id IN ({placeholders})
+            ORDER BY link.marker_group_id, link.sort_order, link.id
+        """), params).mappings().all()
+        result: dict[int, list[dict[str, Any]]] = {}
+        for row in rows:
+            group_id = int(row["marker_group_id"])
+            result.setdefault(group_id, []).append({
+                "id": int(row["id"]),
+                "title": str(row["title"]),
+                "summary": row["summary"],
+                "category_id": int(row["category_id"]) if row["category_id"] is not None else None,
+                "category_name": row["category_name"],
+                "knowledge_type_name": row["knowledge_type_name"],
+                "is_active": bool(row["is_active"]),
+                "sort_order": int(row["sort_order"]),
+            })
+        return result
+
+    def _sync_group_knowledge(self, group_id: int, knowledge_item_ids: list[int]) -> None:
+        ordered_ids = list(dict.fromkeys(knowledge_item_ids))
+        existing_ids = {
+            int(row[0]) for row in self.db.execute(
+                text("SELECT knowledge_item_id FROM chart_marker_group_knowledge_links WHERE marker_group_id = :group_id"),
+                {"group_id": group_id},
+            ).all()
+        }
+        new_ids = [item_id for item_id in ordered_ids if item_id not in existing_ids]
+        if new_ids:
+            placeholders = ", ".join(f":item_{index}" for index in range(len(new_ids)))
+            params = {f"item_{index}": item_id for index, item_id in enumerate(new_ids)}
+            rows = self.db.execute(
+                text(f"SELECT id, is_active FROM kms_knowledge_items WHERE id IN ({placeholders})"), params
+            ).all()
+            active_ids = {int(row.id) for row in rows if bool(row.is_active)}
+            if active_ids != set(new_ids):
+                self.db.rollback()
+                raise HTTPException(400, "연결할 수 없는 지식이 포함되어 있습니다. 활성 지식을 다시 선택해 주세요.")
+        self.db.execute(
+            text("DELETE FROM chart_marker_group_knowledge_links WHERE marker_group_id = :group_id"),
+            {"group_id": group_id},
+        )
+        if ordered_ids:
+            self.db.execute(
+                text("""
+                    INSERT INTO chart_marker_group_knowledge_links
+                    (marker_group_id, knowledge_item_id, sort_order)
+                    VALUES (:group_id, :knowledge_item_id, :sort_order)
+                """),
+                [
+                    {"group_id": group_id, "knowledge_item_id": item_id, "sort_order": index * 10}
+                    for index, item_id in enumerate(ordered_ids)
+                ],
+            )
 
     def create_marker(self, payload: MarkerWrite) -> dict[str, Any]:
         if not self.db.get(ChartMarkerGroup, payload.marker_group_id):

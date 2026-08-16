@@ -264,6 +264,14 @@ export type KmsKnowledgeItem = {
   extractions?: KmsKnowledgeExtraction[];
 };
 
+export type KmsKnowledgeItemPage = {
+  items: KmsKnowledgeItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  category_counts: Array<{ category_id: number; count: number }>;
+};
+
 export type KmsKnowledgeItemPayload = {
   title: string;
   content: string;

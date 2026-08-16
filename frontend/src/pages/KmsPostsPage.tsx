@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useSearchParams } from "react-router-dom";
+import { Grid2X2, List } from "lucide-react";
 import PageHeader from "@/components/common/PageHeader";
 import KmsRichEditor from "@/components/kms/KmsRichEditor";
 import { repositories } from "@/services";
 import type { KmsKnowledgeItem, KmsKnowledgeItemPayload, KmsSettingGroup, KmsSettingItem, KmsSettingItemSummary } from "@/types/kms";
 import { sanitizeKmsHtml, toKmsDisplayHtml, toKmsEditableHtml, toKmsPlainText } from "@/utils/kmsRichContent";
 
-const pageSize = 12;
+const cardPageSize = 12;
+const listPageSize = 20;
 
 const emptyKnowledgeForm: KmsKnowledgeItemPayload = {
   title: "",
@@ -98,7 +100,9 @@ function KmsPostsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [settingGroups, setSettingGroups] = useState<KmsSettingGroup[]>([]);
   const [items, setItems] = useState<KmsKnowledgeItem[]>([]);
-  const [categoryCountItems, setCategoryCountItems] = useState<KmsKnowledgeItem[]>([]);
+  const [totalItems, setTotalItems] = useState(0);
+  const [categoryCounts, setCategoryCounts] = useState<Map<number, number>>(new Map());
+  const [viewMode, setViewMode] = useState<"card" | "list">("card");
   const [keyword, setKeyword] = useState(searchParams.get("keyword") || "");
   const [filters, setFilters] = useState({
     para_type_id: Number(searchParams.get("para_type_id") || 0),
@@ -107,8 +111,9 @@ function KmsPostsPage() {
     importance_id: 0,
     usage_context_id: 0,
     source_type_id: 0,
-    tag: searchParams.get("tag") || "",
+    tag: searchParams.get("tags") || searchParams.get("tag") || "",
   });
+  const [tagMatchMode, setTagMatchMode] = useState<"AND" | "OR">((searchParams.get("match_mode") === "OR" ? "OR" : "AND"));
   const [currentPage, setCurrentPage] = useState(1);
   const [showForm, setShowForm] = useState(searchParams.get("new") === "1");
   const [form, setForm] = useState<KmsKnowledgeItemPayload>(emptyKnowledgeForm);
@@ -119,6 +124,7 @@ function KmsPostsPage() {
   const [saving, setSaving] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const routeKnowledgeItemId = Number(searchParams.get("item_id") || 0);
 
   const optionMap = useMemo(() => {
     const map = new Map<string, KmsSettingItem[]>();
@@ -127,17 +133,10 @@ function KmsPostsPage() {
   }, [settingGroups]);
 
   const categoryOptions = optionMap.get("KNOWLEDGE_CATEGORY") ?? [];
-  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
-  const pagedItems = useMemo(() => items.slice((currentPage - 1) * pageSize, currentPage * pageSize), [currentPage, items]);
-  const pageStart = items.length === 0 ? 0 : (currentPage - 1) * pageSize + 1;
-  const pageEnd = Math.min(currentPage * pageSize, items.length);
-  const categoryCounts = useMemo(() => {
-    const counts = new Map<number, number>();
-    categoryCountItems.forEach((item) => {
-      if (item.category_id) counts.set(item.category_id, (counts.get(item.category_id) || 0) + 1);
-    });
-    return counts;
-  }, [categoryCountItems]);
+  const pageSize = viewMode === "list" ? listPageSize : cardPageSize;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const pageStart = totalItems === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const pageEnd = Math.min(currentPage * pageSize, totalItems);
 
   const defaultId = (groupCode: string) => optionMap.get(groupCode)?.find((item) => item.is_default)?.id ?? optionMap.get(groupCode)?.[0]?.id ?? null;
   const withDefaults = (base: KmsKnowledgeItemPayload = emptyKnowledgeForm): KmsKnowledgeItemPayload => ({
@@ -161,20 +160,25 @@ function KmsPostsPage() {
         importance_id: filters.importance_id || undefined,
         usage_context_id: filters.usage_context_id || undefined,
         source_type_id: filters.source_type_id || undefined,
-        tag: filters.tag || undefined,
+        recent_days: Number(searchParams.get("recent") || 0) || undefined,
         is_active: true,
       };
-      const [rows, countRows] = await Promise.all([
-        repositories.kms.listKnowledgeItems({ ...baseParams, category_id: filters.category_id || undefined, limit: 500 }),
-        repositories.kms.listKnowledgeItems({ ...baseParams, limit: 500 }),
-      ]);
-      setItems(rows);
-      setCategoryCountItems(countRows);
-      if (!options?.keepPage) setCurrentPage(1);
+      const data = await repositories.kms.listKnowledgeItemsPage({
+        ...baseParams,
+        category_id: filters.category_id || undefined,
+        tag_names: normalizeTagNames(filters.tag),
+        tag_match_mode: tagMatchMode,
+        limit: pageSize,
+        offset: (currentPage - 1) * pageSize,
+      });
+      setItems(data.items);
+      setTotalItems(data.total);
+      setCategoryCounts(new Map(data.category_counts.map((entry) => [entry.category_id, entry.count])));
       setSelectedItem((prev) => {
-        const targetId = options?.selectedItemId ?? prev?.id;
+        const routeTargetId = Number(searchParams.get("item_id") || 0);
+        const targetId = options?.selectedItemId ?? (routeTargetId || prev?.id);
         if (!targetId) return null;
-        return rows.find((row) => row.id === targetId) ?? prev;
+        return data.items.find((row) => row.id === targetId) ?? prev;
       });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "지식 목록을 불러오지 못했습니다.");
@@ -190,13 +194,32 @@ function KmsPostsPage() {
   useEffect(() => {
     if (settingGroups.length === 0) return;
     setForm((prev) => withDefaults(prev));
-    void loadItems();
+    const statusCode = searchParams.get("status_code");
+    const importanceCode = searchParams.get("importance_code");
+    if (statusCode || importanceCode) {
+      setFilters((prev) => ({
+        ...prev,
+        status_id: statusCode ? (optionMap.get("KNOWLEDGE_STATUS")?.find((item) => item.item_code === statusCode)?.id || prev.status_id) : prev.status_id,
+        importance_id: importanceCode ? (optionMap.get("IMPORTANCE_LEVEL")?.find((item) => item.item_code === importanceCode)?.id || prev.importance_id) : prev.importance_id,
+      }));
+    } else {
+      void loadItems();
+    }
   }, [settingGroups]);
 
   useEffect(() => {
     if (settingGroups.length === 0) return;
     void loadItems();
-  }, [filters]);
+  }, [filters, currentPage, viewMode, tagMatchMode]);
+
+  useEffect(() => {
+    if (!routeKnowledgeItemId) return;
+    let active = true;
+    repositories.kms.getKnowledgeItem(routeKnowledgeItemId)
+      .then((item) => { if (active) setSelectedItem(item); })
+      .catch((error) => { if (active) setMessage(error instanceof Error ? error.message : "연결된 지식을 불러오지 못했습니다."); });
+    return () => { active = false; };
+  }, [routeKnowledgeItemId]);
 
   useEffect(() => {
     if (!selectedItem) {
@@ -359,11 +382,22 @@ function KmsPostsPage() {
     setKeyword("");
     setFilters({ para_type_id: 0, category_id: 0, status_id: 0, importance_id: 0, usage_context_id: 0, source_type_id: 0, tag: "" });
     setCurrentPage(1);
+    setTagMatchMode("AND");
   };
 
   const runSearch = () => {
     setCurrentPage(1);
-    void loadItems();
+    if (currentPage === 1) void loadItems({ keepPage: true });
+  };
+
+  const updateFilters = (updater: (current: typeof filters) => typeof filters) => {
+    setFilters(updater);
+    setCurrentPage(1);
+  };
+
+  const changeView = (next: "card" | "list") => {
+    setViewMode(next);
+    setCurrentPage(1);
   };
 
   const handleSearchKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -455,9 +489,13 @@ function KmsPostsPage() {
 
       <section className="knowledge-board-filter-panel">
         <div className="knowledge-board-search-bar">
-          {compactSettingSelect("PARA_TYPE", filters.para_type_id || null, (value) => setFilters((prev) => ({ ...prev, para_type_id: value || 0 })), "지식 유형")}
-          {compactSettingSelect("KNOWLEDGE_CATEGORY", filters.category_id || null, (value) => setFilters((prev) => ({ ...prev, category_id: value || 0 })), "카테고리")}
-          <label className="kms-compact-field"><span>태그</span><input value={filters.tag} onChange={(event) => setFilters((prev) => ({ ...prev, tag: event.target.value }))} placeholder="#태그" /></label>
+          {compactSettingSelect("PARA_TYPE", filters.para_type_id || null, (value) => updateFilters((prev) => ({ ...prev, para_type_id: value || 0 })), "지식 유형")}
+          {compactSettingSelect("KNOWLEDGE_CATEGORY", filters.category_id || null, (value) => updateFilters((prev) => ({ ...prev, category_id: value || 0 })), "카테고리")}
+          <label className="kms-compact-field"><span>태그</span><input value={filters.tag} onChange={(event) => updateFilters((prev) => ({ ...prev, tag: event.target.value }))} placeholder="#태그, #태그" /></label>
+          <div className="kms-filter-match-mode" aria-label="태그 검색 조건">
+            <button type="button" className={tagMatchMode === "AND" ? "active" : ""} onClick={() => { setTagMatchMode("AND"); setCurrentPage(1); }}>AND</button>
+            <button type="button" className={tagMatchMode === "OR" ? "active" : ""} onClick={() => { setTagMatchMode("OR"); setCurrentPage(1); }}>OR</button>
+          </div>
           <label className="kms-compact-field"><span>검색어</span><input className="kms-search-input" value={keyword} onChange={(event) => setKeyword(event.target.value)} onKeyDown={handleSearchKeyDown} placeholder="제목, 본문, 요약 검색" /></label>
           <button type="button" className="btn btn-primary" onClick={runSearch} disabled={loading}>검색</button>
           <button type="button" className="btn btn-secondary" onClick={resetFilters}>초기화</button>
@@ -468,7 +506,7 @@ function KmsPostsPage() {
         <div className="section-header"><div><h2>카테고리 현황</h2></div></div>
         <div className="kms-category-strip">
           {categoryOptions.map((category) => (
-            <button key={category.id} type="button" className={`kms-category-pill ${filters.category_id === category.id ? "active" : ""}`} style={{ "--category-color": category.color || "#94a3b8" } as CSSProperties} onClick={() => setFilters((prev) => ({ ...prev, category_id: prev.category_id === category.id ? 0 : category.id }))}>
+            <button key={category.id} type="button" className={`kms-category-pill ${filters.category_id === category.id ? "active" : ""}`} style={{ "--category-color": category.color || "#94a3b8" } as CSSProperties} onClick={() => updateFilters((prev) => ({ ...prev, category_id: prev.category_id === category.id ? 0 : category.id }))}>
               <span className="category-dot" />
               <span className="category-name">{category.item_name}</span>
               <strong className="category-count">{(categoryCounts.get(category.id) || 0).toLocaleString("ko-KR")}개</strong>
@@ -478,21 +516,47 @@ function KmsPostsPage() {
       </section>
 
       <section className="kms-panel">
-        <div className="kms-board-title-row"><div><h2 className="kms-panel-title">지식 목록</h2><p className="kms-panel-description">{loading ? "조회 중..." : `총 ${items.length.toLocaleString("ko-KR")}개 중 ${pageStart.toLocaleString("ko-KR")}-${pageEnd.toLocaleString("ko-KR")}개 표시`}</p></div></div>
-        <div className="kms-result-grid">
-          {pagedItems.map((item) => (
-            <button key={item.id} type="button" className="kms-post-card kms-knowledge-item-card" style={knowledgeCardStyle(item)} onClick={() => setSelectedItem(item)}>
-              <div className="kms-card-badges"><SettingBadge item={item.para_type} fallback="유형" /><SettingBadge item={item.category} fallback="미분류" /><SettingBadge item={item.status} fallback="상태" /><SettingBadge item={item.importance} fallback="중요도" /></div>
-              <strong>{item.title}</strong>
-              <p>{item.summary || plainSnippet(item.content)}</p>
-              <div className="kms-chip-row compact">{confirmedTags(item).slice(0, 6).map((tag) => <span key={tag.id} className="kms-chip static">#{tag.tag_name}</span>)}</div>
-              <div className="kms-knowledge-state-row"><span>출처: {item.source_type?.item_name || "-"}</span><span>임베딩: {statusLabel(item.embedding_status)}</span></div>
-              <small>{item.updated_at}</small>
-            </button>
-          ))}
-          {!loading && pagedItems.length === 0 ? <div className="kms-empty-state">조건에 맞는 지식이 없습니다.</div> : null}
+        <div className="kms-board-title-row">
+          <div><h2 className="kms-panel-title">지식 목록</h2><p className="kms-panel-description">{loading ? "조회 중..." : `총 ${totalItems.toLocaleString("ko-KR")}개 중 ${pageStart.toLocaleString("ko-KR")}-${pageEnd.toLocaleString("ko-KR")}개 표시`}</p></div>
+          <div className="kms-view-toggle" aria-label="지식 목록 보기 방식">
+            <button type="button" className={viewMode === "card" ? "active" : ""} aria-pressed={viewMode === "card"} onClick={() => changeView("card")}><Grid2X2 size={15} aria-hidden="true" />카드</button>
+            <button type="button" className={viewMode === "list" ? "active" : ""} aria-pressed={viewMode === "list"} onClick={() => changeView("list")}><List size={16} aria-hidden="true" />목록</button>
+          </div>
         </div>
-        {totalPages > 1 ? <div className="kms-pagination"><span>총 {items.length.toLocaleString("ko-KR")}개</span><button type="button" className="kms-page-button" onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))} disabled={currentPage === 1}>이전</button>{Array.from({ length: totalPages }, (_, index) => index + 1).map((page) => <button key={page} type="button" className={page === currentPage ? "kms-page-button active" : "kms-page-button"} onClick={() => setCurrentPage(page)}>{page}</button>)}<button type="button" className="kms-page-button" onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))} disabled={currentPage === totalPages}>다음</button></div> : null}
+        {viewMode === "card" ? (
+          <div className="kms-result-grid">
+            {items.map((item) => (
+              <button key={item.id} type="button" className="kms-post-card kms-knowledge-item-card" style={knowledgeCardStyle(item)} onClick={() => setSelectedItem(item)}>
+                <div className="kms-card-badges"><SettingBadge item={item.para_type} fallback="유형" /><SettingBadge item={item.category} fallback="미분류" /><SettingBadge item={item.status} fallback="상태" /><SettingBadge item={item.importance} fallback="중요도" /></div>
+                <strong>{item.title}</strong>
+                <p>{item.summary || plainSnippet(item.content)}</p>
+                <div className="kms-chip-row compact">{confirmedTags(item).slice(0, 6).map((tag) => <span key={tag.id} className="kms-chip static">#{tag.tag_name}</span>)}</div>
+                <div className="kms-knowledge-state-row"><span>출처: {item.source_type?.item_name || "-"}</span><span>임베딩: {statusLabel(item.embedding_status)}</span></div>
+                <small>{item.updated_at.replace("T", " ").slice(0, 16)}</small>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="kms-knowledge-list" role="table" aria-label="지식 목록">
+            <div className="kms-knowledge-list-head" role="row"><span>유형</span><span>카테고리</span><span>제목</span><span>태그</span><span>상태</span><span>출처</span><span>수정일</span></div>
+            {items.map((item) => {
+              const tags = confirmedTags(item);
+              return (
+                <button key={item.id} type="button" role="row" className="kms-knowledge-list-row" onClick={() => setSelectedItem(item)} title={item.title}>
+                  <span role="cell"><SettingBadge item={item.para_type} fallback="유형" /></span>
+                  <span role="cell"><SettingBadge item={item.category} fallback="미분류" /></span>
+                  <strong role="cell">{item.title}</strong>
+                  <span role="cell" className="kms-list-tags">{tags.slice(0, 2).map((tag) => <i key={tag.id}>#{tag.tag_name}</i>)}{tags.length > 2 ? <i>+{tags.length - 2}</i> : null}</span>
+                  <span role="cell">{item.status?.item_name || "-"}</span>
+                  <span role="cell">{item.source_type?.item_name || "-"}</span>
+                  <time role="cell">{item.updated_at.replace("T", " ").slice(0, 16)}</time>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {!loading && items.length === 0 ? <div className="kms-empty-state">조건에 맞는 지식이 없습니다.</div> : null}
+        {totalPages > 1 ? <div className="kms-pagination"><span>총 {totalItems.toLocaleString("ko-KR")}개</span><button type="button" className="kms-page-button" onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))} disabled={currentPage === 1}>이전</button>{Array.from({ length: totalPages }, (_, index) => index + 1).map((page) => <button key={page} type="button" className={page === currentPage ? "kms-page-button active" : "kms-page-button"} onClick={() => setCurrentPage(page)}>{page}</button>)}<button type="button" className="kms-page-button" onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))} disabled={currentPage === totalPages}>다음</button></div> : null}
       </section>
 
       {selectedItem && drawerForm ? (

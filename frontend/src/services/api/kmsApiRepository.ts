@@ -7,6 +7,7 @@ import type {
   KmsCategorySortOrderResponse,
   KmsHomeSummary,
   KmsKnowledgeItem,
+  KmsKnowledgeItemPage,
   KmsKnowledgeItemPayload,
   KmsKnowledgeItemUpdatePayload,
   KmsLocalImageSelectResponse,
@@ -86,6 +87,38 @@ export const kmsApiRepository = {
     appendOptional(search, "limit", params?.limit ?? 100);
     appendOptional(search, "offset", params?.offset ?? 0);
     return apiRequest<KmsKnowledgeItem[]>(`/kms/knowledge-items?${search.toString()}`);
+  },
+
+  listKnowledgeItemsPage: (params?: {
+    keyword?: string;
+    para_type_id?: number;
+    category_id?: number;
+    status_id?: number;
+    importance_id?: number;
+    usage_context_id?: number;
+    source_type_id?: number;
+    tag_names?: string[];
+    tag_match_mode?: "AND" | "OR";
+    recent_days?: number;
+    is_active?: boolean;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const search = new URLSearchParams();
+    appendOptional(search, "keyword", params?.keyword);
+    appendOptional(search, "para_type_id", params?.para_type_id);
+    appendOptional(search, "category_id", params?.category_id);
+    appendOptional(search, "status_id", params?.status_id);
+    appendOptional(search, "importance_id", params?.importance_id);
+    appendOptional(search, "usage_context_id", params?.usage_context_id);
+    appendOptional(search, "source_type_id", params?.source_type_id);
+    params?.tag_names?.forEach((tag) => search.append("tag_names", tag));
+    appendOptional(search, "tag_match_mode", params?.tag_match_mode ?? "AND");
+    appendOptional(search, "recent_days", params?.recent_days);
+    appendOptional(search, "is_active", params?.is_active ?? true);
+    appendOptional(search, "limit", params?.limit ?? 20);
+    appendOptional(search, "offset", params?.offset ?? 0);
+    return apiRequest<KmsKnowledgeItemPage>(`/kms/knowledge-items/page?${search.toString()}`);
   },
 
   getKnowledgeItem: (itemId: number) => apiRequest<KmsKnowledgeItem>(`/kms/knowledge-items/${itemId}`),

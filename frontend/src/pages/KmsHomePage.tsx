@@ -1,18 +1,14 @@
 ﻿import { useEffect, useMemo, useState } from "react";
-import { BookOpen, ClipboardList, Filter, Plus, Search, Tags } from "lucide-react";
+import { BookOpen, Check, ClipboardList, Info, Plus, Search, Tags, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import StatusBadge from "@/components/common/StatusBadge";
 import { repositories } from "@/services";
 import {
-  KMS_IMPORTANCE_OPTIONS,
-  KMS_LEARNING_STATUS_OPTIONS,
   type KmsCategorySummary,
   type KmsHomeSummary,
-  type KmsPost,
   type KmsRecentPost,
   type KmsTagMatchMode,
 } from "@/types/kms";
-import { toKmsPlainText } from "@/utils/kmsRichContent";
 
 const emptySummary: KmsHomeSummary = {
   overall: {
@@ -29,15 +25,21 @@ const emptySummary: KmsHomeSummary = {
   practice_candidate_posts: [],
 };
 
-const reviewNeededStatus = KMS_LEARNING_STATUS_OPTIONS[3];
-const practiceCandidateStatus = KMS_LEARNING_STATUS_OPTIONS[4];
-const coreImportance = KMS_IMPORTANCE_OPTIONS[3];
-
 const splitTags = (value: string) =>
   value
     .split(",")
     .map((tag) => tag.trim().replace(/^#/, ""))
     .filter(Boolean);
+
+const mergeTags = (...groups: string[][]) => {
+  const seen = new Set<string>();
+  return groups.flat().map((tag) => tag.trim().replace(/^#+/, "")).filter((tag) => {
+    const key = tag.toLocaleLowerCase("ko-KR");
+    if (!tag || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
 
 const formatDate = (value: string | null | undefined) => {
   if (!value) return "수정 이력 없음";
@@ -95,8 +97,6 @@ function KmsHomePage() {
   const [tagInput, setTagInput] = useState("");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [matchMode, setMatchMode] = useState<KmsTagMatchMode>("AND");
-  const [searchResults, setSearchResults] = useState<KmsPost[]>([]);
-  const [hasSearchedTags, setHasSearchedTags] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -112,19 +112,19 @@ function KmsHomePage() {
         label: "복습 필요",
         value: summary.overall.review_needed_count,
         help: "다시 확인할 글",
-        path: makePostsPath({ learning_status: reviewNeededStatus }),
+        path: makePostsPath({ status_code: "VERIFYING" }),
       },
       {
         label: "실전 적용 후보",
         value: summary.overall.practice_candidate_count,
         help: "매매에 적용해 볼 글",
-        path: makePostsPath({ learning_status: practiceCandidateStatus }),
+        path: makePostsPath({ status_code: "APPLIED" }),
       },
       {
         label: "핵심 지식",
         value: summary.overall.core_count,
         help: "중요도가 핵심인 글",
-        path: makePostsPath({ importance: coreImportance }),
+        path: makePostsPath({ importance_code: "CORE" }),
       },
       {
         label: "최근 7일",
@@ -136,9 +136,7 @@ function KmsHomePage() {
     [summary],
   );
 
-  const popularTags = summary.popular_tags.slice(0, 10);
-  const tagPreviewResults = searchResults.slice(0, 5);
-
+  const popularTags = summary.popular_tags.filter((tag) => tag.use_count > 0).slice(0, 12);
   const load = async () => {
     setLoading(true);
     setMessage("");
@@ -157,37 +155,31 @@ function KmsHomePage() {
   }, []);
 
   const addTags = (tags: string[]) => {
-    setSelectedTags((prev) => Array.from(new Set([...prev, ...tags])));
+    setSelectedTags((prev) => mergeTags(prev, tags));
   };
 
   const removeTag = (tag: string) => {
-    setSelectedTags((prev) => prev.filter((item) => item !== tag));
+    const key = tag.toLocaleLowerCase("ko-KR");
+    setSelectedTags((prev) => prev.filter((item) => item.toLocaleLowerCase("ko-KR") !== key));
   };
 
-  const runTagSearch = async () => {
-    const mergedTags = Array.from(new Set([...selectedTags, ...splitTags(tagInput)]));
+  const runTagSearch = () => {
+    const mergedTags = mergeTags(selectedTags, splitTags(tagInput));
     setSelectedTags(mergedTags);
     setTagInput("");
-    setHasSearchedTags(true);
-    if (!mergedTags.length) {
-      setSearchResults([]);
-      return;
-    }
-    setLoading(true);
-    setMessage("");
-    try {
-      const rows = await repositories.kms.searchPostsByTags({ tag_names: mergedTags, match_mode: matchMode });
-      setSearchResults(rows);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "태그 검색에 실패했습니다.");
-    } finally {
-      setLoading(false);
-    }
+    navigate(makePostsPath({ tags: mergedTags.join(","), match_mode: matchMode }));
   };
 
-  const openPost = (postId: number) => navigate(`/kms/posts/${postId}`);
+  const commitTagInput = () => {
+    const tags = splitTags(tagInput);
+    if (!tags.length) return false;
+    addTags(tags);
+    setTagInput("");
+    return true;
+  };
+
+  const openPost = (postId: number) => navigate(makePostsPath({ item_id: postId }));
   const openCategory = (category: KmsCategorySummary) => navigate(makePostsPath({ category_id: category.category_id }));
-  const openTagResults = () => navigate(makePostsPath({ keyword: selectedTags.join(" ") }));
 
   return (
     <div className="kms-home-page">
@@ -226,83 +218,108 @@ function KmsHomePage() {
             <p>여러 태그를 조합해 관련 지식글을 빠르게 좁혀봅니다.</p>
           </div>
         </div>
-        <div className="kms-home-search-row">
+        <div className="kms-home-tag-input-row">
+          <Search className="kms-home-tag-input-icon" size={18} aria-hidden="true" />
           <input
             className="input"
             value={tagInput}
-            placeholder="태그를 쉼표로 입력하세요. 예: 실적, 수급"
+            placeholder="태그 추가 또는 검색… (Enter 또는 쉼표)"
             onChange={(event) => setTagInput(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter") void runTagSearch();
+              if (event.key === ",") {
+                event.preventDefault();
+                commitTagInput();
+              }
+              if (event.key === "Enter") {
+                event.preventDefault();
+                if (!commitTagInput()) runTagSearch();
+              }
             }}
+            aria-label="태그 추가"
           />
-          <select className="select compact" value={matchMode} onChange={(event) => setMatchMode(event.target.value as KmsTagMatchMode)}>
-            <option value="AND">AND</option>
-            <option value="OR">OR</option>
-          </select>
-          <button type="button" className="btn btn-primary" onClick={() => void runTagSearch()} disabled={loading}>
-            <Search size={16} aria-hidden="true" />검색
-          </button>
         </div>
-        <div className="kms-home-tag-area">
-          <div>
-            <span className="kms-home-mini-title">인기 태그</span>
-            <div className="kms-home-chip-row">
-              {popularTags.length ? (
-                popularTags.map((tag) => (
-                  <button key={tag.id} type="button" className="kms-chip" onClick={() => addTags([tag.name])}>
-                    #{tag.name} <span>{tag.use_count}</span>
-                  </button>
-                ))
-              ) : (
-                <span className="kms-home-muted">아직 사용된 태그가 없습니다.</span>
-              )}
+        <div className="kms-home-tag-box kms-home-popular-tags">
+          <div className="kms-home-tag-box-header">
+            <div>
+              <h3>인기 태그</h3>
+              <p>자주 등록된 태그를 선택하세요.</p>
             </div>
           </div>
-          {selectedTags.length ? (
-            <div>
-              <span className="kms-home-mini-title">선택 태그</span>
+          <div className="kms-home-chip-row">
+            {popularTags.length ? (
+              popularTags.map((tag) => {
+                const isSelected = selectedTags.some((selected) => selected.toLocaleLowerCase("ko-KR") === tag.name.toLocaleLowerCase("ko-KR"));
+                return (
+                  <button
+                    key={tag.id}
+                    type="button"
+                    className={`kms-chip kms-popular-tag-chip ${isSelected ? "selected" : ""}`}
+                    aria-pressed={isSelected}
+                    aria-label={`${tag.name} 태그 ${isSelected ? "선택 해제" : "선택"}`}
+                    onClick={() => isSelected ? removeTag(tag.name) : addTags([tag.name])}
+                  >
+                    {isSelected ? <Check size={13} aria-hidden="true" /> : null}
+                    <span className="kms-popular-tag-name">#{tag.name}</span>
+                    <span className="kms-popular-tag-count">{tag.use_count}</span>
+                  </button>
+                );
+              })
+            ) : (
+              <span className="kms-home-muted">아직 사용된 태그가 없습니다.</span>
+            )}
+          </div>
+        </div>
+        <div className="kms-home-tag-box kms-home-selected-tags">
+          <h3 className="kms-selected-tag-title">선택 태그</h3>
+          <div className="kms-selected-tags-content">
+            {selectedTags.length ? (
               <div className="kms-home-chip-row">
                 {selectedTags.map((tag) => (
-                  <button key={tag} type="button" className="kms-chip selected" onClick={() => removeTag(tag)}>
-                    #{tag} <span aria-hidden="true">x</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
-        </div>
-        <div className="kms-home-quick-filters" aria-label="빠른 필터">
-          <button type="button" onClick={() => navigate(makePostsPath({ learning_status: reviewNeededStatus }))}><Filter size={14} aria-hidden="true" />복습 필요</button>
-          <button type="button" onClick={() => navigate(makePostsPath({ learning_status: practiceCandidateStatus }))}>실전 적용 후보</button>
-          <button type="button" onClick={() => navigate(makePostsPath({ importance: coreImportance }))}>핵심 지식</button>
-          <button type="button" onClick={() => navigate(makePostsPath({ recent: 7 }))}>최근 7일</button>
-          <button type="button" onClick={() => navigate("/kms/posts")}>전체 보기</button>
-        </div>
-        {hasSearchedTags ? (
-          <div className="kms-home-tag-results">
-            <div className="kms-home-section-head compact">
-              <div>
-                <h2>검색 결과 미리보기</h2>
-                <p>{searchResults.length.toLocaleString("ko-KR")}건 중 최대 5건을 표시합니다.</p>
-              </div>
-              {searchResults.length ? <button type="button" className="kms-home-link-button" onClick={openTagResults}>전체 결과 보기</button> : null}
-            </div>
-            {tagPreviewResults.length ? (
-              <div className="kms-home-result-list">
-                {tagPreviewResults.map((post) => (
-                  <button key={post.id} type="button" className="kms-home-result-item" onClick={() => openPost(post.id)}>
-                    <span>{post.category_name || "미분류"} · {post.importance} · {post.learning_status}</span>
-                    <strong>{post.title}</strong>
-                    <p>{post.summary || toKmsPlainText(post.content).slice(0, 110)}</p>
-                  </button>
+                  <span key={tag} className="kms-selected-tag-chip">
+                    <span title={`#${tag}`}>#{tag}</span>
+                    <button type="button" onClick={() => removeTag(tag)} aria-label={`선택 태그 ${tag} 제거`}><X size={12} aria-hidden="true" /></button>
+                  </span>
                 ))}
               </div>
             ) : (
-              <div className="kms-home-empty compact">조건에 맞는 지식글이 없습니다.</div>
+              <p className="kms-selected-tags-empty">인기 태그를 누르거나 위 입력창에서 태그를 추가하세요.</p>
             )}
+            <div className="kms-selected-tag-actions">
+              <button
+                type="button"
+                className="kms-tag-mode-help"
+                aria-label="AND와 OR 검색 조건 안내"
+                title={'AND: 선택한 모든 태그가 포함된 지식\nOR: 선택한 태그 중 하나 이상 포함된 지식'}
+              >
+                <Info size={14} aria-hidden="true" />
+              </button>
+              <div className={`kms-tag-mode-toggle ${selectedTags.length < 2 ? "muted" : ""}`} aria-label="태그 조합 조건">
+                {(["AND", "OR"] as KmsTagMatchMode[]).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    className={matchMode === mode ? "active" : ""}
+                    aria-label={`${mode} 검색 조건 선택`}
+                    aria-pressed={matchMode === mode}
+                    disabled={selectedTags.length < 2}
+                    onClick={() => setMatchMode(mode)}
+                  >{mode}</button>
+                ))}
+              </div>
+              {selectedTags.length ? (
+                <button type="button" className="kms-clear-selected-tags" onClick={() => setSelectedTags([])}>전체 해제</button>
+              ) : null}
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={runTagSearch}
+                disabled={loading || (!selectedTags.length && !splitTags(tagInput).length)}
+              >
+                <Search size={16} aria-hidden="true" />선택한 태그로 검색
+              </button>
+            </div>
           </div>
-        ) : null}
+        </div>
       </section>
 
       <section className="kms-home-category-section">
@@ -357,7 +374,7 @@ function KmsHomePage() {
           posts={summary.review_needed_posts}
           emptyText="복습 필요로 표시된 글이 없습니다."
           onOpenPost={openPost}
-          onOpenList={() => navigate(makePostsPath({ learning_status: reviewNeededStatus }))}
+          onOpenList={() => navigate(makePostsPath({ status_code: "VERIFYING" }))}
         />
         <FlowCard
           title="실전 적용 후보"
@@ -365,7 +382,7 @@ function KmsHomePage() {
           posts={summary.practice_candidate_posts}
           emptyText="실전 적용 후보 글이 없습니다."
           onOpenPost={openPost}
-          onOpenList={() => navigate(makePostsPath({ learning_status: practiceCandidateStatus }))}
+          onOpenList={() => navigate(makePostsPath({ status_code: "APPLIED" }))}
         />
       </div>
     </div>

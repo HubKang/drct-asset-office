@@ -22,6 +22,22 @@ class ChartMarkerGroup(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
 
 
+class ChartMarkerGroupKnowledgeLink(Base):
+    __tablename__ = "chart_marker_group_knowledge_links"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    marker_group_id: Mapped[int] = mapped_column(ForeignKey("chart_marker_groups.id", ondelete="CASCADE"), nullable=False)
+    # KMS tables are managed through explicit SQL rather than SQLAlchemy metadata.
+    # The database migration/runtime schema adds the durable FK to kms_knowledge_items.
+    knowledge_item_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint("marker_group_id", "knowledge_item_id", name="uq_chart_marker_group_knowledge"),
+    )
+
+
 class ChartMarker(Base):
     __tablename__ = "chart_markers"
 

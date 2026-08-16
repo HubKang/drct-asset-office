@@ -12,6 +12,7 @@ class MarkerGroupWrite(BaseModel):
     color: str = Field(default="#64748b", pattern=r"^#[0-9A-Fa-f]{6}$")
     sort_order: int = 0
     is_active: bool = True
+    knowledge_item_ids: list[int] = Field(default_factory=list, max_length=50)
 
 
 class MarkerGroupPatch(BaseModel):
@@ -20,6 +21,7 @@ class MarkerGroupPatch(BaseModel):
     color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
     sort_order: int | None = None
     is_active: bool | None = None
+    knowledge_item_ids: list[int] | None = Field(default=None, max_length=50)
 
 
 class MarkerWrite(BaseModel):

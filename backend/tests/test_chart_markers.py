@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import Session
 
-from backend.app.schemas.chart_marker_schema import MarkerEventPatch, MarkerEventWrite, MarkerGroupWrite, MarkerWrite
+from backend.app.schemas.chart_marker_schema import MarkerEventPatch, MarkerEventWrite, MarkerGroupPatch, MarkerGroupWrite, MarkerWrite
 from backend.app.services.chart_marker_service import ChartMarkerService
 
 
@@ -25,6 +25,12 @@ def _db() -> Session:
         conn.exec_driver_sql("""CREATE TABLE chart_marker_events(id INTEGER PRIMARY KEY AUTOINCREMENT,stock_id INTEGER NOT NULL,marker_id INTEGER NOT NULL,
           marker_date DATE NOT NULL,memo TEXT,review_result TEXT,reviewed_at DATETIME,created_at DATETIME,updated_at DATETIME,
           CHECK(review_result IS NULL OR review_result IN ('SUCCESS','FAILURE')),UNIQUE(stock_id,marker_id,marker_date))""")
+        conn.exec_driver_sql("""CREATE TABLE kms_setting_items(id INTEGER PRIMARY KEY,item_name TEXT,is_active INTEGER NOT NULL)""")
+        conn.exec_driver_sql("""CREATE TABLE kms_knowledge_items(id INTEGER PRIMARY KEY,title TEXT NOT NULL,summary TEXT,
+          para_type_id INTEGER,category_id INTEGER,is_active INTEGER NOT NULL)""")
+        conn.exec_driver_sql("""CREATE TABLE chart_marker_group_knowledge_links(id INTEGER PRIMARY KEY AUTOINCREMENT,
+          marker_group_id INTEGER NOT NULL,knowledge_item_id INTEGER NOT NULL,sort_order INTEGER NOT NULL DEFAULT 0,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,UNIQUE(marker_group_id,knowledge_item_id))""")
         conn.exec_driver_sql("INSERT INTO stocks VALUES(1,'005930','삼성전자')")
         start = date(2026, 5, 1)
         for index in range(120):
@@ -32,6 +38,16 @@ def _db() -> Session:
             conn.exec_driver_sql("INSERT INTO stock_daily_prices VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (index + 1,1,trade_date.isoformat(),101+index,106+index,96+index,103+index,1001+index,100,100,100,100,100))
     return Session(engine)
+
+
+def _seed_knowledge(db: Session) -> None:
+    db.execute(text("INSERT INTO kms_setting_items VALUES (10, '차트패턴', 1), (20, '기술분석', 1)"))
+    db.execute(text("""INSERT INTO kms_knowledge_items
+        (id,title,summary,para_type_id,category_id,is_active) VALUES
+        (1,'거래량 돌파 확인','거래량을 동반한 돌파를 확인합니다.',20,10,1),
+        (2,'지지선 반등','지지선 부근 반응을 확인합니다.',20,10,1),
+        (3,'과거 비활성 지식','기존 연결 보존 확인용입니다.',20,10,0)"""))
+    db.commit()
 
 
 def test_marker_event_upsert_updates_memo_without_duplicate() -> None:
@@ -47,6 +63,50 @@ def test_marker_event_upsert_updates_memo_without_duplicate() -> None:
     catalog_marker=service.list_catalog()["items"][0]["markers"][0]
     assert catalog_marker["stock_count"] == 1 and catalog_marker["marker_count"] == 2
     assert catalog_marker["success_count"] == 0 and catalog_marker["failure_count"] == 0
+    db.close()
+
+
+def test_group_knowledge_links_create_update_deduplicate_and_keep_existing_inactive() -> None:
+    db = _db(); _seed_knowledge(db); service = ChartMarkerService(db)
+    group = service.create_group(MarkerGroupWrite(name="돌파", color="#2563eb", knowledge_item_ids=[1, 1, 2]))
+    assert [item["id"] for item in group["knowledge_items"]] == [1, 2]
+    assert group["knowledge_items"][0]["category_name"] == "차트패턴"
+
+    db.execute(text("UPDATE kms_knowledge_items SET is_active=0 WHERE id=1")); db.commit()
+    updated = service.update_group(group["id"], MarkerGroupPatch(description="설명 변경", knowledge_item_ids=[1, 2]))
+    assert updated["knowledge_items"][0]["is_active"] is False
+
+    removed = service.update_group(group["id"], MarkerGroupPatch(knowledge_item_ids=[2]))
+    assert [item["id"] for item in removed["knowledge_items"]] == [2]
+    db.close()
+
+
+def test_group_knowledge_links_reject_new_inactive_item() -> None:
+    db = _db(); _seed_knowledge(db); service = ChartMarkerService(db)
+    try:
+        service.create_group(MarkerGroupWrite(name="저점", color="#2563eb", knowledge_item_ids=[3]))
+        raise AssertionError("inactive knowledge link should be rejected")
+    except Exception as exc:
+        assert getattr(exc, "status_code", None) == 400
+    assert db.execute(text("SELECT COUNT(*) FROM chart_marker_groups")).scalar() == 0
+    db.close()
+
+
+def test_catalog_loads_all_group_knowledge_links_with_one_query() -> None:
+    db = _db(); _seed_knowledge(db); service = ChartMarkerService(db)
+    service.create_group(MarkerGroupWrite(name="돌파", color="#2563eb", knowledge_item_ids=[1]))
+    service.create_group(MarkerGroupWrite(name="반등", color="#16a34a", knowledge_item_ids=[2]))
+    knowledge_selects: list[str] = []
+
+    def count_knowledge_query(_conn, _cursor, statement, _parameters, _context, _executemany) -> None:  # type: ignore[no-untyped-def]
+        if "FROM chart_marker_group_knowledge_links link" in statement:
+            knowledge_selects.append(statement)
+
+    event.listen(db.get_bind(), "before_cursor_execute", count_knowledge_query)
+    catalog = service.list_catalog()
+    event.remove(db.get_bind(), "before_cursor_execute", count_knowledge_query)
+    assert len(catalog["items"]) == 2
+    assert len(knowledge_selects) == 1
     db.close()
 
 
