@@ -66,6 +66,24 @@ def test_marker_event_upsert_updates_memo_without_duplicate() -> None:
     db.close()
 
 
+def test_marker_can_be_deleted_only_when_event_count_is_zero() -> None:
+    db = _db(); service = ChartMarkerService(db)
+    group = service.create_group(MarkerGroupWrite(name="삭제 검증", color="#2563eb"))
+    unused = service.create_marker(MarkerWrite(marker_group_id=group["id"], name="미사용 마커"))
+    used = service.create_marker(MarkerWrite(marker_group_id=group["id"], name="사용 중 마커"))
+    service.upsert_event(MarkerEventWrite(stock_id=1, marker_id=used["id"], marker_date=date(2026, 7, 15), memo=None))
+
+    assert service.delete_marker(unused["id"]) == {"deleted": True, "id": unused["id"]}
+    assert db.execute(text("SELECT COUNT(*) FROM chart_markers WHERE id = :id"), {"id": unused["id"]}).scalar_one() == 0
+    try:
+        service.delete_marker(used["id"])
+        raise AssertionError("used marker should not be deleted")
+    except Exception as exc:
+        assert getattr(exc, "status_code", None) == 409
+    assert db.execute(text("SELECT COUNT(*) FROM chart_markers WHERE id = :id"), {"id": used["id"]}).scalar_one() == 1
+    db.close()
+
+
 def test_group_knowledge_links_create_update_deduplicate_and_keep_existing_inactive() -> None:
     db = _db(); _seed_knowledge(db); service = ChartMarkerService(db)
     group = service.create_group(MarkerGroupWrite(name="돌파", color="#2563eb", knowledge_item_ids=[1, 1, 2]))
@@ -110,11 +128,12 @@ def test_catalog_loads_all_group_knowledge_links_with_one_query() -> None:
     db.close()
 
 
-def test_review_chart_centers_marker_between_forty_candles_on_each_side() -> None:
-    db=_db(); result=ChartMarkerService(db).review_chart(1,date(2026,7,10),81)
+def test_review_chart_uses_forty_before_and_after() -> None:
+    db=_db(); result=ChartMarkerService(db).review_chart(1,date(2026,7,10),40,40)
     assert result["total_candles"] == 81
     assert result["marker_index"] == 40
     assert result["available_before"] == 40 and result["available_after"] == 40
+    assert result["requested_before"] == 40 and result["requested_after"] == 40
     assert result["candles"][40]["trade_date"] == "2026-07-10"
     assert [row["trade_date"] for row in result["candles"]] == sorted(row["trade_date"] for row in result["candles"])
     db.close()
@@ -140,14 +159,47 @@ def test_marker_event_review_result_updates_existing_event_and_can_be_cleared() 
     db.close()
 
 
+def test_marker_event_type_can_change_without_resetting_review_result() -> None:
+    db = _db(); service = ChartMarkerService(db)
+    group = service.create_group(MarkerGroupWrite(name="반등", color="#2563eb"))
+    marker_a = service.create_marker(MarkerWrite(marker_group_id=group["id"], name="A"))
+    marker_b = service.create_marker(MarkerWrite(marker_group_id=group["id"], name="B"))
+    created = service.upsert_event(MarkerEventWrite(stock_id=1, marker_id=marker_a["id"], marker_date=date(2026, 7, 15), memo="기존"))
+    reviewed = service.update_event(created["id"], MarkerEventPatch(review_result="SUCCESS"))
+
+    changed = service.update_event(reviewed["id"], MarkerEventPatch(marker_id=marker_b["id"], memo="수정"))
+
+    assert changed["marker_id"] == marker_b["id"]
+    assert changed["memo"] == "수정"
+    assert changed["review_result"] == "SUCCESS"
+    assert changed["reviewed_at"] == reviewed["reviewed_at"]
+    db.close()
+
+
+def test_marker_event_type_change_rejects_unique_collision() -> None:
+    db = _db(); service = ChartMarkerService(db)
+    group = service.create_group(MarkerGroupWrite(name="충돌", color="#2563eb"))
+    marker_a = service.create_marker(MarkerWrite(marker_group_id=group["id"], name="A"))
+    marker_b = service.create_marker(MarkerWrite(marker_group_id=group["id"], name="B"))
+    event_a = service.upsert_event(MarkerEventWrite(stock_id=1, marker_id=marker_a["id"], marker_date=date(2026, 7, 15), memo=None))
+    service.upsert_event(MarkerEventWrite(stock_id=1, marker_id=marker_b["id"], marker_date=date(2026, 7, 15), memo=None))
+
+    try:
+        service.update_event(event_a["id"], MarkerEventPatch(marker_id=marker_b["id"]))
+        raise AssertionError("duplicate marker change should fail")
+    except Exception as exc:
+        assert getattr(exc, "status_code", None) == 409
+    db.close()
+
+
 def test_review_chart_keeps_future_side_at_forty_when_past_is_short() -> None:
-    db=_db(); result=ChartMarkerService(db).review_chart(1,date(2026,5,16),81)
+    db=_db(); result=ChartMarkerService(db).review_chart(1,date(2026,5,16),40,40)
     assert (result["available_before"], result["marker_index"], result["available_after"], result["total_candles"]) == (15,15,40,56)
     db.close()
 
 
 def test_review_chart_keeps_past_side_at_forty_when_future_is_short() -> None:
-    db=_db(); result=ChartMarkerService(db).review_chart(1,date(2026,8,21),81)
+    db=_db(); result=ChartMarkerService(db).review_chart(1,date(2026,8,21),40,40)
     assert (result["available_before"], result["marker_index"], result["available_after"], result["total_candles"]) == (40,40,7,48)
     db.close()
 
@@ -162,11 +214,11 @@ def test_review_chart_returns_all_existing_rows_when_stock_has_fewer_than_eighty
             (id,stock_id,trade_date,open_price,high_price,low_price,close_price,volume,ma5,ma10,ma20,ma60,ma120)
             VALUES(:id,2,:trade_date,100,105,95,102,1000,100,100,100,100,100)"""), {"id": 1000 + index, "trade_date": trade_date})
     db.commit()
-    result=ChartMarkerService(db).review_chart(2,date(2026,1,21),81)
-    assert result["total_candles"] == 53
+    result=ChartMarkerService(db).review_chart(2,date(2026,1,21),60,20)
+    assert result["total_candles"] == 41
     assert result["marker_index"] == 20
-    assert result["available_after"] == 32
-    assert len({row["trade_date"] for row in result["candles"]}) == 53
+    assert result["available_after"] == 20
+    assert len({row["trade_date"] for row in result["candles"]}) == 41
     db.close()
 
 
@@ -178,11 +230,32 @@ def test_review_chart_does_not_replace_a_missing_marker_date() -> None:
     db.close()
 
 
-def test_review_chart_api_uses_candle_count_contract() -> None:
+def test_review_chart_api_uses_before_after_contract() -> None:
     from backend.app.main import app
 
     parameters = app.openapi()["paths"]["/chart-markers/review/chart"]["get"]["parameters"]
     by_name = {parameter["name"]: parameter for parameter in parameters}
-    assert by_name["candle_count"]["schema"]["default"] == 81
-    assert "before_trading_days" not in by_name
-    assert "after_trading_days" not in by_name
+    assert by_name["before_candles"]["schema"]["default"] == 60
+    assert by_name["after_candles"]["schema"]["default"] == 20
+    assert "candle_count" not in by_name
+
+
+def test_review_chart_modes_keep_requested_d0_index() -> None:
+    db = _db(); service = ChartMarkerService(db)
+    marker_date = date(2026, 7, 19)
+    for before, after in ((40, 40), (60, 20), (70, 10)):
+        result = service.review_chart(1, marker_date, before, after)
+        assert result["total_candles"] == 81
+        assert result["marker_index"] == before
+        assert result["available_before"] == before
+        assert result["available_after"] == after
+    db.close()
+
+
+def test_review_chart_does_not_backfill_missing_side() -> None:
+    db = _db(); service = ChartMarkerService(db)
+    result = service.review_chart(1, date(2026, 5, 26), 60, 20)
+    assert result["available_before"] == 25
+    assert result["available_after"] == 20
+    assert result["total_candles"] == 46
+    db.close()

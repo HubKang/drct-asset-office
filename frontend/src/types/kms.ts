@@ -287,6 +287,8 @@ export type KmsKnowledgeItemPayload = {
   source_url?: string | null;
   source_title?: string | null;
   tags?: string[] | string | null;
+  editor_uploaded_image_urls?: string[];
+  editor_removed_image_urls?: string[];
 };
 
 export type KmsKnowledgeItemUpdatePayload = Partial<KmsKnowledgeItemPayload> & {

@@ -9,6 +9,62 @@ from sqlalchemy.orm import Session
 from backend.app.core.config import now_kst
 
 
+ANALYTIC_RISK_EVENT_TYPES = {
+    "UNPLANNED_BUY",
+    "UNPLANNED_SELL",
+    "BUY_PRICE_DEVIATION",
+    "SELL_PRICE_DEVIATION",
+    "FULL_STOP_PARTIAL_QUANTITY",
+    "PARTIAL_STOP_FULL_QUANTITY",
+    "STOP_AREA_BUY",
+    "RISK_BUDGET_NEAR_LIMIT",
+    "RISK_BUDGET_EXCEEDED",
+    "TAKE_PROFIT_REACHED",
+    "PARTIAL_STOP_REACHED",
+    "FULL_STOP_REACHED",
+}
+ANALYTIC_RISK_EVENT_PREFIXES = (
+    "TAKE_PROFIT_RESPONSE_",
+    "PARTIAL_STOP_RESPONSE_",
+    "FULL_STOP_RESPONSE_",
+)
+RISK_EVENT_PLANNED_VALUE_FIELDS = {
+    "plan_type",
+    "step_no",
+    "trigger_price",
+    "planned_step_price",
+    "risk_budget_amount",
+    "stop_price",
+}
+RISK_EVENT_ACTUAL_VALUE_FIELDS = {
+    "order_price",
+    "order_quantity",
+    "estimated_risk_amount",
+    "risk_usage_pct",
+    "price_deviation_pct",
+    "unplanned_reason",
+    "day_high",
+    "day_low",
+    "position_quantity",
+    "sequence_unknown",
+    "reach_event_id",
+    "response_type",
+    "reason",
+    "current_price",
+}
+
+
+def is_analytic_risk_event_type(event_type: str) -> bool:
+    normalized = str(event_type or "").strip().upper()
+    return normalized in ANALYTIC_RISK_EVENT_TYPES or normalized.startswith(ANALYTIC_RISK_EVENT_PREFIXES)
+
+
+def compact_risk_event_payload(value: Any, allowlist: set[str]) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {key: value[key] for key in allowlist if key in value and value[key] is not None}
+
+
 class TradeTrainingRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -1326,8 +1382,13 @@ class TradeTrainingRepository:
 
     def insert_risk_event_no_commit(self, values: dict[str, Any]) -> dict[str, Any]:
         self.ensure_training_account_table()
+        event_type = str(values.get("event_type") or "").strip().upper()
+        if not is_analytic_risk_event_type(event_type):
+            return {}
         now = now_kst()
         acknowledged = bool(values.get("acknowledged"))
+        planned_value = compact_risk_event_payload(values.get("planned_value"), RISK_EVENT_PLANNED_VALUE_FIELDS)
+        actual_value = compact_risk_event_payload(values.get("actual_value"), RISK_EVENT_ACTUAL_VALUE_FIELDS)
         cursor = self.db.execute(
             text(
                 """
@@ -1346,8 +1407,9 @@ class TradeTrainingRepository:
             ),
             {
                 **values,
-                "planned_value_json": json.dumps(values.get("planned_value") or {}, ensure_ascii=False),
-                "actual_value_json": json.dumps(values.get("actual_value") or {}, ensure_ascii=False),
+                "event_type": event_type,
+                "planned_value_json": json.dumps(planned_value, ensure_ascii=False),
+                "actual_value_json": json.dumps(actual_value, ensure_ascii=False),
                 "acknowledged": 1 if acknowledged else 0,
                 "acknowledged_at": now if acknowledged else None,
                 "created_at": now,

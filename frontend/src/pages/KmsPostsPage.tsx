@@ -6,7 +6,7 @@ import PageHeader from "@/components/common/PageHeader";
 import KmsRichEditor from "@/components/kms/KmsRichEditor";
 import { repositories } from "@/services";
 import type { KmsKnowledgeItem, KmsKnowledgeItemPayload, KmsSettingGroup, KmsSettingItem, KmsSettingItemSummary } from "@/types/kms";
-import { sanitizeKmsHtml, toKmsDisplayHtml, toKmsEditableHtml, toKmsPlainText } from "@/utils/kmsRichContent";
+import { extractKmsImageSources, sanitizeKmsHtml, toKmsDisplayHtml, toKmsEditableHtml, toKmsPlainText } from "@/utils/kmsRichContent";
 
 const cardPageSize = 12;
 const listPageSize = 20;
@@ -24,6 +24,7 @@ const emptyKnowledgeForm: KmsKnowledgeItemPayload = {
   source_type_id: null,
   source_url: "",
   tags: "",
+  editor_uploaded_image_urls: [],
 };
 
 const statusLabel = (value: string | null | undefined) => {
@@ -124,6 +125,7 @@ function KmsPostsPage() {
   const [saving, setSaving] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [drawerRemovedImageUrls, setDrawerRemovedImageUrls] = useState<string[]>([]);
   const routeKnowledgeItemId = Number(searchParams.get("item_id") || 0);
 
   const optionMap = useMemo(() => {
@@ -228,6 +230,7 @@ function KmsPostsPage() {
       return;
     }
     setDrawerEditing(false);
+    setDrawerRemovedImageUrls([]);
     setDrawerForm({
       title: selectedItem.title,
       content: toKmsEditableHtml(selectedItem.content),
@@ -241,6 +244,7 @@ function KmsPostsPage() {
       source_type_id: selectedItem.source_type_id,
       source_url: selectedItem.source_url || "",
       tags: toTagText(selectedItem),
+      editor_uploaded_image_urls: [],
     });
   }, [selectedItem]);
 
@@ -310,13 +314,25 @@ function KmsPostsPage() {
       setMessage("제목과 본문은 필수입니다.");
       return;
     }
+    const originalImageSources = extractKmsImageSources(selectedItem.content);
+    const nextImageSources = new Set(extractKmsImageSources(cleanContent));
+    const explicitlyRemoved = new Set(drawerRemovedImageUrls);
+    const unexpectedlyMissing = originalImageSources.filter((source) => !nextImageSources.has(source) && !explicitlyRemoved.has(source));
+    if (unexpectedlyMissing.length) {
+      setMessage(`이미지 ${unexpectedlyMissing.length}개가 명시적인 삭제 없이 본문에서 누락되어 저장을 중단했습니다. 편집 화면을 다시 열어 확인해 주세요.`);
+      return;
+    }
     setSaving(true);
     try {
-      const saved = await repositories.kms.updateKnowledgeItem(selectedItem.id, savePayload(next, cleanContent));
+      const saved = await repositories.kms.updateKnowledgeItem(selectedItem.id, {
+        ...savePayload(next, cleanContent),
+        editor_removed_image_urls: drawerRemovedImageUrls,
+      });
       setSelectedItem(saved);
       await loadItems({ keepPage: true, selectedItemId: saved.id });
       setSelectedItem(await repositories.kms.getKnowledgeItem(saved.id));
       setDrawerEditing(false);
+      setDrawerRemovedImageUrls([]);
       setMessage("지식을 수정했습니다.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "지식 수정에 실패했습니다.");
@@ -441,7 +457,17 @@ function KmsPostsPage() {
         </label>
         <div className="kms-form-field">
           <span className="kms-form-label">본문 *</span>
-          <KmsRichEditor resetKey={ownerId ? `knowledge-${ownerId}` : "knowledge-new"} value={target.content} selectLocalImage={() => repositories.kms.selectLocalImage()} imageUploadDomain="kms" ownerType="kms_knowledge_item" ownerId={ownerId} onChange={(content) => setTarget((prev) => ({ ...prev, content, content_format: "HTML" }))} />
+          <KmsRichEditor
+            resetKey={ownerId ? `knowledge-${ownerId}` : "knowledge-new"}
+            value={target.content}
+            selectLocalImage={() => repositories.kms.selectLocalImage()}
+            imageUploadDomain="kms"
+            ownerType="kms_knowledge_item"
+            ownerId={ownerId}
+            onChange={(content) => setTarget((prev) => ({ ...prev, content, content_format: "HTML" }))}
+            onSessionUploadedImageUrlsChange={(urls) => setTarget((prev) => ({ ...prev, editor_uploaded_image_urls: urls }))}
+            onRemovedImageUrlsChange={ownerId ? setDrawerRemovedImageUrls : undefined}
+          />
         </div>
       </div>
       <div className="kms-knowledge-meta-grid">

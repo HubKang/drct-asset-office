@@ -21,6 +21,8 @@ def update_group(group_id: int, payload: MarkerGroupPatch, db: Session = Depends
 def create_marker(payload: MarkerWrite, db: Session = Depends(get_db)): return ChartMarkerService(db).create_marker(payload)
 @router.patch("/markers/{marker_id}")
 def update_marker(marker_id: int, payload: MarkerPatch, db: Session = Depends(get_db)): return ChartMarkerService(db).update_marker(marker_id, payload)
+@router.delete("/markers/{marker_id}")
+def delete_marker(marker_id: int, db: Session = Depends(get_db)): return ChartMarkerService(db).delete_marker(marker_id)
 @router.put("/events")
 def upsert_event(payload: MarkerEventWrite, db: Session = Depends(get_db)): return ChartMarkerService(db).upsert_event(payload)
 @router.get("/events")
@@ -32,5 +34,11 @@ def delete_event(event_id: int, db: Session = Depends(get_db)): return ChartMark
 @router.get("/review/events")
 def review_events(marker_id: int, db: Session = Depends(get_db)): return ChartMarkerService(db).review_events(marker_id)
 @router.get("/review/chart")
-def review_chart(stock_id: int, marker_date: date, candle_count: int = Query(81, ge=3, le=201), db: Session = Depends(get_db)):
-    return ChartMarkerService(db).review_chart(stock_id, marker_date, candle_count)
+def review_chart(
+    stock_id: int,
+    marker_date: date,
+    before_candles: int = Query(60, ge=0, le=200),
+    after_candles: int = Query(20, ge=0, le=200),
+    db: Session = Depends(get_db),
+):
+    return ChartMarkerService(db).review_chart(stock_id, marker_date, before_candles, after_candles)

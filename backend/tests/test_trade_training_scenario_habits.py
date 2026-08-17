@@ -53,6 +53,26 @@ def test_consecutive_reaches_form_one_unresolved_episode():
     assert distribution["max_unresolved_bars"] == 27
 
 
+def test_single_reach_event_uses_price_series_for_continuous_duration():
+    reaches = [{
+        **_reach(1, 1),
+        "planned_value": {"trigger_price": 100},
+    }]
+    prices = [
+        {"trade_date": "2026-01-01", "low_price": 99},
+        {"trade_date": "2026-01-02", "low_price": 98},
+        {"trade_date": "2026-01-03", "low_price": 101},
+        {"trade_date": "2026-01-04", "low_price": 97},
+    ]
+    date_index = {str(row["trade_date"]): index for index, row in enumerate(prices)}
+
+    episodes = TradeTrainingService._build_reach_episodes(reaches, [], date_index, prices)
+
+    assert len(episodes) == 1
+    assert episodes[0]["duration_bars"] == 2
+    assert episodes[0]["latest_reached_chart_date"] == "2026-01-02"
+
+
 def test_response_closes_episode_before_next_reach():
     reaches = [_reach(1, 1), _reach(2, 2)]
     responses = [{

@@ -174,6 +174,24 @@ class ChartMarkerService:
         self.db.refresh(row)
         return self._marker(row)
 
+    def delete_marker(self, marker_id: int) -> dict[str, Any]:
+        row = self.db.get(ChartMarker, marker_id)
+        if not row:
+            raise HTTPException(404, "차트마커를 찾을 수 없습니다.")
+        marker_count = int(self.db.execute(
+            text("SELECT COUNT(*) FROM chart_marker_events WHERE marker_id = :marker_id"),
+            {"marker_id": marker_id},
+        ).scalar_one())
+        if marker_count > 0:
+            raise HTTPException(409, "등록된 마커 기록이 있어 삭제할 수 없습니다. 먼저 마커 기록을 삭제해 주세요.")
+        self.db.delete(row)
+        try:
+            self.db.commit()
+        except IntegrityError as exc:
+            self.db.rollback()
+            raise HTTPException(409, "연결된 데이터가 있어 차트마커를 삭제할 수 없습니다.") from exc
+        return {"deleted": True, "id": marker_id}
+
     def upsert_event(self, payload: MarkerEventWrite) -> dict[str, Any]:
         marker = self.db.get(ChartMarker, payload.marker_id)
         if not marker or not marker.is_active:
@@ -216,12 +234,26 @@ class ChartMarkerService:
         if not row:
             raise HTTPException(404, "차트마커 기록을 찾을 수 없습니다.")
         changes = payload.model_dump(exclude_unset=True)
+        if "marker_id" in changes and changes["marker_id"] != row.marker_id:
+            marker = self.db.get(ChartMarker, changes["marker_id"])
+            if not marker or not marker.is_active:
+                raise HTTPException(400, "활성 차트마커를 선택해 주세요.")
+            duplicate = self.db.scalar(select(ChartMarkerEvent).where(
+                ChartMarkerEvent.stock_id == row.stock_id,
+                ChartMarkerEvent.marker_id == changes["marker_id"],
+                ChartMarkerEvent.marker_date == row.marker_date,
+                ChartMarkerEvent.id != row.id,
+            ))
+            if duplicate:
+                raise HTTPException(409, "해당 날짜에 선택한 마커가 이미 등록되어 있습니다. 기존 마커의 메모를 수정하거나 현재 마커를 삭제해 주세요.")
+            row.marker_id = changes["marker_id"]
         if "memo" in changes:
             row.memo = changes["memo"]
         if "review_result" in changes:
             row.review_result = changes["review_result"]
             row.reviewed_at = datetime.now() if row.review_result else None
-        self.db.commit(); self.db.refresh(row)
+        self._commit_unique("해당 날짜에 선택한 마커가 이미 등록되어 있습니다.")
+        self.db.refresh(row)
         return self._event_detail(row)
 
     def delete_event(self, event_id: int) -> dict[str, Any]:
@@ -242,21 +274,25 @@ class ChartMarkerService:
         """), {"marker_id": marker_id}).all()
         return {"items": [dict(row._mapping) for row in rows]}
 
-    def review_chart(self, stock_id: int, marker_date: date, candle_count: int = 81) -> dict[str, Any]:
-        params = {"stock_id": stock_id, "marker_date": marker_date.isoformat(), "side_limit": max(0, candle_count - 1)}
+    def review_chart(self, stock_id: int, marker_date: date, before_candles: int = 60, after_candles: int = 20) -> dict[str, Any]:
+        params = {
+            "stock_id": stock_id,
+            "marker_date": marker_date.isoformat(),
+            "before_limit": before_candles,
+            "after_limit": after_candles,
+        }
         center = self.db.execute(text("SELECT * FROM stock_daily_prices WHERE stock_id=:stock_id AND trade_date=:marker_date"), params).first()
         if not center:
             return {"stock_id": stock_id, "marker_date": marker_date, "marker_index": None, "total_candles": 0,
-                    "available_before": 0, "available_after": 0, "candles": []}
+                    "available_before": 0, "available_after": 0, "requested_before": before_candles,
+                    "requested_after": after_candles, "candles": []}
 
         before_available = self.db.execute(text("""SELECT * FROM stock_daily_prices WHERE stock_id=:stock_id AND trade_date < :marker_date
-            ORDER BY trade_date DESC LIMIT :side_limit"""), params).all()
+            ORDER BY trade_date DESC LIMIT :before_limit"""), params).all()
         after_available = self.db.execute(text("""SELECT * FROM stock_daily_prices WHERE stock_id=:stock_id AND trade_date > :marker_date
-            ORDER BY trade_date ASC LIMIT :side_limit"""), params).all()
-        target_before = candle_count // 2
-        target_after = candle_count - target_before - 1
-        before_count = min(target_before, len(before_available))
-        after_count = min(target_after, len(after_available))
+            ORDER BY trade_date ASC LIMIT :after_limit"""), params).all()
+        before_count = min(before_candles, len(before_available))
+        after_count = min(after_candles, len(after_available))
 
         before_rows = before_available[:before_count][::-1]
         after_rows = after_available[:after_count]
@@ -265,7 +301,8 @@ class ChartMarkerService:
                     "close": r.close_price, "volume": r.volume, "moving_averages": {f"ma{n}": getattr(r, f"ma{n}") for n in (5,10,20,60,120)}} for r in rows]
         return {"stock_id": stock_id, "marker_date": marker_date, "marker_index": len(before_rows),
                 "total_candles": len(candles), "available_before": len(before_rows),
-                "available_after": len(after_rows), "candles": candles}
+                "available_after": len(after_rows), "requested_before": before_candles,
+                "requested_after": after_candles, "candles": candles}
 
     def _event_detail(self, row: ChartMarkerEvent) -> dict[str, Any]:
         marker = self.db.get(ChartMarker, row.marker_id); group = self.db.get(ChartMarkerGroup, marker.marker_group_id) if marker else None

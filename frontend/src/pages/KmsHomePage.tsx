@@ -240,10 +240,7 @@ function KmsHomePage() {
         </div>
         <div className="kms-home-tag-box kms-home-popular-tags">
           <div className="kms-home-tag-box-header">
-            <div>
-              <h3>인기 태그</h3>
-              <p>자주 등록된 태그를 선택하세요.</p>
-            </div>
+            <h3>인기 태그</h3>
           </div>
           <div className="kms-home-chip-row">
             {popularTags.length ? (

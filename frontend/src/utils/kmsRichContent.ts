@@ -71,7 +71,7 @@ export const sanitizeKmsHtml = (value: string) =>
         "span",
         "div",
       ],
-      ALLOWED_ATTR: ["href", "src", "alt", "title", "target", "rel", "colspan", "rowspan", "width", "height", "style"],
+      ALLOWED_ATTR: ["href", "src", "alt", "title", "target", "rel", "colspan", "rowspan", "width", "height", "style", "data-kms-width"],
       ADD_DATA_URI_TAGS: ["img"],
       FORBID_TAGS: ["script", "iframe", "object", "embed"],
       FORBID_ATTR: ["onerror", "onclick", "onload", "onmouseover"],
@@ -126,6 +126,23 @@ const linkifyTextUrls = (html: string) => {
   return container.innerHTML;
 };
 
+const preserveTrailingParagraphBreaks = (html: string) => {
+  if (!html || typeof document === "undefined") return html;
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  container.querySelectorAll("p").forEach((paragraph) => {
+    let lastNode = paragraph.lastChild;
+    while (lastNode?.nodeType === Node.TEXT_NODE && !(lastNode.textContent || "").trim()) lastNode = lastNode.previousSibling;
+    if (!(lastNode instanceof HTMLBRElement)) return;
+    const spacer = document.createElement("span");
+    spacer.className = "kms-display-trailing-break";
+    spacer.setAttribute("aria-hidden", "true");
+    spacer.textContent = "\u00a0";
+    lastNode.after(spacer);
+  });
+  return container.innerHTML;
+};
+
 
 const bustLocalImageCache = (html: string) => {
   if (!html || typeof document === "undefined") return html;
@@ -146,7 +163,8 @@ const bustLocalImageCache = (html: string) => {
   return container.innerHTML;
 };
 
-export const toKmsDisplayHtml = (value: string) => bustLocalImageCache(linkifyTextUrls(toKmsEditableHtml(value)));
+export const toKmsDisplayHtml = (value: string) =>
+  bustLocalImageCache(preserveTrailingParagraphBreaks(linkifyTextUrls(toKmsEditableHtml(value))));
 
 export const toKmsPlainText = (value: string) => {
   if (!value) return "";
@@ -155,4 +173,13 @@ export const toKmsPlainText = (value: string) => {
   const element = document.createElement("div");
   element.innerHTML = html;
   return (element.textContent || element.innerText || "").replace(/\s+/g, " ").trim();
+};
+
+export const extractKmsImageSources = (value: string) => {
+  if (!value || typeof document === "undefined") return [] as string[];
+  const container = document.createElement("div");
+  container.innerHTML = value;
+  return Array.from(container.querySelectorAll("img"))
+    .map((image) => image.getAttribute("src")?.trim() || "")
+    .filter(Boolean);
 };

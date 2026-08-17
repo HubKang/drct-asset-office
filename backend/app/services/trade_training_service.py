@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from decimal import Decimal
 import json
+import logging
 from time import perf_counter
 from typing import Any
 
@@ -45,6 +46,7 @@ FINISHED_STATUS = "완료"
 ABORTED_STATUS = "중단"
 TRAINING_ACCOUNT_STATUSES = {"ACTIVE", "PAUSED", "COMPLETED", "ARCHIVED"}
 TRAINING_PREVIEW_CANDLE_COUNT = 30
+logger = logging.getLogger(__name__)
 
 
 class TradeTrainingService:
@@ -1613,6 +1615,7 @@ class TradeTrainingService:
             normalized_scenario["stop_price"] = self._float_or_none(full_stop.get("trigger_price"))
         preview = self.calculate_risk_scenario_preview(int(scenario["simulation_session_id"]), scenario=normalized_scenario, buy_steps=buy_steps)
         latest_revision = self.repo.get_latest_risk_scenario_revision(int(scenario["id"]))
+        events = self.repo.list_risk_events(int(scenario["simulation_session_id"]))
         return {
             "scenario": normalized_scenario,
             "buy_steps": buy_steps,
@@ -1621,7 +1624,7 @@ class TradeTrainingService:
             "preview": preview,
             "requires_plan_before_buy": False,
             "holding_risk": self._holding_risk_summary(self.repo.get_session(int(scenario["simulation_session_id"])) or {}, scenario) if str(scenario.get("status") or "").upper() == "ACTIVE" else None,
-            "events": (events := self.repo.list_risk_events(int(scenario["simulation_session_id"]))),
+            "events": [self._public_risk_event(event) for event in events],
             "pending_responses": self._pending_risk_responses(events),
         }
 
@@ -1788,6 +1791,24 @@ class TradeTrainingService:
             )
         return result
 
+    @staticmethod
+    def _public_risk_event(event: dict[str, Any]) -> dict[str, Any]:
+        actual = event.get("actual_value") or {}
+        return {
+            "id": event.get("id"),
+            "event_type": event.get("event_type"),
+            "severity": event.get("severity"),
+            "message": event.get("message"),
+            "acknowledged": bool(event.get("acknowledged")),
+            "chart_date": event.get("chart_date"),
+            "created_at": event.get("created_at"),
+            "risk_scenario_id": event.get("risk_scenario_id"),
+            "risk_plan_step_id": event.get("risk_plan_step_id"),
+            "simulation_trade_id": event.get("simulation_trade_id"),
+            "reason": actual.get("reason") or actual.get("unplanned_reason"),
+            "sequence_unknown": bool(actual.get("sequence_unknown")),
+        }
+
     def check_risk_level_reaches(self, session_id: int, chart_date: str) -> dict[str, Any]:
         session = self.repo.get_session(session_id)
         if not session:
@@ -1795,12 +1816,20 @@ class TradeTrainingService:
         scenario = self.repo.get_active_risk_scenario(session_id)
         if not scenario:
             return {"events": [], "pending_responses": []}
-        candle = next((row for row in self._session_prices(session) if str(row.get("trade_date")) == chart_date), None)
+        prices = self._session_prices(session)
+        candle_index = next((index for index, row in enumerate(prices) if str(row.get("trade_date")) == chart_date), None)
+        candle = prices[candle_index] if candle_index is not None else None
         if not candle:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="해당 차트 날짜의 가격 데이터가 없습니다.")
         day_high = float(candle.get("high_price") or 0)
         day_low = float(candle.get("low_price") or 0)
         revision = self.repo.get_latest_risk_scenario_revision(int(scenario["id"]))
+        existing_events = self.repo.list_risk_events(session_id)
+        answered_reach_ids = {
+            int((event.get("actual_value") or {}).get("reach_event_id") or 0)
+            for event in existing_events
+            if "_RESPONSE_" in str(event.get("event_type") or "")
+        }
         reached_rows: list[tuple[dict[str, Any], str]] = []
         for step in self.repo.list_risk_plan_steps(int(scenario["id"])):
             if str(step.get("plan_group") or "").upper() != "SELL":
@@ -1819,6 +1848,22 @@ class TradeTrainingService:
             if (event_type == "TAKE_PROFIT_REACHED" and day_high >= price) or (
                 event_type != "TAKE_PROFIT_REACHED" and day_low <= price
             ):
+                previous_candle = prices[candle_index - 1] if candle_index is not None and candle_index > 0 else None
+                previous_still_reached = bool(
+                    previous_candle
+                    and (
+                        (event_type == "TAKE_PROFIT_REACHED" and float(previous_candle.get("high_price") or 0) >= price)
+                        or (event_type != "TAKE_PROFIT_REACHED" and float(previous_candle.get("low_price") or 0) <= price)
+                    )
+                )
+                unresolved_episode = any(
+                    int(event.get("risk_plan_step_id") or 0) == int(step["id"])
+                    and str(event.get("event_type") or "") == event_type
+                    and int(event.get("id") or 0) not in answered_reach_ids
+                    for event in existing_events
+                )
+                if previous_still_reached and unresolved_episode:
+                    continue
                 reached_rows.append((step, event_type))
         sequence_unknown = len(reached_rows) > 1
         created = []
@@ -1857,30 +1902,12 @@ class TradeTrainingService:
                 }
             )
             created.append(self.repo.get_risk_event(int(event["id"])) or event)
-        if sequence_unknown:
-            event = self.repo.insert_risk_event_no_commit(
-                {
-                    "training_account_id": int(scenario["training_account_id"]),
-                    "simulation_session_id": session_id,
-                    "risk_scenario_id": int(scenario["id"]),
-                    "risk_scenario_revision_id": int(revision["id"]) if revision else None,
-                    "risk_plan_step_id": None,
-                    "simulation_trade_id": None,
-                    "event_key": f"scenario:{scenario['id']}:date:{chart_date}:event:MULTIPLE_PLAN_LEVELS_REACHED",
-                    "event_type": "MULTIPLE_PLAN_LEVELS_REACHED",
-                    "severity": "CAUTION",
-                    "planned_value": {"step_ids": [int(step["id"]) for step, _ in reached_rows]},
-                    "actual_value": {"day_high": day_high, "day_low": day_low, "sequence_unknown": True},
-                    "message": "같은 봉에서 여러 계획 가격에 도달했습니다. 봉 내부의 선후 관계는 알 수 없습니다.",
-                    "acknowledged": False,
-                    "acknowledgement_note": None,
-                    "chart_date": chart_date,
-                }
-            )
-            created.append(self.repo.get_risk_event(int(event["id"])) or event)
         self.repo.db.commit()
         all_events = self.repo.list_risk_events(session_id)
-        return {"events": created, "pending_responses": self._pending_risk_responses(all_events)}
+        return {
+            "events": [self._public_risk_event(event) for event in created],
+            "pending_responses": self._pending_risk_responses(all_events),
+        }
 
     def record_risk_level_response(self, session_id: int, payload: RiskLevelResponseRequest) -> dict[str, Any]:
         session = self.repo.get_session(session_id)
@@ -1898,7 +1925,10 @@ class TradeTrainingService:
             None,
         )
         if existing:
-            return {"event": existing, "pending_responses": self._pending_risk_responses(self.repo.list_risk_events(session_id))}
+            return {
+                "event": self._public_risk_event(existing),
+                "pending_responses": self._pending_risk_responses(self.repo.list_risk_events(session_id)),
+            }
         candle = self._current_price_row(session)
         actual_value = {
             "reach_event_id": int(reach["id"]),
@@ -1928,7 +1958,10 @@ class TradeTrainingService:
         )
         self.repo.db.commit()
         decoded = self.repo.get_risk_event(int(event["id"])) or event
-        return {"event": decoded, "pending_responses": self._pending_risk_responses(self.repo.list_risk_events(session_id))}
+        return {
+            "event": self._public_risk_event(decoded),
+            "pending_responses": self._pending_risk_responses(self.repo.list_risk_events(session_id)),
+        }
 
     @staticmethod
     def _score_category(key: str, label: str, scores: list[float], excluded_count: int = 0) -> dict[str, Any]:
@@ -1976,11 +2009,12 @@ class TradeTrainingService:
         reach_events: list[dict[str, Any]],
         response_events: list[dict[str, Any]],
         date_index: dict[str, int],
+        price_rows: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         responses_by_reach = {
-            int((event.get("actual_value") or {}).get("reach_event_id")): event
+            int(event.get("reach_event_id") or (event.get("actual_value") or {}).get("reach_event_id")): event
             for event in response_events
-            if (event.get("actual_value") or {}).get("reach_event_id")
+            if event.get("reach_event_id") or (event.get("actual_value") or {}).get("reach_event_id")
         }
         grouped: dict[tuple[int, int, str], list[dict[str, Any]]] = {}
         for event in reach_events:
@@ -2020,6 +2054,7 @@ class TradeTrainingService:
                         "reach_event_ids": [int(event.get("id") or 0)],
                         "response_event": response,
                         "response_end_index": response_index,
+                        "trigger_price": event.get("trigger_price") or (event.get("planned_value") or {}).get("trigger_price"),
                     }
                     group_episodes.append(current)
                     episodes.append(current)
@@ -2032,15 +2067,34 @@ class TradeTrainingService:
                         current["response_end_index"] = response_index
 
             for episode in group_episodes:
-                episode["duration_bars"] = int(episode["last_index"]) - int(episode["start_index"]) + 1
+                start_index = int(episode["start_index"])
+                last_index = int(episode["last_index"])
+                trigger_price = float(episode.get("trigger_price") or 0)
+                if price_rows and trigger_price > 0:
+                    last_index = start_index
+                    for row in price_rows[start_index:]:
+                        reached = (
+                            float(row.get("high_price") or 0) >= trigger_price
+                            if episode["reach_type"] == "TAKE_PROFIT_REACHED"
+                            else float(row.get("low_price") or 0) <= trigger_price
+                        )
+                        if not reached:
+                            break
+                        last_index += 1
+                    last_index = max(start_index, last_index - 1)
+                    episode["last_index"] = last_index
+                    if 0 <= last_index < len(price_rows):
+                        episode["latest_reached_chart_date"] = price_rows[last_index].get("trade_date")
+                episode["duration_bars"] = last_index - start_index + 1
                 response = episode.get("response_event")
                 response_index = date_index.get(str((response or {}).get("chart_date")))
                 episode["response_bars"] = (
-                    max(0, response_index - int(episode["start_index"])) if response_index is not None else None
+                    max(0, response_index - start_index) if response_index is not None else None
                 )
                 episode.pop("start_index", None)
                 episode.pop("last_index", None)
                 episode.pop("response_end_index", None)
+                episode.pop("trigger_price", None)
         return episodes
 
     @staticmethod
@@ -2075,6 +2129,12 @@ class TradeTrainingService:
             step for step in self.repo.list_risk_plan_steps(scenario_id)
             if not bool(step.get("is_removed")) and str(step.get("status") or "").upper() != "CANCELLED"
         ]
+        steps_by_id = {int(step["id"]): step for step in steps}
+        scenario_trades = [
+            trade
+            for trade in self.repo.list_trades(int(scenario["simulation_session_id"]))
+            if int(trade.get("risk_scenario_id") or 0) == scenario_id
+        ]
         events = self.repo.list_risk_events_by_scenario(scenario_id)
         revisions = self.repo.list_risk_scenario_revisions(scenario_id)
         unplanned = [event for event in events if str(event.get("event_type") or "").startswith("UNPLANNED_")]
@@ -2091,10 +2151,11 @@ class TradeTrainingService:
             key = (int(event.get("risk_plan_step_id") or 0), str(event.get("event_type") or ""))
             dates = sorted(str(row.get("chart_date") or "") for row in reach_groups[key] if row.get("chart_date"))
             decorated_reaches.append({
-                **event,
+                **self._public_risk_event(event),
                 "first_reached_chart_date": dates[0] if dates else None,
                 "latest_reached_chart_date": dates[-1] if dates else None,
                 "reach_count": len(reach_groups[key]),
+                "trigger_price": (event.get("planned_value") or {}).get("trigger_price"),
             })
         review_session = self.repo.get_session(int(scenario["simulation_session_id"])) or {}
         date_index = {str(row.get("trade_date")): idx for idx, row in enumerate(self._session_prices(review_session))}
@@ -2106,7 +2167,12 @@ class TradeTrainingService:
             start_index = date_index.get(str((reach or {}).get("chart_date")))
             end_index = date_index.get(str(event.get("chart_date")))
             response_candles = max(0, end_index - start_index) if start_index is not None and end_index is not None else None
-            decorated_responses.append({**event, "response_candles": response_candles})
+            decorated_responses.append({
+                **self._public_risk_event(event),
+                "reach_event_id": reach_id,
+                "response_type": (event.get("actual_value") or {}).get("response_type"),
+                "response_candles": response_candles,
+            })
         category_scores = [
             self._score_category("pre_plan", "사전 계획", [1.0]),
             self._score_category(
@@ -2136,23 +2202,92 @@ class TradeTrainingService:
         ]
         eligible = [row for row in category_scores if row["applicable"]]
         overall = round(sum(float(row["score"]) for row in eligible) / len(eligible), 2) if eligible else None
-        timeline = [
+        decision_timeline = []
+        reconstructed_trade_ids: set[int] = set()
+        for trade in scenario_trades:
+            step_id = int(trade.get("risk_plan_step_id") or 0)
+            step = steps_by_id.get(step_id)
+            if not step:
+                continue
+            trade_id = int(trade["id"])
+            reconstructed_trade_ids.add(trade_id)
+            side = str(trade.get("side") or "").upper()
+            step_no = int(step.get("step_no") or 0)
+            plan_type = str(step.get("plan_type") or "").upper()
+            action = "매수" if side == "BUY" else ("익절" if plan_type == "TAKE_PROFIT" else "손절")
+            decision_timeline.append(
+                {
+                    "id": f"trade-decision-{trade_id}",
+                    "kind": "trade_decision",
+                    "event_type": "PLANNED_BUY_EXECUTED" if side == "BUY" else "PLANNED_SELL_EXECUTED",
+                    "chart_date": trade.get("trade_date"),
+                    "created_at": trade.get("created_at"),
+                    "message": f"{step_no}차 {action} 계획대로 실행 · {float(trade.get('price') or 0):,.0f}원 · {int(trade.get('quantity') or 0):,}주",
+                    "severity": "INFO",
+                    "simulation_trade_id": trade_id,
+                    "risk_plan_step_id": step_id,
+                    "risk_scenario_id": scenario_id,
+                    "acknowledged": True,
+                }
+            )
+
+        legacy_plan_groups: dict[int, list[dict[str, Any]]] = {}
+        for event in events:
+            if str(event.get("event_type") or "") not in {"BUY_PLAN_MATCHED", "SELL_PLAN_MATCHED", "PLAN_STEP_EXECUTED"}:
+                continue
+            if int(event.get("risk_scenario_id") or 0) != scenario_id:
+                continue
+            trade_id = int(event.get("simulation_trade_id") or 0)
+            if trade_id and trade_id not in reconstructed_trade_ids:
+                legacy_plan_groups.setdefault(trade_id, []).append(event)
+        for trade_id, grouped_events in legacy_plan_groups.items():
+            representative = grouped_events[0]
+            event_types = {str(event.get("event_type") or "") for event in grouped_events}
+            side = "BUY" if "BUY_PLAN_MATCHED" in event_types else "SELL"
+            actual = representative.get("actual_value") or {}
+            decision_timeline.append(
+                {
+                    "id": f"legacy-trade-decision-{trade_id}",
+                    "kind": "trade_decision",
+                    "event_type": "PLANNED_BUY_EXECUTED" if side == "BUY" else "PLANNED_SELL_EXECUTED",
+                    "chart_date": representative.get("chart_date"),
+                    "created_at": representative.get("created_at"),
+                    "message": f"계획대로 {'매수' if side == 'BUY' else '매도'} 실행 · {float(actual.get('order_price') or 0):,.0f}원 · {int(actual.get('order_quantity') or 0):,}주",
+                    "severity": "INFO",
+                    "simulation_trade_id": trade_id,
+                    "risk_plan_step_id": representative.get("risk_plan_step_id"),
+                    "risk_scenario_id": scenario_id,
+                    "acknowledged": True,
+                }
+            )
+
+        technical_event_types = {"BUY_PLAN_MATCHED", "SELL_PLAN_MATCHED", "PLAN_STEP_EXECUTED", "MULTIPLE_PLAN_LEVELS_REACHED"}
+        timeline = decision_timeline + [
             {
                 "id": f"event-{event['id']}",
                 "kind": "event",
                 "event_type": event.get("event_type"),
                 "chart_date": event.get("chart_date"),
                 "created_at": event.get("created_at"),
-                "message": event.get("message"),
+                "message": " · ".join(
+                    part for part in [
+                        str(event.get("message") or "").strip(),
+                        (
+                            "사유: " + str((event.get("actual_value") or {}).get("reason") or (event.get("actual_value") or {}).get("unplanned_reason") or "").strip()
+                            if str((event.get("actual_value") or {}).get("reason") or (event.get("actual_value") or {}).get("unplanned_reason") or "").strip()
+                            else ""
+                        ),
+                    ] if part
+                ),
                 "severity": event.get("severity"),
-                "planned_value": event.get("planned_value") or {},
-                "actual_value": event.get("actual_value") or {},
                 "simulation_trade_id": event.get("simulation_trade_id"),
                 "risk_plan_step_id": event.get("risk_plan_step_id"),
                 "risk_scenario_id": event.get("risk_scenario_id"),
                 "acknowledged": bool(event.get("acknowledged")),
             }
             for event in events
+            if int(event.get("risk_scenario_id") or 0) == scenario_id
+            if str(event.get("event_type") or "") not in technical_event_types
         ] + [
             {
                 "id": f"revision-{revision['id']}",
@@ -2164,6 +2299,7 @@ class TradeTrainingService:
                 "severity": "INFO",
             }
             for revision in revisions
+            if str(revision.get("revision_type") or "") in {"PRICE_LINES_UPDATED", "UPDATE"}
         ]
         timeline.sort(key=lambda row: (str(row.get("created_at") or ""), str(row.get("id") or "")))
         return {
@@ -2174,8 +2310,16 @@ class TradeTrainingService:
             "timeline": timeline,
             "reach_events": decorated_reaches,
             "response_events": decorated_responses,
-            "warning_events": warnings,
-            "revision_events": revisions,
+            "warning_events": [self._public_risk_event(event) for event in warnings],
+            "revision_events": [
+                {
+                    "id": revision.get("id"),
+                    "revision_type": revision.get("revision_type"),
+                    "change_reason": revision.get("change_reason"),
+                    "created_at": revision.get("created_at"),
+                }
+                for revision in revisions
+            ],
             "rule_based_summary": "계획 단계 실행, 계획 밖 주문의 사유, 경고 확인 및 도달 대응만으로 산출한 규칙 기반 결과입니다.",
         }
 
@@ -2204,6 +2348,7 @@ class TradeTrainingService:
     ) -> dict[str, Any]:
         account = self.get_training_account(account_id)
         closed = self.list_training_account_closed_trades(account_id)["items"]
+        account_order_trades = self.repo.list_account_trade_events(account_id)
         if stock_id:
             closed = [trade for trade in closed if int(trade.get("stock_id") or 0) == stock_id]
         if result_filter != "all":
@@ -2239,7 +2384,12 @@ class TradeTrainingService:
             all_events.extend(review["timeline"])
             prices = self._session_prices(self.repo.get_session(int(trade["training_session_id"])) or {})
             date_index = {str(row.get("trade_date")): idx for idx, row in enumerate(prices)}
-            episodes = self._build_reach_episodes(review["reach_events"], review["response_events"], date_index)
+            episodes = self._build_reach_episodes(
+                review["reach_events"],
+                review["response_events"],
+                date_index,
+                prices,
+            )
             target_episodes = [row for row in episodes if row.get("reach_type") == "TAKE_PROFIT_REACHED"]
             stop_episodes = [row for row in episodes if row.get("reach_type") != "TAKE_PROFIT_REACHED"]
             all_target_episodes.extend(target_episodes)
@@ -2288,20 +2438,41 @@ class TradeTrainingService:
             )
 
         planned_count = sum(1 for _, scenario, _ in reviews if scenario)
-        order_event_types = {"BUY_PLAN_MATCHED", "SELL_PLAN_MATCHED", "UNPLANNED_BUY", "UNPLANNED_SELL"}
-        order_events = [event for event in all_events if str(event.get("event_type") or "") in order_event_types]
+        evaluated_trades: dict[int, dict[str, Any]] = {}
+        selected_session_ids = {int(trade["training_session_id"]) for trade, scenario, _ in reviews if scenario}
+        for order_trade in account_order_trades:
+            if int(order_trade.get("session_id") or 0) in selected_session_ids and order_trade.get("risk_scenario_id"):
+                evaluated_trades[int(order_trade["id"])] = order_trade
+
         def order_key(event: dict[str, Any]) -> str:
             trade_id = event.get("simulation_trade_id")
             return f"trade:{trade_id}" if trade_id is not None else str(event.get("id") or "")
 
-        evaluated_order_keys = {order_key(event) for event in order_events}
         unplanned_events_by_order: dict[str, dict[str, Any]] = {}
-        for event in order_events:
+        selected_session_events = [
+            event
+            for selected_session_id in selected_session_ids
+            for event in self.repo.list_risk_events(selected_session_id)
+        ]
+        for event in selected_session_events:
             if str(event.get("event_type") or "").startswith("UNPLANNED_"):
                 unplanned_events_by_order.setdefault(order_key(event), event)
         unplanned_events = list(unplanned_events_by_order.values())
+        unplanned_trade_ids = {
+            trade_id for trade_id, order_trade in evaluated_trades.items()
+            if not order_trade.get("risk_plan_step_id")
+        } | {
+            int(event.get("simulation_trade_id") or 0)
+            for event in unplanned_events
+            if int(event.get("simulation_trade_id") or 0) in evaluated_trades
+        }
+        unplanned_count_by_session: dict[int, int] = {}
+        for trade_id in unplanned_trade_ids:
+            session_id_for_trade = int(evaluated_trades[trade_id].get("session_id") or 0)
+            unplanned_count_by_session[session_id_for_trade] = unplanned_count_by_session.get(session_id_for_trade, 0) + 1
         reasoned_unplanned = sum(
             1 for event in unplanned_events
+            if int(event.get("simulation_trade_id") or 0) in unplanned_trade_ids
             if str((event.get("actual_value") or {}).get("unplanned_reason") or "").strip()
         )
 
@@ -2351,8 +2522,8 @@ class TradeTrainingService:
             if account_risk_budget > 0 else None
         )
         average = round(sum(float(review["overall_execution_rate"]) for review in scored) / len(scored), 2) if scored else None
-        evaluated_order_count = len(evaluated_order_keys)
-        unplanned_order_count = len(unplanned_events)
+        evaluated_order_count = len(evaluated_trades)
+        unplanned_order_count = len(unplanned_trade_ids)
 
         trades = []
         for trade, scenario, review in reviews:
@@ -2369,13 +2540,7 @@ class TradeTrainingService:
                     "scenario_execution_rate": review.get("overall_execution_rate") if review else None,
                     "category_scores": review.get("category_scores") if review else [],
                     "max_risk_pct": scenario.get("account_risk_pct") if scenario else None,
-                    "unplanned_action_count": len(
-                        {
-                            order_key(event)
-                            for event in (review or {}).get("timeline", [])
-                            if str(event.get("event_type") or "").startswith("UNPLANNED_")
-                        }
-                    ),
+                    "unplanned_action_count": unplanned_count_by_session.get(int(trade["training_session_id"]), 0),
                     "target_response": target_distribution,
                     "stop_response": stop_distribution,
                 }
@@ -2454,8 +2619,28 @@ class TradeTrainingService:
             return None, None, None
         if int(session.get("position_qty") or 0) > 0:
             active = self.repo.get_active_risk_scenario(int(session["id"]))
-            revision = self.repo.get_latest_risk_scenario_revision(int(active["id"])) if active else None
-            return active, int(revision["id"]) if revision else None, trade_values.get("risk_plan_step_id")
+            if active:
+                revision = self.repo.get_latest_risk_scenario_revision(int(active["id"]))
+                return active, int(revision["id"]) if revision else None, trade_values.get("risk_plan_step_id")
+            draft = self.repo.get_draft_risk_scenario(int(session["id"]))
+            if not draft:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "RISK_SCENARIO_RECOVERY_REQUIRED",
+                        "message": "보유수량은 있지만 활성 리스크 관리 계획이 없습니다. 계획을 작성해 상태를 복구해 주세요.",
+                        "session_id": int(session["id"]),
+                    },
+                )
+            steps = self.repo.list_risk_plan_steps(int(draft["id"]))
+            buy_steps = [step for step in steps if str(step.get("plan_group") or "").upper() == "BUY"]
+            sell_steps = [step for step in steps if str(step.get("plan_group") or "").upper() == "SELL"]
+            preview = self.calculate_risk_scenario_preview(int(session["id"]), scenario=draft, buy_steps=buy_steps)
+            activated = self.repo.activate_risk_scenario(int(draft["id"]), preview)
+            revision = self.repo.create_risk_scenario_revision(
+                int(activated["id"]), "RECOVERY_ACTIVATE", self._risk_snapshot(activated, buy_steps, sell_steps, preview), "recovered missing active scenario"
+            )
+            return activated, int(revision["id"]), trade_values.get("risk_plan_step_id") or (int(buy_steps[0]["id"]) if buy_steps else None)
         draft = self.repo.get_draft_risk_scenario(int(session["id"]))
         if not draft:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "RISK_SCENARIO_REQUIRED", "message": "최초 매수 전 리스크 시나리오를 등록해 주세요.", "session_id": int(session["id"])})
@@ -2497,8 +2682,10 @@ class TradeTrainingService:
         side = str(trade.get("side") or "").upper()
         event_rows: list[dict[str, str]] = []
         if selected_step:
-            event_rows.append({"code": "BUY_PLAN_MATCHED" if side == "BUY" else "SELL_PLAN_MATCHED", "severity": "INFO", "message": "주문이 선택한 리스크 계획 단계와 연결되었습니다."})
-            event_rows.append({"code": "PLAN_STEP_EXECUTED", "severity": "INFO", "message": "리스크 계획 단계를 실행 완료로 변경했습니다."})
+            logger.info(
+                "trade training plan step executed",
+                extra={"simulation_trade_id": int(trade["id"]), "risk_plan_step_id": step_id, "side": side},
+            )
         else:
             event_rows.append({"code": "UNPLANNED_BUY" if side == "BUY" else "UNPLANNED_SELL", "severity": "CAUTION", "message": f"계획 외 {('매수' if side == 'BUY' else '매도')}로 기록되었습니다."})
         existing_codes = {row["code"] for row in event_rows}
@@ -2514,8 +2701,6 @@ class TradeTrainingService:
         actual_value = {
             "order_price": float(payload.price),
             "order_quantity": int(payload.quantity),
-            "post_position_quantity": preview.get("projected_position", {}).get("quantity"),
-            "post_average_price": preview.get("projected_position", {}).get("average_price"),
             "estimated_risk_amount": preview.get("projected_estimated_risk"),
             "risk_usage_pct": preview.get("risk_usage_pct"),
             "price_deviation_pct": preview.get("price_deviation_pct"),

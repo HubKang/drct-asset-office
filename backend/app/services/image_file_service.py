@@ -218,6 +218,23 @@ class ImageFileService:
         except OSError as exc:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"failed to delete image file: {exc}") from exc
 
+    def delete_domain_physical_file(self, domain: str, file_path: str) -> tuple[bool, bool]:
+        domain_root = (PROJECT_ROOT / "data" / self.get_domain_folder(domain)).resolve()
+        target = (PROJECT_ROOT / str(file_path)).resolve()
+        try:
+            target.relative_to(domain_root)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="image path is outside domain directory") from exc
+        if not target.exists():
+            return False, True
+        if not target.is_file():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="image path is not a file")
+        try:
+            target.unlink()
+            return True, False
+        except OSError as exc:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"failed to delete image file: {exc}") from exc
+
     def _next_sequence(self, domain: str, stamp: str, target_dir: Path) -> int:
         pattern = re.compile(rf"_{re.escape(stamp)}(\d{{3}})\.[^.]+$")
         max_seq = 0

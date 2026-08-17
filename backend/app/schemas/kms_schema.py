@@ -319,6 +319,7 @@ class KmsKnowledgeItemCreate(BaseModel):
     source_url: str | None = None
     source_title: str | None = None
     tags: list[str] | str | None = None
+    editor_uploaded_image_urls: list[str] = Field(default_factory=list)
 
 
 class KmsKnowledgeItemUpdate(BaseModel):
@@ -337,6 +338,8 @@ class KmsKnowledgeItemUpdate(BaseModel):
     source_title: str | None = None
     is_active: bool | None = None
     tags: list[str] | str | None = None
+    editor_uploaded_image_urls: list[str] = Field(default_factory=list)
+    editor_removed_image_urls: list[str] = Field(default_factory=list)
 
 
 class KmsKnowledgeItemTagUpdate(BaseModel):

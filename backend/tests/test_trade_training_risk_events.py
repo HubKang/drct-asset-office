@@ -2,6 +2,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 from backend.app.repositories.trade_training_repository import TradeTrainingRepository
+from backend.app.schemas.trade_training_schema import TrainingOrderRequest
 from backend.app.services.trade_training_service import TradeTrainingService
 
 
@@ -54,9 +55,9 @@ def risk_event_values() -> dict:
         "risk_scenario_revision_id": 1,
         "risk_plan_step_id": 1,
         "simulation_trade_id": 1,
-        "event_key": "simulation_trade:1:risk:PLAN_STEP_EXECUTED",
-        "event_type": "PLAN_STEP_EXECUTED",
-        "severity": "INFO",
+        "event_key": "simulation_trade:1:risk:UNPLANNED_BUY",
+        "event_type": "UNPLANNED_BUY",
+        "severity": "CAUTION",
         "planned_value": {"planned_step_price": 10000},
         "actual_value": {"order_price": 10100, "order_quantity": 3},
         "message": "executed",
@@ -102,6 +103,59 @@ def test_risk_event_key_is_idempotent_and_step_executes_once():
     assert step["actual_price"] == 10100
     assert step["actual_quantity"] == 3
     assert db.execute(text("SELECT COUNT(*) FROM trade_training_risk_events")).scalar_one() == 1
+
+
+def test_technical_risk_event_is_not_persisted_and_payload_is_allowlisted():
+    db, repo = build_repository()
+    values = risk_event_values()
+    technical = {**values, "event_key": "technical:1", "event_type": "PLAN_STEP_EXECUTED"}
+
+    assert repo.insert_risk_event_no_commit(technical) == {}
+    assert db.execute(text("SELECT COUNT(*) FROM trade_training_risk_events")).scalar_one() == 0
+
+    values["actual_value"] = {
+        "order_price": 10100,
+        "order_quantity": 3,
+        "unplanned_reason": "계획 변경",
+        "post_position_quantity": 99,
+        "raw_response": {"large": "payload"},
+    }
+    stored = repo.insert_risk_event_no_commit(values)
+    db.commit()
+
+    assert stored["id"]
+    decoded = repo.get_risk_event(int(stored["id"]))
+    assert decoded is not None
+    assert decoded["actual_value"] == {
+        "order_price": 10100,
+        "order_quantity": 3,
+        "unplanned_reason": "계획 변경",
+    }
+
+
+def test_planned_order_updates_step_without_persisting_technical_events():
+    db, repo = build_repository()
+    seed_step_and_trade(db)
+    service = TradeTrainingService(db)
+    service._record_order_risk_events(
+        {"id": 1, "training_account_id": 1},
+        TrainingOrderRequest(price=10100, quantity=3, risk_plan_step_id=1),
+        {"id": 1, "side": "BUY", "trade_date": "2026-01-02"},
+        {
+            "selected_step": {"id": 1, "trigger_price": 10000},
+            "warnings": [],
+            "risk_budget_amount": 100000,
+            "stop_price": 9000,
+            "projected_estimated_risk": 90000,
+            "risk_usage_pct": 90,
+        },
+        1,
+        1,
+    )
+    db.commit()
+
+    assert repo.get_risk_plan_step(1)["status"] == "EXECUTED"
+    assert db.execute(text("SELECT COUNT(*) FROM trade_training_risk_events")).scalar_one() == 0
 
 def test_active_plan_update_preserves_executed_step_identity():
     db, repo = build_repository()
@@ -256,15 +310,35 @@ def test_reach_check_preserves_multiple_levels_and_is_idempotent():
         "PARTIAL_STOP_REACHED",
         "FULL_STOP_REACHED",
     }
-    assert all(event["actual_value"]["sequence_unknown"] is True for event in reached)
+    assert all(event["sequence_unknown"] is True for event in reached)
     assert len(first["pending_responses"]) == 3
     assert all(item["created_at"] for item in first["pending_responses"])
     assert len(second["pending_responses"]) == 3
-    assert db.execute(text("SELECT COUNT(*) FROM trade_training_risk_events")).scalar_one() == 4
+    assert db.execute(text("SELECT COUNT(*) FROM trade_training_risk_events")).scalar_one() == 3
     review = service.get_risk_scenario_execution_review(1)
     assert len(review["reach_events"]) == 3
     assert all(event["reach_count"] == 1 for event in review["reach_events"])
     assert all(event["first_reached_chart_date"] == "2026-01-05" for event in review["reach_events"])
+
+
+def test_consecutive_reach_days_persist_one_episode_start_event():
+    db, repo = build_repository()
+    seed_active_reach_scenario(db)
+    service = TradeTrainingService(db)
+    prices = [
+        {"trade_date": "2026-01-05", "open_price": 10000, "high_price": 10100, "low_price": 8900, "close_price": 9000},
+        {"trade_date": "2026-01-06", "open_price": 9000, "high_price": 9200, "low_price": 8800, "close_price": 8900},
+    ]
+    service._session_prices = lambda session: prices
+
+    service.check_risk_level_reaches(1, "2026-01-05")
+    service.check_risk_level_reaches(1, "2026-01-06")
+
+    reached = db.execute(text("SELECT event_type, chart_date FROM trade_training_risk_events ORDER BY id")).all()
+    assert reached == [
+        ("PARTIAL_STOP_REACHED", "2026-01-05"),
+        ("FULL_STOP_REACHED", "2026-01-05"),
+    ]
 
 
 def test_hold_response_is_recorded_once_and_clears_only_selected_reach():
@@ -290,7 +364,7 @@ def test_hold_response_is_recorded_once_and_clears_only_selected_reach():
     ))
 
     assert first["event"]["event_type"] == "TAKE_PROFIT_RESPONSE_HOLD"
-    assert first["event"]["actual_value"]["reason"] == "추세 유지"
+    assert first["event"]["reason"] == "추세 유지"
     assert second["event"]["id"] == first["event"]["id"]
     assert first["pending_responses"] == []
 

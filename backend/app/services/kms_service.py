@@ -1,13 +1,15 @@
 ﻿from __future__ import annotations
 
 from collections import Counter
+from html.parser import HTMLParser
 import json
 from html import unescape
+import logging
 import mimetypes
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 from typing import Any
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlsplit
 
 from fastapi import HTTPException
 from sqlalchemy import bindparam, text
@@ -54,6 +56,22 @@ from backend.app.schemas.kms_schema import (
     KmsTagResponse,
     KmsTagUpdate,
 )
+
+
+logger = logging.getLogger(__name__)
+
+
+class _ImageSourceParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.sources: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.casefold() != "img":
+            return
+        source = dict(attrs).get("src")
+        if source:
+            self.sources.append(source)
 
 KMS_ALLOWED_LOCAL_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 KMS_DEFAULT_ITEM_CODES = {
@@ -519,7 +537,13 @@ class KmsService:
         )
         item_id = int(result.lastrowid)
         self._replace_knowledge_item_tags(item_id, self._normalize_tags(payload.tags))
+        self._link_content_images_to_knowledge_item(item_id, content)
         self.db.commit()
+        self._cleanup_unreferenced_knowledge_images(
+            old_content="",
+            new_content=content,
+            editor_uploaded_image_urls=payload.editor_uploaded_image_urls,
+        )
         return self.get_knowledge_item(item_id)
 
     def replace_knowledge_item_tags(self, item_id: int, payload: KmsKnowledgeItemTagUpdate) -> KmsKnowledgeItemResponse:
@@ -545,9 +569,12 @@ class KmsService:
         return self.get_knowledge_item(item_id)
 
     def update_knowledge_item(self, item_id: int, payload: KmsKnowledgeItemUpdate) -> KmsKnowledgeItemResponse:
-        self.get_knowledge_item(item_id)
+        current = self.get_knowledge_item(item_id)
+        old_content = current.content
         values = payload.model_dump(exclude_unset=True)
         tags_value = values.pop("tags", None)
+        editor_uploaded_image_urls = values.pop("editor_uploaded_image_urls", [])
+        editor_removed_image_urls = values.pop("editor_removed_image_urls", [])
         values.pop("content_format", None)
         if "title" in values and values["title"] is not None:
             values["title"] = str(values["title"]).strip()
@@ -571,7 +598,15 @@ class KmsService:
                 text("UPDATE kms_knowledge_items SET updated_at = :now WHERE id = :item_id"),
                 {"item_id": item_id, "now": now_kst()},
             )
+        next_content = str(values.get("content", old_content) or "")
+        self._link_content_images_to_knowledge_item(item_id, next_content)
         self.db.commit()
+        self._cleanup_unreferenced_knowledge_images(
+            old_content=old_content,
+            new_content=next_content,
+            editor_uploaded_image_urls=editor_uploaded_image_urls,
+            editor_removed_image_urls=editor_removed_image_urls,
+        )
         return self.get_knowledge_item(item_id)
 
     def set_knowledge_item_active(self, item_id: int, is_active: bool) -> KmsKnowledgeItemResponse:
@@ -590,6 +625,7 @@ class KmsService:
         self.db.execute(text("DELETE FROM kms_knowledge_items WHERE id = :item_id"), {"item_id": item_id})
         self._refresh_tag_counts()
         self.db.commit()
+        self._cleanup_unreferenced_knowledge_images(old_content=current.content, new_content="", editor_uploaded_image_urls=[])
         return current
 
     def generate_knowledge_item_summary_help(self, item_id: int) -> KmsSummaryHelpResponse:
@@ -1501,23 +1537,125 @@ class KmsService:
             for row in rows
         ]
 
+    @staticmethod
+    def _canonical_kms_image_relative_path(source: str | None) -> str | None:
+        if not source:
+            return None
+        path = unquote(urlsplit(unescape(str(source))).path).replace("\\", "/")
+        marker = "/static/kms_images/"
+        marker_index = path.find(marker)
+        if marker_index < 0:
+            return None
+        suffix = path[marker_index + len(marker):].lstrip("/")
+        parts = PurePosixPath(suffix).parts
+        if not parts or any(part in {"", ".", ".."} for part in parts):
+            return None
+        return PurePosixPath("data", "kms_images", *parts).as_posix()
+
     def _extract_kms_image_refs(self, content: str | None) -> tuple[set[str], set[str]]:
+        parser = _ImageSourceParser()
+        parser.feed(str(content or ""))
+        relative_paths = {
+            relative_path
+            for source in parser.sources
+            if (relative_path := self._canonical_kms_image_relative_path(source)) is not None
+        }
         file_urls: set[str] = set()
-        relative_paths: set[str] = set()
-        for src in re.findall(r'<img[^>]+src=["\']([^"\']+)["\']', str(content or ""), flags=re.IGNORECASE):
-            marker = "/static/kms_images/"
-            marker_index = src.find(marker)
-            if marker_index < 0:
-                continue
-            file_url = src[marker_index:].split("#", 1)[0].split("?", 1)[0]
-            if not file_url:
-                continue
-            file_urls.add(file_url)
-            decoded_file_url = unquote(file_url)
-            file_urls.add(decoded_file_url)
-            relative_paths.add("data/" + file_url.removeprefix("/static/"))
-            relative_paths.add("data/" + decoded_file_url.removeprefix("/static/"))
+        for relative_path in relative_paths:
+            suffix = relative_path.removeprefix("data/")
+            decoded_url = "/static/" + suffix
+            file_urls.add(decoded_url)
+            file_urls.add(quote(decoded_url, safe="/"))
         return file_urls, relative_paths
+
+    def _link_content_images_to_knowledge_item(self, item_id: int, content: str | None) -> None:
+        _, relative_paths = self._extract_kms_image_refs(content)
+        for relative_path in relative_paths:
+            self.db.execute(
+                text(
+                    """
+                    UPDATE app_images
+                    SET owner_type = 'kms_knowledge_item', owner_id = :item_id, updated_at = :now
+                    WHERE domain = 'kms'
+                      AND relative_path = :relative_path
+                      AND (owner_id IS NULL OR (owner_type = 'kms_knowledge_item' AND owner_id = :item_id))
+                    """
+                ),
+                {"item_id": item_id, "relative_path": relative_path, "now": now_kst()},
+            )
+
+    def _knowledge_image_is_referenced(self, relative_path: str) -> bool:
+        rows = self.db.execute(
+            text("SELECT content FROM kms_knowledge_items WHERE is_active = 1")
+        ).mappings().all()
+        for row in rows:
+            _, referenced_paths = self._extract_kms_image_refs(row["content"])
+            if relative_path in referenced_paths:
+                return True
+        return False
+
+    def _cleanup_unreferenced_knowledge_images(
+        self,
+        *,
+        old_content: str | None,
+        new_content: str | None,
+        editor_uploaded_image_urls: list[str] | None,
+        editor_removed_image_urls: list[str] | None = None,
+    ) -> dict[str, int]:
+        _, old_paths = self._extract_kms_image_refs(old_content)
+        _, new_paths = self._extract_kms_image_refs(new_content)
+        uploaded_paths = {
+            relative_path
+            for source in (editor_uploaded_image_urls or [])
+            if (relative_path := self._canonical_kms_image_relative_path(source)) is not None
+        }
+        removed_paths = {
+            relative_path
+            for source in (editor_removed_image_urls or [])
+            if (relative_path := self._canonical_kms_image_relative_path(source)) is not None
+        }
+        explicit_old_paths = (removed_paths & old_paths) - new_paths
+        candidates = ((old_paths - new_paths) | explicit_old_paths | (uploaded_paths - new_paths))
+        result = {"deleted": 0, "skipped_in_use": 0, "failed": 0}
+        if not candidates:
+            return result
+
+        image_service = ImageFileService(self.db)
+        for relative_path in sorted(candidates):
+            metadata = self.db.execute(
+                text(
+                    "SELECT id FROM app_images "
+                    "WHERE domain = 'kms' AND relative_path = :relative_path"
+                ),
+                {"relative_path": relative_path},
+            ).mappings().first()
+            # A path read directly from the previously persisted HTML is trusted even
+            # when legacy upload metadata is missing. Session-only paths still require
+            # metadata so a crafted request cannot delete an arbitrary KMS-domain file.
+            if metadata is None and relative_path not in old_paths:
+                logger.warning(
+                    "KMS image cleanup skipped because upload metadata is missing: %s",
+                    relative_path,
+                )
+                result["failed"] += 1
+                continue
+            if self._knowledge_image_is_referenced(relative_path):
+                result["skipped_in_use"] += 1
+                continue
+            try:
+                image_service.delete_domain_physical_file("kms", relative_path)
+                if metadata is not None:
+                    self.db.execute(
+                        text("DELETE FROM app_images WHERE domain = 'kms' AND relative_path = :relative_path"),
+                        {"relative_path": relative_path},
+                    )
+                self.db.commit()
+                result["deleted"] += 1
+            except Exception:
+                self.db.rollback()
+                result["failed"] += 1
+                logger.exception("Failed to clean up unreferenced KMS image: %s", relative_path)
+        return result
 
     def _find_kms_image_ids(self, post_id: int, content: str | None) -> set[int]:
         image_ids: set[int] = set()
