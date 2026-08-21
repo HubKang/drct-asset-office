@@ -11,6 +11,26 @@ export const REALTIME_THEME_INTERVAL_SECONDS = {
 
 export type RealtimeThemeIntervalMinutes = keyof typeof REALTIME_THEME_INTERVAL_SECONDS;
 
+export const REALTIME_THEME_MARKET_OPEN_TIME = "09:00";
+export const REALTIME_THEME_AUTO_STOP_TIME = "15:30";
+const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
+const getKstMarketTimeAt = (hour: number, minute: number, now = Date.now()) => {
+  const kstNow = new Date(now + KST_OFFSET_MS);
+  return Date.UTC(
+    kstNow.getUTCFullYear(),
+    kstNow.getUTCMonth(),
+    kstNow.getUTCDate(),
+    hour - 9,
+    minute,
+  );
+};
+
+export const getRealtimeThemeMarketOpenAt = (now = Date.now()) => getKstMarketTimeAt(9, 0, now);
+export const getRealtimeThemeAutoStopAt = (now = Date.now()) => getKstMarketTimeAt(15, 30, now);
+export const isRealtimeThemeAutoStopTime = (now = Date.now()) => now >= getRealtimeThemeAutoStopAt(now);
+export const isRealtimeThemeMarketHours = (now = Date.now()) => now >= getRealtimeThemeMarketOpenAt(now) && !isRealtimeThemeAutoStopTime(now);
+
 export type RealtimeThemeSchedulerState = {
   snapshot: RealtimeThemeTreemapResponse;
   intervalMinutes: RealtimeThemeIntervalMinutes;
@@ -35,11 +55,14 @@ const storedInterval = isBrowser ? window.localStorage.getItem(INTERVAL_STORAGE_
 const initialInterval: RealtimeThemeIntervalMinutes = storedInterval && storedInterval in REALTIME_THEME_INTERVAL_SECONDS
   ? storedInterval as RealtimeThemeIntervalMinutes
   : "10";
+const storedEnabled = isBrowser && window.localStorage.getItem(ENABLED_STORAGE_KEY) === "true";
+const initialRealtimeEnabled = storedEnabled && isRealtimeThemeMarketHours();
+if (isBrowser && storedEnabled && !initialRealtimeEnabled) window.localStorage.setItem(ENABLED_STORAGE_KEY, "false");
 
 let state: RealtimeThemeSchedulerState = {
   snapshot: emptySnapshot(),
   intervalMinutes: initialInterval,
-  isRealtime: isBrowser && window.localStorage.getItem(ENABLED_STORAGE_KEY) === "true",
+  isRealtime: initialRealtimeEnabled,
   isRefreshing: false,
   lastDurationMs: null,
   error: null,
@@ -58,17 +81,30 @@ const clearTimer = () => {
   if (timer != null) window.clearTimeout(timer);
   timer = null;
 };
+const stopRealtimeTheme = () => {
+  clearTimer();
+  if (isBrowser) window.localStorage.setItem(ENABLED_STORAGE_KEY, "false");
+  update({ isRealtime: false, nextRefreshAt: null });
+};
 
 const scheduleNext = () => {
   clearTimer();
   if (!state.isRealtime) { update({ nextRefreshAt: null }); return; }
+  const now = Date.now();
+  if (!isRealtimeThemeMarketHours(now)) { stopRealtimeTheme(); return; }
+  const autoStopAt = getRealtimeThemeAutoStopAt(now);
   const waitMs = REALTIME_THEME_INTERVAL_SECONDS[state.intervalMinutes] * 1000;
-  const nextRefreshAt = Date.now() + waitMs;
+  const nextRefreshAt = Math.min(now + waitMs, autoStopAt);
+  const isFinalRefresh = nextRefreshAt === autoStopAt;
   update({ nextRefreshAt });
-  timer = window.setTimeout(() => { timer = null; void refreshRealtimeTheme(); }, waitMs);
+  timer = window.setTimeout(() => {
+    timer = null;
+    if (isFinalRefresh && getRealtimeThemeAutoStopAt() !== autoStopAt) { stopRealtimeTheme(); return; }
+    void refreshRealtimeTheme(isFinalRefresh);
+  }, nextRefreshAt - now);
 };
 
-export const refreshRealtimeTheme = (): Promise<void> => {
+export const refreshRealtimeTheme = (stopAfterRefresh = false): Promise<void> => {
   if (refreshPromise) return refreshPromise;
   update({ isRefreshing: true, nextRefreshAt: null });
   refreshPromise = repositories.marketThemes.refreshRealtimeTreemap()
@@ -77,7 +113,8 @@ export const refreshRealtimeTheme = (): Promise<void> => {
     .finally(() => {
       refreshPromise = null;
       update({ isRefreshing: false });
-      if (state.isRealtime) scheduleNext();
+      if (stopAfterRefresh || isRealtimeThemeAutoStopTime()) stopRealtimeTheme();
+      else if (state.isRealtime) scheduleNext();
     });
   return refreshPromise;
 };
@@ -96,7 +133,7 @@ export const setRealtimeThemeEnabled = (enabled: boolean) => {
   window.localStorage.setItem(ENABLED_STORAGE_KEY, String(enabled));
   clearTimer();
   update({ isRealtime: enabled, nextRefreshAt: null });
-  if (enabled) void refreshRealtimeTheme();
+  if (enabled) void refreshRealtimeTheme(!isRealtimeThemeMarketHours());
 };
 
 export const setRealtimeThemeInterval = (intervalMinutes: RealtimeThemeIntervalMinutes) => {

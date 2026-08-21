@@ -34,11 +34,12 @@ function normalizeReviewChart(data: ChartMarkerReviewChart, before: number, afte
   };
 }
 
-function ReviewChart({ data, reviewEvent, loading, markerEvents, onContextMenu }: {
+function ReviewChart({ data, reviewEvent, loading, markerEvents, showD0Marker, onContextMenu }: {
   data: ChartMarkerReviewChart | null;
   reviewEvent: ChartMarkerReviewEvent;
   loading: boolean;
   markerEvents: ChartMarkerEvent[];
+  showD0Marker: boolean;
   onContextMenu: (date: string, x: number, y: number) => void;
 }) {
   const [hovered, setHovered] = useState<number | null>(null);
@@ -73,15 +74,15 @@ function ReviewChart({ data, reviewEvent, loading, markerEvents, onContextMenu }
     <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${reviewEvent.stock_name} ${data.marker_date} 전후 차트`} onMouseLeave={() => setHovered(null)}>
       <rect width={width} height={height} rx="10" fill="#fff" />
       {[0, .25, .5, .75, 1].map((rate) => <line key={rate} x1={p.l} x2={width - p.r} y1={p.t + rate * priceH} y2={p.t + rate * priceH} stroke="#e2e8f0" />)}
-      {d0 >= 0 ? <rect x={x(d0) - slot / 2} y={p.t} width={slot} height={priceH + 24 + volH} fill={reviewEvent.group_color} opacity=".055" /> : null}
+      {showD0Marker && d0 >= 0 ? <rect x={x(d0) - slot / 2} y={p.t} width={slot} height={priceH + 24 + volH} fill={reviewEvent.group_color} opacity=".055" /> : null}
       {maSeries.map((ma) => { const points = rows.map((row, index) => row.moving_averages[ma.key] == null ? null : `${x(index)},${y(Number(row.moving_averages[ma.key]))}`).filter(Boolean).join(" "); return points ? <polyline key={ma.key} points={points} fill="none" stroke={ma.color} strokeWidth="1.4" /> : null; })}
       {rows.map((row, index) => { if (row.open == null || row.close == null || row.high == null || row.low == null) return null; const up = row.close >= row.open, color = up ? "#dc2626" : "#2563eb", top = y(Math.max(row.open, row.close)), bottom = y(Math.min(row.open, row.close)), volume = Number(row.volume || 0) / maxVol * volH; return <g key={row.trade_date}><line x1={x(index)} x2={x(index)} y1={y(row.high)} y2={y(row.low)} stroke={color} /><rect x={x(index) - body / 2} y={top} width={body} height={Math.max(2, bottom - top)} fill={up ? "#fff1f2" : "#eff6ff"} stroke={color} /><rect x={x(index) - body / 2} y={p.t + priceH + 24 + volH - volume} width={body} height={volume} fill={up ? "#fecaca" : "#bfdbfe"} /><rect x={x(index) - slot / 2} y={p.t} width={slot} height={priceH + 24 + volH} fill="transparent" onMouseEnter={() => setHovered(index)} onMouseMove={() => setHovered(index)} onContextMenu={(mouseEvent) => { mouseEvent.preventDefault(); setHovered(null); onContextMenu(row.trade_date, mouseEvent.clientX, mouseEvent.clientY); }} /></g>; })}
-      {rows.flatMap((row, index) => (eventsByDate.get(row.trade_date) ?? []).map((markerEvent, markerIndex) => {
+      {rows.flatMap((row, index) => (eventsByDate.get(row.trade_date) ?? []).filter((markerEvent) => showD0Marker || markerEvent.id !== reviewEvent.id).map((markerEvent, markerIndex) => {
         const isD0 = markerEvent.id === reviewEvent.id;
         const markerY = p.t + 12 + markerIndex * 19;
         return <g key={`marker-${markerEvent.id}`} pointerEvents="none"><circle cx={x(index)} cy={markerY} r={isD0 ? 10 : 8} fill={markerEvent.group_color} stroke="#fff" strokeWidth={isD0 ? 3 : 2} /><text x={x(index)} y={markerY + 3.5} textAnchor="middle" fill="#fff" fontSize={isD0 ? 10 : 8} fontWeight="800">{markerEvent.symbol}</text></g>;
       }))}
-      {d0 >= 0 ? <g pointerEvents="none"><line x1={x(d0)} x2={x(d0)} y1={p.t} y2={p.t + priceH + 24 + volH} stroke={reviewEvent.group_color} strokeWidth="2" strokeDasharray="5 4" /><rect x={x(d0) - 58} y={height - 28} width="116" height="22" rx="6" fill={reviewEvent.group_color} opacity=".12" /><text x={x(d0)} y={height - 13} textAnchor="middle" fill={reviewEvent.group_color} fontWeight="700" fontSize="12">D0 · {data.marker_date}</text></g> : null}
+      {showD0Marker && d0 >= 0 ? <g pointerEvents="none"><line x1={x(d0)} x2={x(d0)} y1={p.t} y2={p.t + priceH + 24 + volH} stroke={reviewEvent.group_color} strokeWidth="2" strokeDasharray="5 4" /><rect x={x(d0) - 58} y={height - 28} width="116" height="22" rx="6" fill={reviewEvent.group_color} opacity=".12" /><text x={x(d0)} y={height - 13} textAnchor="middle" fill={reviewEvent.group_color} fontWeight="700" fontSize="12">D0 · {data.marker_date}</text></g> : null}
       <text x={p.l} y={height - 12} fontSize="11" fill="#64748b">{rows[0].trade_date}</text><text x={width - p.r} y={height - 12} textAnchor="end" fontSize="11" fill="#64748b">{rows[rows.length - 1]?.trade_date}</text>
     </svg>
     {hover ? <div className="chart-marker-chart-tooltip"><strong>{hover.trade_date}</strong><span>시가 <b>{hover.open?.toLocaleString() ?? "-"}</b></span><span>고가 <b>{hover.high?.toLocaleString() ?? "-"}</b></span><span>저가 <b>{hover.low?.toLocaleString() ?? "-"}</b></span><span>종가 <b>{hover.close?.toLocaleString() ?? "-"}</b></span><span>거래량 <b>{hover.volume?.toLocaleString() ?? "-"}</b></span><span>등락률 <b className={closeChangeRate == null ? "" : closeChangeRate > 0 ? "up" : closeChangeRate < 0 ? "down" : "flat"}>{closeChangeRate == null ? "-" : `${closeChangeRate > 0 ? "+" : ""}${closeChangeRate.toFixed(2)}%`}</b></span></div> : null}
@@ -242,6 +243,7 @@ export default function ChartMarkerReviewPage() {
   const [tab, setTab] = useState<"catalog" | "review">("catalog"), [groups, setGroups] = useState<ChartMarkerGroup[]>([]), [groupId, setGroupId] = useState<number | null>(null), [markerId, setMarkerId] = useState<number | null>(null), [events, setEvents] = useState<ChartMarkerReviewEvent[]>([]), [selected, setSelected] = useState<ChartMarkerReviewEvent | null>(null), [stockQuery, setStockQuery] = useState(""), [chart, setChart] = useState<ChartMarkerReviewChart | null>(null), [chartLoading, setChartLoading] = useState(false), [error, setError] = useState("");
   const [resultFilter, setResultFilter] = useState<"ALL" | "SUCCESS" | "FAILURE">("ALL"), [savingReviewId, setSavingReviewId] = useState<number | null>(null);
   const [windowKey, setWindowKey] = useState<ReviewWindowKey>("60.D0.20");
+  const [showD0Marker, setShowD0Marker] = useState(true);
   const [rangeEvents, setRangeEvents] = useState<ChartMarkerEvent[]>([]);
   const [markerMenu, setMarkerMenu] = useState<{ date: string; x: number; y: number } | null>(null);
   const [markerEditor, setMarkerEditor] = useState<{ date: string; event?: ChartMarkerEvent } | null>(null);
@@ -377,11 +379,11 @@ export default function ChartMarkerReviewPage() {
     {tab === "catalog" ? <CatalogTab groups={groups} reload={reload} /> : <>
       <div className="chart-marker-review-intro"><div><h2>차트마커 복기</h2><p>같은 마커가 기록된 사례를 종목별로 비교합니다.</p></div></div>
       <div className="chart-marker-filters">
-        <label><span>마커그룹</span><select className="input-control" value={group?.id ?? ""} onChange={(event) => setGroupId(Number(event.target.value))}>{activeGroups.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-        <label className="chart-marker-filter-marker"><span>차트마커</span><select className="input-control" value={markerId ?? ""} onChange={(event) => setMarkerId(Number(event.target.value))}>{markers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-        <strong className="chart-marker-filter-count">사례 {visibleEvents.length}건</strong>
+        <label className="chart-marker-filter-group"><span>마커그룹</span><select className="input-control" value={group?.id ?? ""} onChange={(event) => { setGroupId(Number(event.target.value)); setMarkerId(null); }}>{activeGroups.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+        <div className="chart-marker-filter-marker"><span>차트마커</span><div className="chart-marker-choice-list" role="group" aria-label="차트마커 선택">{markers.length ? markers.map((item) => <button key={item.id} type="button" className={item.id === markerId ? "active" : ""} style={{ "--chart-marker-accent": group?.color ?? "#2563eb" } as CSSProperties} title={item.name} aria-pressed={item.id === markerId} onClick={() => setMarkerId(item.id)}><span className="chart-marker-choice-symbol" aria-hidden="true">{item.symbol}</span><strong>{item.name}</strong></button>) : <p>등록된 활성 마커가 없습니다.</p>}</div></div>
+        <strong className="chart-marker-filter-count">사례 {events.length}건</strong>
       </div>
-      {!groups.length ? <div className="chart-marker-empty">등록된 차트마커가 없습니다.<br />마커그룹 탭에서 먼저 마커를 등록해 주세요.</div> : !events.length ? <div className="chart-marker-empty">이 마커로 기록된 차트 사례가 없습니다.<br />종목매매훈련 차트에서 캔들을 우클릭하여 마커를 기록해 주세요.</div> : <div className="chart-marker-review-grid">
+      {!activeGroups.length ? <div className="chart-marker-empty">등록된 활성 차트마커 그룹이 없습니다.<br />마커그룹 탭에서 먼저 그룹을 활성화해 주세요.</div> : !markers.length ? <div className="chart-marker-empty">이 그룹에 등록된 활성 마커가 없습니다.<br />마커그룹 탭에서 사용할 마커를 활성화해 주세요.</div> : !events.length ? <div className="chart-marker-empty">이 마커로 기록된 차트 사례가 없습니다.<br />종목매매훈련 차트에서 캔들을 우클릭하여 마커를 기록해 주세요.</div> : <div className="chart-marker-review-grid">
         <aside className="panel chart-marker-case-panel" style={{ "--chart-marker-detail-height": detailHeight ? `${detailHeight}px` : undefined } as CSSProperties}>
           <header><h3>관련 종목 / 캔들일자</h3><span>{visibleEvents.length}건</span></header>
           <div className="chart-marker-case-tools"><div className="chart-marker-case-search"><Search size={15} aria-hidden="true" /><input className="input-control" type="search" value={stockQuery} onChange={(event) => setStockQuery(event.target.value)} placeholder="종목명 검색" aria-label="종목명 검색" /></div><div className="chart-marker-result-filter" aria-label="판정 상태 필터">{(["ALL", "SUCCESS", "FAILURE"] as const).map((value) => <button type="button" key={value} className={`${resultFilter === value ? "active" : ""} ${value.toLowerCase()}`} onClick={() => setResultFilter(value)}>{value === "ALL" ? "전체" : value === "SUCCESS" ? "성공" : "실패"}</button>)}</div></div>
@@ -399,8 +401,8 @@ export default function ChartMarkerReviewPage() {
         </aside>
         {selected ? <main className="panel chart-marker-review-detail" ref={detailRef}>
           <header><div className="chart-marker-review-context"><div className="chart-marker-review-title"><h2>{selected.stock_name}</h2><time>· {selected.marker_date}</time></div><p><span style={{ color: selected.group_color, background: `${selected.group_color}12`, borderColor: `${selected.group_color}40` }}>{selected.group_name}</span><b style={{ color: selected.group_color }}>{selected.symbol}</b>{selected.marker_name}</p></div><div className="chart-marker-review-nav"><button className="btn btn-secondary" disabled={selectedIndex <= 0} onClick={() => moveSelection(-1)}><ArrowLeft size={15} /> 이전 사례</button><strong>{selectedIndex + 1} / {visibleEvents.length}</strong><button className="btn btn-secondary" disabled={selectedIndex >= visibleEvents.length - 1} onClick={() => moveSelection(1)}>다음 사례 <ArrowRight size={15} /></button></div></header>
-          <div className="chart-marker-chart-heading"><div><h3>마커 전후 가격 흐름</h3><p>이전 {chart?.available_before ?? selectedWindow.before}개 · D0 · 이후 {chart?.available_after ?? selectedWindow.after}개</p></div><div className="chart-marker-window-controls" aria-label="차트 조회 구간">{REVIEW_WINDOWS.map((item) => <button key={item.key} type="button" className={windowKey === item.key ? "active" : ""} title={item.title} onClick={() => setWindowKey(item.key)}>{item.key}</button>)}<span>D0 {selected.marker_date}</span></div></div>
-          <ReviewChart data={chart} reviewEvent={selected} loading={chartLoading} markerEvents={rangeEvents} onContextMenu={(date, x, y) => setMarkerMenu({ date, x, y })} />
+          <div className="chart-marker-chart-heading"><div><h3>마커 전후 가격 흐름</h3><p>이전 {chart?.available_before ?? selectedWindow.before}개 · D0 · 이후 {chart?.available_after ?? selectedWindow.after}개</p></div><div className="chart-marker-window-controls" aria-label="차트 조회 도구"><label className="chart-marker-d0-toggle" title="복기 기준일의 마커 심볼과 세로선을 차트에 표시합니다."><input type="checkbox" checked={showD0Marker} onChange={(event) => setShowD0Marker(event.target.checked)} /><span>D0 마커 표시</span></label>{REVIEW_WINDOWS.map((item) => <button key={item.key} type="button" className={windowKey === item.key ? "active" : ""} title={item.title} onClick={() => setWindowKey(item.key)}>{item.key}</button>)}<span className="chart-marker-d0-date">D0 {selected.marker_date}</span></div></div>
+          <ReviewChart data={chart} reviewEvent={selected} loading={chartLoading} markerEvents={rangeEvents} showD0Marker={showD0Marker} onContextMenu={(date, x, y) => setMarkerMenu({ date, x, y })} />
           <section className="chart-marker-memo"><strong>메모</strong><p>{selected.memo || "등록된 메모가 없습니다."}</p></section>
         </main> : <main className="panel chart-marker-review-detail"><div className="chart-marker-empty compact">조건에 맞는 복기 사례가 없습니다.</div></main>}
       </div>}

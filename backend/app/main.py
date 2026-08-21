@@ -35,6 +35,8 @@ from backend.app.api.routes_kiwoom import router as kiwoom_router
 from backend.app.api.routes_reports import router as reports_router
 from backend.app.api.routes_schema_comments import router as schema_comments_router
 from backend.app.api.routes_stocks import router as stocks_router
+from backend.app.api.routes_us_stocks import router as us_stocks_router
+from backend.app.api.routes_us_market_themes import router as us_market_themes_router
 from backend.app.api.routes_stock_prices import router as stock_prices_router
 from backend.app.api.routes_stock_financials import router as stock_financials_router
 from backend.app.api.routes_stock_investor_flows import router as stock_investor_flows_router
@@ -63,6 +65,8 @@ app.add_middleware(
         "http://localhost:3000",
         "http://127.0.0.1:5173",
         "http://localhost:5173",
+        "http://127.0.0.1:4173",
+        "http://localhost:4173",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -72,6 +76,8 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(images_router)
 app.include_router(stocks_router)
+app.include_router(us_stocks_router)
+app.include_router(us_market_themes_router)
 app.include_router(stock_prices_router)
 app.include_router(stock_financials_router)
 app.include_router(stock_investor_flows_router)

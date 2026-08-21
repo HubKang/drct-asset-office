@@ -8,6 +8,7 @@ import { repositories } from "@/services";
 import {
   ensureRealtimeThemeSnapshot,
   getRealtimeThemeSchedulerState,
+  REALTIME_THEME_AUTO_STOP_TIME,
   setRealtimeThemeEnabled,
   setRealtimeThemeInterval,
   subscribeRealtimeThemeScheduler,
@@ -140,7 +141,7 @@ function RealtimeThemeTreemapPage() {
         <button className={`btn ${isRealtime ? "btn-primary" : "btn-secondary"}`} type="button" onClick={() => setRealtimeThemeEnabled(!isRealtime)}><span aria-hidden="true">●</span> 실시간 {isRealtime ? "ON" : "OFF"}</button>
       </div>
       {isRefreshing ? <p className="realtime-theme-refreshing"><RefreshCw size={15} className="realtime-spin" /> 실시간 데이터 갱신 중...</p> : null}
-      {isRealtime && !isRefreshing ? <p className="realtime-theme-refreshing is-waiting"><RefreshCw size={15} /> 실시간 자동 갱신 진행 중 · 다음 갱신 {nextRefreshAt == null ? "준비 중" : new Date(nextRefreshAt).toLocaleTimeString("ko-KR", { hour12: false })}</p> : null}
+      {isRealtime && !isRefreshing ? <p className="realtime-theme-refreshing is-waiting"><RefreshCw size={15} /> 실시간 자동 갱신 진행 중 · 다음 갱신 {nextRefreshAt == null ? "준비 중" : new Date(nextRefreshAt).toLocaleTimeString("ko-KR", { hour12: false })} · {REALTIME_THEME_AUTO_STOP_TIME} 최종 갱신 후 자동 종료</p> : null}
       {realtimeError ? <div className="realtime-theme-error" role="alert">
         <span className="realtime-theme-error-dot" aria-hidden="true" />
         <div><strong>실시간 수집 실패</strong><p>{realtimeError.message}</p></div>

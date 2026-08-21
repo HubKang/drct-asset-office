@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import EmptyState from "@/components/common/EmptyState";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import StatusBadge from "@/components/common/StatusBadge";
+import UsStocksPanel from "@/components/stocks/UsStocksPanel";
 import { repositories } from "@/services";
 import {
   buildNaverStockCandleChartUrl,
@@ -18,6 +20,7 @@ type MarketFilter = "ALL" | "KOSPI" | "KOSDAQ" | "INACTIVE";
 type SecurityFilter = "ALL" | "common_stock" | "preferred_stock" | "etf" | "etn" | "spac" | "reit" | "other";
 type SyncMarket = "ALL" | "KOSPI" | "KOSDAQ";
 type SecurityType = "common_stock" | "preferred_stock" | "etf" | "etn" | "spac" | "reit" | "other";
+type MarketScope = "KR" | "US";
 
 const SECURITY_TYPES: SecurityType[] = ["common_stock", "preferred_stock", "etf", "etn", "spac", "reit", "other"];
 const SECURITY_LABELS: Record<SecurityType, string> = {
@@ -40,10 +43,10 @@ const createEmptySecurityTypeMap = <T,>(value: T): Record<SecurityType, T> => ({
   other: value,
 });
 
-function formatSyncedAt(value: string | null | undefined): string {
+function formatCompactSyncedAt(value: string | null | undefined): string {
   if (!value) return "-";
   const normalized = value.replace("T", " ");
-  return normalized.length >= 16 ? normalized.slice(0, 16) : normalized;
+  return normalized.length >= 16 ? normalized.slice(5, 16).replace("-", ".") : normalized;
 }
 
 function StockChartImage({
@@ -92,6 +95,8 @@ function StockChartImage({
 }
 
 function StocksPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const marketScope: MarketScope = searchParams.get("market")?.toLowerCase() === "us" ? "US" : "KR";
   const [items, setItems] = useState<Stock[]>([]);
   const [keyword, setKeyword] = useState("");
   const [marketFilter, setMarketFilter] = useState<MarketFilter>("ALL");
@@ -109,6 +114,7 @@ function StocksPage() {
   const [syncResult, setSyncResult] = useState<StockSyncResponse | null>(null);
   const [syncError, setSyncError] = useState("");
   const [showRawLog, setShowRawLog] = useState(false);
+  const [usActiveCount, setUsActiveCount] = useState(0);
 
   const buildListParams = (nextOffset = offset) => {
     const params: {
@@ -156,12 +162,12 @@ function StocksPage() {
   };
 
   useEffect(() => {
-    void load();
-  }, [offset]);
+    if (marketScope === "KR") void load();
+  }, [offset, marketScope]);
 
   useEffect(() => {
-    void loadTypeCounts();
-  }, []);
+    if (marketScope === "KR") void loadTypeCounts();
+  }, [marketScope]);
 
   const activeCount = useMemo(() => items.filter((i) => i.is_active === 1).length, [items]);
 
@@ -226,23 +232,41 @@ function StocksPage() {
   const canPrev = offset > 0;
   const canNext = items.length >= limit;
   const renderSecurityType = (value: string | null) => SECURITY_LABELS[(value as SecurityType) || "other"] || "기타";
+  const changeMarketScope = (scope: MarketScope) => {
+    const next = new URLSearchParams(searchParams);
+    next.set("market", scope.toLowerCase());
+    setSearchParams(next, { replace: true });
+  };
+  const scopeToggle = (
+    <div className="stock-market-scope" role="group" aria-label="시장 범위">
+      <button type="button" className={marketScope === "KR" ? "active" : ""} aria-pressed={marketScope === "KR"} onClick={() => changeMarketScope("KR")}>국내 KRX</button>
+      <button type="button" className={marketScope === "US" ? "active" : ""} aria-pressed={marketScope === "US"} onClick={() => changeMarketScope("US")}>미국 US</button>
+    </div>
+  );
 
   return (
     <div className="space-y-4">
-      <PageHeader
-        title="종목 관리"
-        description="KRX 최신 목록을 기준으로 DrCT에셋 종목 마스터를 재구축합니다."
-        action={<StatusBadge label={`활성 ${activeCount} / 이번 페이지 ${items.length}`} tone="blue" />}
-      />
+      <div className="stocks-top-grid">
+        <PageHeader
+          title="종목 관리"
+          description="국내 및 해외 시장에서 DrCT에셋이 사용하는 종목을 관리합니다."
+          action={<StatusBadge label={marketScope === "KR" ? `활성 ${activeCount} / 이번 페이지 ${items.length}` : `미국 활성 ${usActiveCount}`} tone="blue" />}
+        />
+        <SectionCard title="종목 마스터 관리" className="stocks-scope-card">
+          <div className="stock-market-scope-row">{scopeToggle}</div>
+        </SectionCard>
+      </div>
 
-      <SectionCard title="최신 KRX 목록 재구축">
-        <div className="watchlist-card-title-wrap">
-          <span className="watchlist-card-title">동기화 옵션</span>
-          <span className="hint-icon" title="선택한 종목유형 기준으로 기존 종목 마스터를 비활성화한 뒤 최신 KRX 목록으로 다시 반영합니다.">
-            i
+      {marketScope === "US" ? <UsStocksPanel onCountChange={setUsActiveCount} /> : <>
+      <SectionCard
+        className="stock-work-card"
+        title={
+          <span className="stock-work-title">
+            최신 KRX 목록 재구축
+            <span className="hint-icon" title="선택한 종목유형 기준으로 기존 종목 마스터를 비활성화한 뒤 최신 KRX 목록으로 다시 반영합니다.">i</span>
           </span>
-        </div>
-
+        }
+      >
         <div className="stock-sync-market-row">
           <select className="select-control" value={syncMarket} onChange={(e) => setSyncMarket(e.target.value as SyncMarket)}>
             <option value="ALL">전체 시장</option>
@@ -270,10 +294,8 @@ function StocksPage() {
             const selected = includeSecurityTypes.includes(type);
             return (
               <button key={type} type="button" className={`stock-type-card ${selected ? "selected" : ""}`} onClick={() => toggleSecurityType(type)}>
-                <strong>{SECURITY_LABELS[type]}</strong>
-                <span>{typeCounts[type].toLocaleString()}건</span>
-                <span>마지막 동기화 {formatSyncedAt(typeLatestSyncedAt[type])}</span>
-                <em>{selected ? "선택" : "미선택"}</em>
+                <span className="stock-type-card-main"><strong>{SECURITY_LABELS[type]}</strong><b>{typeCounts[type].toLocaleString()}</b></span>
+                <span>최근 {formatCompactSyncedAt(typeLatestSyncedAt[type])}</span>
               </button>
             );
           })}
@@ -385,6 +407,7 @@ function StocksPage() {
           </>
         )}
       </SectionCard>
+      </>}
       {zoomedChart ? (
         <div className="stock-management-chart-modal" onClick={() => setZoomedChart(null)}>
           <img

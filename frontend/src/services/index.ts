@@ -22,6 +22,8 @@ import { kmsApiRepository } from "@/services/api/kmsApiRepository";
 import { imageApiRepository } from "@/services/api/imageApiRepository";
 import { schemaCommentApiRepository } from "@/services/api/schemaCommentApiRepository";
 import { stockApiRepository } from "@/services/api/stockApiRepository";
+import { usStockApiRepository } from "@/services/api/usStockApiRepository";
+import { usMarketThemeApiRepository } from "@/services/api/usMarketThemeApiRepository";
 import { stockPriceApiRepository } from "@/services/api/stockPriceApiRepository";
 import { stockTrackingApiRepository } from "@/services/api/stockTrackingApiRepository";
 import { tradeJournalApiRepository } from "@/services/api/tradeJournalApiRepository";
@@ -56,6 +58,8 @@ export const repositories = {
   architecture: architectureApiRepository,
   backtest: backtestApiRepository,
   stocks: useMock ? stockMockRepository : stockApiRepository,
+  usStocks: usStockApiRepository,
+  usMarketThemes: usMarketThemeApiRepository,
   stockPrices: useMock ? stockPriceMockRepository : stockPriceApiRepository,
   stockTracking: useMock ? stockTrackingMockRepository : stockTrackingApiRepository,
   watchlist: useMock ? watchlistMockRepository : watchlistApiRepository,

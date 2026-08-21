@@ -8,6 +8,7 @@ import MarketThemePriceFlowPanel from "@/components/marketThemes/MarketThemePric
 import MarketThemeFlowTrendPanel, { invalidateMarketThemeFlowTrendFrontendCache } from "@/components/marketThemes/MarketThemeFlowTrendPanel";
 import MarketThemeReturnPredictionPanel from "@/components/marketThemes/MarketThemeReturnPredictionPanel";
 import MarketThemeDetailDrawer, { ThemeLinkedStockChart, type MarketThemeDetailFlowContext } from "@/components/marketThemes/MarketThemeDetailDrawer";
+import UsMarketThemesPanel from "@/components/marketThemes/UsMarketThemesPanel";
 import { repositories } from "@/services";
 import { ApiError } from "@/services/api/apiClient";
 import {
@@ -37,8 +38,9 @@ import type {
   MarketThemeType,
 } from "@/types/marketTheme";
 import type { Stock } from "@/types/stock";
+import type { UsThemeSummary } from "@/types/usMarketTheme";
 
-type ActiveTab = "themes" | "mapping" | "candidates";
+type ActiveTab = "themes" | "mapping" | "candidates" | "usTrend";
 type ThemeViewMode = "group" | "theme" | "trend" | "flowTrend" | "prediction";
 type PredictionSort = "default" | "desc" | "asc";
 type ThemeReturnSort = "default" | "desc" | "asc";
@@ -423,10 +425,12 @@ function ThemeReturnLineChart({
 }
 
 function MarketThemesPage() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const marketScope = searchParams.get("market")?.toLowerCase() === "us" ? "US" : "KR";
   const refreshPollingTokenRef = useRef(0);
   const observationDeepLinkOpenedRef = useRef(false);
   const [activeTab, setActiveTab] = useState<ActiveTab>("themes");
+  const [usSummary, setUsSummary] = useState<UsThemeSummary>({ theme_groups: 0, themes: 0, active_themes: 0, linked_stocks: 0 });
 
   const [themes, setThemes] = useState<MarketTheme[]>([]);
   const [selectedThemeId, setSelectedThemeId] = useState<number | null>(null);
@@ -1089,8 +1093,8 @@ function MarketThemesPage() {
   };
 
   useEffect(() => {
-    void Promise.all([loadThemes(), loadCandidates()]);
-  }, []);
+    if (marketScope === "KR") void Promise.all([loadThemes(), loadCandidates()]);
+  }, [marketScope]);
 
   useEffect(() => {
     if (observationDeepLinkOpenedRef.current || themeViewMode !== "prediction") return;
@@ -1103,8 +1107,8 @@ function MarketThemesPage() {
   }, [manageableThemes, searchParams, themeViewMode]);
 
   useEffect(() => {
-    void loadThemeStocks(selectedThemeId);
-  }, [selectedThemeId, mappingThemeGroupId, mappingSelectableThemes, mappingAllThemesSelected]);
+    if (marketScope === "KR") void loadThemeStocks(selectedThemeId);
+  }, [selectedThemeId, mappingThemeGroupId, mappingSelectableThemes, mappingAllThemesSelected, marketScope]);
 
   useEffect(() => {
     if (!stockDrawerOpen) return;
@@ -1174,10 +1178,10 @@ function MarketThemesPage() {
 
 
   useEffect(() => {
-    if (activeTab === "themes" && themeViewMode === "trend") {
+    if (marketScope === "KR" && activeTab === "themes" && themeViewMode === "trend") {
       void loadThemeReturnTrend();
     }
-  }, [activeTab, themeViewMode, trendEndDate, trendThemeGroupId, trendLimit, trendSortMode]);
+  }, [activeTab, themeViewMode, trendEndDate, trendThemeGroupId, trendLimit, trendSortMode, marketScope]);
   useEffect(() => {
     if (themePage > themeTotalPages) {
       setThemePage(themeTotalPages);
@@ -1213,8 +1217,8 @@ function MarketThemesPage() {
   }, [mappingThemeDropdownOpen]);
 
   useEffect(() => {
-    void loadCandidates();
-  }, [candidateSourceFilter, candidateStatusFilter]);
+    if (marketScope === "KR") void loadCandidates();
+  }, [candidateSourceFilter, candidateStatusFilter, marketScope]);
 
   const openCreateThemeModal = () => {
     resetForm();
@@ -1531,6 +1535,47 @@ function MarketThemesPage() {
     await loadCandidates();
   };
 
+  const changeMarketScope = (scope: "KR" | "US") => {
+    const next = new URLSearchParams(searchParams);
+    next.set("market", scope.toLowerCase());
+    if (scope === "US") {
+      next.delete("view");
+      next.delete("theme_id");
+      if (activeTab === "candidates") setActiveTab("themes");
+      if (!(["group", "theme"] as ThemeViewMode[]).includes(themeViewMode)) setThemeViewMode("theme");
+    } else if (activeTab === "usTrend") {
+      setActiveTab("themes");
+    }
+    setSearchParams(next, { replace: true });
+  };
+
+  const marketScopeControl = <div className="stock-market-scope market-theme-scope-control" role="group" aria-label="시장 범위">
+    <button type="button" className={marketScope === "KR" ? "active" : ""} aria-pressed={marketScope === "KR"} onClick={() => changeMarketScope("KR")}>국내 KRX</button>
+    <button type="button" className={marketScope === "US" ? "active" : ""} aria-pressed={marketScope === "US"} onClick={() => changeMarketScope("US")}>미국 US</button>
+  </div>;
+
+  if (marketScope === "US") {
+    return <div className="space-y-4">
+      <div className="journal-hero-row market-theme-hero-row">
+        <section className="journal-hero-panel"><h1>시장 테마 관리</h1><p>미국 테마와 연결 종목을 관리합니다.</p></section>
+        <section className="journal-summary-compact market-theme-hero-summary us-market-theme-summary" aria-label="미국 시장 테마 요약">
+          {[
+            ["테마그룹", usSummary.theme_groups], ["전체 테마", usSummary.themes], ["활성 테마", usSummary.active_themes], ["연결 종목", usSummary.linked_stocks],
+          ].map(([label, value]) => <div className="journal-summary-mini-card" key={String(label)}><span className="journal-summary-label">{label}</span><strong className="journal-summary-value">{value}</strong></div>)}
+        </section>
+      </div>
+      <div className="market-theme-command-grid">
+        <SectionCard title="" className="market-theme-tabs-card"><div className="gpt-domain-tabs market-theme-primary-tabs">
+          <button type="button" className={`gpt-domain-tab market-theme-primary-tab ${activeTab === "themes" ? "active" : ""}`} onClick={() => setActiveTab("themes")}>테마 관리</button>
+          <button type="button" className={`gpt-domain-tab market-theme-primary-tab ${activeTab === "mapping" ? "active" : ""}`} onClick={() => setActiveTab("mapping")}>종목 연결</button>
+          <button type="button" className={`gpt-domain-tab market-theme-primary-tab ${activeTab === "usTrend" ? "active" : ""}`} onClick={() => setActiveTab("usTrend")}>테마등락추이</button>
+        </div></SectionCard>
+        <SectionCard title="시장" className="market-theme-scope-panel">{marketScopeControl}</SectionCard>
+      </div>
+      <UsMarketThemesPanel activeTab={activeTab === "mapping" ? "mapping" : activeTab === "usTrend" ? "trend" : "themes"} onSummaryChange={setUsSummary} />
+    </div>;
+  }
+
   return (
     <div className="space-y-4">
       <div className="journal-hero-row market-theme-hero-row">
@@ -1592,13 +1637,16 @@ function MarketThemesPage() {
         </details>
       ) : null}
 
-      <SectionCard title="" className="market-theme-tabs-card">
-        <div className="gpt-domain-tabs market-theme-primary-tabs">
-          <button type="button" className={`gpt-domain-tab market-theme-primary-tab ${activeTab === "themes" ? "active" : ""}`} onClick={() => { setActiveTab("themes"); setThemeViewMode("theme"); }}>테마 관리</button>
-          <button type="button" className={`gpt-domain-tab market-theme-primary-tab ${activeTab === "mapping" ? "active" : ""}`} onClick={() => setActiveTab("mapping")}>종목 연결</button>
-          <button type="button" className={`gpt-domain-tab market-theme-primary-tab ${activeTab === "candidates" ? "active" : ""}`} onClick={() => setActiveTab("candidates")}>추천 후보</button>
-        </div>
-      </SectionCard>
+      <div className="market-theme-command-grid">
+        <SectionCard title="" className="market-theme-tabs-card">
+          <div className="gpt-domain-tabs market-theme-primary-tabs">
+            <button type="button" className={`gpt-domain-tab market-theme-primary-tab ${activeTab === "themes" ? "active" : ""}`} onClick={() => { setActiveTab("themes"); setThemeViewMode("theme"); }}>테마 관리</button>
+            <button type="button" className={`gpt-domain-tab market-theme-primary-tab ${activeTab === "mapping" ? "active" : ""}`} onClick={() => setActiveTab("mapping")}>종목 연결</button>
+            <button type="button" className={`gpt-domain-tab market-theme-primary-tab ${activeTab === "candidates" ? "active" : ""}`} onClick={() => setActiveTab("candidates")}>추천 후보</button>
+          </div>
+        </SectionCard>
+        <SectionCard title="시장" className="market-theme-scope-panel">{marketScopeControl}</SectionCard>
+      </div>
 
       {activeTab === "themes" ? (
         <SectionCard title="" className="market-theme-management-card">
