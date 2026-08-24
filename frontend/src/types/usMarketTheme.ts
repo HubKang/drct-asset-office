@@ -30,6 +30,14 @@ export type UsThemeReturnItem = {
   breadth_ratio: number | null; valid_stock_count: number; up_count: number; down_count: number; flat_count: number;
 };
 export type UsThemeReturnList = { latest_date: string | null; items: UsThemeReturnItem[] };
+export type UsThemeTreemapItem = UsThemeReturnItem & { linked_stock_count: number };
+export type UsThemeTreemap = {
+  latest_date: string | null;
+  active_theme_count: number;
+  linked_stock_count: number;
+  aggregated_stock_count: number;
+  items: UsThemeTreemapItem[];
+};
 export type UsThemeTrendPoint = { trade_date: string; simple_return: number; theme_strength: number; rolling_30d_simple_return: number; rolling_30d_theme_strength: number; rolling_30d_valid_count: number; breadth_ratio: number; valid_stock_count: number; up_count: number };
 export type UsThemeTrendItem = { theme_id: number; theme_group_id: number; theme_group_name: string; theme_name: string; active: number; points: UsThemeTrendPoint[] };
 export type UsThemeTrend = { period: 20 | 30 | 60; dates: string[]; items: UsThemeTrendItem[] };

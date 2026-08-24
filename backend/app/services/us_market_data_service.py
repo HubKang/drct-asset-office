@@ -25,6 +25,8 @@ from backend.app.schemas.us_market_theme_schema import (
     UsThemeReturnListResponse,
     UsThemeReturnRecalculateRequest,
     UsThemeReturnRecalculateResponse,
+    UsThemeTreemapItem,
+    UsThemeTreemapResponse,
     UsThemeTrendItem,
     UsThemeTrendPoint,
     UsThemeTrendResponse,
@@ -312,16 +314,64 @@ class UsMarketDataService:
         """), {"latest_date": latest_date}).mappings().all()
         return UsThemeReturnListResponse(latest_date=str(latest_date) if latest_date else None, items=[self._return_item(row) for row in rows])
 
+    def treemap(self) -> UsThemeTreemapResponse:
+        """Return the latest finalized US theme values with active link counts.
+
+        This is a read-only projection over the existing durable aggregate and
+        relationship tables. It deliberately does not recalculate or persist data.
+        """
+        latest_date = self.db.scalar(text("SELECT MAX(trade_date) FROM us_theme_daily_returns"))
+        rows = self.db.execute(text("""
+            SELECT t.id theme_id,g.name theme_group_name,t.name theme_name,
+                   r.trade_date,r.simple_return,r.theme_strength,r.trimmed_mean_return,
+                   r.median_return,r.breadth_ratio,r.valid_stock_count,r.up_count,
+                   r.down_count,r.flat_count,COUNT(s.id) linked_stock_count
+            FROM us_themes t
+            JOIN us_theme_groups g ON g.id=t.theme_group_id
+            LEFT JOIN us_theme_daily_returns r
+              ON r.theme_id=t.id AND r.trade_date=:latest_date
+            LEFT JOIN us_theme_stocks linked
+              ON linked.theme_id=t.id AND linked.active=1
+            LEFT JOIN us_stocks s
+              ON s.id=linked.us_stock_id AND s.is_active=1
+            WHERE t.active=1
+            GROUP BY t.id,g.name,t.name,r.trade_date,r.simple_return,r.theme_strength,
+                     r.trimmed_mean_return,r.median_return,r.breadth_ratio,
+                     r.valid_stock_count,r.up_count,r.down_count,r.flat_count
+            ORDER BY g.sort_order,t.sort_order,t.name
+        """), {"latest_date": latest_date}).mappings().all()
+        items = [
+            UsThemeTreemapItem(
+                **self._return_item(row).model_dump(),
+                linked_stock_count=int(row["linked_stock_count"] or 0),
+            )
+            for row in rows
+        ]
+        return UsThemeTreemapResponse(
+            latest_date=str(latest_date) if latest_date else None,
+            active_theme_count=len(items),
+            linked_stock_count=sum(item.linked_stock_count for item in items),
+            aggregated_stock_count=sum(item.valid_stock_count for item in items),
+            items=items,
+        )
+
     def trend(self, *, period: int, end_date: str | None = None, active: int | None = 1) -> UsThemeTrendResponse:
-        date_filter = "WHERE trade_date<=:end_date" if end_date else ""
-        date_params: dict[str, object] = {"period": period}
-        if end_date:
-            date_params["end_date"] = end_date
-        dates = [str(value) for value in self.db.scalars(text(
-            f"SELECT DISTINCT trade_date FROM us_theme_daily_returns {date_filter} ORDER BY trade_date DESC LIMIT :period"
-        ), date_params).all()][::-1]
-        if not dates:
+        latest_filter = "WHERE trade_date<=:end_date" if end_date else ""
+        latest_params: dict[str, object] = {"end_date": end_date} if end_date else {}
+        latest_stored_date = self.db.scalar(text(
+            f"SELECT MAX(trade_date) FROM us_theme_daily_returns {latest_filter}"
+        ), latest_params)
+        if not latest_stored_date:
             return UsThemeTrendResponse(period=period, dates=[], items=[])
+        # Keep every calendar date in the requested range. A date without a
+        # collected observation remains absent from `points`, allowing the UI
+        # to render the verified KRX missing-data marker (`-`) instead of
+        # compressing the axis or treating the missing value as zero.
+        display_end_date = date.fromisoformat(end_date or str(latest_stored_date))
+        dates = [
+            (display_end_date - timedelta(days=offset)).isoformat()
+            for offset in range(period - 1, -1, -1)
+        ]
         active_filter = "AND t.active=:active" if active is not None else ""
         # Keep the verified KRX rule: for every displayed observation date, sum
         # daily theme values in the inclusive 30-calendar-day window ending on it.

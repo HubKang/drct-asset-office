@@ -3,6 +3,11 @@ export const THEME_RETURN_HEATMAP_COLORS = [
   "#FEE2E2", "#FCA5A5", "#F87171", "#DC2626",
 ] as const;
 
+export const THEME_RETURN_HEATMAP_LABELS = [
+  "-20% 이하", "-15%", "-10%", "-5%", "0%",
+  "+5%", "+10%", "+15%", "+20% 이상",
+] as const;
+
 const NEAR_ZERO_NEGATIVE_COLOR = "#EFF6FF";
 const NEAR_ZERO_POSITIVE_COLOR = "#FFF1F2";
 

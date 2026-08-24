@@ -94,8 +94,22 @@ def test_price_upsert_theme_return_and_strength_parity(isolated_api_client: Test
     assert round(item["theme_strength"], 6) == round(calculate_theme_strength(values, 10.0), 6)
     assert item["breadth_ratio"] == 1.0 and item["valid_stock_count"] == 2
 
+    treemap = client.get("/us-market-themes/treemap")
+    assert treemap.status_code == 200
+    treemap_body = treemap.json()
+    assert treemap_body["latest_date"] == "2026-08-20"
+    assert treemap_body["active_theme_count"] == 1
+    assert treemap_body["linked_stock_count"] == 3
+    assert treemap_body["aggregated_stock_count"] == 2
+    assert treemap_body["items"][0]["linked_stock_count"] == 3
+    assert treemap_body["items"][0]["theme_strength"] == item["theme_strength"]
+
     trend = client.get("/us-market-themes/returns/trend", params={"period": 30})
-    assert trend.status_code == 200 and trend.json()["dates"] == ["2026-08-19", "2026-08-20"]
+    assert trend.status_code == 200
+    assert len(trend.json()["dates"]) == 30
+    assert trend.json()["dates"][0] == "2026-07-22"
+    assert trend.json()["dates"][-1] == "2026-08-20"
+    assert "2026-08-18" in trend.json()["dates"]
     assert trend.json()["items"][0]["theme_group_id"] == group["id"]
     assert trend.json()["items"][0]["active"] == 1
     assert trend.json()["items"][0]["points"][-1]["valid_stock_count"] == 2
@@ -104,7 +118,9 @@ def test_price_upsert_theme_return_and_strength_parity(isolated_api_client: Test
     assert points[-1]["rolling_30d_theme_strength"] == round(sum(point["theme_strength"] for point in points), 4)
     assert points[-1]["rolling_30d_valid_count"] == len(points)
     cutoff = client.get("/us-market-themes/returns/trend", params={"period": 30, "end_date": "2026-08-19"}).json()
-    assert cutoff["dates"] == ["2026-08-19"]
+    assert len(cutoff["dates"]) == 30
+    assert cutoff["dates"][0] == "2026-07-21"
+    assert cutoff["dates"][-1] == "2026-08-19"
     assert cutoff["items"][0]["points"][0]["rolling_30d_simple_return"] == points[0]["simple_return"]
     detail = client.get(f"/us-market-themes/themes/{theme['id']}/returns/2026-08-20").json()
     assert len(detail["stocks"]) == 3

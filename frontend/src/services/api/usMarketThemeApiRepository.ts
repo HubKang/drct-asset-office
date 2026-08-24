@@ -1,5 +1,5 @@
 import { apiRequest } from "@/services/api/apiClient";
-import type { UsMarketRefreshResponse, UsTheme, UsThemeGroup, UsThemeGroupInput, UsThemeInput, UsThemeReturnDetail, UsThemeReturnList, UsThemeStock, UsThemeStockInput, UsThemeSummary, UsThemeTrend, UsStockCharts } from "@/types/usMarketTheme";
+import type { UsMarketRefreshResponse, UsTheme, UsThemeGroup, UsThemeGroupInput, UsThemeInput, UsThemeReturnDetail, UsThemeReturnList, UsThemeStock, UsThemeStockInput, UsThemeSummary, UsThemeTreemap, UsThemeTrend, UsStockCharts } from "@/types/usMarketTheme";
 
 export const usMarketThemeApiRepository = {
   summary: () => apiRequest<UsThemeSummary>("/us-market-themes/summary"),
@@ -20,6 +20,7 @@ export const usMarketThemeApiRepository = {
   unlinkMapping: (mappingId: number) => apiRequest<UsThemeStock>(`/us-market-themes/mappings/${mappingId}`, { method: "DELETE" }),
   charts: (stockId: number) => apiRequest<UsStockCharts>(`/us-stocks/${stockId}/naver-charts`, { timeoutMs: 8000, cache: "no-store" }),
   latestReturns: () => apiRequest<UsThemeReturnList>("/us-market-themes/returns/latest"),
+  treemap: (signal?: AbortSignal) => apiRequest<UsThemeTreemap>("/us-market-themes/treemap", { signal, cache: "no-store" }),
   trend: (period: 20 | 30 | 60, options: { end_date?: string; active?: number | null } = {}) => {
     const search = new URLSearchParams({ period: String(period) });
     if (options.end_date) search.set("end_date", options.end_date);

@@ -281,6 +281,20 @@ def ensure_runtime_schema() -> None:
         """)
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_us_theme_daily_returns_date ON us_theme_daily_returns(trade_date)")
         conn.exec_driver_sql("""
+            CREATE TABLE IF NOT EXISTS us_kr_theme_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                us_theme_id INTEGER NOT NULL UNIQUE,
+                kr_theme_id INTEGER NOT NULL UNIQUE,
+                memo TEXT,
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(us_theme_id) REFERENCES us_themes(id) ON DELETE RESTRICT,
+                FOREIGN KEY(kr_theme_id) REFERENCES market_themes(id) ON DELETE RESTRICT
+            )
+        """)
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_us_kr_theme_links_active ON us_kr_theme_links(active)")
+        conn.exec_driver_sql("""
             CREATE TABLE IF NOT EXISTS chart_marker_groups (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, description TEXT,
                 color TEXT NOT NULL DEFAULT '#64748b', sort_order INTEGER NOT NULL DEFAULT 0,

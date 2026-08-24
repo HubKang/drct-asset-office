@@ -24,6 +24,7 @@ import { schemaCommentApiRepository } from "@/services/api/schemaCommentApiRepos
 import { stockApiRepository } from "@/services/api/stockApiRepository";
 import { usStockApiRepository } from "@/services/api/usStockApiRepository";
 import { usMarketThemeApiRepository } from "@/services/api/usMarketThemeApiRepository";
+import { usKrThemeLinkApiRepository } from "@/services/api/usKrThemeLinkApiRepository";
 import { stockPriceApiRepository } from "@/services/api/stockPriceApiRepository";
 import { stockTrackingApiRepository } from "@/services/api/stockTrackingApiRepository";
 import { tradeJournalApiRepository } from "@/services/api/tradeJournalApiRepository";
@@ -60,6 +61,7 @@ export const repositories = {
   stocks: useMock ? stockMockRepository : stockApiRepository,
   usStocks: usStockApiRepository,
   usMarketThemes: usMarketThemeApiRepository,
+  usKrThemeLinks: usKrThemeLinkApiRepository,
   stockPrices: useMock ? stockPriceMockRepository : stockPriceApiRepository,
   stockTracking: useMock ? stockTrackingMockRepository : stockTrackingApiRepository,
   watchlist: useMock ? watchlistMockRepository : watchlistApiRepository,

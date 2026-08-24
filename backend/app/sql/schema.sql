@@ -438,6 +438,20 @@ CREATE TABLE IF NOT EXISTS us_themes (
     FOREIGN KEY(theme_group_id) REFERENCES us_theme_groups(id) ON DELETE RESTRICT
 );
 
+CREATE TABLE IF NOT EXISTS us_kr_theme_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    us_theme_id INTEGER NOT NULL UNIQUE,
+    kr_theme_id INTEGER NOT NULL UNIQUE,
+    memo TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(us_theme_id) REFERENCES us_themes(id) ON DELETE RESTRICT,
+    FOREIGN KEY(kr_theme_id) REFERENCES market_themes(id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_us_kr_theme_links_active ON us_kr_theme_links(active);
+
 CREATE TABLE IF NOT EXISTS us_theme_stocks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     theme_id INTEGER NOT NULL,

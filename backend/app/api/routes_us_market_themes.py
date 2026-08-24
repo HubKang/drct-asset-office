@@ -19,6 +19,7 @@ from backend.app.schemas.us_market_theme_schema import (
     UsMarketRefreshResponse,
     UsThemeReturnDetailResponse,
     UsThemeReturnListResponse,
+    UsThemeTreemapResponse,
     UsThemeReturnRecalculateRequest,
     UsThemeReturnRecalculateResponse,
     UsThemeTrendResponse,
@@ -47,6 +48,11 @@ def recalculate_us_theme_returns(payload: UsThemeReturnRecalculateRequest, db: S
 @router.get("/returns/latest", response_model=UsThemeReturnListResponse)
 def get_latest_us_theme_returns(db: Session = Depends(get_db)) -> UsThemeReturnListResponse:
     return UsMarketDataService(db).latest_returns()
+
+
+@router.get("/treemap", response_model=UsThemeTreemapResponse)
+def get_us_theme_treemap(db: Session = Depends(get_db)) -> UsThemeTreemapResponse:
+    return UsMarketDataService(db).treemap()
 
 
 @router.get("/returns/trend", response_model=UsThemeTrendResponse)

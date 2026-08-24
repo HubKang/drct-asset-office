@@ -167,6 +167,18 @@ class UsThemeReturnListResponse(BaseModel):
     items: list[UsThemeReturnItem]
 
 
+class UsThemeTreemapItem(UsThemeReturnItem):
+    linked_stock_count: int = 0
+
+
+class UsThemeTreemapResponse(BaseModel):
+    latest_date: str | None
+    active_theme_count: int = 0
+    linked_stock_count: int = 0
+    aggregated_stock_count: int = 0
+    items: list[UsThemeTreemapItem]
+
+
 class UsThemeReturnRecalculateRequest(BaseModel):
     start_date: str | None = None
     end_date: str | None = None

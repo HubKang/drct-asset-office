@@ -69,6 +69,7 @@ let state: RealtimeThemeSchedulerState = {
   nextRefreshAt: null,
 };
 let timer: number | null = null;
+let suspended = false;
 let refreshPromise: Promise<void> | null = null;
 let snapshotLoadPromise: Promise<void> | null = null;
 
@@ -89,6 +90,7 @@ const stopRealtimeTheme = () => {
 
 const scheduleNext = () => {
   clearTimer();
+  if (suspended) { update({ nextRefreshAt: null }); return; }
   if (!state.isRealtime) { update({ nextRefreshAt: null }); return; }
   const now = Date.now();
   if (!isRealtimeThemeMarketHours(now)) { stopRealtimeTheme(); return; }
@@ -114,7 +116,7 @@ export const refreshRealtimeTheme = (stopAfterRefresh = false): Promise<void> =>
       refreshPromise = null;
       update({ isRefreshing: false });
       if (stopAfterRefresh || isRealtimeThemeAutoStopTime()) stopRealtimeTheme();
-      else if (state.isRealtime) scheduleNext();
+      else if (state.isRealtime && !suspended) scheduleNext();
     });
   return refreshPromise;
 };
@@ -140,6 +142,16 @@ export const setRealtimeThemeInterval = (intervalMinutes: RealtimeThemeIntervalM
   window.localStorage.setItem(INTERVAL_STORAGE_KEY, intervalMinutes);
   update({ intervalMinutes });
   if (state.isRealtime && !state.isRefreshing) scheduleNext();
+};
+
+export const setRealtimeThemeSuspended = (nextSuspended: boolean) => {
+  suspended = nextSuspended;
+  if (suspended) {
+    clearTimer();
+    update({ nextRefreshAt: null });
+  } else if (state.isRealtime && !state.isRefreshing) {
+    scheduleNext();
+  }
 };
 
 export const subscribeRealtimeThemeScheduler = (listener: () => void) => {

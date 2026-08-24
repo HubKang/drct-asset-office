@@ -9,6 +9,7 @@ import MarketThemeFlowTrendPanel, { invalidateMarketThemeFlowTrendFrontendCache 
 import MarketThemeReturnPredictionPanel from "@/components/marketThemes/MarketThemeReturnPredictionPanel";
 import MarketThemeDetailDrawer, { ThemeLinkedStockChart, type MarketThemeDetailFlowContext } from "@/components/marketThemes/MarketThemeDetailDrawer";
 import UsMarketThemesPanel from "@/components/marketThemes/UsMarketThemesPanel";
+import UsKrThemeComparisonPanel from "@/components/marketThemes/UsKrThemeComparisonPanel";
 import { repositories } from "@/services";
 import { ApiError } from "@/services/api/apiClient";
 import {
@@ -17,7 +18,7 @@ import {
   type NaverTraderChartType,
 } from "@/utils/naverChart";
 import { compareThemeStocksBySupplyCount, type SupplyCountSort } from "@/utils/marketThemeStockSort";
-import { getThemeReturnHeatmapColor, THEME_RETURN_HEATMAP_COLORS } from "@/utils/marketThemeReturnColor";
+import { getThemeReturnHeatmapColor, THEME_RETURN_HEATMAP_COLORS, THEME_RETURN_HEATMAP_LABELS } from "@/utils/marketThemeReturnColor";
 import type {
   MarketTheme,
   MarketThemeCandidate,
@@ -39,8 +40,9 @@ import type {
 } from "@/types/marketTheme";
 import type { Stock } from "@/types/stock";
 import type { UsThemeSummary } from "@/types/usMarketTheme";
+import type { UsKrThemeLinkSummary } from "@/types/usKrThemeLink";
 
-type ActiveTab = "themes" | "mapping" | "candidates" | "usTrend";
+type ActiveTab = "themes" | "mapping" | "candidates";
 type ThemeViewMode = "group" | "theme" | "trend" | "flowTrend" | "prediction";
 type PredictionSort = "default" | "desc" | "asc";
 type ThemeReturnSort = "default" | "desc" | "asc";
@@ -427,10 +429,13 @@ function ThemeReturnLineChart({
 function MarketThemesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const marketScope = searchParams.get("market")?.toLowerCase() === "us" ? "US" : "KR";
+  const analysisScope = searchParams.get("scope") === "compare" ? "COMPARE" : marketScope;
+  const compareSection = (["link", "analysis", "watch"].includes(searchParams.get("section") || "") ? searchParams.get("section") : "link") as "link" | "analysis" | "watch";
   const refreshPollingTokenRef = useRef(0);
   const observationDeepLinkOpenedRef = useRef(false);
   const [activeTab, setActiveTab] = useState<ActiveTab>("themes");
   const [usSummary, setUsSummary] = useState<UsThemeSummary>({ theme_groups: 0, themes: 0, active_themes: 0, linked_stocks: 0 });
+  const [comparisonSummary, setComparisonSummary] = useState<UsKrThemeLinkSummary>({ us_active_themes: 0, kr_active_themes: 0, linked_themes: 0, unlinked_us_themes: 0, unlinked_kr_themes: 0 });
 
   const [themes, setThemes] = useState<MarketTheme[]>([]);
   const [selectedThemeId, setSelectedThemeId] = useState<number | null>(null);
@@ -1535,26 +1540,56 @@ function MarketThemesPage() {
     await loadCandidates();
   };
 
-  const changeMarketScope = (scope: "KR" | "US") => {
+  const changeMarketScope = (scope: "KR" | "US" | "COMPARE") => {
     const next = new URLSearchParams(searchParams);
+    if (scope === "COMPARE") {
+      next.set("scope", "compare");
+      next.set("section", "link");
+      setSearchParams(next, { replace: true });
+      return;
+    }
+    next.delete("scope");
+    next.delete("section");
     next.set("market", scope.toLowerCase());
     if (scope === "US") {
       next.delete("view");
       next.delete("theme_id");
       if (activeTab === "candidates") setActiveTab("themes");
       if (!(["group", "theme"] as ThemeViewMode[]).includes(themeViewMode)) setThemeViewMode("theme");
-    } else if (activeTab === "usTrend") {
-      setActiveTab("themes");
     }
     setSearchParams(next, { replace: true });
   };
 
-  const marketScopeControl = <div className="stock-market-scope market-theme-scope-control" role="group" aria-label="시장 범위">
-    <button type="button" className={marketScope === "KR" ? "active" : ""} aria-pressed={marketScope === "KR"} onClick={() => changeMarketScope("KR")}>국내 KRX</button>
-    <button type="button" className={marketScope === "US" ? "active" : ""} aria-pressed={marketScope === "US"} onClick={() => changeMarketScope("US")}>미국 US</button>
+  const marketScopeControl = <div className={`stock-market-scope market-theme-scope-control ${analysisScope === "COMPARE" ? "is-compare" : ""}`} role="group" aria-label="분석 범위">
+    <button type="button" className={analysisScope === "KR" ? "active" : ""} aria-pressed={analysisScope === "KR"} onClick={() => changeMarketScope("KR")}>국내 KRX</button>
+    <button type="button" className={analysisScope === "US" ? "active" : ""} aria-pressed={analysisScope === "US"} onClick={() => changeMarketScope("US")}>미국 US</button>
+    <button type="button" className={analysisScope === "COMPARE" ? "active" : ""} aria-pressed={analysisScope === "COMPARE"} onClick={() => changeMarketScope("COMPARE")}>한미테마비교</button>
   </div>;
 
-  if (marketScope === "US") {
+  if (analysisScope === "COMPARE") {
+    const changeSection = (section: "link" | "analysis" | "watch") => {
+      const next = new URLSearchParams(searchParams); next.set("scope", "compare"); next.set("section", section); setSearchParams(next, { replace: true });
+    };
+    return <div className="space-y-4">
+      <div className="journal-hero-row market-theme-hero-row">
+        <section className="journal-hero-panel"><h1>한미테마비교</h1><p>미국 테마와 국내 테마의 연결 및 선행 관계를 분석합니다.</p></section>
+        <section className="journal-summary-compact market-theme-hero-summary us-kr-theme-summary" aria-label="한미 테마 연결 요약">
+          {[["미국 활성", comparisonSummary.us_active_themes], ["국내 활성", comparisonSummary.kr_active_themes], ["연결", comparisonSummary.linked_themes], ["미연결 미국", comparisonSummary.unlinked_us_themes], ["미연결 국내", comparisonSummary.unlinked_kr_themes]].map(([label, value]) => <div className="journal-summary-mini-card" key={String(label)}><span className="journal-summary-label">{label}</span><strong className="journal-summary-value">{value}</strong></div>)}
+        </section>
+      </div>
+      <div className="market-theme-command-grid compare-command-grid">
+        <SectionCard title="" className="market-theme-tabs-card"><div className="gpt-domain-tabs market-theme-primary-tabs">
+          <button type="button" className={`gpt-domain-tab market-theme-primary-tab ${compareSection === "link" ? "active" : ""}`} onClick={() => changeSection("link")}>한미테마연계</button>
+          <button type="button" className={`gpt-domain-tab market-theme-primary-tab ${compareSection === "analysis" ? "active" : ""}`} onClick={() => changeSection("analysis")}>테마별 선행 분석</button>
+          <button type="button" className={`gpt-domain-tab market-theme-primary-tab ${compareSection === "watch" ? "active" : ""}`} onClick={() => changeSection("watch")}>오늘의 연계 관찰</button>
+        </div></SectionCard>
+        <SectionCard title="분석 범위" className="market-theme-scope-panel">{marketScopeControl}</SectionCard>
+      </div>
+      <UsKrThemeComparisonPanel section={compareSection} onSummaryChange={setComparisonSummary} />
+    </div>;
+  }
+
+  if (analysisScope === "US") {
     return <div className="space-y-4">
       <div className="journal-hero-row market-theme-hero-row">
         <section className="journal-hero-panel"><h1>시장 테마 관리</h1><p>미국 테마와 연결 종목을 관리합니다.</p></section>
@@ -1568,11 +1603,10 @@ function MarketThemesPage() {
         <SectionCard title="" className="market-theme-tabs-card"><div className="gpt-domain-tabs market-theme-primary-tabs">
           <button type="button" className={`gpt-domain-tab market-theme-primary-tab ${activeTab === "themes" ? "active" : ""}`} onClick={() => setActiveTab("themes")}>테마 관리</button>
           <button type="button" className={`gpt-domain-tab market-theme-primary-tab ${activeTab === "mapping" ? "active" : ""}`} onClick={() => setActiveTab("mapping")}>종목 연결</button>
-          <button type="button" className={`gpt-domain-tab market-theme-primary-tab ${activeTab === "usTrend" ? "active" : ""}`} onClick={() => setActiveTab("usTrend")}>테마등락추이</button>
         </div></SectionCard>
-        <SectionCard title="시장" className="market-theme-scope-panel">{marketScopeControl}</SectionCard>
+        <SectionCard title="분석 범위" className="market-theme-scope-panel">{marketScopeControl}</SectionCard>
       </div>
-      <UsMarketThemesPanel activeTab={activeTab === "mapping" ? "mapping" : activeTab === "usTrend" ? "trend" : "themes"} onSummaryChange={setUsSummary} />
+      <UsMarketThemesPanel activeTab={activeTab === "mapping" ? "mapping" : "themes"} onSummaryChange={setUsSummary} />
     </div>;
   }
 
@@ -1645,7 +1679,7 @@ function MarketThemesPage() {
             <button type="button" className={`gpt-domain-tab market-theme-primary-tab ${activeTab === "candidates" ? "active" : ""}`} onClick={() => setActiveTab("candidates")}>추천 후보</button>
           </div>
         </SectionCard>
-        <SectionCard title="시장" className="market-theme-scope-panel">{marketScopeControl}</SectionCard>
+        <SectionCard title="분석 범위" className="market-theme-scope-panel">{marketScopeControl}</SectionCard>
       </div>
 
       {activeTab === "themes" ? (
@@ -1752,7 +1786,7 @@ function MarketThemesPage() {
               </div>
               {trendViewMode === "heatmap" ? (
                 <div className="theme-return-legend">
-                  {[`-20% 이하`, `-15%`, `-10%`, `-5%`, `0%`, `+5%`, `+10%`, `+15%`, `+20% 이상`].map((label, index) => {
+                  {THEME_RETURN_HEATMAP_LABELS.map((label, index) => {
                     return <span key={label} className="theme-return-legend__item"><i className="theme-return-legend__chip" style={{ background: THEME_RETURN_HEATMAP_COLORS[index] }} />{label}</span>;
                   })}
                 </div>
