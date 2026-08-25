@@ -323,6 +323,7 @@ class UsKrThemeLinkService:
         global_previous_date = previous_dates[-1] if previous_dates else None
 
         raw_items: list[dict[str, object]] = []
+        today_kst = now_kst()[:10]
         for link in link_rows:
             theme_us_rows = us_by_theme.get(int(link["us_theme_id"]), [])
             theme_kr_rows = kr_by_theme.get(int(link["kr_theme_id"]), [])
@@ -342,6 +343,11 @@ class UsKrThemeLinkService:
             if current:
                 threshold_row = next((row for row in self._thresholds(pairs) if row.direction == current[0] and row.threshold == current[1]), None)
             latest_source = latest[2] if latest else None
+            previous_kr = next((
+                (str(row["return_date"])[:10], float(row["kr_return"]))
+                for row in reversed(theme_kr_rows)
+                if str(row["return_date"])[:10] < today_kst and row["kr_return"] is not None
+            ), None)
             # A zero latest value is valid observation data even though it has no
             # matching directional threshold bucket. Only a missing latest value
             # should be pushed into the unavailable group.
@@ -349,6 +355,7 @@ class UsKrThemeLinkService:
             raw_items.append({
                 "link": link, "available": available, "latest": latest, "previous": previous,
                 "source": latest_source, "current": current, "threshold_row": threshold_row,
+                "previous_kr": previous_kr,
                 "missing_reason": None if available else "최신 미국 테마 지표가 없습니다.",
             })
 
@@ -368,6 +375,7 @@ class UsKrThemeLinkService:
             source = item["source"]
             current = item["current"]
             threshold_row = item["threshold_row"]
+            previous_kr = item["previous_kr"]
             items.append(UsKrTodayObservationItem(
                 rank=index, link_id=int(link["link_id"]), us_theme_id=int(link["us_theme_id"]), us_group_name=str(link["us_group_name"]), us_theme_name=str(link["us_theme_name"]),
                 kr_theme_id=int(link["kr_theme_id"]), kr_group_name=str(link["kr_group_name"]), kr_theme_name=str(link["kr_theme_name"]),
@@ -380,6 +388,9 @@ class UsKrThemeLinkService:
                 threshold_direction=current[0] if current else None, threshold_condition=threshold_row.condition if threshold_row else None,
                 threshold=current[1] if current else None, sample_count=threshold_row.sample_count if threshold_row else 0,
                 response_rate=threshold_row.response_rate if threshold_row else None, avg_kr_return=threshold_row.avg_kr_return if threshold_row else None,
+                median_kr_return=threshold_row.median_kr_return if threshold_row else None,
+                previous_kr_date=previous_kr[0] if previous_kr else None,
+                previous_kr_return=self._rounded(previous_kr[1]) if previous_kr else None,
                 sample_guidance=self._sample_guidance(threshold_row.sample_count if threshold_row else 0), missing_reason=item["missing_reason"],
             ))
         available_items = [row for row in items if row.available]

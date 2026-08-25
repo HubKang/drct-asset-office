@@ -37,7 +37,8 @@ export type UsKrTodayObservationItem = {
   latest_value: number | null; previous_value: number | null; delta: number | null;
   breadth_ratio: number | null; valid_stock_count: number; up_count: number; down_count: number;
   threshold_direction: "UP" | "DOWN" | null; threshold_condition: string | null; threshold: number | null;
-  sample_count: number; response_rate: number | null; avg_kr_return: number | null;
+  sample_count: number; response_rate: number | null; avg_kr_return: number | null; median_kr_return: number | null;
+  previous_kr_date: string | null; previous_kr_return: number | null;
   sample_guidance: string; missing_reason: string | null;
 };
 export type UsKrTodayObservation = {

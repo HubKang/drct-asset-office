@@ -62,6 +62,9 @@ def test_lead_analysis_matches_next_real_kr_date_and_calculates_metrics(isolated
     us_theme = _create_us_theme(client, "전력", "원전·SMR")
     kr_theme = _create_kr_theme(client, "KR_NUCLEAR", "에너지", "원전")
     link = client.post("/us-kr-theme-links", json={"us_theme_id": us_theme["id"], "kr_theme_id": kr_theme["id"]}).json()
+    second_us_theme = _create_us_theme(client, "바이오", "유전자편집 / 신약개발")
+    second_kr_theme = _create_kr_theme(client, "KR_BIO", "제약/바이오", "신약&제약")
+    second_link = client.post("/us-kr-theme-links", json={"us_theme_id": second_us_theme["id"], "kr_theme_id": second_kr_theme["id"]}).json()
 
     override = app.dependency_overrides[get_db]
     session_generator = override()
@@ -102,6 +105,18 @@ def test_lead_analysis_matches_next_real_kr_date_and_calculates_metrics(isolated
                  first_created_at,last_refreshed_at,created_at,updated_at)
                 VALUES (:theme_id,:day,:value,4,4,0,2,2,0,0,'test','2026-08-24','2026-08-24','2026-08-24','2026-08-24')"""),
                 {"theme_id": kr_theme["id"], "day": day, "value": value})
+        for day, value in [("2026-08-20", -1.0), ("2026-08-21", -2.0)]:
+            db.execute(text("""INSERT INTO us_theme_daily_returns
+                (theme_id,trade_date,simple_return,theme_strength,trimmed_mean_return,median_return,breadth_ratio,
+                 valid_stock_count,up_count,down_count,flat_count,created_at,updated_at)
+                VALUES (:theme_id,:day,:value,:value,:value,:value,0.25,4,1,3,0,'2026-08-24','2026-08-24')"""),
+                {"theme_id": second_us_theme["id"], "day": day, "value": value})
+        db.execute(text("""INSERT INTO market_theme_daily_returns
+            (theme_id,return_date,avg_change_rate,stock_count,success_stock_count,failed_stock_count,
+             rising_stock_count,falling_stock_count,flat_stock_count,total_trading_value,data_source,
+             first_created_at,last_refreshed_at,created_at,updated_at)
+            VALUES (:theme_id,'2026-08-24',9.0,4,4,0,3,1,0,0,'test','2026-08-24','2026-08-24','2026-08-24','2026-08-24')"""),
+            {"theme_id": second_kr_theme["id"]})
         db.commit()
     finally:
         session_generator.close()
@@ -131,8 +146,8 @@ def test_lead_analysis_matches_next_real_kr_date_and_calculates_metrics(isolated
     assert observation["latest_us_date"] == "2026-08-21"
     assert observation["previous_us_date"] == "2026-08-20"
     assert observation["kr_target_date"] == "2026-08-24"
-    assert observation["summary"] == {"linked_count": 1, "available_count": 1, "missing_count": 0, "up_count": 1, "down_count": 0}
-    item = observation["items"][0]
+    assert observation["summary"] == {"linked_count": 2, "available_count": 2, "missing_count": 0, "up_count": 1, "down_count": 1}
+    item = next(row for row in observation["items"] if row["link_id"] == link["id"])
     assert item["latest_value"] == 3.5
     assert item["previous_value"] == 2.5
     assert item["delta"] == 1.0
@@ -140,8 +155,14 @@ def test_lead_analysis_matches_next_real_kr_date_and_calculates_metrics(isolated
     assert item["sample_count"] == up_thresholds[-1]["sample_count"]
     assert item["response_rate"] == up_thresholds[-1]["response_rate"]
     assert item["avg_kr_return"] == up_thresholds[-1]["avg_kr_return"]
+    assert item["median_kr_return"] == up_thresholds[-1]["median_kr_return"]
+    assert item["previous_kr_date"] == "2026-08-24"
+    assert item["previous_kr_return"] == 2.0
     assert item["breadth_ratio"] == 0.5
     assert item["valid_stock_count"] == 4
+    second_item = next(row for row in observation["items"] if row["link_id"] == second_link["id"])
+    assert second_item["previous_kr_date"] == "2026-08-24"
+    assert second_item["previous_kr_return"] == 9.0
     assert client.get(f"/us-kr-theme-links/{link['id']}/lead-analysis?window=61").status_code == 422
     assert client.get("/us-kr-theme-links/today-observation?window=61").status_code == 422
 

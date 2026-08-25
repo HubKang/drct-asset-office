@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronDown, DatabaseZap, Loader2, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import EmptyState from "@/components/common/EmptyState";
 import SectionCard from "@/components/common/SectionCard";
-import StatusBadge from "@/components/common/StatusBadge";
 import { repositories } from "@/services";
+import type { UsStockCharts } from "@/types/usMarketTheme";
 import type { UsExchange, UsHistoricalCollectionMode, UsHistoricalPriceStatus, UsPriceCollectionResponse, UsStock, UsStockDeleteImpact, UsStockDeleteResponse, UsStockInput, UsStockSummary, UsStockType } from "@/types/usStock";
 
 const EXCHANGES: Array<{ value: UsExchange; label: string }> = [
@@ -16,16 +16,59 @@ const TYPES: Array<{ value: UsStockType; label: string }> = [
 const EMPTY_SUMMARY: UsStockSummary = { total: 0, active: 0, common: 0, etf: 0, price_complete: 0, price_not_collected: 0, price_partial: 0, price_error: 0, latest_price_date: null };
 const EMPTY_FORM: UsStockInput = { symbol: "", name: "", name_ko: "", exchange: "NASDAQ", stock_type: "COMMON", naver_code: "", is_active: 1 };
 type UsStockStatusFilter = "" | "ACTIVE" | "INACTIVE" | UsHistoricalPriceStatus;
+const usStockChartCache = new Map<number, Promise<UsStockCharts>>();
 
 function exchangeLabel(value: string) { return EXCHANGES.find((item) => item.value === value)?.label ?? value; }
-function typeLabel(value: string) { return TYPES.find((item) => item.value === value)?.label ?? "기타"; }
-function formatDate(value: string | null) { return value ? value.replace("T", " ").slice(5, 16) : "-"; }
 function formatPriceDate(value: string | null) { return value ? value.slice(5).replace("-", ".") : "-"; }
-function priceStatus(status: UsHistoricalPriceStatus) {
-  if (status === "COMPLETE") return { label: "정상", tone: "emerald" as const };
-  if (status === "PARTIAL") return { label: "부분수집", tone: "amber" as const };
-  if (status === "ERROR") return { label: "오류", tone: "rose" as const };
-  return { label: "미수집", tone: "slate" as const };
+
+function UsStockChartCells({ stock, onOpen }: { stock: UsStock; onOpen: (chart: { url: string; title: string }) => void }) {
+  const rootRef = useRef<HTMLTableCellElement | null>(null);
+  const [charts, setCharts] = useState<UsStockCharts | null>(null);
+  const [requested, setRequested] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+
+  useEffect(() => {
+    setCharts(null); setRequested(false); setRetryCount(0);
+    const element = rootRef.current;
+    if (!element || !stock.naver_code) return;
+    const request = () => setRequested(true);
+    if (typeof IntersectionObserver === "undefined") { request(); return; }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) { request(); observer.disconnect(); }
+    }, { rootMargin: "160px" });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [stock.id, stock.naver_code]);
+
+  useEffect(() => {
+    if (!requested) return;
+    let active = true;
+    let retryTimer: number | undefined;
+    let promise = usStockChartCache.get(stock.id);
+    if (!promise) {
+      promise = repositories.usMarketThemes.charts(stock.id);
+      usStockChartCache.set(stock.id, promise);
+    }
+    promise.then((value) => {
+      if (!value.available) usStockChartCache.delete(stock.id);
+      if (active) setCharts(value);
+      if (active && !value.available && retryCount < 1) retryTimer = window.setTimeout(() => setRetryCount((count) => count + 1), 2500);
+    }).catch(() => {
+      usStockChartCache.delete(stock.id);
+      if (active) setCharts({ stock_id: stock.id, naver_code: stock.naver_code, day: null, week: null, month: null, available: false });
+      if (active && retryCount < 1) retryTimer = window.setTimeout(() => setRetryCount((count) => count + 1), 2500);
+    });
+    return () => { active = false; if (retryTimer !== undefined) window.clearTimeout(retryTimer); };
+  }, [requested, retryCount, stock.id, stock.naver_code]);
+
+  return <>
+    {(["day", "week", "month"] as const).map((period) => {
+      const label = period === "day" ? "일봉" : period === "week" ? "주봉" : "월봉";
+      const url = charts?.[period];
+      return <td key={period} ref={period === "day" ? rootRef : undefined} className="us-stock-chart-cell">{url ? <button type="button" className="theme-linked-stock-chart-button" onClick={() => onOpen({ url, title: `${stock.symbol} ${label}` })}><img className="theme-linked-stock-chart" src={url} alt={`${stock.symbol} ${label}`} loading="lazy" decoding="async" /></button>
+        : <div className="theme-linked-stock-chart-fallback">{!stock.naver_code ? "차트없음" : !requested ? "차트 준비" : !charts ? "조회 중" : "조회불가"}</div>}</td>;
+    })}
+  </>;
 }
 
 function UsStockModal({ editing, onClose, onSaved, onDeleted }: { editing: UsStock | null; onClose: () => void; onSaved: (createdIds: number[]) => Promise<void>; onDeleted?: (result: UsStockDeleteResponse) => Promise<void> }) {
@@ -95,6 +138,7 @@ export default function UsStocksPanel({ onCountChange }: { onCountChange: (count
   const [keyword, setKeyword] = useState(""); const [draftKeyword, setDraftKeyword] = useState(""); const [exchange, setExchange] = useState(""); const [stockType, setStockType] = useState(""); const [statusFilter, setStatusFilter] = useState<UsStockStatusFilter>("");
   const [loading, setLoading] = useState(false); const [error, setError] = useState(""); const [editing, setEditing] = useState<UsStock | null>(null); const [showCreate, setShowCreate] = useState(false);
   const [deleteMessage, setDeleteMessage] = useState("");
+  const [zoomedChart, setZoomedChart] = useState<{ url: string; title: string } | null>(null);
   const [collecting, setCollecting] = useState(false); const [collectionResult, setCollectionResult] = useState<UsPriceCollectionResponse | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set()); const [historicalMode, setHistoricalMode] = useState<UsHistoricalCollectionMode>("MISSING"); const [showCollectionMenu, setShowCollectionMenu] = useState(false);
   const load = async (targetPage = page) => { setLoading(true); setError(""); try { const [list, nextSummary] = await Promise.all([repositories.usStocks.list({ keyword, exchange, stock_type: stockType, is_active: statusFilter === "ACTIVE" || ["NOT_COLLECTED", "COMPLETE", "PARTIAL", "ERROR"].includes(statusFilter) ? 1 : statusFilter === "INACTIVE" ? 0 : undefined, price_status: ["NOT_COLLECTED", "COMPLETE", "PARTIAL", "ERROR"].includes(statusFilter) ? statusFilter : undefined, page: targetPage, page_size: pageSize }), repositories.usStocks.summary()]); setItems(list.items); setTotal(list.total); setSummary(nextSummary); onCountChange(nextSummary.active); } catch (e) { setError(e instanceof Error ? e.message : "미국 종목을 불러오지 못했습니다."); } finally { setLoading(false); } };
@@ -160,7 +204,27 @@ export default function UsStocksPanel({ onCountChange }: { onCountChange: (count
       {collectionResult ? <div className={`inline-result ${collectionResult.failed_stock_count ? "inline-warning" : "inline-success"}`}><strong>{collectionResult.message}</strong><span>요청 {collectionResult.requested_stock_count} · 성공 {collectionResult.success_stock_count} · 실패 {collectionResult.failed_stock_count} · 추가 {collectionResult.inserted_count.toLocaleString()} · 갱신 {collectionResult.updated_count.toLocaleString()} · 재계산 테마 {collectionResult.recalculated_theme_count}</span>{collectionResult.failures.length ? <small>{collectionResult.failures.slice(0, 5).map((item) => `${item.symbol}: ${item.reason}`).join(" / ")}</small> : null}</div> : null}
     </SectionCard>
     <SectionCard className="us-stock-search-card"><form className="stock-search-row us-stock-search-row" onSubmit={(e) => { e.preventDefault(); setPage(1); setKeyword(draftKeyword.trim()); }}><select className="select-control" value={exchange} onChange={(e) => { setPage(1); setExchange(e.target.value); }}><option value="">전체 거래소</option>{EXCHANGES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select><select className="select-control" value={stockType} onChange={(e) => { setPage(1); setStockType(e.target.value); }}><option value="">전체 유형</option>{TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select><select className="select-control" value={statusFilter} onChange={(e) => { setPage(1); setStatusFilter(e.target.value as UsStockStatusFilter); }}><option value="">전체 상태</option><option value="ACTIVE">활성</option><option value="INACTIVE">비활성</option><option value="COMPLETE">정상</option><option value="NOT_COLLECTED">미수집</option><option value="PARTIAL">부분수집</option><option value="ERROR">오류</option></select><input className="input-control" value={draftKeyword} onChange={(e) => setDraftKeyword(e.target.value)} placeholder="Ticker 또는 종목명" /><button className="btn btn-primary stock-search-btn" type="submit">검색</button><button className="btn btn-secondary stock-search-btn" type="button" onClick={reset}>초기화</button></form></SectionCard>
-    <SectionCard title="미국 종목 목록">{deleteMessage ? <div className="inline-result inline-success">{deleteMessage}</div> : null}{error ? <div className="inline-result inline-error">{error}</div> : null}{loading ? <div className="us-stock-loading"><Loader2 size={18} className="animate-spin" /> 불러오는 중...</div> : items.length === 0 ? <EmptyState message="등록된 미국 종목이 없습니다." /> : <><div className="table-shell us-stock-table-shell"><table className="data-table compact-table us-stock-table"><thead><tr><th className="us-stock-check-cell"><input type="checkbox" aria-label="현재 페이지 활성 종목 전체 선택" checked={pageSelected} onChange={togglePage} /></th><th>Ticker</th><th>종목명</th><th>거래소</th><th>유형</th><th>활성</th><th>최근 종가</th><th>등락률</th><th>가격일</th><th>과거가격 상태</th><th>작업</th></tr></thead><tbody>{items.map((item) => { const status = priceStatus(item.price_status); return <tr key={item.id}><td className="us-stock-check-cell"><input type="checkbox" aria-label={`${item.symbol} 선택`} disabled={!item.is_active} checked={selectedIds.has(item.id)} onChange={() => toggleSelected(item.id)} /></td><td><strong>{item.symbol}</strong></td><td title={item.name ?? undefined}>{item.name_ko || item.name || "-"}</td><td>{exchangeLabel(item.exchange)}</td><td>{typeLabel(item.stock_type)}</td><td><StatusBadge label={item.is_active ? "활성" : "비활성"} tone={item.is_active ? "emerald" : "slate"} /></td><td className="numeric-cell">{item.latest_close == null ? "-" : `$${item.latest_close.toLocaleString(undefined, { maximumFractionDigits: 4 })}`}</td><td className={`numeric-cell ${item.latest_change_rate == null ? "" : item.latest_change_rate >= 0 ? "value-up" : "value-down"}`}>{item.latest_change_rate == null ? "-" : `${item.latest_change_rate >= 0 ? "+" : ""}${item.latest_change_rate.toFixed(2)}%`}</td><td>{item.latest_price_date || "-"}</td><td title={`가격 보유 ${item.historical_price_row_count.toLocaleString()}일${item.historical_price_completed_at ? ` · 완료 ${formatDate(item.historical_price_completed_at)}` : ""}`}><StatusBadge label={status.label} tone={status.tone} /><small className="us-price-row-count">{item.historical_price_row_count.toLocaleString()}일</small></td><td><div className="us-stock-row-actions"><button type="button" className="btn btn-secondary btn-table-sm" onClick={() => setEditing(item)}>수정</button>{item.is_active && item.price_status !== "COMPLETE" ? <button type="button" className="btn btn-secondary btn-table-sm" disabled={collecting} onClick={() => void collectPrices("SELECTED", [item.id])}>과거가격 수집</button> : null}</div></td></tr>; })}</tbody></table></div><div className="pagination-bar"><div className="pagination-info">전체 {total.toLocaleString()}건 · {page} / {totalPages} 페이지 · 선택 {selectedIds.size}건</div><div className="pagination-actions"><button className="btn btn-secondary" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page <= 1}>이전</button><button className="btn btn-secondary" onClick={() => setPage((value) => Math.min(totalPages, value + 1))} disabled={page >= totalPages}>다음</button></div></div></>}</SectionCard>
+    <SectionCard title="미국 종목 목록">
+      {deleteMessage ? <div className="inline-result inline-success">{deleteMessage}</div> : null}
+      {error ? <div className="inline-result inline-error">{error}</div> : null}
+      {loading ? <div className="us-stock-loading"><Loader2 size={18} className="animate-spin" /> 불러오는 중...</div> : items.length === 0 ? <EmptyState message="등록된 미국 종목이 없습니다." /> : <>
+        <div className="table-shell us-stock-table-shell"><table className="data-table compact-table us-stock-table">
+          <colgroup><col className="us-stock-col-ticker"/><col className="us-stock-col-name"/><col className="us-stock-col-exchange"/><col className="us-stock-col-price"/><col className="us-stock-col-change"/><col className="us-stock-col-chart"/><col className="us-stock-col-chart"/><col className="us-stock-col-chart"/><col className="us-stock-col-action"/></colgroup>
+          <thead><tr><th>Ticker</th><th>종목명</th><th>거래소</th><th>최근 종가</th><th>등락률</th><th>일봉</th><th>주봉</th><th>월봉</th><th><span className="us-stock-action-heading">작업<input type="checkbox" aria-label="현재 페이지 활성 종목 전체 선택" title="현재 페이지 전체 선택" checked={pageSelected} onChange={togglePage}/></span></th></tr></thead>
+          <tbody>{items.map((item) => <tr key={item.id}>
+            <td><strong>{item.symbol}</strong></td>
+            <td title={item.name ?? undefined}>{item.name_ko || item.name || "-"}</td>
+            <td>{exchangeLabel(item.exchange)}</td>
+            <td className="numeric-cell">{item.latest_close == null ? "-" : `$${item.latest_close.toLocaleString(undefined, { maximumFractionDigits: 4 })}`}</td>
+            <td className={`numeric-cell ${item.latest_change_rate == null ? "" : item.latest_change_rate >= 0 ? "value-up" : "value-down"}`}>{item.latest_change_rate == null ? "-" : `${item.latest_change_rate >= 0 ? "+" : ""}${item.latest_change_rate.toFixed(2)}%`}</td>
+            <UsStockChartCells stock={item} onOpen={setZoomedChart}/>
+            <td><div className="us-stock-row-actions"><input className="us-stock-row-select" type="checkbox" aria-label={`${item.symbol} 가격 수집 대상으로 선택`} title="가격 수집 대상으로 선택" disabled={!item.is_active} checked={selectedIds.has(item.id)} onChange={() => toggleSelected(item.id)}/><button type="button" className="btn btn-secondary btn-table-sm" onClick={() => setEditing(item)}>수정</button>{item.is_active && item.price_status !== "COMPLETE" ? <button type="button" className="btn btn-secondary btn-table-sm" disabled={collecting} onClick={() => void collectPrices("SELECTED", [item.id])}>과거가격 수집</button> : null}</div></td>
+          </tr>)}</tbody>
+        </table></div>
+        <div className="pagination-bar"><div className="pagination-info">전체 {total.toLocaleString()}건 · {page} / {totalPages} 페이지 · 선택 {selectedIds.size}건</div><div className="pagination-actions"><button className="btn btn-secondary" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page <= 1}>이전</button><button className="btn btn-secondary" onClick={() => setPage((value) => Math.min(totalPages, value + 1))} disabled={page >= totalPages}>다음</button></div></div>
+      </>}
+    </SectionCard>
     {showCreate ? <UsStockModal editing={null} onClose={() => setShowCreate(false)} onSaved={afterSaved} /> : null}{editing ? <UsStockModal editing={editing} onClose={() => setEditing(null)} onSaved={afterSaved} onDeleted={afterDeleted} /> : null}
+    {zoomedChart ? <div className="theme-linked-stock-chart-modal" onClick={() => setZoomedChart(null)}><div className="theme-linked-stock-chart-modal-panel" onClick={(event) => event.stopPropagation()}><div className="theme-linked-stock-chart-modal-header"><h3>{zoomedChart.title}</h3><button className="btn btn-secondary btn-table-sm" onClick={() => setZoomedChart(null)}>닫기</button></div><img src={zoomedChart.url} alt={zoomedChart.title} className="theme-linked-stock-chart-modal-image" /></div></div> : null}
   </>;
 }

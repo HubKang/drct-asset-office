@@ -129,6 +129,9 @@ class UsKrTodayObservationItem(BaseModel):
     sample_count: int
     response_rate: float | None
     avg_kr_return: float | None
+    median_kr_return: float | None
+    previous_kr_date: str | None
+    previous_kr_return: float | None
     sample_guidance: str
     missing_reason: str | None
 
