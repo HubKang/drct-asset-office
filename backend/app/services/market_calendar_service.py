@@ -41,8 +41,14 @@ class MarketCalendarService:
     def _normalize_payload(self, payload: MarketCalendarEventCreateRequest | MarketCalendarEventUpdateRequest) -> dict[str, object]:
         start_date = self._parse_date(payload.start_date, "start_date")
         end_date = self._parse_date(payload.end_date, "end_date")
+        period_type = payload.period_type
+        if period_type == "M":
+            start_date = start_date.replace(day=1)
+            end_date = end_date.replace(day=calendar.monthrange(end_date.year, end_date.month)[1])
         if end_date < start_date:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="종료일은 시작일보다 빠를 수 없습니다.")
+            unit = "종료월" if period_type == "M" else "종료일"
+            start_unit = "시작월" if period_type == "M" else "시작일"
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{unit}은 {start_unit}보다 빠를 수 없습니다.")
 
         event_type = (payload.event_type or "news").strip()
         importance = (payload.importance or "medium").strip()
@@ -61,11 +67,13 @@ class MarketCalendarService:
         if not title:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="뉴스명을 입력해 주세요.")
 
-        self._get_theme(payload.theme_id)
+        if payload.theme_id is not None:
+            self._get_theme(payload.theme_id)
         return {
+            "period_type": period_type,
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
-            "theme_id": int(payload.theme_id),
+            "theme_id": int(payload.theme_id) if payload.theme_id is not None else None,
             "title": title,
             "summary": self._normalize_text(payload.summary),
             "news_url": news_url,
@@ -166,10 +174,11 @@ class MarketCalendarService:
     def _to_response(row: dict[str, object], stocks: list[MarketCalendarStockResponse]) -> MarketCalendarEventResponse:
         return MarketCalendarEventResponse(
             id=int(row["id"]),
+            period_type="M" if str(row.get("period_type") or "D").upper() == "M" else "D",
             start_date=str(row["start_date"]),
             end_date=str(row["end_date"]),
-            theme_id=int(row["theme_id"]),
-            theme_name=str(row["theme_name"]),
+            theme_id=int(row["theme_id"]) if row.get("theme_id") is not None else None,
+            theme_name=str(row["theme_name"]) if row.get("theme_name") is not None else None,
             theme_group_id=int(row["theme_group_id"]) if row.get("theme_group_id") is not None else None,
             theme_group_name=str(row["theme_group_name"]) if row.get("theme_group_name") is not None else None,
             title=str(row["title"]),
@@ -216,11 +225,11 @@ class MarketCalendarService:
         rows = self.db.execute(
             text(
                 f"""
-                SELECT e.id, e.start_date, e.end_date, e.theme_id, e.title, e.summary, e.news_url,
+                SELECT e.id, e.period_type, e.start_date, e.end_date, e.theme_id, e.title, e.summary, e.news_url,
                        e.event_type, e.importance, e.memo, e.is_active, e.created_at, e.updated_at,
                        t.theme_name, t.parent_theme_id AS theme_group_id, g.theme_name AS theme_group_name
                 FROM market_calendar_events e
-                JOIN market_themes t ON t.id = e.theme_id
+                LEFT JOIN market_themes t ON t.id = e.theme_id
                 LEFT JOIN market_themes g ON g.id = t.parent_theme_id
                 WHERE {where_sql}
                 ORDER BY e.start_date ASC, e.importance ASC, e.id ASC
@@ -283,7 +292,8 @@ class MarketCalendarService:
 
     def list_daily(self, selected_date: str) -> MarketCalendarDailyResponse:
         parsed = self._parse_date(selected_date, "date").isoformat()
-        return MarketCalendarDailyResponse(date=parsed, events=self._list_events(start_date=parsed, end_date=parsed))
+        events = self._list_events(start_date=parsed, end_date=parsed)
+        return MarketCalendarDailyResponse(date=parsed, events=[event for event in events if event.period_type == "D"])
 
     def create_event(self, payload: MarketCalendarEventCreateRequest) -> MarketCalendarEventResponse:
         data = self._normalize_payload(payload)
@@ -293,8 +303,8 @@ class MarketCalendarService:
             text(
                 """
                 INSERT INTO market_calendar_events
-                (start_date, end_date, theme_id, title, summary, news_url, event_type, importance, memo, is_active, created_at, updated_at)
-                VALUES (:start_date, :end_date, :theme_id, :title, :summary, :news_url, :event_type, :importance, :memo, 1, :created_at, :updated_at)
+                (period_type, start_date, end_date, theme_id, title, summary, news_url, event_type, importance, memo, is_active, created_at, updated_at)
+                VALUES (:period_type, :start_date, :end_date, :theme_id, :title, :summary, :news_url, :event_type, :importance, :memo, 1, :created_at, :updated_at)
                 """
             ),
             {**data, "created_at": now, "updated_at": now},
@@ -313,7 +323,8 @@ class MarketCalendarService:
             text(
                 """
                 UPDATE market_calendar_events
-                SET start_date = :start_date,
+                SET period_type = :period_type,
+                    start_date = :start_date,
                     end_date = :end_date,
                     theme_id = :theme_id,
                     title = :title,

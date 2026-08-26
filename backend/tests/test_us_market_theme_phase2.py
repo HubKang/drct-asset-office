@@ -290,6 +290,88 @@ def test_selected_incremental_collects_only_selected_stock_and_provides_return(i
     assert row["historical_price_row_count"] == 2
 
 
+def test_incremental_collection_refreshes_provisional_latest_trading_day(isolated_api_client: TestClient, monkeypatch) -> None:
+    client = isolated_api_client
+    coin = _stock(client, "COIN")
+    attempts = 0
+
+    def fake_history(_self, **_kwargs):
+        nonlocal attempts
+        attempts += 1
+        latest_close = 183.671 if attempts == 1 else 187.18
+        return UsDailyPriceFetchResult([
+            UsDailyPrice("2026-08-24", 179.48, 179.48, 179.48, 179.48, 1_000),
+            UsDailyPrice("2026-08-25", latest_close, latest_close, latest_close, latest_close, 2_000),
+        ], history_exhausted=False)
+
+    monkeypatch.setattr(us_market_data_service.KiwoomUsDailyPriceProvider, "fetch_history", fake_history)
+    first = client.post("/us-stocks/prices/collect", json={"mode": "INCREMENTAL", "stock_ids": [coin["id"]]}).json()
+    assert first["inserted_count"] == 2 and first["updated_count"] == 0
+
+    second = client.post("/us-stocks/prices/collect", json={"mode": "INCREMENTAL", "stock_ids": [coin["id"]]}).json()
+    assert second["inserted_count"] == 0 and second["updated_count"] == 2
+    assert second["affected_date_from"] == "2026-08-24"
+    assert second["affected_date_to"] == "2026-08-25"
+
+    row = client.get("/us-stocks", params={"keyword": "COIN"}).json()["items"][0]
+    assert row["latest_price_date"] == "2026-08-25"
+    assert row["latest_close"] == 187.18
+    assert row["latest_change_rate"] == 4.2902
+    assert row["historical_price_row_count"] == 2
+
+
+def test_incremental_collection_overlaps_two_sessions_and_inserts_a_new_session(isolated_api_client: TestClient, monkeypatch) -> None:
+    client = isolated_api_client
+    stock = _stock(client, "OVERLAP")
+    attempts = 0
+
+    def fake_history(_self, **_kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts > 1:
+            rows = [
+                UsDailyPrice("2026-08-21", 90, 91, 89, 90, 900),
+                UsDailyPrice("2026-08-24", 100, 101, 99, 100, 1_000),
+                UsDailyPrice("2026-08-25", 112, 114, 108, 113, 1_300),
+                UsDailyPrice("2026-08-26", 120, 121, 119, 120, 1_200),
+            ]
+        else:
+            rows = [
+                UsDailyPrice("2026-08-21", 90, 91, 89, 90, 900),
+                UsDailyPrice("2026-08-24", 100, 101, 99, 100, 1_000),
+                UsDailyPrice("2026-08-25", 110, 111, 109, 110, 1_100),
+            ]
+        return UsDailyPriceFetchResult(rows, history_exhausted=False)
+
+    monkeypatch.setattr(us_market_data_service.KiwoomUsDailyPriceProvider, "fetch_history", fake_history)
+    first = client.post("/us-stocks/prices/collect", json={"mode": "INCREMENTAL", "stock_ids": [stock["id"]]}).json()
+    assert first["inserted_count"] == 3
+
+    second = client.post("/us-stocks/prices/collect", json={"mode": "INCREMENTAL", "stock_ids": [stock["id"]]}).json()
+    assert second["inserted_count"] == 1 and second["updated_count"] == 2
+    prices = client.get(f"/us-stocks/{stock['id']}/prices").json()["items"]
+    assert [row["trade_date"] for row in prices] == ["2026-08-21", "2026-08-24", "2026-08-25", "2026-08-26"]
+    assert next(row for row in prices if row["trade_date"] == "2026-08-25")["close_price"] == 113
+
+
+def test_incremental_collection_uses_provider_sessions_without_synthetic_weekend_rows(isolated_api_client: TestClient, monkeypatch) -> None:
+    client = isolated_api_client
+    stock = _stock(client, "WEEKEND")
+
+    def fake_history(_self, **_kwargs):
+        return UsDailyPriceFetchResult([
+            UsDailyPrice("2026-08-27", 100, 101, 99, 100, 1_000),
+            UsDailyPrice("2026-08-28", 101, 102, 100, 101, 1_100),
+        ], history_exhausted=False)
+
+    monkeypatch.setattr(us_market_data_service.KiwoomUsDailyPriceProvider, "fetch_history", fake_history)
+    client.post("/us-stocks/prices/collect", json={"mode": "INCREMENTAL", "stock_ids": [stock["id"]]})
+    second = client.post("/us-stocks/prices/collect", json={"mode": "INCREMENTAL", "stock_ids": [stock["id"]]}).json()
+    assert second["inserted_count"] == 0 and second["updated_count"] == 2
+    prices = client.get(f"/us-stocks/{stock['id']}/prices").json()["items"]
+    assert [row["trade_date"] for row in prices] == ["2026-08-27", "2026-08-28"]
+
+
 def test_market_refresh_completes_linked_history_and_recalculates_all_active_themes(isolated_api_client: TestClient, monkeypatch) -> None:
     client = isolated_api_client
     a, b, c = _stock(client, "RFA"), _stock(client, "RFB"), _stock(client, "RFC")

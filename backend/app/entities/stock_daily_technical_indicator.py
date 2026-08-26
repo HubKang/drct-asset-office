@@ -39,7 +39,6 @@ class StockDailyTechnicalIndicator(Base):
     volume_ma20: Mapped[float | None] = mapped_column(Float, nullable=True)
     volume_5_20_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
 
-    source: Mapped[str] = mapped_column(Text, nullable=False, default="calculated")
     calculation_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)

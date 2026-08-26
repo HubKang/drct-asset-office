@@ -14,6 +14,7 @@ from backend.app.schemas.us_market_theme_schema import (
     UsThemeStockResponse,
     UsThemeStockUpdate,
     UsThemeSummaryResponse,
+    UsThemeDashboardSummaryResponse,
     UsThemeUpdate,
     UsMarketRefreshRequest,
     UsMarketRefreshResponse,
@@ -33,6 +34,11 @@ router = APIRouter(prefix="/us-market-themes", tags=["us-market-themes"])
 @router.get("/summary", response_model=UsThemeSummaryResponse)
 def get_summary(db: Session = Depends(get_db)) -> UsThemeSummaryResponse:
     return UsMarketThemeService(db).summary()
+
+
+@router.get("/dashboard-summary", response_model=UsThemeDashboardSummaryResponse)
+def get_dashboard_summary(db: Session = Depends(get_db)) -> UsThemeDashboardSummaryResponse:
+    return UsMarketDataService(db).dashboard_summary()
 
 
 @router.post("/refresh", response_model=UsMarketRefreshResponse)

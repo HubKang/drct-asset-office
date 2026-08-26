@@ -36,7 +36,6 @@ class StockDailyPriceResponse(BaseModel):
     atr14_ratio_to_close: float | None = None
     ma20_gap_pct: float | None = None
     volume_5_20_ratio: float | None = None
-    technical_indicator_source: str | None = None
     technical_indicator_calculation_version: str | None = None
     source: str | None = None
     created_at: str

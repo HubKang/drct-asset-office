@@ -136,7 +136,6 @@ class StockPriceRepository:
                 t.bb_upper, t.bb_middle, t.bb_lower, t.bb_width, t.bb_close_position,
                 t.atr14, t.atr14_ratio_to_close,
                 t.ma20_gap_pct, t.volume_5_20_ratio,
-                t.source AS technical_indicator_source,
                 t.calculation_version AS technical_indicator_calculation_version
             FROM stock_daily_prices p
             LEFT JOIN stock_daily_technical_indicators t

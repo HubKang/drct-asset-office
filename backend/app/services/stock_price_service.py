@@ -550,10 +550,7 @@ class StockPriceService:
                 error_message = "요청 범위의 일봉 가격 응답이 비어 있습니다. 기존 가격 데이터는 유지되었습니다."
             if collected_count > 0:
                 try:
-                    indicator_result = self.technical_indicator_service.calculate_and_save_for_stock(
-                        stock.id,
-                        source_label="kiwoom_rest" if source == "kiwoom_rest" else "calculated_from_pykrx_prices",
-                    )
+                    indicator_result = self.technical_indicator_service.calculate_and_save_for_stock(stock.id)
                     technical_saved_count = int(indicator_result.get("saved_count") or 0)
                 except Exception as indicator_exc:
                     self.db.rollback()
@@ -703,11 +700,7 @@ class StockPriceService:
                 technical_latest_trade_date = None
                 technical_error = None
                 try:
-                    technical_source_label = "kiwoom_rest" if source == "kiwoom_rest" else "calculated_from_pykrx_prices"
-                    technical_result = self.technical_indicator_service.calculate_and_save_for_stock(
-                        stock.id,
-                        source_label=technical_source_label,
-                    )
+                    technical_result = self.technical_indicator_service.calculate_and_save_for_stock(stock.id)
                     technical_saved_count = int(technical_result["saved_count"])
                     technical_latest_trade_date = technical_result.get("latest_trade_date")
                     technical_saved_total += technical_saved_count

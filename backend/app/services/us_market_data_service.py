@@ -20,6 +20,8 @@ from backend.app.providers.market_data.kiwoom_us_daily_price_provider import (
 from backend.app.schemas.us_market_theme_schema import (
     UsMarketRefreshRequest,
     UsMarketRefreshResponse,
+    UsThemeDashboardRankItem,
+    UsThemeDashboardSummaryResponse,
     UsThemeReturnDetailResponse,
     UsThemeReturnItem,
     UsThemeReturnListResponse,
@@ -130,6 +132,15 @@ class UsMarketDataService:
                 symbol = str(stock["symbol"])
                 try:
                     latest = self.db.scalar(text("SELECT MAX(trade_date) FROM us_stock_daily_prices WHERE us_stock_id=:id"), {"id": stock_id})
+                    overlap_start = None
+                    if payload.mode == "INCREMENTAL" and latest:
+                        overlap_dates = self.db.scalars(text("""
+                            SELECT trade_date FROM us_stock_daily_prices
+                            WHERE us_stock_id=:id
+                            ORDER BY trade_date DESC
+                            LIMIT 2
+                        """), {"id": stock_id}).all()
+                        overlap_start = min(str(value) for value in overlap_dates)
                     request_count = payload.trading_days
                     if payload.mode == "INCREMENTAL":
                         if latest:
@@ -141,8 +152,11 @@ class UsMarketDataService:
                             request_count = 2
                     result = self.provider.fetch_history(symbol=symbol, exchange=str(stock["exchange"]), start_date=today, trading_days=request_count)
                     prices = result.prices
-                    if payload.mode == "INCREMENTAL" and latest:
-                        prices = [row for row in prices if row.trade_date > str(latest)]
+                    if payload.mode == "INCREMENTAL" and overlap_start:
+                        # Revisit the latest two actual provider trading sessions. This
+                        # corrects provisional candles without relying on calendar-day
+                        # arithmetic across US weekends, holidays, or the KST date gap.
+                        prices = [row for row in prices if row.trade_date >= overlap_start]
                     if historical_mode and not prices:
                         raise ValueError("Kiwoom에서 과거가격을 찾지 못했습니다.")
                     timestamp = now_kst()
@@ -313,6 +327,39 @@ class UsMarketDataService:
             WHERE t.active=1 ORDER BY g.sort_order,t.sort_order,t.name
         """), {"latest_date": latest_date}).mappings().all()
         return UsThemeReturnListResponse(latest_date=str(latest_date) if latest_date else None, items=[self._return_item(row) for row in rows])
+
+    def dashboard_summary(self) -> UsThemeDashboardSummaryResponse:
+        """Build both dashboard rankings from the existing durable US aggregates."""
+        trend = self.trend(period=30, active=1)
+        latest_date = max((point.trade_date for item in trend.items for point in item.points), default=None)
+        latest_refreshed_at = self.db.scalar(text("SELECT MAX(updated_at) FROM us_theme_daily_returns"))
+        active_theme_count = int(self.db.scalar(text("SELECT COUNT(*) FROM us_themes WHERE active=1")) or 0)
+        rows: list[UsThemeDashboardRankItem] = []
+        for item in trend.items:
+            if not item.points:
+                continue
+            latest = max(item.points, key=lambda point: point.trade_date)
+            recent = sorted(item.points, key=lambda point: point.trade_date)[-10:]
+            positive_days = sum(1 for point in recent if point.simple_return > 0)
+            observed_days = len(recent)
+            rows.append(UsThemeDashboardRankItem(
+                theme_id=item.theme_id,
+                theme_group_name=item.theme_group_name,
+                theme_name=item.theme_name,
+                simple_return=latest.simple_return,
+                theme_strength=latest.theme_strength,
+                rolling_30d_return=latest.rolling_30d_simple_return,
+                persistence_rate=round((positive_days / observed_days) * 100, 2) if observed_days else 0,
+                positive_days=positive_days,
+                observed_days=observed_days,
+            ))
+        return UsThemeDashboardSummaryResponse(
+            latest_date=latest_date,
+            latest_refreshed_at=str(latest_refreshed_at) if latest_refreshed_at else None,
+            active_theme_count=active_theme_count,
+            top_strength=sorted(rows, key=lambda row: (-row.theme_strength, -row.simple_return, row.theme_name))[:6],
+            top_persistence=sorted(rows, key=lambda row: (-row.persistence_rate, -row.positive_days, -row.theme_strength, row.theme_name))[:6],
+        )
 
     def treemap(self) -> UsThemeTreemapResponse:
         """Return the latest finalized US theme values with active link counts.

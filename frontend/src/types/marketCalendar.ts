@@ -1,5 +1,6 @@
 export type MarketCalendarImportance = "high" | "medium" | "low";
 export type MarketCalendarEventType = "news" | "policy" | "issue" | "earnings" | "disclosure" | "supply" | "other";
+export type MarketCalendarPeriodType = "D" | "M";
 
 export type MarketCalendarStock = {
   stock_id: number;
@@ -9,10 +10,11 @@ export type MarketCalendarStock = {
 
 export type MarketCalendarEvent = {
   id: number;
+  period_type: MarketCalendarPeriodType;
   start_date: string;
   end_date: string;
-  theme_id: number;
-  theme_name: string;
+  theme_id: number | null;
+  theme_name: string | null;
   theme_group_id?: number | null;
   theme_group_name?: string | null;
   title: string;
@@ -28,9 +30,10 @@ export type MarketCalendarEvent = {
 };
 
 export type MarketCalendarEventInput = {
+  period_type?: MarketCalendarPeriodType;
   start_date: string;
   end_date: string;
-  theme_id: number;
+  theme_id?: number | null;
   title: string;
   summary?: string | null;
   news_url?: string | null;

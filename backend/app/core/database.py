@@ -1171,7 +1171,8 @@ def ensure_runtime_schema() -> None:
             ('US_SOX', '필라델피아 반도체지수', 'GLOBAL_INDEX', 'US_SEMICONDUCTOR', 'DAILY', 'LINE', 'INDEX', '지수', '지수', None, 73, 4, 'FRED NASDAQSOX 기반 미국 반도체지수', None, '글로벌 반도체 수급 개선 가능', '글로벌 반도체 수급 약화 가능', 1, 'WAITING'),
             ('US_10Y', '미국 국채 10년', 'GLOBAL_RATE', 'US_TREASURY', 'DAILY', 'LINE', 'PCT', '%', '금리', None, 80, 1, 'FRED DGS10 기반 미국 국채 10년 금리', None, '글로벌 장기금리 부담 가능', '글로벌 장기금리 부담 완화 가능', 1, 'WAITING'),
             ('US_2Y', '미국 국채 2년', 'GLOBAL_RATE', 'US_TREASURY', 'DAILY', 'LINE', 'PCT', '%', '금리', None, 81, 2, 'FRED DGS2 기반 미국 국채 2년 금리', None, '미국 단기금리 부담 가능', '미국 단기금리 부담 완화 가능', 1, 'WAITING'),
-            ('US_FED_FUNDS', '미국 연방기금금리', 'GLOBAL_RATE', 'US_POLICY_RATE', 'DAILY', 'LINE', 'PCT', '%', '금리', None, 82, 3, 'FRED DFF 기반 미국 연방기금금리', None, '정책금리 부담 가능', '정책금리 부담 완화 가능', 1, 'WAITING'),
+            ('US_30Y', '미국 국채 30년', 'GLOBAL_RATE', 'US_TREASURY', 'DAILY', 'LINE', 'PCT', '%', '금리', None, 82, 3, '미국 30년 만기 국채의 Constant Maturity Rate. 미국 초장기 금리와 장기 기대 인플레이션, 기간 프리미엄 및 재정 부담 변화를 관찰하는 참고 지표.', None, '미국 초장기금리 부담 가능', '미국 초장기금리 부담 완화 가능', 1, 'WAITING'),
+            ('US_FED_FUNDS', '미국 연방기금금리', 'GLOBAL_RATE', 'US_POLICY_RATE', 'DAILY', 'LINE', 'PCT', '%', '금리', None, 83, 4, 'FRED DFF 기반 미국 연방기금금리', None, '정책금리 부담 가능', '정책금리 부담 완화 가능', 1, 'WAITING'),
         )
         for row in market_indicator_rows:
             conn.exec_driver_sql(
@@ -1225,6 +1226,7 @@ def ensure_runtime_schema() -> None:
             'US_SOX': 'FRED',
             'US_10Y': 'FRED',
             'US_2Y': 'FRED',
+            'US_30Y': 'FRED',
             'US_FED_FUNDS': 'FRED',
         }
         for indicator_code, provider in indicator_provider_candidates.items():
@@ -1292,6 +1294,7 @@ def ensure_runtime_schema() -> None:
             'US_SOX': ('NASDAQSOX', 'INDEX'),
             'US_10Y': ('DGS10', 'PCT'),
             'US_2Y': ('DGS2', 'PCT'),
+            'US_30Y': ('DGS30', 'PCT'),
             'US_FED_FUNDS': ('DFF', 'PCT'),
         }
         for indicator_code, (series_id, source_unit) in fred_mapping_defaults.items():
@@ -1407,7 +1410,7 @@ def ensure_runtime_schema() -> None:
             """
             CREATE TABLE IF NOT EXISTS market_theme_stocks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                theme_id INTEGER NOT NULL,
+                theme_id INTEGER,
                 stock_id INTEGER NOT NULL,
                 mapping_source TEXT NOT NULL DEFAULT 'manual',
                 confidence_score REAL,
@@ -1471,7 +1474,7 @@ def ensure_runtime_schema() -> None:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 UNIQUE(theme_id, return_date),
-                FOREIGN KEY (theme_id) REFERENCES market_themes(id) ON DELETE CASCADE
+                FOREIGN KEY (theme_id) REFERENCES market_themes(id) ON DELETE SET NULL
             )
             """
         )
@@ -1881,9 +1884,10 @@ def ensure_runtime_schema() -> None:
             """
             CREATE TABLE IF NOT EXISTS market_calendar_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                period_type TEXT NOT NULL DEFAULT 'D' CHECK(period_type IN ('D', 'M')),
                 start_date TEXT NOT NULL,
                 end_date TEXT NOT NULL,
-                theme_id INTEGER NOT NULL,
+                theme_id INTEGER,
                 title TEXT NOT NULL,
                 summary TEXT,
                 news_url TEXT,
@@ -1893,10 +1897,11 @@ def ensure_runtime_schema() -> None:
                 is_active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                FOREIGN KEY (theme_id) REFERENCES market_themes(id) ON DELETE CASCADE
+                FOREIGN KEY (theme_id) REFERENCES market_themes(id) ON DELETE SET NULL
             )
             """
         )
+        _ensure_column(conn, "market_calendar_events", "period_type", "TEXT NOT NULL DEFAULT 'D' CHECK(period_type IN ('D', 'M'))")
         conn.exec_driver_sql(
             """
             CREATE TABLE IF NOT EXISTS market_calendar_event_stocks (
@@ -3827,6 +3832,7 @@ def ensure_market_data_collection_schema() -> None:
         )
 
         fred_rows = (
+            ("US_30Y", "미국 국채 30년", "GLOBAL_RATE", "US_TREASURY", "DAILY", "LINE", "PCT", "%", "미국 30년 만기 국채의 Constant Maturity Rate. 미국 초장기 금리와 장기 기대 인플레이션, 기간 프리미엄 및 재정 부담 변화를 관찰하는 참고 지표.", 82, 3, "DGS30"),
             ("US_VIX", "VIX", "GLOBAL_RISK", "VOLATILITY", "DAILY", "LINE", "INDEX", "지수", "VIX risk-off and volatility signal", 90, 1, "VIXCLS"),
             ("US_REAL_10Y", "미국 10년 실질금리", "GLOBAL_RATE", "REAL_RATE", "DAILY", "LINE", "PCT", "%", "US 10Y real yield discount-rate pressure", 91, 2, "DFII10"),
             ("US_BREAKEVEN_10Y", "미국 10년 기대인플레이션", "INFLATION", "BREAKEVEN", "DAILY", "LINE", "PCT", "%", "US 10Y breakeven inflation expectation", 92, 3, "T10YIE"),

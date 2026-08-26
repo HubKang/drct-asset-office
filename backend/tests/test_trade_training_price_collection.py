@@ -54,7 +54,7 @@ def test_recent_collection_targets_one_stock_and_never_promotes_to_full():
     assert kwargs["stock"] is stock
     assert kwargs["max_pages"] == 1
     assert kwargs["recalculate_derived"] is True
-    service.technical_indicator_service.calculate_and_save_for_stock.assert_called_once_with(7, source_label="kiwoom_rest")
+    service.technical_indicator_service.calculate_and_save_for_stock.assert_called_once_with(7)
 
 
 def test_full_collection_uses_existing_two_year_policy_for_one_stock():

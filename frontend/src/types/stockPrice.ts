@@ -31,7 +31,6 @@ export type StockDailyPrice = {
   atr14_ratio_to_close?: number | null;
   ma20_gap_pct?: number | null;
   volume_5_20_ratio?: number | null;
-  technical_indicator_source?: string | null;
   technical_indicator_calculation_version?: string | null;
   source: string | null;
   created_at: string;

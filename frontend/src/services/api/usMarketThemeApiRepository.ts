@@ -1,8 +1,9 @@
 import { apiRequest } from "@/services/api/apiClient";
-import type { UsMarketRefreshResponse, UsTheme, UsThemeGroup, UsThemeGroupInput, UsThemeInput, UsThemeReturnDetail, UsThemeReturnList, UsThemeStock, UsThemeStockInput, UsThemeSummary, UsThemeTreemap, UsThemeTrend, UsStockCharts } from "@/types/usMarketTheme";
+import type { UsMarketRefreshResponse, UsTheme, UsThemeDashboardSummary, UsThemeGroup, UsThemeGroupInput, UsThemeInput, UsThemeReturnDetail, UsThemeReturnList, UsThemeStock, UsThemeStockInput, UsThemeSummary, UsThemeTreemap, UsThemeTrend, UsStockCharts } from "@/types/usMarketTheme";
 
 export const usMarketThemeApiRepository = {
   summary: () => apiRequest<UsThemeSummary>("/us-market-themes/summary"),
+  dashboardSummary: () => apiRequest<UsThemeDashboardSummary>("/us-market-themes/dashboard-summary", { cache: "no-store" }),
   listGroups: () => apiRequest<UsThemeGroup[]>("/us-market-themes/groups"),
   createGroup: (payload: UsThemeGroupInput) => apiRequest<UsThemeGroup>("/us-market-themes/groups", { method: "POST", body: JSON.stringify(payload) }),
   updateGroup: (id: number, payload: Partial<UsThemeGroupInput>) => apiRequest<UsThemeGroup>(`/us-market-themes/groups/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),

@@ -23,7 +23,7 @@ class TechnicalIndicatorRepository:
                 atr14, atr14_ratio_to_close,
                 ma5_gap_pct, ma10_gap_pct, ma20_gap_pct, ma60_gap_pct, ma120_gap_pct, ma240_gap_pct,
                 volume_ma5, volume_ma20, volume_5_20_ratio,
-                source, calculation_version, created_at, updated_at
+                calculation_version, created_at, updated_at
             ) VALUES (
                 :stock_id, :trade_date,
                 :rsi14, :macd, :macd_signal, :macd_histogram,
@@ -31,7 +31,7 @@ class TechnicalIndicatorRepository:
                 :atr14, :atr14_ratio_to_close,
                 :ma5_gap_pct, :ma10_gap_pct, :ma20_gap_pct, :ma60_gap_pct, :ma120_gap_pct, :ma240_gap_pct,
                 :volume_ma5, :volume_ma20, :volume_5_20_ratio,
-                :source, :calculation_version, :created_at, :updated_at
+                :calculation_version, :created_at, :updated_at
             )
             ON CONFLICT(stock_id, trade_date) DO UPDATE SET
                 rsi14=excluded.rsi14,
@@ -54,7 +54,6 @@ class TechnicalIndicatorRepository:
                 volume_ma5=excluded.volume_ma5,
                 volume_ma20=excluded.volume_ma20,
                 volume_5_20_ratio=excluded.volume_5_20_ratio,
-                source=excluded.source,
                 calculation_version=excluded.calculation_version,
                 updated_at=excluded.updated_at
             """
@@ -86,7 +85,6 @@ class TechnicalIndicatorRepository:
                     "volume_ma5": row.get("volume_ma5"),
                     "volume_ma20": row.get("volume_ma20"),
                     "volume_5_20_ratio": row.get("volume_5_20_ratio"),
-                    "source": row.get("source", "calculated_from_pykrx_prices"),
                     "calculation_version": row.get("calculation_version", "v1"),
                     "created_at": now,
                     "updated_at": now,

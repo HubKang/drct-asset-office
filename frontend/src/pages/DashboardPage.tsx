@@ -10,7 +10,7 @@ import type { CollectionRun } from "@/types/collectionRun";
 import type { MarketDataCollectionRun } from "@/types/marketData";
 import type { MarketCalendarEvent, MarketCalendarImportance } from "@/types/marketCalendar";
 import type { MarketSignalCurrentStateItem } from "@/types/marketSignal";
-import type { DashboardActivity, DashboardRecentActivitiesResponse } from "@/types/dashboard";
+import type { UsThemeDashboardSummary } from "@/types/usMarketTheme";
 import type {
   MarketTheme,
   MarketThemeObservationResponse,
@@ -106,6 +106,17 @@ const latestExpectedTradingDate = () => {
   return new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Seoul" }).format(date);
 };
 
+const latestExpectedUsTradingDate = () => {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23",
+  }).formatToParts(new Date());
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const dateValue = `${value.year}-${value.month}-${value.day}`;
+  const date = new Date(`${dateValue}T12:00:00Z`);
+  if (date.getUTCDay() !== 0 && date.getUTCDay() !== 6 && Number(value.hour) >= 18) return dateValue;
+  return shiftBusinessDay(dateValue, -1);
+};
+
 const maxDate = (values: Array<string | null | undefined>) =>
   values.reduce<string | null>((latest, value) => {
     const date = value?.slice(0, 10) ?? "";
@@ -124,12 +135,12 @@ const isRunningStatus = (status?: string | null) => {
   return normalized === "RUNNING" || normalized === "PENDING";
 };
 
-const resolveReadinessStatus = (dataDate: string | null, runStatus?: string | null): ReadinessStatus => {
+const resolveReadinessStatus = (dataDate: string | null, runStatus?: string | null, expectedDate = latestExpectedTradingDate()): ReadinessStatus => {
   const normalized = String(runStatus ?? "").toUpperCase();
   if (isRunningStatus(normalized)) return "RUNNING";
   if (normalized.includes("PARTIAL")) return "PARTIAL";
   if (normalized === "FAILED" || normalized === "FAILURE") return "FAILED";
-  return dataDate && dataDate >= latestExpectedTradingDate() ? "FRESH" : "STALE";
+  return dataDate && dataDate >= expectedDate ? "FRESH" : "STALE";
 };
 
 const formatDate = (value: string | null) => value || "확인되지 않음";
@@ -221,22 +232,6 @@ const OBSERVATION_STATE_LABELS: Record<string, string> = {
   FLOW_EXIT: "수급 이탈",
 };
 
-const ACTIVITY_TYPE_LABELS: Record<DashboardActivity["type"], string> = {
-  TRAINING_COMPLETED: "훈련",
-  TRADE_JOURNAL: "일지",
-  CHART_MARKER: "마커",
-  OBSERVATION_CALCULATION: "분석",
-  OBSERVATION_VALIDATION: "검증",
-};
-
-const formatActivityTime = (value: string) => {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value.replace("T", " ").slice(5, 16);
-  return new Intl.DateTimeFormat("ko-KR", {
-    timeZone: "Asia/Seoul", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
-  }).format(date);
-};
-
 const observationDateLabel = (targetDate: string) => {
   return `관찰 대상 ${targetDate.slice(5).replace("-", ".")}`;
 };
@@ -290,6 +285,9 @@ type ThemeRankPanelProps = {
   onOpenAll: () => void;
   onRefreshTheme: () => void;
   refreshDisabled: boolean;
+  title?: string;
+  emptyMessage?: string;
+  refreshLabel?: string;
 };
 
 function ThemeRankPanel({
@@ -303,8 +301,11 @@ function ThemeRankPanel({
   onOpenAll,
   onRefreshTheme,
   refreshDisabled,
+  title: titleOverride,
+  emptyMessage,
+  refreshLabel = "등락률&수급 갱신",
 }: ThemeRankPanelProps) {
-  const title = kind === "gainers" ? "상승 테마 Top6" : "상승 지속 Top6";
+  const title = titleOverride ?? (kind === "gainers" ? "상승 테마 Top6" : "상승 지속 Top6");
   return (
     <article className="dashboard-v2-rank-panel">
       <div className="dashboard-v2-rank-head">
@@ -343,8 +344,8 @@ function ThemeRankPanel({
         </ol>
       ) : (
         <div className="dashboard-v2-rank-state">
-          <p>{kind === "gainers" ? "상승한 테마가 없습니다." : "상승 지속 데이터를 계산하기 위한 관측일수가 부족합니다."}</p>
-          {kind === "gainers" ? <button type="button" className="btn btn-secondary" onClick={onRefreshTheme} disabled={refreshDisabled}>등락률&수급 갱신</button> : null}
+          <p>{emptyMessage ?? (kind === "gainers" ? "상승한 테마가 없습니다." : "상승 지속 데이터를 계산하기 위한 관측일수가 부족합니다.")}</p>
+          {kind === "gainers" ? <button type="button" className="btn btn-secondary" onClick={onRefreshTheme} disabled={refreshDisabled}>{refreshLabel}</button> : null}
         </div>
       )}
     </article>
@@ -381,6 +382,11 @@ function DashboardPage() {
   const [themeSummary, setThemeSummary] = useState<ThemeSummaryData | null>(null);
   const [isThemeSummaryLoading, setIsThemeSummaryLoading] = useState(true);
   const [themeSummaryError, setThemeSummaryError] = useState("");
+  const [usThemeSummary, setUsThemeSummary] = useState<UsThemeDashboardSummary | null>(null);
+  const [isUsThemeSummaryLoading, setIsUsThemeSummaryLoading] = useState(true);
+  const [usThemeError, setUsThemeError] = useState("");
+  const [usThemeFeedback, setUsThemeFeedback] = useState<ActionFeedback | null>(null);
+  const [isUsThemeRunning, setIsUsThemeRunning] = useState(false);
   const [marketSignals, setMarketSignals] = useState<MarketSignalSummaryRow[]>([]);
   const [isMarketSignalsLoading, setIsMarketSignalsLoading] = useState(true);
   const [marketSignalsError, setMarketSignalsError] = useState("");
@@ -390,9 +396,6 @@ function DashboardPage() {
   const [observationSummary, setObservationSummary] = useState<MarketThemeObservationResponse | null>(null);
   const [isObservationLoading, setIsObservationLoading] = useState(true);
   const [observationError, setObservationError] = useState("");
-  const [recentActivities, setRecentActivities] = useState<DashboardRecentActivitiesResponse | null>(null);
-  const [isActivitiesLoading, setIsActivitiesLoading] = useState(true);
-  const [activitiesError, setActivitiesError] = useState("");
   const [observationTargetDate, setObservationTargetDate] = useState("");
   const [observationCalculationOpen, setObservationCalculationOpen] = useState(false);
   const [isObservationCalculating, setIsObservationCalculating] = useState(false);
@@ -494,6 +497,18 @@ function DashboardPage() {
     }
   }, []);
 
+  const loadUsThemeSummary = useCallback(async () => {
+    setIsUsThemeSummaryLoading(true);
+    setUsThemeError("");
+    try {
+      setUsThemeSummary(await repositories.usMarketThemes.dashboardSummary());
+    } catch (error) {
+      setUsThemeError(errorMessage(error));
+    } finally {
+      setIsUsThemeSummaryLoading(false);
+    }
+  }, []);
+
   const loadMarketSignals = useCallback(async () => {
     setIsMarketSignalsLoading(true);
     setMarketSignalsError("");
@@ -538,7 +553,7 @@ function DashboardPage() {
       const deduplicated = new Map<number, MarketCalendarEvent>();
       responses.flatMap((response) => response.events).forEach((event) => deduplicated.set(event.id, event));
       const events = Array.from(deduplicated.values())
-        .filter((event) => event.is_active === 1 && event.start_date <= endDate && event.end_date >= startDate)
+        .filter((event) => event.is_active === 1 && event.period_type === "D" && event.start_date <= endDate && event.end_date >= startDate)
         .map((event) => ({ ...event, displayDate: event.start_date < startDate ? startDate : event.start_date }))
         .sort((a, b) =>
           a.displayDate.localeCompare(b.displayDate)
@@ -564,18 +579,6 @@ function DashboardPage() {
     }
   }, []);
 
-  const loadRecentActivities = useCallback(async () => {
-    setIsActivitiesLoading(true);
-    setActivitiesError("");
-    try {
-      setRecentActivities(await repositories.dashboard.recentActivities(30, 5));
-    } catch (error) {
-      setActivitiesError(errorMessage(error));
-    } finally {
-      setIsActivitiesLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
     void (async () => {
       const [dataDate] = await Promise.all([
@@ -583,14 +586,14 @@ function DashboardPage() {
         loadMarketSignals(),
         loadUpcomingCalendar(),
         loadObservationSummary(),
-        loadRecentActivities(),
+        loadUsThemeSummary(),
       ]);
       await loadThemeSummary(dataDate as string | null);
     })();
     return () => {
       themePollingTokenRef.current += 1;
     };
-  }, [loadReadiness, loadThemeSummary, loadMarketSignals, loadUpcomingCalendar, loadObservationSummary, loadRecentActivities]);
+  }, [loadReadiness, loadThemeSummary, loadMarketSignals, loadUpcomingCalendar, loadObservationSummary, loadUsThemeSummary]);
 
   useEffect(() => {
     if (themeReadiness?.dataDate) setObservationTargetDate(shiftBusinessDay(themeReadiness.dataDate, 1));
@@ -614,7 +617,7 @@ function DashboardPage() {
       loadMarketSignals(),
       loadUpcomingCalendar(),
       loadObservationSummary(),
-      loadRecentActivities(),
+      loadUsThemeSummary(),
     ]);
     await loadThemeSummary(dataDate as string | null);
     setIsRefreshing(false);
@@ -680,6 +683,28 @@ function DashboardPage() {
     }
   };
 
+  const handleUsThemeRefresh = async () => {
+    if (isUsThemeRunning) return;
+    setIsUsThemeRunning(true);
+    setUsThemeFeedback(null);
+    setUsThemeError("");
+    try {
+      const result = await repositories.usMarketThemes.refresh();
+      const failedCount = Number(result.price.failed_stock_count ?? 0);
+      setUsThemeFeedback({
+        tone: failedCount > 0 ? "warning" : "success",
+        message: `${result.price.success_stock_count.toLocaleString()}/${result.price.requested_stock_count.toLocaleString()}개 종목 · ${result.returns.processed_theme_count.toLocaleString()}개 테마 처리${failedCount ? ` · 실패 ${failedCount.toLocaleString()}건` : ""}`,
+      });
+      await loadUsThemeSummary();
+    } catch (error) {
+      const message = errorMessage(error);
+      setUsThemeError(message);
+      setUsThemeFeedback({ tone: "error", message });
+    } finally {
+      setIsUsThemeRunning(false);
+    }
+  };
+
   const observationTargetDateError = () => {
     if (!observationTargetDate) return "관찰 대상일을 선택해 주세요.";
     const day = new Date(`${observationTargetDate}T00:00:00`).getDay();
@@ -710,7 +735,7 @@ function DashboardPage() {
       const result = await repositories.marketThemes.calculateObservationPriority(observationTargetDate, refreshMarketIndicators);
       setObservationCalculationFeedback(`${result.run?.target_date ?? observationTargetDate} 관찰순위 계산 완료`);
       setObservationCalculationOpen(false);
-      await Promise.all([loadObservationSummary(), loadRecentActivities()]);
+      await loadObservationSummary();
     } catch (error) {
       setObservationCalculationError(errorMessage(error));
     } finally {
@@ -720,6 +745,18 @@ function DashboardPage() {
 
   const themeStatus = statusPresentation[isThemeRunning ? "RUNNING" : (themeReadiness?.status ?? "STALE")];
   const marketStatus = statusPresentation[isMarketRunning ? "RUNNING" : (marketReadiness?.status ?? "STALE")];
+  const usReadinessStatus = resolveReadinessStatus(usThemeSummary?.latest_date ?? null, null, latestExpectedUsTradingDate());
+  const usStatus = statusPresentation[isUsThemeRunning ? "RUNNING" : usReadinessStatus];
+  const usStrengthRows: ThemeSummaryRow[] = (usThemeSummary?.top_strength ?? []).map((row) => ({
+    themeId: row.theme_id, themeName: row.theme_name, themeGroupName: row.theme_group_name,
+    dailyReturn: row.theme_strength, rolling30dReturn: row.rolling_30d_return,
+    persistenceRate: row.persistence_rate, positiveDays: row.positive_days, observedDays: row.observed_days,
+  }));
+  const usPersistenceRows: ThemeSummaryRow[] = (usThemeSummary?.top_persistence ?? []).map((row) => ({
+    themeId: row.theme_id, themeName: row.theme_name, themeGroupName: row.theme_group_name,
+    dailyReturn: row.theme_strength, rolling30dReturn: row.rolling_30d_return,
+    persistenceRate: row.persistence_rate, positiveDays: row.positive_days, observedDays: row.observed_days,
+  }));
 
   return (
     <div className="space-y-4 dashboard-v2">
@@ -801,6 +838,29 @@ function DashboardPage() {
             </article>
           )}
 
+          {isUsThemeSummaryLoading && !usThemeSummary ? <ReadinessSkeleton /> : (
+            <article className={`dashboard-v2-operation-card dashboard-v2-status-${(isUsThemeRunning ? "running" : usReadinessStatus.toLowerCase())}`}>
+              <div className="dashboard-v2-operation-head">
+                <div><span className="dashboard-v2-operation-eyebrow">미국 테마</span><h4>미국 종가 · 테마</h4></div>
+                <StatusBadge label={usStatus.label} tone={usStatus.tone} />
+              </div>
+              <dl className="dashboard-v2-metrics dashboard-v2-card-metrics">
+                <div><dt>최신 미국 데이터</dt><dd>{formatDate(usThemeSummary?.latest_date ?? null)}</dd></div>
+                <div><dt>활성 테마</dt><dd>{(usThemeSummary?.active_theme_count ?? 0).toLocaleString()}개</dd></div>
+                <div className="dashboard-v2-metric-wide"><dt>최근 성공</dt><dd>{formatDateTime(usThemeSummary?.latest_refreshed_at ?? null)}</dd></div>
+              </dl>
+              <div className="dashboard-v2-operation-footer">
+                {!usThemeFeedback && !usThemeError ? <p className="dashboard-v2-operation-summary">기존 미국 가격·테마 갱신 흐름을 실행합니다.</p> : null}
+                {usThemeFeedback ? <p className={`dashboard-v2-feedback ${usThemeFeedback.tone}`}>{usThemeFeedback.message}</p> : null}
+                {!usThemeFeedback && usThemeError ? <p className="dashboard-v2-feedback error">상태 조회 실패: {usThemeError}</p> : null}
+                <button type="button" className="btn btn-primary dashboard-v2-action-button" onClick={() => void handleUsThemeRefresh()} disabled={isUsThemeRunning}>
+                  {isUsThemeRunning ? <span className="dashboard-v2-spinner" aria-hidden="true" /> : null}
+                  {isUsThemeRunning ? "미국 테마 갱신 중" : "미국종가·테마 갱신"}
+                </button>
+              </div>
+            </article>
+          )}
+
           {isReadinessLoading && !marketReadiness ? <ReadinessSkeleton /> : (
             <article className={`dashboard-v2-operation-card dashboard-v2-status-${marketReadiness?.status.toLowerCase() ?? "stale"}`}>
               <div className="dashboard-v2-operation-head">
@@ -851,49 +911,32 @@ function DashboardPage() {
             {observationCalculationFeedback ? <p className="dashboard-v2-feedback success dashboard-v2-observation-feedback">{observationCalculationFeedback}</p> : null}
             {observationCalculationError ? <p className="dashboard-v2-feedback error dashboard-v2-observation-feedback">{observationCalculationError}</p> : null}
           </article>
-        </div>
-      </SectionCard>
 
-      <SectionCard className="dashboard-v2-theme-summary-section">
-        <div className="dashboard-v2-section-heading dashboard-v2-theme-summary-heading">
-          <div>
-            <h3 className="section-title">테마 강도 순위</h3>
-            <p>최신 거래일의 상승 강도와 최근 10일 상승 지속 강도를 확인합니다.</p>
-          </div>
-          <span>{themeSummary?.dataDate ? `최근 거래일 ${themeSummary.dataDate}` : "최근 거래일 확인 중"}</span>
-        </div>
-        <div className="dashboard-v2-rank-grid">
-          <ThemeRankPanel
-            kind="gainers"
-            rows={themeSummary?.topGainers ?? []}
-            dataDate={themeSummary?.dataDate ?? themeReadiness?.dataDate ?? null}
-            loading={isThemeSummaryLoading}
-            error={themeSummaryError}
-            onRetry={() => void loadThemeSummary(themeReadiness?.dataDate)}
-            onOpenTheme={(themeId) => setThemeDetailRequest({ themeId, dataDate: themeSummary?.dataDate ?? themeReadiness?.dataDate ?? null })}
-            onOpenAll={() => navigate("/market-themes")}
-            onRefreshTheme={() => void handleThemeRefresh()}
-            refreshDisabled={isThemeRunning}
-          />
-          <ThemeRankPanel
-            kind="persistence"
-            rows={themeSummary?.topPersistence ?? []}
-            dataDate={themeSummary?.dataDate ?? themeReadiness?.dataDate ?? null}
-            loading={isThemeSummaryLoading}
-            error={themeSummaryError}
-            onRetry={() => void loadThemeSummary(themeReadiness?.dataDate)}
-            onOpenTheme={(themeId) => setThemeDetailRequest({ themeId, dataDate: themeSummary?.dataDate ?? themeReadiness?.dataDate ?? null })}
-            onOpenAll={() => navigate("/market-themes")}
-            onRefreshTheme={() => void handleThemeRefresh()}
-            refreshDisabled={isThemeRunning}
-          />
+          <article className="dashboard-v2-operation-card dashboard-v2-status-fresh dashboard-v2-navigation-card">
+            <div className="dashboard-v2-operation-head">
+              <div><span className="dashboard-v2-operation-eyebrow">시장 수급</span><h4>테마 · 종목</h4></div>
+              <StatusBadge label="분석" tone="slate" />
+            </div>
+            <p className="dashboard-v2-operation-summary">시장 수급 테마와 연결 종목의 흐름을 확인합니다.</p>
+            <div className="dashboard-v2-operation-footer">
+              <button type="button" className="btn btn-secondary dashboard-v2-action-button" onClick={() => navigate("/market-trends")}>수급 분석 보기 →</button>
+            </div>
+          </article>
+
+          <article className="dashboard-v2-operation-card dashboard-v2-status-stale dashboard-v2-extension-card">
+            <div className="dashboard-v2-operation-head">
+              <div><span className="dashboard-v2-operation-eyebrow">향후 확장</span><h4>데이터 슬롯</h4></div>
+              <StatusBadge label="준비 중" tone="slate" />
+            </div>
+            <p className="dashboard-v2-operation-summary">추가 분석 데이터 연결을 위한 확장 공간입니다.</p>
+          </article>
         </div>
       </SectionCard>
 
       <SectionCard className="dashboard-v3-market-check-section">
         <div className="dashboard-v2-section-heading dashboard-v3-market-check-heading">
           <div>
-            <h3 className="section-title">오늘의 시장 체크</h3>
+            <h3 className="section-title">시장 : 오늘의 시장 체크</h3>
             <p>시장 변화 신호와 앞으로 예정된 주요 일정을 확인합니다.</p>
           </div>
         </div>
@@ -962,27 +1005,79 @@ function DashboardPage() {
         </div>
       </SectionCard>
 
+      <SectionCard className="dashboard-v2-theme-summary-section">
+        <div className="dashboard-v2-section-heading dashboard-v2-theme-summary-heading">
+          <div>
+            <h3 className="section-title">테마 : 미국 테마 강도 순위</h3>
+            <p>전일 미국 시장의 테마 강도와 최근 10개 관측일의 상승 지속 흐름을 확인합니다.</p>
+          </div>
+          <span>{usThemeSummary?.latest_date ? `미국 데이터 기준일 ${usThemeSummary.latest_date}` : "미국 데이터 기준일 확인 중"}</span>
+        </div>
+        <div className="dashboard-v2-rank-grid">
+          <ThemeRankPanel
+            kind="gainers" title="미국 테마 강도 Top6" rows={usStrengthRows}
+            dataDate={usThemeSummary?.latest_date ?? null} loading={isUsThemeSummaryLoading} error={usThemeError}
+            onRetry={() => void loadUsThemeSummary()} onOpenTheme={() => navigate("/market-themes")}
+            onOpenAll={() => navigate("/market-themes")} onRefreshTheme={() => void handleUsThemeRefresh()}
+            refreshDisabled={isUsThemeRunning} refreshLabel="미국종가·테마 갱신"
+            emptyMessage="최근 미국 테마 데이터가 없습니다. 오늘의 데이터 준비에서 미국종가·테마 갱신을 실행해 주세요."
+          />
+          <ThemeRankPanel
+            kind="persistence" title="미국 상승 지속 Top6" rows={usPersistenceRows}
+            dataDate={usThemeSummary?.latest_date ?? null} loading={isUsThemeSummaryLoading} error={usThemeError}
+            onRetry={() => void loadUsThemeSummary()} onOpenTheme={() => navigate("/market-themes")}
+            onOpenAll={() => navigate("/market-themes")} onRefreshTheme={() => void handleUsThemeRefresh()}
+            refreshDisabled={isUsThemeRunning}
+            emptyMessage="최근 미국 테마 데이터가 없습니다. 오늘의 데이터 준비에서 미국종가·테마 갱신을 실행해 주세요."
+          />
+        </div>
+      </SectionCard>
+
+      <SectionCard className="dashboard-v2-theme-summary-section">
+        <div className="dashboard-v2-section-heading dashboard-v2-theme-summary-heading">
+          <div>
+            <h3 className="section-title">테마/종목 : 국내 테마 강도 순위</h3>
+            <p>최신 거래일의 상승 강도와 최근 10일 상승 지속 강도를 확인합니다.</p>
+          </div>
+          <span>{themeSummary?.dataDate ? `국내 데이터 기준일 ${themeSummary.dataDate}` : "국내 데이터 기준일 확인 중"}</span>
+        </div>
+        <div className="dashboard-v2-rank-grid">
+          <ThemeRankPanel
+            kind="gainers" rows={themeSummary?.topGainers ?? []} dataDate={themeSummary?.dataDate ?? themeReadiness?.dataDate ?? null}
+            loading={isThemeSummaryLoading} error={themeSummaryError} onRetry={() => void loadThemeSummary(themeReadiness?.dataDate)}
+            onOpenTheme={(themeId) => setThemeDetailRequest({ themeId, dataDate: themeSummary?.dataDate ?? themeReadiness?.dataDate ?? null })}
+            onOpenAll={() => navigate("/market-themes")} onRefreshTheme={() => void handleThemeRefresh()} refreshDisabled={isThemeRunning}
+          />
+          <ThemeRankPanel
+            kind="persistence" rows={themeSummary?.topPersistence ?? []} dataDate={themeSummary?.dataDate ?? themeReadiness?.dataDate ?? null}
+            loading={isThemeSummaryLoading} error={themeSummaryError} onRetry={() => void loadThemeSummary(themeReadiness?.dataDate)}
+            onOpenTheme={(themeId) => setThemeDetailRequest({ themeId, dataDate: themeSummary?.dataDate ?? themeReadiness?.dataDate ?? null })}
+            onOpenAll={() => navigate("/market-themes")} onRefreshTheme={() => void handleThemeRefresh()} refreshDisabled={isThemeRunning}
+          />
+        </div>
+      </SectionCard>
+
       <SectionCard className="dashboard-v4-observation-section">
         <div className="dashboard-v2-section-heading dashboard-v4-section-heading">
           <div>
-            <h3 className="section-title">오늘의 관찰과 활동</h3>
-            <p>관찰우선순위와 최근 DrCT 분석·훈련 활동을 확인합니다.</p>
+            <h3 className="section-title">테마/종목 : 오늘의 국내 테마 관찰 순위</h3>
+            <p>오늘 우선 관찰할 국내 테마와 구조적 강도를 확인합니다.</p>
           </div>
         </div>
         <div className="dashboard-v4-grid">
           <article className="dashboard-v4-panel">
             <header>
-              <div><h4>테마 관찰우선순위</h4><p>저장된 최신 관찰 결과 Top3</p></div>
+              <div><h4>테마 관찰우선순위</h4><p>저장된 최신 관찰 결과 Top4</p></div>
               {observationSummary?.run ? <span>{observationDateLabel(observationSummary.run.target_date)}</span> : null}
             </header>
             {isObservationLoading ? (
-              <div className="dashboard-v4-radar-skeleton" aria-label="관찰우선순위 불러오는 중">{[0, 1, 2].map((index) => <i key={index} />)}</div>
+              <div className="dashboard-v4-radar-skeleton" aria-label="관찰우선순위 불러오는 중">{[0, 1, 2, 3].map((index) => <i key={index} />)}</div>
             ) : observationError ? (
               <div className="dashboard-v4-state error"><p>관찰우선순위를 불러오지 못했습니다.</p><button type="button" className="btn btn-secondary" onClick={() => void loadObservationSummary()}>다시 시도</button></div>
             ) : observationSummary?.run && observationSummary.items.length ? (
               <div className="dashboard-v4-radar-wrap">
                 <ObservationRadarGrid
-                  items={observationSummary.items.slice(0, 3)}
+                  items={observationSummary.items.slice(0, 4)}
                   statusNames={OBSERVATION_STATE_LABELS}
                   onThemeClick={(themeId) => navigate(`/market-themes?view=prediction&target_date=${observationSummary.run!.target_date}&theme_id=${themeId}`)}
                 />
@@ -990,29 +1085,6 @@ function DashboardPage() {
               </div>
             ) : (
               <div className="dashboard-v4-state"><p>저장된 관찰우선순위 결과가 없습니다.</p><button type="button" className="btn btn-secondary" onClick={() => navigate("/market-themes?view=prediction")}>관찰순위 화면으로 이동</button></div>
-            )}
-          </article>
-
-          <article className="dashboard-v4-panel">
-            <header>
-              <div><h4>최근 DrCT 활동</h4><p>최근 30일 · 최신 5건</p></div>
-            </header>
-            {isActivitiesLoading ? (
-              <div className="dashboard-v4-list-skeleton" aria-label="최근 활동 불러오는 중">{[0, 1, 2, 3, 4].map((index) => <i key={index} />)}</div>
-            ) : activitiesError ? (
-              <div className="dashboard-v4-state error"><p>최근 활동을 불러오지 못했습니다.</p><button type="button" className="btn btn-secondary" onClick={() => void loadRecentActivities()}>다시 시도</button></div>
-            ) : recentActivities?.items.length ? (
-              <div className="dashboard-v4-activity-list">
-                {recentActivities.items.map((activity, index) => (
-                  <button key={`${activity.type}-${activity.event_at}-${index}`} type="button" onClick={() => navigate(activity.route)} aria-label={`${activity.title} 상세 보기`}>
-                    <time>{formatActivityTime(activity.event_at)}</time>
-                    <span className="dashboard-v4-activity-type">{ACTIVITY_TYPE_LABELS[activity.type]}</span>
-                    <span><strong>{activity.title}</strong><small>{activity.summary}</small></span>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <div className="dashboard-v4-state compact"><p>최근 30일 기록된 DrCT 활동이 없습니다.</p></div>
             )}
           </article>
         </div>

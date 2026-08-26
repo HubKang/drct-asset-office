@@ -46,6 +46,7 @@ const RATE_CODES = new Set([
   "KTB_10Y",
   "US_10Y",
   "US_2Y",
+  "US_30Y",
   "US_FED_FUNDS",
   "US_REAL_10Y",
   "US_BREAKEVEN_10Y",

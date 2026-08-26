@@ -19,7 +19,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Recalculate moving averages and technical indicators for selected stocks")
     parser.add_argument("--ticker", action="append", default=[], help="Stock code, repeatable (e.g. --ticker 097230)")
     parser.add_argument("--all", action="store_true", help="Recalculate all active stocks")
-    parser.add_argument("--source", default="kiwoom_rest", help="Technical indicator source label to save")
+    parser.add_argument("--source", default="kiwoom_rest", help="Price data source to recalculate from")
     return parser.parse_args()
 
 
@@ -80,10 +80,7 @@ def main() -> int:
                     continue
 
                 service.recalculate_moving_averages(stock.id)
-                result = service.technical_indicator_service.calculate_and_save_for_stock(
-                    stock_id=stock.id,
-                    source_label=args.source,
-                )
+                result = service.technical_indicator_service.calculate_and_save_for_stock(stock_id=stock.id)
 
                 print(
                     json.dumps(

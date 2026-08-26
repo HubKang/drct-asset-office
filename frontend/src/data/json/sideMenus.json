@@ -57,14 +57,6 @@
       {
         "title": "지표 신호 관리",
         "routeKey": "market-indicator-signals"
-      },
-      {
-        "title": "경제 흐름 관리",
-        "routeKey": "market-economic-flows"
-      },
-      {
-        "title": "경제 시나리오 진단",
-        "routeKey": "market-scenario-diagnosis"
       }
     ]
   },
@@ -183,5 +175,15 @@
     "menuKey": "warehouse",
     "title": "GPT 자문 패키지",
     "routeKey": "advisory-packages"
+  },
+  {
+    "menuKey": "warehouse",
+    "title": "경제 흐름 관리",
+    "routeKey": "market-economic-flows"
+  },
+  {
+    "menuKey": "warehouse",
+    "title": "경제 시나리오 진단",
+    "routeKey": "market-scenario-diagnosis"
   }
 ]

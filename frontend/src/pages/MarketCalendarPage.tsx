@@ -3,9 +3,10 @@ import clsx from "clsx";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import { repositories } from "@/services";
-import type { MarketCalendarEvent, MarketCalendarEventInput, MarketCalendarEventType, MarketCalendarImportance } from "@/types/marketCalendar";
+import type { MarketCalendarEvent, MarketCalendarEventInput, MarketCalendarEventType, MarketCalendarImportance, MarketCalendarPeriodType } from "@/types/marketCalendar";
 import type { MarketTheme } from "@/types/marketTheme";
 import type { Stock } from "@/types/stock";
+import { formatCalendarPeriod, normalizeCalendarDates } from "@/utils/marketCalendarPeriod";
 
 const EVENT_TYPE_LABELS: Record<MarketCalendarEventType, string> = {
   news: "뉴스",
@@ -26,6 +27,7 @@ const IMPORTANCE_LABELS: Record<MarketCalendarImportance, string> = {
 const THEME_COLORS = ["#16a34a", "#db2777", "#2563eb", "#f97316", "#7c3aed", "#0891b2", "#dc2626", "#65a30d", "#9333ea", "#0f766e", "#ca8a04", "#4f46e5", "#be123c", "#15803d", "#0369a1", "#a21caf"];
 
 const emptyForm = (dateValue: string): MarketCalendarEventInput => ({
+  period_type: "D",
   start_date: dateValue,
   end_date: dateValue,
   theme_id: 0,
@@ -79,7 +81,7 @@ function occursOn(event: MarketCalendarEvent, dateValue: string) {
   return event.start_date <= dateValue && event.end_date >= dateValue;
 }
 
-function themeColor(themeId: number, themeName = "") {
+function themeColor(themeId: number | null, themeName = "") {
   const seed = String(themeId) + themeName;
   let hash = 0;
   for (let index = 0; index < seed.length; index += 1) hash = (hash * 31 + seed.charCodeAt(index)) >>> 0;
@@ -95,7 +97,7 @@ function hexToRgba(hex: string, alpha: number) {
 }
 
 function eventDateLabel(event: MarketCalendarEvent) {
-  return event.start_date === event.end_date ? event.start_date : event.start_date + " ~ " + event.end_date;
+  return formatCalendarPeriod(event);
 }
 
 function getThemeInitial(event: MarketCalendarEvent) {
@@ -146,6 +148,7 @@ function MarketCalendarPage() {
   const [eventType, setEventType] = useState<MarketCalendarEventType | "">("");
   const [selectedDate, setSelectedDate] = useState(today);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerKind, setDrawerKind] = useState<"daily" | "period">("daily");
   const [modalOpen, setModalOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<MarketCalendarEvent | null>(null);
   const [form, setForm] = useState<MarketCalendarEventInput>(emptyForm(today));
@@ -157,12 +160,16 @@ function MarketCalendarPage() {
   const [, setMessage] = useState("");
   const [formError, setFormError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [showAllPeriodEvents, setShowAllPeriodEvents] = useState(false);
   const themePickerRef = useRef<HTMLDivElement | null>(null);
 
   const themeGroups = useMemo(() => themes.filter((theme) => theme.theme_level === "THEME_GROUP"), [themes]);
   const themeItems = useMemo(() => themes.filter((theme) => theme.theme_level === "THEME" && theme.is_active === 1), [themes]);
   const selectedTheme = useMemo(() => themeItems.find((theme) => theme.id === form.theme_id) ?? null, [form.theme_id, themeItems]);
   const calendarDays = useMemo(() => buildCalendarDays(month), [month]);
+  const dailyCalendarEvents = useMemo(() => events.filter((event) => event.period_type === "D"), [events]);
+  const periodEvents = useMemo(() => events.filter((event) => event.period_type === "M"), [events]);
+  const visiblePeriodEvents = showAllPeriodEvents ? periodEvents : periodEvents.slice(0, 6);
   const themeOptions = useMemo(() => {
     const query = themeSearchText.trim().toLowerCase();
     return themeItems
@@ -217,6 +224,7 @@ function MarketCalendarPage() {
 
   useEffect(() => {
     loadMonthly().catch((error) => setMessage(error instanceof Error ? error.message : String(error)));
+    setShowAllPeriodEvents(false);
   }, [month, themeGroupId, eventType]);
 
   useEffect(() => {
@@ -239,8 +247,16 @@ function MarketCalendarPage() {
 
   const openDrawer = async (dateValue: string) => {
     setSelectedDate(dateValue);
+    setDrawerKind("daily");
     setDrawerOpen(true);
     await loadDaily(dateValue);
+  };
+
+  const openPeriodDrawer = (event: MarketCalendarEvent) => {
+    setSelectedDate(event.start_date);
+    setDailyEvents([event]);
+    setDrawerKind("period");
+    setDrawerOpen(true);
   };
 
   const openCreateModal = (dateValue = selectedDate) => {
@@ -257,10 +273,11 @@ function MarketCalendarPage() {
   const openEditModal = (event: MarketCalendarEvent) => {
     setEditingEvent(event);
     setSelectedStocks(event.stocks.map(stockFromCalendar));
-    setThemeSearchText(event.theme_name);
+    setThemeSearchText(event.theme_name ?? "");
     setForm({
-      start_date: event.start_date,
-      end_date: event.end_date,
+      period_type: event.period_type,
+      start_date: event.period_type === "M" ? event.start_date.slice(0, 7) : event.start_date,
+      end_date: event.period_type === "M" ? event.end_date.slice(0, 7) : event.end_date,
       theme_id: event.theme_id,
       title: event.title,
       summary: event.summary ?? "",
@@ -300,10 +317,10 @@ function MarketCalendarPage() {
   };
 
   const validateForm = () => {
-    if (!form.start_date) return "시작일을 선택해 주세요.";
-    if (!form.end_date) return "종료일을 선택해 주세요.";
-    if (form.end_date < form.start_date) return "종료일은 시작일보다 빠를 수 없습니다.";
-    if (!form.theme_id) return "테마를 선택해 주세요.";
+    const isMonthly = form.period_type === "M";
+    if (!form.start_date) return isMonthly ? "시작월을 선택해 주세요." : "시작일을 선택해 주세요.";
+    if (!form.end_date) return isMonthly ? "종료월을 선택해 주세요." : "종료일을 선택해 주세요.";
+    if (form.end_date < form.start_date) return isMonthly ? "종료월은 시작월보다 빠를 수 없습니다." : "종료일은 시작일보다 빠를 수 없습니다.";
     if (!form.title.trim()) return "뉴스명을 입력해 주세요.";
     if (form.news_url && form.news_url.trim() && !/^https?:\/\//i.test(form.news_url.trim())) return "뉴스 URL은 http:// 또는 https://로 시작해야 합니다.";
     return "";
@@ -318,10 +335,11 @@ function MarketCalendarPage() {
     setIsSaving(true);
     setFormError("");
     try {
+      const normalizedDates = normalizeCalendarDates(form.period_type ?? "D", form.start_date, form.end_date);
       const payload: MarketCalendarEventInput = {
-        start_date: form.start_date,
-        end_date: form.end_date,
-        theme_id: Number(form.theme_id),
+        period_type: form.period_type ?? "D",
+        ...normalizedDates,
+        theme_id: form.theme_id ? Number(form.theme_id) : null,
         title: form.title.trim(),
         summary: form.summary?.trim() || null,
         news_url: form.news_url?.trim() || null,
@@ -330,13 +348,17 @@ function MarketCalendarPage() {
         memo: form.memo?.trim() || null,
         stock_ids: selectedStocks.map((stock) => stock.id),
       };
-      if (editingEvent) await repositories.marketCalendar.update(editingEvent.id, payload);
-      else await repositories.marketCalendar.create(payload);
+      const savedEvent = editingEvent
+        ? await repositories.marketCalendar.update(editingEvent.id, payload)
+        : await repositories.marketCalendar.create(payload);
       setModalOpen(false);
       setForm(emptyForm(selectedDate));
       setSelectedStocks([]);
       await loadMonthly();
-      if (drawerOpen) await loadDaily(selectedDate);
+      if (drawerOpen && drawerKind === "period") {
+        if (savedEvent.period_type === "M") setDailyEvents([savedEvent]);
+        else closeDrawer();
+      } else if (drawerOpen) await loadDaily(selectedDate);
     } catch (error) {
       console.error(error);
       setFormError("뉴스 등록에 실패했습니다. 입력값과 서버 상태를 확인해 주세요.");
@@ -350,7 +372,24 @@ function MarketCalendarPage() {
     await repositories.marketCalendar.delete(event.id);
     setMessage("");
     await loadMonthly();
-    if (drawerOpen) await loadDaily(selectedDate);
+    if (drawerOpen && drawerKind === "period") closeDrawer();
+    else if (drawerOpen) await loadDaily(selectedDate);
+  };
+
+  const changePeriodType = (periodType: MarketCalendarPeriodType) => {
+    setFormError("");
+    setForm((previous) => {
+      if ((previous.period_type ?? "D") === periodType) return previous;
+      if (periodType === "M") {
+        return {
+          ...previous,
+          period_type: "M",
+          start_date: previous.start_date.slice(0, 7),
+          end_date: previous.end_date.slice(0, 7),
+        };
+      }
+      return { ...previous, period_type: "D", start_date: "", end_date: "" };
+    });
   };
 
   return (
@@ -381,12 +420,34 @@ function MarketCalendarPage() {
             <button type="button" className="btn-secondary" onClick={() => loadMonthly()}>조회</button>
           </div>
         </div>
+        <section className="market-calendar-period-panel" aria-labelledby="market-calendar-period-title">
+          <header>
+            <div><h3 id="market-calendar-period-title">기간 일정</h3><p>{formatMonthLabel(month)} 중 어느 시점에 예정된 월별 일정입니다.</p></div>
+            <span>{periodEvents.length}건</span>
+          </header>
+          {periodEvents.length ? (
+            <div className="market-calendar-period-list">
+              {visiblePeriodEvents.map((event) => {
+                const color = getThemeColor(event);
+                return (
+                  <button key={event.id} type="button" className="market-calendar-period-row" onClick={() => openPeriodDrawer(event)}>
+                    <span className="market-calendar-period-badge">{formatCalendarPeriod(event)}</span>
+                    <strong>{event.title}</strong>
+                    {event.theme_name ? <span className="market-calendar-period-theme" style={{ color, backgroundColor: hexToRgba(color, 0.1) }}>{event.theme_name}</span> : <span className="market-calendar-period-theme is-empty">테마 미지정</span>}
+                    <span className={clsx("market-calendar-importance-badge", "market-calendar-importance-badge--" + event.importance)}>{IMPORTANCE_LABELS[event.importance]}</span>
+                  </button>
+                );
+              })}
+              {periodEvents.length > 6 ? <button type="button" className="market-calendar-period-more" onClick={() => setShowAllPeriodEvents((value) => !value)}>{showAllPeriodEvents ? "접기" : `+ ${periodEvents.length - 6}건 더 보기`}</button> : null}
+            </div>
+          ) : <p className="market-calendar-period-empty">등록된 기간 일정이 없습니다.</p>}
+        </section>
         <div className="market-calendar-weekdays">
           {["일", "월", "화", "수", "목", "금", "토"].map((day) => <span key={day}>{day}</span>)}
         </div>
         <div className="market-calendar-grid">
           {calendarDays.map((day) => {
-            const dayEvents = events.filter((event) => occursOn(event, day.date));
+            const dayEvents = dailyCalendarEvents.filter((event) => occursOn(event, day.date));
             const visible = dayEvents.slice(0, 4);
             return (
               <button key={day.date} type="button" className={clsx("market-calendar-day", !day.inMonth && "market-calendar-day--muted", day.date === today && "market-calendar-day--today", day.date === selectedDate && drawerOpen && "market-calendar-day--selected")} onClick={() => openDrawer(day.date)}>
@@ -412,10 +473,10 @@ function MarketCalendarPage() {
         <div className="market-calendar-drawer-overlay" role="presentation" onClick={closeDrawer}>
           <aside className="market-calendar-drawer" onClick={(event) => event.stopPropagation()}>
             <div className="market-calendar-drawer__header">
-              <div><h3>{selectedDate}</h3><p>{dailyEvents.length}개 일정</p></div>
+              <div><h3>{drawerKind === "period" && dailyEvents[0] ? formatCalendarPeriod(dailyEvents[0]) : selectedDate}</h3><p>{drawerKind === "period" ? "월별 예정 일정" : `${dailyEvents.length}개 일정`}</p></div>
               <button type="button" className="btn-secondary" onClick={closeDrawer}>닫기</button>
             </div>
-            <button type="button" className="btn-primary market-calendar-drawer__add" onClick={() => openCreateModal(selectedDate)}>+ 이 날짜에 뉴스 등록</button>
+            {drawerKind === "daily" ? <button type="button" className="btn-primary market-calendar-drawer__add" onClick={() => openCreateModal(selectedDate)}>+ 이 날짜에 뉴스 등록</button> : null}
             <div className="market-calendar-drawer__list">
               {dailyEvents.length === 0 ? <div className="empty-state">등록된 뉴스가 없습니다.</div> : null}
               {dailyEvents.map((event) => {
@@ -426,9 +487,10 @@ function MarketCalendarPage() {
                     <div className="market-calendar-detail-card__top">
                       <span className="badge-soft market-calendar-theme-badge" style={{ color, backgroundColor: hexToRgba(color, 0.12) }}>
                         <i style={{ backgroundColor: color }} aria-hidden="true" />
-                        {event.theme_name}
+                        {event.theme_name || "테마 미지정"}
                       </span>
                       <span className="badge-soft market-calendar-type-badge">{EVENT_TYPE_LABELS[event.event_type]}</span>
+                      <span className="badge-soft market-calendar-period-type-badge">{event.period_type === "M" ? "월별 예정" : "일별"}</span>
                       <span className={clsx("badge-soft", "market-calendar-importance-badge", "market-calendar-importance-badge--" + event.importance)}>{IMPORTANCE_LABELS[event.importance]}</span>
                     </div>
                     <h4>{event.title}</h4>
@@ -457,12 +519,19 @@ function MarketCalendarPage() {
             </div>
             <div className="market-calendar-modal__body">
               {formError ? <div className="alert-error market-calendar-form-alert">{formError}</div> : null}
+              <fieldset className="market-calendar-period-selector">
+                <legend>일정 구분</legend>
+                <div>
+                  <button type="button" className={clsx((form.period_type ?? "D") === "D" && "is-active")} onClick={() => changePeriodType("D")}><strong>일별</strong><span>D · 날짜 확정</span></button>
+                  <button type="button" className={clsx(form.period_type === "M" && "is-active")} onClick={() => changePeriodType("M")}><strong>월별</strong><span>M · 기간 내 예정</span></button>
+                </div>
+              </fieldset>
               <div className="market-calendar-date-grid">
-                <label>시작일<input type="date" value={form.start_date} onChange={(event) => setForm((prev) => ({ ...prev, start_date: event.target.value }))} /></label>
-                <label>종료일<input type="date" value={form.end_date} onChange={(event) => setForm((prev) => ({ ...prev, end_date: event.target.value }))} /></label>
+                <label>{form.period_type === "M" ? "시작월" : "시작일"}<input type={form.period_type === "M" ? "month" : "date"} value={form.start_date} onChange={(event) => setForm((prev) => ({ ...prev, start_date: event.target.value }))} /></label>
+                <label>{form.period_type === "M" ? "종료월" : "종료일"}<input type={form.period_type === "M" ? "month" : "date"} value={form.end_date} onChange={(event) => setForm((prev) => ({ ...prev, end_date: event.target.value }))} /></label>
               </div>
               <div className="market-calendar-meta-grid">
-                <label className="market-calendar-field market-calendar-theme-field">테마
+                <label className="market-calendar-field market-calendar-theme-field">테마 <span className="market-calendar-optional-label">선택</span>
                   <div className="theme-search-combobox market-calendar-theme-picker" ref={themePickerRef}>
                     <input className="theme-search-combobox__input" value={themeDropdownOpen ? themeSearchText : selectedTheme?.theme_name ?? themeSearchText} placeholder="테마명 검색" onFocus={() => setThemeDropdownOpen(true)} onChange={(event) => { setThemeSearchText(event.target.value); setThemeDropdownOpen(true); setForm((prev) => ({ ...prev, theme_id: 0 })); }} />
                     <button type="button" className="theme-search-combobox__arrow" onClick={() => setThemeDropdownOpen((open) => !open)}>▾</button>
@@ -495,7 +564,7 @@ function MarketCalendarPage() {
               <label className="market-calendar-field">메모<textarea value={form.memo ?? ""} onChange={(event) => setForm((prev) => ({ ...prev, memo: event.target.value }))} rows={3} /></label>
             </div>
             <div className="market-calendar-modal__footer">
-              <p>시작일, 종료일, 테마, 제목은 필수입니다.</p>
+              <p>{form.period_type === "M" ? "시작월, 종료월, 제목은 필수입니다." : "시작일, 종료일, 제목은 필수입니다."} 테마는 선택 항목입니다.</p>
               <div className="market-calendar-modal__footer-actions">
                 <button type="button" className="btn-secondary" disabled={isSaving} onClick={() => { setForm(emptyForm(selectedDate)); setSelectedStocks([]); setFormError(""); }}>초기화</button>
                 <button type="button" className="btn-secondary" disabled={isSaving} onClick={closeModal}>취소</button>

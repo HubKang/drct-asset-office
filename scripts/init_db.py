@@ -138,7 +138,6 @@ def ensure_stock_daily_technical_indicators_table(conn: sqlite3.Connection) -> N
             volume_ma5 REAL,
             volume_ma20 REAL,
             volume_5_20_ratio REAL,
-            source TEXT NOT NULL DEFAULT 'calculated',
             calculation_version TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,

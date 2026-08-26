@@ -39,3 +39,4 @@ def test_daily_price_response_includes_technical_indicator_fields() -> None:
     assert "atr14_ratio_to_close" in first
     assert "ma20_gap_pct" in first
     assert "volume_5_20_ratio" in first
+    assert "technical_indicator_source" not in first

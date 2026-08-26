@@ -137,6 +137,26 @@ class UsThemeSummaryResponse(BaseModel):
     linked_stocks: int
 
 
+class UsThemeDashboardRankItem(BaseModel):
+    theme_id: int
+    theme_group_name: str
+    theme_name: str
+    simple_return: float
+    theme_strength: float
+    rolling_30d_return: float
+    persistence_rate: float
+    positive_days: int
+    observed_days: int
+
+
+class UsThemeDashboardSummaryResponse(BaseModel):
+    latest_date: str | None
+    latest_refreshed_at: str | None
+    active_theme_count: int
+    top_strength: list[UsThemeDashboardRankItem]
+    top_persistence: list[UsThemeDashboardRankItem]
+
+
 class UsStockChartResponse(BaseModel):
     stock_id: int
     naver_code: str | None

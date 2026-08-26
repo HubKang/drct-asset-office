@@ -14,10 +14,11 @@ const overlaps = (event: MarketCalendarEvent, start: string, end: string) =>
 
 const toEvent = (payload: MarketCalendarEventInput, id = nextEventId++): MarketCalendarEvent => ({
   id,
+  period_type: payload.period_type ?? "D",
   start_date: payload.start_date,
   end_date: payload.end_date,
-  theme_id: payload.theme_id,
-  theme_name: "Mock Theme",
+  theme_id: payload.theme_id ?? null,
+  theme_name: payload.theme_id ? "Mock Theme" : null,
   theme_group_id: null,
   theme_group_name: null,
   title: payload.title,
@@ -41,7 +42,7 @@ export const marketCalendarMockRepository = {
   },
   listDaily: async (date: string): Promise<MarketCalendarDailyResponse> => ({
     date,
-    events: events.filter((event) => overlaps(event, date, date)),
+    events: events.filter((event) => event.period_type === "D" && overlaps(event, date, date)),
   }),
   create: async (payload: MarketCalendarEventInput): Promise<MarketCalendarEvent> => {
     const event = toEvent(payload);

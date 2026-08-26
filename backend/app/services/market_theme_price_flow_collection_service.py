@@ -323,9 +323,7 @@ class MarketThemePriceFlowCollectionService:
                     continue
                 try:
                     technical_before_count = self.technical_service.repo.count_by_stock(stock_id)
-                    result = self.technical_service.calculate_and_save_for_stock(
-                        stock_id, source_label="calculated_from_kiwoom_prices"
-                    )
+                    result = self.technical_service.calculate_and_save_for_stock(stock_id)
                     saved_count = int(result.get("saved_count") or 0)
                     technical_after_count = self.technical_service.repo.count_by_stock(stock_id)
                     technical_inserted = max(0, technical_after_count - technical_before_count)

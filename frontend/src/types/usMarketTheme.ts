@@ -2,6 +2,16 @@ export type UsThemeStockRole = "LEADER" | "CORE" | "RELATED" | "ETF";
 
 export type UsThemeSummary = { theme_groups: number; themes: number; active_themes: number; linked_stocks: number };
 
+export type UsThemeDashboardRankItem = {
+  theme_id: number; theme_group_name: string; theme_name: string;
+  simple_return: number; theme_strength: number; rolling_30d_return: number;
+  persistence_rate: number; positive_days: number; observed_days: number;
+};
+export type UsThemeDashboardSummary = {
+  latest_date: string | null; latest_refreshed_at: string | null; active_theme_count: number;
+  top_strength: UsThemeDashboardRankItem[]; top_persistence: UsThemeDashboardRankItem[];
+};
+
 export type UsThemeGroup = {
   id: number; name: string; description: string | null; sort_order: number; active: number;
   theme_count: number; active_theme_count: number; linked_stock_count: number; created_at: string; updated_at: string;

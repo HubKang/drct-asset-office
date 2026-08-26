@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -10,9 +12,10 @@ class MarketCalendarStockResponse(BaseModel):
 
 
 class MarketCalendarEventBase(BaseModel):
+    period_type: Literal["D", "M"] = "D"
     start_date: str = Field(min_length=10, max_length=10)
     end_date: str = Field(min_length=10, max_length=10)
-    theme_id: int
+    theme_id: int | None = None
     title: str = Field(min_length=1)
     summary: str | None = None
     news_url: str | None = None
@@ -32,10 +35,11 @@ class MarketCalendarEventUpdateRequest(MarketCalendarEventBase):
 
 class MarketCalendarEventResponse(BaseModel):
     id: int
+    period_type: Literal["D", "M"] = "D"
     start_date: str
     end_date: str
-    theme_id: int
-    theme_name: str
+    theme_id: int | None = None
+    theme_name: str | None = None
     theme_group_id: int | None = None
     theme_group_name: str | None = None
     title: str
