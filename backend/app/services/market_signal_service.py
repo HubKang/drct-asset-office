@@ -885,6 +885,8 @@ class MarketSignalService:
             "title": row.get("signal_name"),
             "signal_code": row.get("signal_code"),
             "signal_type": row.get("signal_type"),
+            "category": row.get("category"),
+            "item_code": row.get("trend_item_code"),
             "current_state": (detail.get("current_state") if include_transition else stored_state) or "NOT_EVALUATED",
             "calculated_state": detail.get("current_state"),
             "stored_state": stored_state or "NOT_EVALUATED",
@@ -900,12 +902,12 @@ class MarketSignalService:
             "missing_reason": detail.get("missing_reason") or row.get("missing_reason"),
             "error_message": detail.get("error_message") or row.get("error_message"),
             "explanation": detail.get("explanation"),
+            "from_state": row.get("last_transition_from"),
+            "to_state": row.get("last_transition_to"),
+            "last_transition_at": self._to_kst_iso(last_transition_at),
         }
         if include_transition:
             item.update({
-                "from_state": row.get("last_transition_from"),
-                "to_state": row.get("last_transition_to"),
-                "last_transition_at": self._to_kst_iso(last_transition_at),
                 "current_state_changed": bool(detail.get("current_state") and detail.get("current_state") != row.get("last_transition_to")),
             })
         return item

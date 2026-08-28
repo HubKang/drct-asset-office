@@ -58,6 +58,29 @@ def test_collection_summary_counts_waiting_separately() -> None:
     assert totals["unchanged_count"] == 7
 
 
+def test_collection_run_timestamps_are_returned_as_explicit_utc() -> None:
+    db = _session()
+    db.execute(text("""
+        CREATE TABLE market_data_collection_runs (
+            id INTEGER PRIMARY KEY, run_type TEXT, status TEXT,
+            started_at TEXT, finished_at TEXT, target_count INTEGER,
+            success_count INTEGER, inserted_count INTEGER, updated_count INTEGER,
+            unchanged_count INTEGER, skipped_count INTEGER, failed_count INTEGER,
+            elapsed_ms INTEGER, triggered_by TEXT, error_summary TEXT
+        )
+    """))
+    db.execute(text("""
+        INSERT INTO market_data_collection_runs VALUES
+        (56, 'INCREMENTAL_ALL', 'PARTIAL_SUCCESS', '2026-08-26 07:47:40', '2026-08-26 07:47:56',
+         57, 54, 0, 0, 40, 0, 3, 16000, 'USER', NULL)
+    """))
+
+    item = MarketDataCollectionService(db).list_runs(limit=1)["items"][0]
+
+    assert item["started_at"] == "2026-08-26T07:47:40Z"
+    assert item["finished_at"] == "2026-08-26T07:47:56Z"
+
+
 def test_same_date_market_index_value_is_updated_and_counted() -> None:
     db = _session()
     db.execute(

@@ -23,8 +23,6 @@ from backend.app.schemas.trade_training_schema import (
     TradeTrainingRiskScenarioRevisionListResponse,
     RiskOrderPreviewRequest,
     RiskOrderPreviewResponse,
-    RiskLevelReachCheckRequest,
-    RiskLevelResponseRequest,
     TrainingFinishResponse,
     TrainingGptPackageResponse,
     TrainingOrderRequest,
@@ -230,23 +228,6 @@ def get_trade_training_scenario_habits(
 def get_trade_training_risk_scenario_execution_review(scenario_id: int, db: Session = Depends(get_db)) -> dict:
     return TradeTrainingService(db).get_risk_scenario_execution_review(scenario_id)
 
-
-@router.post("/trade-training/sessions/{session_id}/risk-level-reach-check")
-def check_trade_training_risk_level_reach(
-    session_id: int,
-    payload: RiskLevelReachCheckRequest,
-    db: Session = Depends(get_db),
-) -> dict:
-    return TradeTrainingService(db).check_risk_level_reaches(session_id, payload.chart_date)
-
-
-@router.post("/trade-training/sessions/{session_id}/risk-level-responses")
-def record_trade_training_risk_level_response(
-    session_id: int,
-    payload: RiskLevelResponseRequest,
-    db: Session = Depends(get_db),
-) -> dict:
-    return TradeTrainingService(db).record_risk_level_response(session_id, payload)
 
 @router.post("/trade-training/sessions/{session_id}/risk-order-preview", response_model=RiskOrderPreviewResponse)
 def preview_trade_training_risk_order(session_id: int, payload: RiskOrderPreviewRequest, db: Session = Depends(get_db)) -> dict:

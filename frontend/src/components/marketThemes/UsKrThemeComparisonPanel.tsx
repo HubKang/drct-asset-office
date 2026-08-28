@@ -7,7 +7,7 @@ import UsKrTodayObservationPanel, { type TodayDirection, type TodayMetric } from
 import { repositories } from "@/services";
 import type { ThemeLinkOption, UsKrThemeLink, UsKrThemeLinkSummary } from "@/types/usKrThemeLink";
 
-type Props = { section: "link" | "analysis" | "watch"; onSummaryChange: (value: UsKrThemeLinkSummary) => void };
+type Props = { section: "link" | "analysis" | "watch"; onSummaryChange: (value: UsKrThemeLinkSummary) => void; onOpenThemeDetail: (themeId: number) => void };
 type PendingPair = { us: ThemeLinkOption; kr: ThemeLinkOption } | null;
 const EMPTY = { us_active_themes: 0, kr_active_themes: 0, linked_themes: 0, unlinked_us_themes: 0, unlinked_kr_themes: 0 };
 const ALL_GROUPS = "__all__";
@@ -16,7 +16,7 @@ const sortThemes = (rows: ThemeLinkOption[]) => [...rows].sort((a, b) =>
   a.group_name.localeCompare(b.group_name, "ko") || a.theme_name.localeCompare(b.theme_name, "ko"),
 );
 
-export default function UsKrThemeComparisonPanel({ section, onSummaryChange }: Props) {
+export default function UsKrThemeComparisonPanel({ section, onSummaryChange, onOpenThemeDetail }: Props) {
   const [searchParams, setSearchParams] = useSearchParams();
   const [links, setLinks] = useState<UsKrThemeLink[]>([]);
   const [usThemes, setUsThemes] = useState<ThemeLinkOption[]>([]);
@@ -97,7 +97,7 @@ export default function UsKrThemeComparisonPanel({ section, onSummaryChange }: P
     const next = new URLSearchParams(searchParams); next.set("section", "analysis"); next.set("link_id", String(linkId)); next.set("window", String(window)); next.set("metric", metric); next.set("direction", direction); setSearchParams(next, { replace: true });
   };
   if (section === "analysis") return <UsKrLeadAnalysisPanel links={links} overviewLoading={loading} initialLinkId={configuredLinkId} initialWindow={configuredWindow} initialMetric={configuredMetric} />;
-  if (section === "watch") return <UsKrTodayObservationPanel initialWindow={configuredWindow} initialMetric={configuredMetric} initialDirection={configuredDirection} onConfigChange={updateObservationConfig} onOpenAnalysis={openAnalysis} />;
+  if (section === "watch") return <UsKrTodayObservationPanel initialWindow={configuredWindow} initialMetric={configuredMetric} initialDirection={configuredDirection} onConfigChange={updateObservationConfig} onOpenAnalysis={openAnalysis} onOpenThemeDetail={onOpenThemeDetail} />;
 
   const createLink = async (us: ThemeLinkOption, kr: ThemeLinkOption) => {
     if (connectingUsId !== null) return;

@@ -345,6 +345,8 @@ export type MarketSignalCurrentStateItem = {
   title?: string | null;
   signal_code?: string | null;
   signal_type?: string | null;
+  category?: string | null;
+  item_code?: string | null;
   current_state: string;
   stored_state: string;
   calculated_state?: string | null;

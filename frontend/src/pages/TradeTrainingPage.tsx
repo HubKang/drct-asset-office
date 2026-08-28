@@ -15,7 +15,6 @@ import type { TradeMethod, TradeMethodSaveRequest } from "@/types/tradeJournal";
 import type {
   SimulationReview,
   RiskOrderPreview,
-  RiskPendingResponse,
   TrainingCandle,
   TrainingEquityCurvePoint,
   TrainingGptPackage,
@@ -49,7 +48,6 @@ type OrderMode = "BUY" | "SELL";
 type MarketIndexCode = "KOSPI" | "KOSDAQ";
 type TradeMarkerSide = "BUY" | "SELL";
 type DrawingTool = "horizontal" | "trend" | null;
-type AlertMarkerVisibility = "SELECTED" | "ALL" | "HIDDEN";
 type TrendPoint = {
   index: number;
   price: number;
@@ -468,19 +466,13 @@ function CandleChart({
   trades,
   avgPriceLine,
   riskPlanLines,
-  riskReachAlerts,
-  selectedRiskReachAlertId,
-  riskAlertMarkerVisibility,
   showTradeMarkers,
   showExistingChartMarkers,
-  scrollTargetSignal,
-  restoreViewportSignal,
   displayDays,
   scrollTargetDate,
   highlightedTradeDate,
   highlightedTradeId,
   onMarkerClick,
-  onRiskReachAlertSelect,
   onShowExistingChartMarkersChange,
   marketIndexControls,
   renderMarketIndexPanel,
@@ -491,6 +483,11 @@ function CandleChart({
   onToggleTechnical,
   onOpenTechnical,
   onRetryTechnical,
+  planPriceEditor,
+  showPlanPriceLines = true,
+  planPriceSaving,
+  onPlanPriceReset,
+  onPlanPriceComplete,
 }: {
   sessionId?: number | string | null;
   stockId?: number | null;
@@ -499,14 +496,8 @@ function CandleChart({
   trades: TrainingTrade[];
   avgPriceLine?: number | null;
   riskPlanLines?: TradeTrainingRiskPlanStep[];
-  riskReachAlerts?: RiskPendingResponse[];
-  selectedRiskReachAlertId?: number | null;
-  riskAlertMarkerVisibility?: AlertMarkerVisibility;
   showTradeMarkers?: boolean;
   showExistingChartMarkers: boolean;
-  scrollTargetSignal?: number;
-  restoreViewportSignal?: number;
-  onRiskReachAlertSelect?: (id: number) => void;
   displayDays: number;
   scrollTargetDate?: string | null;
   highlightedTradeDate?: string | null;
@@ -522,6 +513,11 @@ function CandleChart({
   onToggleTechnical: () => void;
   onOpenTechnical: () => void;
   onRetryTechnical: () => void;
+  planPriceEditor?: ReturnType<typeof useRiskPlanPriceEditor>;
+  showPlanPriceLines?: boolean;
+  planPriceSaving?: boolean;
+  onPlanPriceReset?: () => void | Promise<void>;
+  onPlanPriceComplete?: () => void;
 }) {
   const [tooltip, setTooltip] = useState<{ candle: TrainingCandle; x: number; y: number; changeRate: number | null } | null>(null);
   const [markerTooltip, setMarkerTooltip] = useState<TradeMarkerTooltip | null>(null);
@@ -545,7 +541,6 @@ function CandleChart({
   const [chartMarkerMemo, setChartMarkerMemo] = useState("");
   const [chartMarkerError, setChartMarkerError] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const previousViewportRef = useRef<number | null>(null);
   const fallbackWidth = 1080;
   const [chartViewportWidth, setChartViewportWidth] = useState(fallbackWidth);
   const priceHeight = 420;
@@ -565,34 +560,15 @@ function CandleChart({
     String(step.status || "PLANNED").toUpperCase() !== "CANCELLED" &&
     Number(step.trigger_price || 0) > 0
   );
-  const allRiskReachAlerts = (riskReachAlerts || []).filter((alert) =>
-    !!alert.chart_date &&
-    Number(alert.trigger_price || 0) > 0 &&
-    candles.some((candle) => candle.trade_date === alert.chart_date)
-  );
-  const visibleRiskReachAlerts = riskAlertMarkerVisibility === "HIDDEN"
-    ? []
-    : riskAlertMarkerVisibility === "ALL"
-      ? allRiskReachAlerts
-      : allRiskReachAlerts.filter((alert) => alert.reach_event_id === selectedRiskReachAlertId);
-  const riskReachGroups = Array.from(visibleRiskReachAlerts.reduce((groups, alert) => {
-    const date = String(alert.chart_date);
-    const current = groups.get(date) || [];
-    current.push(alert);
-    groups.set(date, current);
-    return groups;
-  }, new Map<string, RiskPendingResponse[]>()).entries()).map(([date, alerts]) => ({
-    date,
-    alerts: sortPendingRiskAlerts(alerts),
-    selected: alerts.some((alert) => alert.reach_event_id === selectedRiskReachAlertId),
-  }));
-  const riskPlanPrices = visibleRiskPlanLines.map((step) => Number(step.trigger_price));
-  const riskReachPrices = visibleRiskReachAlerts.map((alert) => Number(alert.trigger_price));
-  const chartLowPrices = [...priced.map((candle) => Number(candle.low)), ...riskPlanPrices, ...riskReachPrices];
-  const chartHighPrices = [...priced.map((candle) => Number(candle.high)), ...riskPlanPrices, ...riskReachPrices];
+  const editableRiskLines = showPlanPriceLines && planPriceEditor
+    ? [...planPriceEditor.buyLines, ...planPriceEditor.sellLines]
+    : [];
+  const riskPlanPrices = [...visibleRiskPlanLines.map((step) => Number(step.trigger_price)), ...editableRiskLines.map((line) => line.price)];
+  const chartLowPrices = [...priced.map((candle) => Number(candle.low)), ...riskPlanPrices];
+  const chartHighPrices = [...priced.map((candle) => Number(candle.high)), ...riskPlanPrices];
   const rawMinPrice = chartLowPrices.length ? Math.min(...chartLowPrices) : 0;
   const rawMaxPrice = chartHighPrices.length ? Math.max(...chartHighPrices) : 1;
-  const riskRangePadding = visibleRiskPlanLines.length || visibleRiskReachAlerts.length ? Math.max(1, (rawMaxPrice - rawMinPrice) * 0.05) : 0;
+  const riskRangePadding = visibleRiskPlanLines.length || editableRiskLines.length ? Math.max(1, (rawMaxPrice - rawMinPrice) * 0.05) : 0;
   const minPrice = Math.max(0, rawMinPrice - riskRangePadding);
   const maxPrice = rawMaxPrice + riskRangePadding;
   const span = Math.max(1, maxPrice - minPrice);
@@ -745,26 +721,11 @@ function CandleChart({
     if (!el || !scrollTargetDate) return;
     const targetIndex = candles.findIndex((candle) => candle.trade_date === scrollTargetDate);
     if (targetIndex < 0) return;
-    if (previousViewportRef.current === null) previousViewportRef.current = el.scrollLeft;
     requestAnimationFrame(() => {
       const targetX = xAt(targetIndex);
       el.scrollLeft = Math.max(0, targetX - el.clientWidth / 2);
     });
-  }, [scrollTargetDate, scrollTargetSignal, candles]);
-
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el || !restoreViewportSignal || previousViewportRef.current === null) return;
-    const previous = previousViewportRef.current;
-    requestAnimationFrame(() => {
-      el.scrollLeft = previous;
-      previousViewportRef.current = null;
-    });
-  }, [restoreViewportSignal]);
-
-  useEffect(() => {
-    previousViewportRef.current = null;
-  }, [sessionId, displayDays]);
+  }, [scrollTargetDate, candles]);
 
   useEffect(() => {
     setChartDrawings([]);
@@ -873,6 +834,13 @@ function CandleChart({
 
   return (
     <div className="training-chart-card">
+      {planPriceEditor && onPlanPriceComplete ? (
+        <div className="training-plan-price-toolbar-row">
+          <span>계획 가격</span>
+          <RiskPlanPriceToolbar editor={planPriceEditor} saving={planPriceSaving} onReset={onPlanPriceReset} onComplete={onPlanPriceComplete} />
+          {planPriceEditor.message ? <small>{planPriceEditor.message}</small> : null}
+        </div>
+      ) : null}
       <div className="training-chart-tools">
         <div className="training-chart-tool-group" aria-label="작도">
           <span>작도</span>
@@ -1000,8 +968,16 @@ function CandleChart({
                 width={slot}
                 height={priceHeight + 22 + volumeHeight}
                 fill="transparent"
-                onMouseEnter={() => !drawingTool && setTooltip({ candle, x, y: yPrice(high), changeRate })}
-                onMouseMove={() => !drawingTool && setTooltip({ candle, x, y: yPrice(high), changeRate })}
+                onMouseEnter={() => !drawingTool && !planPriceEditor?.activePickMode && setTooltip({ candle, x, y: yPrice(high), changeRate })}
+                onMouseMove={() => !drawingTool && !planPriceEditor?.activePickMode && setTooltip({ candle, x, y: yPrice(high), changeRate })}
+                onClick={(event) => {
+                  if (!planPriceEditor?.activePickMode) return;
+                  const rect = event.currentTarget.ownerSVGElement?.getBoundingClientRect();
+                  if (!rect) return;
+                  const rawY = ((event.clientY - rect.top) / rect.height) * height;
+                  planPriceEditor.pickPrice(priceAtY(clampNumber(rawY, pad.top, pad.top + priceHeight)));
+                  setTooltip(null);
+                }}
                 onContextMenu={(event) => {
                   event.preventDefault(); if(drawingTool)return;
                   setChartMarkerMenu({date:candle.trade_date,x:event.clientX,y:event.clientY}); setTooltip(null); setMarkerTooltip(null);
@@ -1064,37 +1040,15 @@ function CandleChart({
             </g>
           );
         })}
-        {riskReachGroups.map((group) => {
-          const candleIndex = candles.findIndex((candle) => candle.trade_date === group.date);
-          if (candleIndex < 0) return null;
-          const x = xAt(candleIndex);
-          const selectedAlert = group.alerts.find((alert) => alert.reach_event_id === selectedRiskReachAlertId) || group.alerts[0];
-          const y = yPrice(Number(selectedAlert.trigger_price));
-          const isTarget = selectedAlert.event_type === "TAKE_PROFIT_REACHED";
-          const isFullStop = selectedAlert.event_type === "FULL_STOP_REACHED";
-          const color = isTarget ? "#dc2626" : isFullStop ? "#1e3a8a" : "#2563eb";
-          const title = [group.date, ...group.alerts.map((alert) => riskReachAlertLabel(alert) + " · " + fmtWon(alert.trigger_price)), group.alerts.some((alert) => alert.sequence_unknown) ? "같은 봉 내 선후 관계 알 수 없음" : ""].filter(Boolean).join("\n");
-          if (!group.selected) {
-            return (
-              <g key={"risk-reach-" + group.date} className="training-risk-reach-marker muted" onClick={() => onRiskReachAlertSelect?.(group.alerts[0].reach_event_id)}>
-                <line x1={x} x2={x} y1={pad.top + 2} y2={pad.top + 12} stroke={color} strokeWidth={2} opacity={0.45} />
-                <circle cx={x} cy={pad.top + 14} r={3.5} fill={color} opacity={0.45} />
-                <title>{title}</title>
-              </g>
-            );
-          }
-          return (
-            <g key={"risk-reach-" + group.date} className="training-risk-reach-marker selected">
-              <rect x={x - slot / 2} y={pad.top} width={slot} height={priceHeight} fill={color} opacity={0.055} pointerEvents="none" />
-              <line x1={x} x2={x} y1={pad.top} y2={pad.top + priceHeight} stroke={color} strokeWidth={1.2} strokeDasharray="3 5" opacity={0.7} pointerEvents="none" />
-              <circle cx={x} cy={y} r={10} fill={color} stroke="#ffffff" strokeWidth={2} />
-              <text x={x} y={y + 4} textAnchor="middle" fontSize="11" fontWeight="900" fill="#ffffff" pointerEvents="none">{group.alerts.length > 1 ? group.alerts.length : "!"}</text>
-              <rect x={x + 12} y={y - 15} width={92} height={22} rx={5} fill="#ffffff" stroke={color} opacity={0.94} pointerEvents="none" />
-              <text x={x + 18} y={y} fontSize="10" fontWeight="800" fill={color} pointerEvents="none">{riskReachAlertLabel(selectedAlert)} {fmtNumber(selectedAlert.trigger_price)}</text>
-              <title>{title}</title>
-            </g>
-          );
-        })}        {showTradeMarkers !== false ? tradeMarkers.map((marker) => {
+        {editableRiskLines.map((line) => {
+          const color = line.kind === "BUY" ? "#16a34a" : line.kind === "TAKE_PROFIT" ? "#dc2626" : line.kind === "FULL_STOP" ? "#1e3a8a" : "#2563eb";
+          const y = yPrice(line.price);
+          return <g key={`risk-edit-${line.id}`} pointerEvents="none">
+            <line x1={pad.left} x2={width - pad.right} y1={y} y2={y} stroke={color} strokeWidth={line.kind === "FULL_STOP" ? 2.2 : 1.5} strokeDasharray="6 4" />
+            <text x={pad.left + 8} y={y - 5} fontSize="10" fontWeight="800" fill={color}>{riskLineLabel(line, line.stepNo - 1)} · {fmtWon(line.price)}</text>
+          </g>;
+        })}
+        {showTradeMarkers !== false ? tradeMarkers.map((marker) => {
           const isActive = highlightedTradeDate === marker.tradeDate || marker.trades.some((trade) => trade.id === highlightedTradeId);
           const label = marker.side === "BUY" ? "B" : "S";
           const sideLabel = marker.side === "BUY" ? "매수" : "매도";
@@ -1286,10 +1240,11 @@ function MarketIndexReplayChart({
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    requestAnimationFrame(() => {
-      el.scrollLeft = el.scrollWidth;
+    const frame = requestAnimationFrame(() => {
+      if (el.scrollWidth > el.clientWidth) el.scrollLeft = el.scrollWidth - el.clientWidth;
     });
-  }, [alignedPrices.length, alignedPrices[alignedPrices.length - 1]?.date]);
+    return () => cancelAnimationFrame(frame);
+  }, [indexCode, alignedPrices.length, alignedPrices[alignedPrices.length - 1]?.date]);
 
   const maSeries = [
     { key: "ma5" as const, label: "MA5", color: "#111827", width: 1.3 },
@@ -3873,6 +3828,8 @@ type RiskScenarioPanelProps = {
   onRiskDetailChange: (next: TradeTrainingRiskScenarioDetail | null) => void;
   onSelectStep: (stepId: number | null) => void;
   onSaved?: () => void;
+  onReset?: () => void;
+  onDraftComplete?: (draft: TradeTrainingRiskScenarioDraftRequest) => void;
 };
 
 function firstStep(steps: TradeTrainingRiskPlanStep[], group: "BUY" | "SELL") {
@@ -3957,6 +3914,94 @@ function riskLinesFromSteps(buySteps: TradeTrainingRiskPlanStep[], sellSteps: Tr
       };
     });
   return { buyLines, sellLines: normalizeStopLineKinds(rawSellLines) };
+}
+
+function useRiskPlanPriceEditor(buySteps: TradeTrainingRiskPlanStep[] = [], sellSteps: TradeTrainingRiskPlanStep[] = [], resetKey = "") {
+  const initial = riskLinesFromSteps(buySteps, sellSteps);
+  const [buyLines, setBuyLines] = useState<RiskPriceLine[]>(initial.buyLines);
+  const [sellLines, setSellLines] = useState<RiskPriceLine[]>(initial.sellLines);
+  const [activePickMode, setActivePickMode] = useState<RiskPriceSelectionMode>(null);
+  const [hoverPrice, setHoverPrice] = useState<number | null>(null);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    const next = riskLinesFromSteps(buySteps, sellSteps);
+    setBuyLines(next.buyLines);
+    setSellLines(next.sellLines);
+    setActivePickMode(null);
+    setHoverPrice(null);
+    setMessage("");
+  }, [resetKey]);
+
+  const nextStepNo = () => Math.max(0, ...buyLines.map((line) => line.stepNo), ...sellLines.map((line) => line.stepNo)) + 1;
+  const pickPrice = (price: number) => {
+    const nextPrice = roundPlanPrice(price);
+    if (!nextPrice || !activePickMode) return;
+    const targetLines = sellLines.filter((line) => line.kind === "TAKE_PROFIT");
+    const stopLines = sellLines.filter((line) => isStopLineKind(line.kind));
+    if (activePickMode === "ENTRY") {
+      if (buyLines.some((line) => line.price === nextPrice)) return setMessage("이미 등록된 분할매수 가격입니다.");
+      setBuyLines((prev) => [...prev, { id: `buy-local-${Date.now()}-${nextPrice}`, kind: "BUY", price: nextPrice, stepNo: nextStepNo() }]);
+    } else if (activePickMode === "TAKE_PROFIT") {
+      if (targetLines.some((line) => line.price === nextPrice)) return setMessage("이미 등록된 익절 가격입니다.");
+      setSellLines((prev) => [...prev, { id: `target-local-${Date.now()}-${nextPrice}`, kind: "TAKE_PROFIT", price: nextPrice, stepNo: nextStepNo() }]);
+    } else {
+      if (stopLines.some((line) => line.price === nextPrice)) return setMessage("이미 등록된 손절 가격입니다.");
+      setSellLines((prev) => normalizeStopLineKinds([...prev, { id: `stop-local-${Date.now()}-${nextPrice}`, kind: "PARTIAL_STOP", price: nextPrice, stepNo: nextStepNo() }]));
+    }
+    setMessage("");
+  };
+  const removeLine = (id: string, group: "BUY" | "SELL") => {
+    if (group === "BUY") setBuyLines((prev) => prev.filter((line) => line.id !== id));
+    else setSellLines((prev) => normalizeStopLineKinds(prev.filter((line) => line.id !== id)));
+    setMessage("");
+  };
+  const resetPrices = () => {
+    setBuyLines([]);
+    setSellLines([]);
+    setActivePickMode(null);
+    setHoverPrice(null);
+    setMessage("계획가격을 초기화했습니다.");
+  };
+  return { buyLines, sellLines, activePickMode, setActivePickMode, hoverPrice, setHoverPrice, message, setMessage, pickPrice, removeLine, resetPrices };
+}
+
+function buildRiskPlanDraft(
+  buyLines: RiskPriceLine[],
+  sellLines: RiskPriceLine[],
+  values: { profitText: string; stopText: string; memo?: string; changeReason?: string },
+): TradeTrainingRiskScenarioDraftRequest {
+  const targets = sellLines.filter((line) => line.kind === "TAKE_PROFIT").sort((a, b) => a.price - b.price);
+  const stops = sellLines.filter((line) => isStopLineKind(line.kind)).sort((a, b) => a.price - b.price);
+  const targetIndex = new Map(targets.map((line, index) => [line.id, index + 1]));
+  const partialStopIndex = new Map(stops.filter((line) => line.kind === "PARTIAL_STOP").map((line, index) => [line.id, index + 1]));
+  return {
+    buy_plan_mode: buyLines.length > 1 ? "SPLIT" : "SINGLE",
+    sell_plan_mode: sellLines.length > 1 ? "SPLIT" : "SINGLE",
+    profit_scenario_text: values.profitText.trim(),
+    stop_scenario_text: values.stopText.trim(),
+    stop_price: stops[0]?.price ?? null,
+    primary_target_price: targets[0]?.price ?? null,
+    memo: values.memo?.trim() || null,
+    change_reason: values.changeReason?.trim() || null,
+    buy_steps: buyLines.map((line, index) => ({ plan_group: "BUY", plan_type: "ENTRY", step_no: line.stepNo, status: "PLANNED", trigger_type: "PRICE_LINE", trigger_price: line.price, trigger_text: `${index + 1}차 매수 가격`, planned_ratio_pct: null, planned_quantity: null, planned_amount: null, memo: "chart price line" })),
+    sell_steps: sellLines.map((line) => ({ plan_group: "SELL", plan_type: line.kind, step_no: line.stepNo, status: "PLANNED", trigger_type: "PRICE_LINE", trigger_price: line.price, trigger_text: line.kind === "TAKE_PROFIT" ? `${targetIndex.get(line.id) || 1}차 익절 가격` : line.kind === "FULL_STOP" ? "전량 손절 가격" : `${partialStopIndex.get(line.id) || 1}차 손절 가격`, planned_ratio_pct: line.kind === "FULL_STOP" ? 100 : null, planned_quantity: null, planned_amount: null, memo: "chart price line" })),
+  };
+}
+
+function RiskPlanPriceToolbar({ editor, saving = false, onReset, onComplete }: { editor: ReturnType<typeof useRiskPlanPriceEditor>; saving?: boolean; onReset?: () => void | Promise<void>; onComplete: () => void }) {
+  const toggle = (mode: Exclude<RiskPriceSelectionMode, null>) => editor.setActivePickMode((current) => current === mode ? null : mode);
+  const reset = () => {
+    if (onReset) void onReset();
+    else editor.resetPrices();
+  };
+  return <div className="training-risk-picker-actions shared-toolbar" aria-label="계획가격 지정">
+    <button type="button" className={editor.activePickMode === "ENTRY" ? "active-entry" : ""} onClick={() => toggle("ENTRY")}>1. 분할매수 기준가</button>
+    <button type="button" className={editor.activePickMode === "TAKE_PROFIT" ? "active-target" : ""} onClick={() => toggle("TAKE_PROFIT")}>2. 분할익절 목표가</button>
+    <button type="button" className={editor.activePickMode === "STOP_LOSS" ? "active-stop" : ""} onClick={() => toggle("STOP_LOSS")}>3. 분할손절 기준가</button>
+    <button type="button" className="reset-action" disabled={saving || (!editor.buyLines.length && !editor.sellLines.length)} onClick={reset}>가격 초기화</button>
+    <button type="button" className="complete-action" disabled={saving} onClick={onComplete}>{saving ? "처리 중..." : "지정 완료"}</button>
+  </div>;
 }
 
 type RiskPricePickerChartProps = {
@@ -4123,16 +4168,13 @@ function RiskPricePickerChart({ candles, mode, buyLines, sellLines, activePickMo
     </div>
   );
 }
-function RiskScenarioPanel({ mode, detail, riskDetail, onRiskDetailChange, onSelectStep, onSaved }: RiskScenarioPanelProps) {
+function RiskScenarioPanel({ mode, detail, riskDetail, onRiskDetailChange, onSelectStep, onSaved, onReset, onDraftComplete }: RiskScenarioPanelProps) {
   const scenario = riskDetail?.scenario ?? null;
   const currentPrice = Number(detail.current_candle?.close || 0);
-  const { buyLines: savedBuyLines, sellLines: savedSellLines } = riskLinesFromSteps(riskDetail?.buy_steps ?? [], riskDetail?.sell_steps ?? []);
   const [profitText, setProfitText] = useState(scenario?.profit_scenario_text || "");
   const [stopText, setStopText] = useState(scenario?.stop_scenario_text || "");
-  const [buyLines, setBuyLines] = useState<RiskPriceLine[]>(savedBuyLines);
-  const [sellLines, setSellLines] = useState<RiskPriceLine[]>(savedSellLines);
-  const [activePickMode, setActivePickMode] = useState<RiskPriceSelectionMode>(null);
-  const [hoverPrice, setHoverPrice] = useState<number | null>(null);
+  const editor = useRiskPlanPriceEditor(riskDetail?.buy_steps ?? [], riskDetail?.sell_steps ?? [], `${scenario?.id || 0}:${scenario?.updated_at || ""}`);
+  const { buyLines, sellLines } = editor;
   const [memo, setMemo] = useState(scenario?.memo || "");
   const [changeReason, setChangeReason] = useState("");
   const [saving, setSaving] = useState(false);
@@ -4143,8 +4185,6 @@ function RiskScenarioPanel({ mode, detail, riskDetail, onRiskDetailChange, onSel
   useEffect(() => {
     setProfitText(scenario?.profit_scenario_text || "");
     setStopText(scenario?.stop_scenario_text || "");
-    setBuyLines(savedBuyLines);
-    setSellLines(savedSellLines);
     setMemo(scenario?.memo || "");
     if (scenario?.memo) setMemoOpen(true);
   }, [scenario?.id, scenario?.updated_at, riskDetail?.buy_steps?.length, riskDetail?.sell_steps?.length]);
@@ -4157,53 +4197,45 @@ function RiskScenarioPanel({ mode, detail, riskDetail, onRiskDetailChange, onSel
   const targetLines = sellLines.filter((line) => line.kind === "TAKE_PROFIT").sort((a, b) => a.price - b.price);
   const stopLines = sellLines.filter((line) => isStopLineKind(line.kind)).sort((a, b) => a.price - b.price);
   const fullStopLine = stopLines[0] ?? null;
-  const partialStopLines = stopLines.slice(1);
-  const primaryTarget = targetLines[0]?.price ?? null;
   const allLines = [...buyLines, ...sellLines];
   const crossGroupDuplicate = allLines.some((line, index) => allLines.some((other, otherIndex) => index < otherIndex && line.price === other.price && line.kind !== other.kind));
   const targetBelowStop = Boolean(fullStopLine && targetLines.some((line) => line.price <= fullStopLine.price));
 
-  const nextStepNo = () => Math.max(0, ...buyLines.map((line) => line.stepNo), ...sellLines.map((line) => line.stepNo)) + 1;
-
-  const pickPrice = (price: number) => {
-    const nextPrice = roundPlanPrice(price);
-    if (!nextPrice || !activePickMode) return;
-    setSaveError(false);
-    if (activePickMode === "ENTRY") {
-      if (buyLines.some((line) => line.price === nextPrice)) {
-        setMessage("이미 등록된 분할매수 가격입니다.");
-        return;
-      }
-      setBuyLines((prev) => [...prev, { id: `buy-local-${Date.now()}-${nextPrice}`, kind: "BUY", price: nextPrice, stepNo: nextStepNo() }]);
-      setMessage(sellLines.some((line) => line.price === nextPrice) ? "매수 가격과 매도 계획 가격이 같습니다. 계획을 다시 확인해 주세요." : "");
+  const resetPrices = async () => {
+    if (!scenario) {
+      editor.resetPrices();
+      setMessage("새로 지정한 계획가격을 모두 초기화했습니다.");
+      setSaveError(false);
+      onReset?.();
       return;
     }
-    if (activePickMode === "TAKE_PROFIT") {
-      if (targetLines.some((line) => line.price === nextPrice)) {
-        setMessage("이미 등록된 익절 가격입니다.");
-        return;
-      }
-      setSellLines((prev) => [...prev, { id: `target-local-${Date.now()}-${nextPrice}`, kind: "TAKE_PROFIT", price: nextPrice, stepNo: nextStepNo() }]);
-      setMessage(stopLines.some((line) => line.price === nextPrice) ? "익절 가격과 손절 가격이 같습니다. 계획을 다시 확인해 주세요." : "");
-      return;
-    }
-    if (stopLines.some((line) => line.price === nextPrice)) {
-      setMessage("이미 등록된 손절 가격입니다.");
-      return;
-    }
-    setSellLines((prev) => normalizeStopLineKinds([...prev, { id: `stop-local-${Date.now()}-${nextPrice}`, kind: "PARTIAL_STOP", price: nextPrice, stepNo: nextStepNo() }]));
-    setMessage(targetLines.some((line) => line.price === nextPrice) || buyLines.some((line) => line.price === nextPrice) ? "다른 계획 그룹과 같은 가격입니다. 계획을 다시 확인해 주세요." : "");
-  };
-
-  const removeLine = (id: string, removeMode: "BUY" | "SELL") => {
-    if (removeMode === "BUY") setBuyLines((prev) => prev.filter((line) => line.id !== id));
-    else setSellLines((prev) => normalizeStopLineKinds(prev.filter((line) => line.id !== id)));
+    setSaving(true);
     setMessage("");
     setSaveError(false);
+    try {
+      const next = scenario.status === "DRAFT"
+        ? await repositories.tradeTraining.cancelRiskScenario(scenario.id)
+        : await repositories.tradeTraining.updateRiskScenario(scenario.id, buildRiskPlanDraft([], [], {
+          profitText: profitText || "계획가격 재지정 예정",
+          stopText: stopText || "계획가격 재지정 예정",
+          memo,
+          changeReason: "가격 초기화",
+        }));
+      onRiskDetailChange(next);
+      onSelectStep(null);
+      editor.resetPrices();
+      setMessage("새로 지정한 가격선과 저장된 가격선을 모두 삭제했습니다.");
+      onReset?.();
+    } catch (nextError) {
+      setSaveError(true);
+      setMessage(nextError instanceof Error ? nextError.message : "저장된 계획가격을 삭제하지 못했습니다.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const save = async () => {
-    setActivePickMode(null);
+    editor.setActivePickMode(null);
     const missingItems: string[] = [];
     if (!profitText.trim()) missingItems.push("수익 시나리오");
     if (!stopText.trim()) missingItems.push("손절 시나리오");
@@ -4218,44 +4250,13 @@ function RiskScenarioPanel({ mode, detail, riskDetail, onRiskDetailChange, onSel
     setSaveError(false);
     setMessage("");
     try {
-      const targetIndex = new Map(targetLines.map((line, index) => [line.id, index + 1]));
-      const partialStopIndex = new Map(partialStopLines.map((line, index) => [line.id, index + 1]));
-      const payload: TradeTrainingRiskScenarioDraftRequest = {
-        buy_plan_mode: buyLines.length > 1 ? "SPLIT" : "SINGLE",
-        sell_plan_mode: sellLines.length > 1 ? "SPLIT" : "SINGLE",
-        profit_scenario_text: profitText.trim(),
-        stop_scenario_text: stopText.trim(),
-        stop_price: fullStopLine?.price ?? null,
-        primary_target_price: primaryTarget,
-        memo: memo.trim() || null,
-        change_reason: changeReason.trim() || null,
-        buy_steps: buyLines.map((line, index) => ({
-          plan_group: "BUY",
-          plan_type: "ENTRY",
-          step_no: line.stepNo,
-          status: "PLANNED",
-          trigger_type: "PRICE_LINE",
-          trigger_price: line.price,
-          trigger_text: `${index + 1}차 매수 가격`,
-          planned_ratio_pct: null,
-          planned_quantity: null,
-          planned_amount: null,
-          memo: "chart price line",
-        })),
-        sell_steps: sellLines.map((line) => ({
-          plan_group: "SELL",
-          plan_type: line.kind,
-          step_no: line.stepNo,
-          status: "PLANNED",
-          trigger_type: "PRICE_LINE",
-          trigger_price: line.price,
-          trigger_text: line.kind === "TAKE_PROFIT" ? `${targetIndex.get(line.id) || 1}차 익절 가격` : line.kind === "FULL_STOP" ? "전량 손절 가격" : `${partialStopIndex.get(line.id) || 1}차 손절 가격`,
-          planned_ratio_pct: line.kind === "FULL_STOP" ? 100 : null,
-          planned_quantity: null,
-          planned_amount: null,
-          memo: "chart price line",
-        })),
-      };
+      const payload = buildRiskPlanDraft(buyLines, sellLines, { profitText, stopText, memo, changeReason });
+      if (onDraftComplete) {
+        onDraftComplete(payload);
+        setMessage("계획가격을 현재 주문 초안에 반영했습니다. 실제 주문이 성공할 때 저장됩니다.");
+        setSaveError(false);
+        return;
+      }
       const next = scenario
         ? await repositories.tradeTraining.updateRiskScenario(scenario.id, payload)
         : await repositories.tradeTraining.saveRiskScenarioDraft(detail.session.id, payload);
@@ -4263,7 +4264,7 @@ function RiskScenarioPanel({ mode, detail, riskDetail, onRiskDetailChange, onSel
       const nextStep = mode === "BUY" ? firstStep(next.buy_steps, "BUY") : firstStep(next.sell_steps, "SELL");
       onSelectStep(nextStep?.id ?? null);
       setChangeReason("");
-      setActivePickMode(null);
+      editor.setActivePickMode(null);
       setSaveError(false);
       setMessage("리스크 관리 계획을 저장했습니다. 계획 가격은 주문 제한이 아니라 복기 기준입니다.");
       onSaved?.();
@@ -4301,25 +4302,20 @@ function RiskScenarioPanel({ mode, detail, riskDetail, onRiskDetailChange, onSel
         <div className="inline-result inline-warning">보유수량은 있지만 활성 리스크 관리 계획이 없습니다. 현재 대응 계획을 작성하여 상태를 복구해 주세요.</div>
       ) : null}
       <section className="training-risk-section training-risk-chart-section">
-        <div className="training-risk-picker-actions">
-          <button type="button" className={activePickMode === "ENTRY" ? "active-entry" : ""} onClick={() => setActivePickMode((current) => current === "ENTRY" ? null : "ENTRY")}>분할매수 가격 지정</button>
-          <button type="button" className={activePickMode === "TAKE_PROFIT" ? "active-target" : ""} onClick={() => setActivePickMode((current) => current === "TAKE_PROFIT" ? null : "TAKE_PROFIT")}>분할매도(익절) 가격 지정</button>
-          <button type="button" className={activePickMode === "STOP_LOSS" ? "active-stop" : ""} onClick={() => setActivePickMode((current) => current === "STOP_LOSS" ? null : "STOP_LOSS")}>분할매도(손절) 가격 지정</button>
-          <button type="button" className="complete-action" disabled={saving} onClick={() => void save()}>{saving ? "저장 중..." : "지정 완료"}</button>
-        </div>
+        <RiskPlanPriceToolbar editor={editor} saving={saving} onReset={resetPrices} onComplete={() => void save()} />
 
-        {message ? <div className={`inline-result ${saveError ? "inline-error" : ""}`} role={saveError ? "alert" : "status"}>{message}</div> : null}
+        {message || editor.message ? <div className={`inline-result ${saveError ? "inline-error" : ""}`} role={saveError ? "alert" : "status"}>{message || editor.message}</div> : null}
 
         <RiskPricePickerChart
           candles={detail.candles}
           mode={mode}
           buyLines={buyLines}
           sellLines={sellLines}
-          activePickMode={activePickMode}
-          hoverPrice={hoverPrice}
-          onHoverPrice={setHoverPrice}
-          onPickPrice={pickPrice}
-          onRemoveLine={removeLine}
+          activePickMode={editor.activePickMode}
+          hoverPrice={editor.hoverPrice}
+          onHoverPrice={editor.setHoverPrice}
+          onPickPrice={editor.pickPrice}
+          onRemoveLine={editor.removeLine}
         />
 
         {targetBelowStop ? <div className="inline-result inline-warning">익절 가격이 전량 손절 가격보다 낮거나 같습니다. 가격 계획을 다시 확인해 주세요.</div> : null}
@@ -4380,7 +4376,6 @@ function RiskScenarioPanel({ mode, detail, riskDetail, onRiskDetailChange, onSel
 
       <div className="training-risk-actions">
         {canCancel ? <button type="button" className="btn btn-secondary" disabled={saving} onClick={cancelDraft}>초안 취소</button> : null}
-        <button type="button" className="btn btn-primary" disabled={saving} onClick={() => void save()}>{saving ? "저장 중..." : scenario ? "계획 저장 후 주문 입력" : "초안 저장 후 주문 입력"}</button>
       </div>
     </div>
   );
@@ -4391,7 +4386,7 @@ function OrderModal({
   onClose,
   onSubmit,
   onRiskScenarioChange,
-  onRiskPlanSaved,
+  deferRiskPlanPersistence = true,
   initialTab,
 }: {
   mode: OrderMode;
@@ -4399,7 +4394,7 @@ function OrderModal({
   onClose: () => void;
   onSubmit: (payload: TrainingOrderRequest) => Promise<void>;
   onRiskScenarioChange: (next: TradeTrainingRiskScenarioDetail | null) => void;
-  onRiskPlanSaved?: () => void;
+  deferRiskPlanPersistence?: boolean;
   initialTab?: OrderModalTab;
 }) {
   const candle = detail.current_candle;
@@ -4424,6 +4419,7 @@ function OrderModal({
   const [riskLoadError, setRiskLoadError] = useState("");
   const [orderError, setOrderError] = useState("");
   const [riskSaveNotice, setRiskSaveNotice] = useState("");
+  const [pendingRiskPlanDraft, setPendingRiskPlanDraft] = useState<TradeTrainingRiskScenarioDraftRequest | null>(null);
   const [selectedRiskPlanStepId, setSelectedRiskPlanStepId] = useState<number | null>(() => {
     const steps = mode === "BUY" ? detail.risk_scenario?.buy_steps ?? [] : detail.risk_scenario?.sell_steps ?? [];
     return steps[0]?.id ?? null;
@@ -4453,7 +4449,7 @@ function OrderModal({
     mode === "BUY"
       ? Math.floor(availableCash / Math.max(1, price * (1 + feeRate)))
       : detail.session.position_qty;
-  const riskPlanRequired = Boolean(linkedAccount && mode === "BUY" && detail.session.position_qty <= 0 && !riskLoading && !riskDetail?.scenario);
+  const riskPlanRequired = Boolean(linkedAccount && mode === "BUY" && detail.session.position_qty <= 0 && !riskLoading && !riskDetail?.scenario && !pendingRiskPlanDraft);
   const riskStepsForMode = mode === "BUY" ? riskDetail?.buy_steps ?? [] : riskDetail?.sell_steps ?? [];
   const selectedRiskStep = riskStepsForMode.find((step) => step.id === selectedRiskPlanStepId) ?? null;
   const selectedRiskStepTone = mode === "BUY"
@@ -4635,6 +4631,7 @@ function OrderModal({
         unplanned_reason: selectedRiskPlanStepId === null ? unplannedReason.trim() || null : null,
         risk_warning_acknowledged: acknowledgeWarning,
         risk_warning_acknowledgement_note: acknowledgeWarning ? "주문 모달에서 경고 확인 후 진행" : null,
+        risk_plan_draft: mode === "BUY" ? pendingRiskPlanDraft : null,
       });
     } catch (nextError) {
       const message = nextError instanceof Error ? nextError.message : "주문을 처리하지 못했습니다.";
@@ -4884,10 +4881,18 @@ function OrderModal({
             }}
             onSelectStep={setSelectedRiskPlanStepId}
             onSaved={() => {
-              onRiskPlanSaved?.();
-              setRiskSaveNotice("리스크 관리 계획이 저장되었습니다. 주문 수량을 입력해 주세요.");
-              setActiveOrderTab("order");
+              setRiskSaveNotice("리스크 관리 계획을 저장했습니다.");
             }}
+            onReset={() => {
+              setPendingRiskPlanDraft(null);
+              setRiskSaveNotice("계획가격을 모두 초기화했습니다.");
+            }}
+            onDraftComplete={deferRiskPlanPersistence ? (draft) => {
+              setPendingRiskPlanDraft(draft);
+              setSelectedRiskPlanStepId(null);
+              setRiskSaveNotice("계획가격이 주문 초안에 반영되었습니다. 매수 체결 성공 시 함께 저장됩니다.");
+              setActiveOrderTab("order");
+            } : undefined}
           />
         ) : (
           <div className="training-method-review-panel training-method-review-tab-panel">
@@ -5002,177 +5007,6 @@ function OrderModal({
   );
 }
 
-function riskReachAlertLabel(item: RiskPendingResponse): string {
-  if (item.event_type === "TAKE_PROFIT_REACHED") return item.step_no ? item.step_no + "차 익절" : "익절";
-  if (item.event_type === "FULL_STOP_REACHED") return "전량손절";
-  return item.step_no ? item.step_no + "차 손절" : "분할손절";
-}
-
-function sortPendingRiskAlerts(items: RiskPendingResponse[]): RiskPendingResponse[] {
-  return [...items].sort((a, b) => {
-    const dateCompare = String(b.chart_date || "").localeCompare(String(a.chart_date || ""));
-    if (dateCompare) return dateCompare;
-    const createdCompare = String(b.created_at || "").localeCompare(String(a.created_at || ""));
-    return createdCompare || Number(b.reach_event_id || 0) - Number(a.reach_event_id || 0);
-  });
-}
-
-function RiskReachAlertPanel({
-  pending,
-  selectedId,
-  loading,
-  responseAction,
-  notice,
-  canRestoreChart,
-  onSelect,
-  onMoveChart,
-  onRestoreChart,
-  onRespond,
-  onOpenPlan,
-}: {
-  pending: RiskPendingResponse[];
-  selectedId: number | null;
-  loading: boolean;
-  responseAction: "SELL" | "HOLD" | "PLAN_REVISED" | null;
-  notice: string;
-  canRestoreChart: boolean;
-  onSelect: (id: number) => void;
-  onMoveChart: (item: RiskPendingResponse) => void;
-  onRestoreChart: () => void;
-  onRespond: (item: RiskPendingResponse, response: "SELL" | "HOLD", reason: string) => void;
-  onOpenPlan: (item: RiskPendingResponse) => void;
-}) {
-  const sorted = useMemo(() => sortPendingRiskAlerts(pending), [pending]);
-  const foundIndex = sorted.findIndex((candidate) => candidate.reach_event_id === selectedId);
-  const selectedIndex = foundIndex >= 0 ? foundIndex : 0;
-  const item = sorted[selectedIndex] ?? null;
-  const ordinal = item ? sorted.length - selectedIndex : 0;
-  const [reason, setReason] = useState("");
-  const [listOpen, setListOpen] = useState(false);
-  const [holdOpen, setHoldOpen] = useState(false);
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const listRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    setReason("");
-    setHoldOpen(false);
-    setDetailsOpen(false);
-  }, [item?.reach_event_id]);
-
-  useEffect(() => {
-    if (!listOpen) return;
-    const handlePointer = (event: globalThis.MouseEvent) => {
-      if (!listRef.current?.contains(event.target as Node)) setListOpen(false);
-    };
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setListOpen(false);
-    };
-    document.addEventListener("mousedown", handlePointer);
-    window.addEventListener("keydown", handleKey);
-    return () => {
-      document.removeEventListener("mousedown", handlePointer);
-      window.removeEventListener("keydown", handleKey);
-    };
-  }, [listOpen]);
-
-  if (!item) return notice ? <div className="training-risk-reach-notice compact" role="status">{notice}</div> : null;
-
-  const isTarget = item.event_type === "TAKE_PROFIT_REACHED";
-  const isFullStop = item.event_type === "FULL_STOP_REACHED";
-  const typeClass = isTarget ? "target" : isFullStop ? "full-stop" : "partial-stop";
-  const sellLabel = isTarget ? "매도" : isFullStop ? "전량매도" : "분할매도";
-  const selectOlder = () => {
-    const older = sorted[selectedIndex + 1];
-    if (older) onSelect(older.reach_event_id);
-  };
-  const selectNewer = () => {
-    const newer = sorted[selectedIndex - 1];
-    if (newer) onSelect(newer.reach_event_id);
-  };
-
-  return (
-    <section className={"training-risk-reach-alert compact " + typeClass} aria-live="polite" aria-busy={responseAction !== null}>
-      <div className="training-risk-alert-main">
-        <button type="button" className="training-risk-alert-summary" onClick={() => setDetailsOpen((current) => !current)} aria-expanded={detailsOpen}>
-          <span className={"training-risk-alert-badge " + typeClass}>{riskReachAlertLabel(item)}</span>
-          <strong>{fmtWon(item.trigger_price)}</strong>
-          <span>{String(item.chart_date || "").slice(2).replace(/-/g, ".")}</span>
-        </button>
-
-        <div className="training-risk-alert-navigation" ref={listRef}>
-          <button type="button" className="training-risk-alert-count" onClick={() => setListOpen((current) => !current)} aria-expanded={listOpen}>
-            미응답 {sorted.length}건
-          </button>
-          <button type="button" onClick={selectOlder} disabled={selectedIndex >= sorted.length - 1} aria-label="이전 알림: 더 오래된 알림" title="더 오래된 알림">‹</button>
-          <strong>{ordinal} / {sorted.length}</strong>
-          <button type="button" onClick={selectNewer} disabled={selectedIndex <= 0} aria-label="다음 알림: 더 최근 알림" title="더 최근 알림">›</button>
-          {listOpen ? (
-            <div className="training-risk-alert-list" role="listbox" aria-label="미응답 알림 목록">
-              <strong>미응답 알림 {sorted.length}건</strong>
-              <div>
-                {sorted.map((alert, index) => {
-                  const alertOrdinal = sorted.length - index;
-                  return (
-                    <button
-                      type="button"
-                      key={alert.reach_event_id}
-                      className={alert.reach_event_id === item.reach_event_id ? "active" : ""}
-                      onClick={() => {
-                        onSelect(alert.reach_event_id);
-                        setListOpen(false);
-                      }}
-                      role="option"
-                      aria-selected={alert.reach_event_id === item.reach_event_id}
-                    >
-                      <b>{alertOrdinal}.</b>
-                      <span>{String(alert.chart_date || "").slice(2).replace(/-/g, ".")}</span>
-                      <span>{riskReachAlertLabel(alert)}</span>
-                      <span>{fmtWon(alert.trigger_price)}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="training-risk-reach-actions">
-        <button type="button" className="btn btn-secondary" disabled={!item.chart_date} onClick={() => onMoveChart(item)}>차트 이동</button>
-        {canRestoreChart ? <button type="button" className="training-risk-restore-button" onClick={onRestoreChart} title="차트 이동 전 위치로 돌아가기" aria-label="원래 차트 위치">↶</button> : null}
-        <button type="button" className="btn btn-danger" disabled={loading} onClick={() => onRespond(item, "SELL", reason)}>{sellLabel}</button>
-        <button type="button" className="btn btn-secondary" disabled={loading} onClick={() => setHoldOpen((current) => !current)}>보유</button>
-        <button type="button" className="btn btn-secondary" disabled={loading} onClick={() => onOpenPlan(item)}>수정</button>
-      </div>
-
-      {detailsOpen ? (
-        <div className="training-risk-alert-details">
-          <span>{item.chart_date}</span>
-          <span>{isTarget ? "고가 " + fmtWon(item.day_high) : "저가 " + fmtWon(item.day_low)}</span>
-          <span>보유 {fmtNumber(item.position_quantity)}주</span>
-          {item.sequence_unknown ? <span>같은 봉 내 선후 관계 알 수 없음</span> : null}
-        </div>
-      ) : null}
-
-      {holdOpen ? (
-        <div className="training-risk-hold-panel">
-          <span>계속 보유 사유</span>
-          <div>
-            {["추세 유지", "종가 지지", "거래량 확인"].map((preset) => (
-              <button type="button" key={preset} className={reason === preset ? "active" : ""} onClick={() => setReason(preset)}>{preset}</button>
-            ))}
-          </div>
-          <input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="직접 입력 (선택)" aria-label="계속 보유 사유" />
-          <button type="button" className="btn btn-secondary" disabled={loading} onClick={() => onRespond(item, "HOLD", reason)}>
-            {responseAction === "HOLD" ? "기록 중..." : "기록"}
-          </button>
-        </div>
-      ) : null}
-
-      {notice ? <div className="training-risk-reach-notice compact" role="status">{notice}</div> : null}
-    </section>
-  );
-}
 function ActiveRiskPanel({
   detail,
   showPlanLines,
@@ -5508,6 +5342,7 @@ function TradeTrainingPage() {
   const [showAvgPriceLine, setShowAvgPriceLine] = useState(false);
   const [showRiskPlanLines, setShowRiskPlanLines] = useState(false);
   const [orderInitialTab, setOrderInitialTab] = useState<OrderModalTab>("order");
+  const [riskPlanEditOnly, setRiskPlanEditOnly] = useState(false);
   const [scrollTargetDate, setScrollTargetDate] = useState<string | null>(null);
   const [highlightedTradeDate, setHighlightedTradeDate] = useState<string | null>(null);
   const [highlightedTradeId, setHighlightedTradeId] = useState<number | null>(null);
@@ -5516,53 +5351,34 @@ function TradeTrainingPage() {
   const [marketIndexPriceMap, setMarketIndexPriceMap] = useState<Partial<Record<MarketIndexCode, MarketIndexDailyPriceItem[]>>>({});
   const [marketIndexLoadingCode, setMarketIndexLoadingCode] = useState<MarketIndexCode | null>(null);
   const [marketIndexError, setMarketIndexError] = useState<string | null>(null);
-  const [riskResponseAction, setRiskResponseAction] = useState<"SELL" | "HOLD" | "PLAN_REVISED" | null>(null);
-  const [riskResponseNotice, setRiskResponseNotice] = useState("");
-  const [selectedPendingAlertId, setSelectedPendingAlertId] = useState<number | null>(null);
-  const [pendingSellAlert, setPendingSellAlert] = useState<{ item: RiskPendingResponse; reason: string } | null>(null);
-  const [pendingPlanRevisionAlert, setPendingPlanRevisionAlert] = useState<RiskPendingResponse | null>(null);
-  const [riskAlertMarkerVisibility, setRiskAlertMarkerVisibility] = useState<AlertMarkerVisibility>(() => {
-    const stored = typeof window !== "undefined" ? window.localStorage.getItem("drct.tradeTraining.riskAlertMarkerVisibility") : null;
-    return stored === "ALL" || stored === "HIDDEN" ? stored : "SELECTED";
-  });
   const [showTradeMarkers, setShowTradeMarkers] = useState(() => {
     const stored = typeof window !== "undefined" ? window.localStorage.getItem("drct.tradeTraining.showTradeMarkers") : null;
     return stored !== "false";
   });
   const [showExistingChartMarkers, setShowExistingChartMarkers] = useState(false);
   const [riskControlsOpen, setRiskControlsOpen] = useState(false);
-  const [scrollTargetSignal, setScrollTargetSignal] = useState(0);
-  const [restoreViewportSignal, setRestoreViewportSignal] = useState(0);
-  const [canRestoreRiskViewport, setCanRestoreRiskViewport] = useState(false);
-  const previousPendingAlertIdsRef = useRef<Set<number>>(new Set());
+  const [mainRiskPlanSaving, setMainRiskPlanSaving] = useState(false);
   const technicalRequestRef = useRef(0);
   const multiTechnicalRequestRef = useRef(0);
   const multiTechnicalCacheRef = useRef<Map<string, MultiPeriodTechnicalAnalysis>>(new Map());
+  const mainRiskEditor = useRiskPlanPriceEditor(
+    detail?.risk_scenario?.buy_steps ?? [],
+    detail?.risk_scenario?.sell_steps ?? [],
+    `${detail?.session.id || 0}:${detail?.risk_scenario?.scenario?.id || 0}:${detail?.risk_scenario?.scenario?.updated_at || ""}`,
+  );
+  useEffect(() => {
+    if (mainRiskEditor.activePickMode) setShowRiskPlanLines(true);
+  }, [mainRiskEditor.activePickMode]);
 
   const selectedTrainingMethod = useMemo(
     () => tradeMethods.find((method) => method.id === selectedMethodId) ?? null,
     [tradeMethods, selectedMethodId]
   );
-  const pendingRiskAlerts = useMemo(
-    () => sortPendingRiskAlerts(detail?.risk_scenario?.pending_responses ?? []),
-    [detail?.risk_scenario?.pending_responses]
-  );
-  const pendingRiskAlertKey = pendingRiskAlerts.map((item) => item.reach_event_id).join(",");
-
-  useEffect(() => {
-    window.localStorage.setItem("drct.tradeTraining.riskAlertMarkerVisibility", riskAlertMarkerVisibility);
-  }, [riskAlertMarkerVisibility]);
-
   useEffect(() => {
     window.localStorage.setItem("drct.tradeTraining.showTradeMarkers", String(showTradeMarkers));
   }, [showTradeMarkers]);
 
   useEffect(() => {
-    previousPendingAlertIdsRef.current = new Set();
-    setSelectedPendingAlertId(null);
-    setPendingSellAlert(null);
-    setPendingPlanRevisionAlert(null);
-    setCanRestoreRiskViewport(false);
   }, [detail?.session.id]);
 
   useEffect(() => {
@@ -5645,22 +5461,6 @@ function TradeTrainingPage() {
     multiTechnicalCacheRef.current.clear();
     setMultiTechnicalRetryKey((current) => current + 1);
   };
-  useEffect(() => {
-    if (!pendingRiskAlerts.length) {
-      previousPendingAlertIdsRef.current = new Set();
-      setSelectedPendingAlertId(null);
-      return;
-    }
-    const previousIds = previousPendingAlertIdsRef.current;
-    const newlyAdded = pendingRiskAlerts.filter((item) => !previousIds.has(item.reach_event_id));
-    setSelectedPendingAlertId((current) => {
-      if (newlyAdded.length && previousIds.size > 0) return newlyAdded[0].reach_event_id;
-      if (current && pendingRiskAlerts.some((item) => item.reach_event_id === current)) return current;
-      return pendingRiskAlerts[0].reach_event_id;
-    });
-    previousPendingAlertIdsRef.current = new Set(pendingRiskAlerts.map((item) => item.reach_event_id));
-  }, [pendingRiskAlertKey]);
-
   const loadStocks = async (keyword = q, page = 1) => {
     setLoading(true);
     setError("");
@@ -5860,34 +5660,6 @@ function TradeTrainingPage() {
     }
   };
 
-  const recordRiskResponse = async (
-    item: RiskPendingResponse,
-    responseType: "SELL" | "HOLD" | "PLAN_REVISED",
-    reason: string,
-    baseDetail?: TrainingSessionDetail,
-  ) => {
-    if (!detail) return null;
-    const response = await repositories.tradeTraining.recordRiskLevelResponse(detail.session.id, {
-      reach_event_id: item.reach_event_id,
-      response_type: responseType,
-      reason: reason.trim() || undefined,
-    });
-    const nextSorted = sortPendingRiskAlerts(response.pending_responses);
-    const nextSelectedId = nextSorted[0]?.reach_event_id ?? null;
-    previousPendingAlertIdsRef.current = new Set(nextSorted.map((candidate) => candidate.reach_event_id));
-    setSelectedPendingAlertId(nextSelectedId);
-    setDetail((current) => {
-      const source = baseDetail ?? current;
-      return source ? {
-        ...source,
-        risk_scenario: source.risk_scenario
-          ? { ...source.risk_scenario, pending_responses: response.pending_responses }
-          : source.risk_scenario,
-      } : source;
-    });
-    return response;
-  };
-
   const submitOrder = async (payload: TrainingOrderRequest) => {
     if (!detail || !orderMode) return;
     const submittedMode = orderMode;
@@ -5895,13 +5667,7 @@ function TradeTrainingPage() {
       submittedMode === "BUY"
         ? await repositories.tradeTraining.buy(detail.session.id, payload)
         : await repositories.tradeTraining.sell(detail.session.id, payload);
-    if (submittedMode === "SELL" && pendingSellAlert) {
-      await recordRiskResponse(pendingSellAlert.item, "SELL", pendingSellAlert.reason, response);
-      setPendingSellAlert(null);
-      setRiskResponseNotice("매도 주문과 알림 대응을 기록했습니다.");
-    } else {
-      setDetail(response);
-    }
+    setDetail(response);
     setScrollTargetDate(null);
     setOrderMode(null);
     setMessage(submittedMode === "BUY" ? "매수 체결되었습니다." : "매도 체결되었습니다.");
@@ -5933,66 +5699,6 @@ function TradeTrainingPage() {
     setHighlightedTradeId(tradeId);
   };
 
-  const moveToRiskAlert = (item: RiskPendingResponse) => {
-    if (!item.chart_date) return;
-    setSelectedPendingAlertId(item.reach_event_id);
-    setHighlightedTradeDate(item.chart_date);
-    setHighlightedTradeId(null);
-    setScrollTargetDate(item.chart_date);
-    setScrollTargetSignal((current) => current + 1);
-    setCanRestoreRiskViewport(true);
-  };
-
-  const restoreRiskAlertViewport = () => {
-    setScrollTargetDate(null);
-    setRestoreViewportSignal((current) => current + 1);
-    setCanRestoreRiskViewport(false);
-  };
-
-  const handleRiskReachResponse = async (item: RiskPendingResponse, responseType: "SELL" | "HOLD", reason: string) => {
-    if (!detail) return;
-    setRiskResponseNotice("");
-    setError("");
-    if (responseType === "SELL") {
-      setPendingSellAlert({ item, reason });
-      setOrderInitialTab("order");
-      setOrderMode("SELL");
-      return;
-    }
-    setLoading(true);
-    setRiskResponseAction("HOLD");
-    try {
-      const response = await recordRiskResponse(item, "HOLD", reason);
-      const remainingCount = response?.pending_responses.length ?? 0;
-      setRiskResponseNotice(remainingCount ? "보유 대응을 기록했습니다." : "모든 도달 알림을 처리했습니다.");
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "도달 대응을 기록하지 못했습니다.");
-    } finally {
-      setLoading(false);
-      setRiskResponseAction(null);
-    }
-  };
-
-  const openRiskPlanForAlert = (item: RiskPendingResponse) => {
-    setPendingPlanRevisionAlert(item);
-    setRiskResponseNotice("리스크 관리 계획 화면을 열었습니다. 계획 변경을 저장하면 대응이 기록됩니다.");
-    setOrderInitialTab("risk");
-    setOrderMode("BUY");
-  };
-
-  const handleRiskPlanSaved = async () => {
-    if (!pendingPlanRevisionAlert) return;
-    setRiskResponseAction("PLAN_REVISED");
-    try {
-      await recordRiskResponse(pendingPlanRevisionAlert, "PLAN_REVISED", "리스크 관리 계획 변경 저장");
-      setPendingPlanRevisionAlert(null);
-      setRiskResponseNotice("계획 변경과 알림 대응을 기록했습니다.");
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "계획 수정 대응을 기록하지 못했습니다.");
-    } finally {
-      setRiskResponseAction(null);
-    }
-  };
   const handleNextDay = () => {
     if (!detail) return;
     void mutateDetail(() => repositories.tradeTraining.next(detail.session.id), "다음 거래일로 이동했습니다.");
@@ -6029,6 +5735,74 @@ function TradeTrainingPage() {
       setMarketIndexError(nextError instanceof Error ? nextError.message : "\uc9c0\uc218 \ub370\uc774\ud130\ub97c \ubd88\ub7ec\uc624\uc9c0 \ubabb\ud588\uc2b5\ub2c8\ub2e4.");
     } finally {
       setMarketIndexLoadingCode((current) => (current === indexCode ? null : current));
+    }
+  };
+
+  const completeMainRiskPlanPrices = async () => {
+    if (!detail || !isAccountLinkedSession(detail)) {
+      mainRiskEditor.setMessage("계좌관리매매 훈련에서만 계획가격을 저장할 수 있습니다.");
+      return;
+    }
+    const scenario = detail.risk_scenario?.scenario;
+    const stopLines = mainRiskEditor.sellLines.filter((line) => isStopLineKind(line.kind));
+    if (!mainRiskEditor.buyLines.length || !stopLines.length) {
+      mainRiskEditor.setMessage("분할매수 가격과 손절 가격을 각각 하나 이상 지정해 주세요.");
+      return;
+    }
+    const payload = buildRiskPlanDraft(mainRiskEditor.buyLines, mainRiskEditor.sellLines, {
+      profitText: scenario?.profit_scenario_text || "차트에서 지정한 익절 계획",
+      stopText: scenario?.stop_scenario_text || "차트에서 지정한 손절 계획",
+      memo: scenario?.memo || "",
+      changeReason: scenario ? "매매훈련 메인 차트에서 계획가격 수정" : "매매훈련 메인 차트에서 계획가격 지정",
+    });
+    setMainRiskPlanSaving(true);
+    mainRiskEditor.setMessage("");
+    try {
+      const next = scenario
+        ? await repositories.tradeTraining.updateRiskScenario(scenario.id, payload)
+        : await repositories.tradeTraining.saveRiskScenarioDraft(detail.session.id, payload);
+      setDetail((current) => current ? { ...current, risk_scenario: next } : current);
+      setShowRiskPlanLines(true);
+      mainRiskEditor.setActivePickMode(null);
+      mainRiskEditor.setMessage("계획가격을 저장했습니다.");
+    } catch (nextError) {
+      mainRiskEditor.setMessage(nextError instanceof Error ? nextError.message : "계획가격을 저장하지 못했습니다.");
+    } finally {
+      setMainRiskPlanSaving(false);
+    }
+  };
+
+  const resetMainRiskPlanPrices = async () => {
+    if (!detail || !isAccountLinkedSession(detail)) {
+      mainRiskEditor.resetPrices();
+      mainRiskEditor.setMessage("새로 지정한 계획가격을 모두 초기화했습니다.");
+      return;
+    }
+    const scenario = detail.risk_scenario?.scenario;
+    if (!scenario) {
+      mainRiskEditor.resetPrices();
+      mainRiskEditor.setMessage("새로 지정한 계획가격을 모두 초기화했습니다.");
+      return;
+    }
+    setMainRiskPlanSaving(true);
+    mainRiskEditor.setMessage("");
+    try {
+      const next = scenario.status === "DRAFT"
+        ? await repositories.tradeTraining.cancelRiskScenario(scenario.id)
+        : await repositories.tradeTraining.updateRiskScenario(scenario.id, buildRiskPlanDraft([], [], {
+          profitText: scenario.profit_scenario_text || "계획가격 재지정 예정",
+          stopText: scenario.stop_scenario_text || "계획가격 재지정 예정",
+          memo: scenario.memo || "",
+          changeReason: "매매훈련 메인 차트에서 가격 초기화",
+        }));
+      setDetail((current) => current ? { ...current, risk_scenario: next } : current);
+      mainRiskEditor.resetPrices();
+      setShowRiskPlanLines(true);
+      mainRiskEditor.setMessage("새로 지정한 가격선과 저장된 가격선을 모두 삭제했습니다.");
+    } catch (nextError) {
+      mainRiskEditor.setMessage(nextError instanceof Error ? nextError.message : "저장된 계획가격을 삭제하지 못했습니다.");
+    } finally {
+      setMainRiskPlanSaving(false);
     }
   };
 
@@ -6153,7 +5927,7 @@ function TradeTrainingPage() {
                   <button className="btn btn-secondary" type="button" disabled={!canTrade || loading} onClick={handleNextDay}>
                     <StepForward size={16} /> 다음
                   </button>
-                  <button className="btn btn-primary" type="button" disabled={!canTrade || loading} onClick={() => { setOrderInitialTab("order"); setOrderMode("BUY"); }}>
+                  <button className="btn btn-primary" type="button" disabled={!canTrade || loading} onClick={() => { setRiskPlanEditOnly(false); setOrderInitialTab("order"); setOrderMode("BUY"); }}>
                     <ShoppingCart size={16} /> 매수
                   </button>
                   <button className="btn btn-danger" type="button" disabled={!canTrade || detail.session.position_qty <= 0 || loading} onClick={() => { setOrderInitialTab("order"); setOrderMode("SELL"); }}>
@@ -6173,20 +5947,7 @@ function TradeTrainingPage() {
                 detail={detail}
                 showPlanLines={showRiskPlanLines}
                 onTogglePlanLines={() => setShowRiskPlanLines((current) => !current)}
-                onOpenPlan={() => { setOrderInitialTab("risk"); setOrderMode("BUY"); }}
-              />
-              <RiskReachAlertPanel
-                pending={pendingRiskAlerts}
-                selectedId={selectedPendingAlertId}
-                loading={loading}
-                responseAction={riskResponseAction}
-                notice={riskResponseNotice}
-                canRestoreChart={canRestoreRiskViewport}
-                onSelect={setSelectedPendingAlertId}
-                onMoveChart={moveToRiskAlert}
-                onRestoreChart={restoreRiskAlertViewport}
-                onRespond={(item, responseType, reason) => void handleRiskReachResponse(item, responseType, reason)}
-                onOpenPlan={openRiskPlanForAlert}
+                onOpenPlan={() => { setRiskPlanEditOnly(true); setOrderInitialTab("risk"); setOrderMode("BUY"); }}
               />
               <CandleChart
                 sessionId={detail.session.id}
@@ -6196,14 +5957,8 @@ function TradeTrainingPage() {
                 trades={detail.trades}
                 avgPriceLine={showAvgPriceLine && detail.session.position_qty > 0 ? detail.session.avg_price : null}
                 riskPlanLines={showRiskPlanLines ? [...(detail.risk_scenario?.buy_steps ?? []), ...(detail.risk_scenario?.sell_steps ?? [])] : []}
-                riskReachAlerts={pendingRiskAlerts}
-                selectedRiskReachAlertId={selectedPendingAlertId}
-                riskAlertMarkerVisibility={riskAlertMarkerVisibility}
                 showTradeMarkers={showTradeMarkers}
                 showExistingChartMarkers={showExistingChartMarkers}
-                scrollTargetSignal={scrollTargetSignal}
-                restoreViewportSignal={restoreViewportSignal}
-                onRiskReachAlertSelect={setSelectedPendingAlertId}
                 displayDays={displayDays}
                 scrollTargetDate={scrollTargetDate}
                 highlightedTradeDate={highlightedTradeDate}
@@ -6217,6 +5972,11 @@ function TradeTrainingPage() {
                 onToggleTechnical={() => setTechnicalEnabled((current) => !current)}
                 onOpenTechnical={openTechnicalDrawer}
                 onRetryTechnical={retryTechnicalAnalysis}
+                planPriceEditor={mainRiskEditor}
+                showPlanPriceLines={showRiskPlanLines}
+                planPriceSaving={mainRiskPlanSaving}
+                onPlanPriceReset={() => void resetMainRiskPlanPrices()}
+                onPlanPriceComplete={() => void completeMainRiskPlanPrices()}
                 marketIndexControls={
                   <>
                     {(["KOSPI", "KOSDAQ"] as MarketIndexCode[]).map((indexCode) => (
@@ -6256,18 +6016,8 @@ function TradeTrainingPage() {
                             <button type="button" disabled={!detail.risk_scenario?.scenario} className={showRiskPlanLines ? "active" : ""} onClick={() => setShowRiskPlanLines(true)}>표시</button>
                             <button type="button" disabled={!detail.risk_scenario?.scenario} className={!showRiskPlanLines ? "active" : ""} onClick={() => setShowRiskPlanLines(false)}>숨김</button>
                           </div>
-                          <div>
-                            <span>도달 알림 마커</span>
-                            {([
-                              ["SELECTED", "선택만"],
-                              ["ALL", "전체"],
-                              ["HIDDEN", "숨김"],
-                            ] as Array<[AlertMarkerVisibility, string]>).map(([value, label]) => (
-                              <button type="button" key={value} className={riskAlertMarkerVisibility === value ? "active" : ""} onClick={() => setRiskAlertMarkerVisibility(value)}>{label}</button>
-                            ))}
-                          </div>
                           {isAccountLinkedSession(detail) ? (
-                            <button type="button" className="training-risk-plan-open" onClick={() => { setRiskControlsOpen(false); setOrderInitialTab("risk"); setOrderMode("BUY"); }}>계획 보기·수정</button>
+                            <button type="button" className="training-risk-plan-open" onClick={() => { setRiskControlsOpen(false); setRiskPlanEditOnly(true); setOrderInitialTab("risk"); setOrderMode("BUY"); }}>계획 보기·수정</button>
                           ) : null}
                         </div>
                       ) : null}
@@ -6411,12 +6161,11 @@ function TradeTrainingPage() {
           initialTab={orderInitialTab}
           onClose={() => {
             setOrderMode(null);
-            setPendingSellAlert(null);
-            setPendingPlanRevisionAlert(null);
+            setRiskPlanEditOnly(false);
           }}
           onSubmit={submitOrder}
           onRiskScenarioChange={(next) => setDetail((current) => current ? { ...current, risk_scenario: next } : current)}
-          onRiskPlanSaved={() => void handleRiskPlanSaved()}
+          deferRiskPlanPersistence={!riskPlanEditOnly}
         />
       ) : null}
       {result ? (

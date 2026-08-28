@@ -168,6 +168,8 @@ class UsPriceCollectionResponse(BaseModel):
     failed_stock_count: int
     inserted_count: int
     updated_count: int
+    unchanged_count: int = 0
+    normalized_open_boundary_count: int = 0
     affected_date_from: str | None
     affected_date_to: str | None
     recalculated_theme_count: int = 0

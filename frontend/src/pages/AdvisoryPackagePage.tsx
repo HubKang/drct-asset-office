@@ -194,15 +194,14 @@ function AdvisoryPackagePage() {
           {!loadingNews && newsItems.length > 0 ? (
             <>
               <div className="table-shell">
-                <table className="data-table compact-table min-w-[920px]">
+                <table className="data-table compact-table min-w-[760px]">
                   <thead>
                     <tr>
                       <th className="selection-cell">선택</th>
                       <th>ID</th>
-                      <th>AI</th>
-                      <th>중요도</th>
-                      <th>감성</th>
+                      <th>요약</th>
                       <th>제목</th>
+                      <th>기사 요약</th>
                       <th>발행일</th>
                     </tr>
                   </thead>
@@ -223,10 +222,9 @@ function AdvisoryPackagePage() {
                             />
                           </td>
                           <td>{item.id}</td>
-                          <td>{aiState(item.ai_summary, item.ai_summary_error)}</td>
-                          <td>{item.ai_importance_score ?? item.importance_score ?? "-"}</td>
-                          <td>{item.ai_sentiment ?? item.sentiment ?? "neutral"}</td>
+                          <td>{item.summary ? "완료" : "미요약"}</td>
                           <td className="cell-title cell-clamp-2 min-w-[360px]">{item.title}</td>
+                          <td className="cell-title cell-clamp-2 min-w-[280px]">{item.summary ?? "-"}</td>
                           <td className="cell-nowrap">{item.published_at ?? "-"}</td>
                         </tr>
                       );

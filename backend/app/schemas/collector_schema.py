@@ -48,6 +48,15 @@ class CollectorResultResponse(BaseModel):
     collected_count: int
     saved_count: int
     skipped_count: int
+    mode: str | None = None
+    from_date: str | None = None
+    to_date: str | None = None
+    scanned_count: int = 0
+    matched_count: int = 0
+    name_mismatch_skipped: int = 0
+    duplicate_skipped: int = 0
+    excluded_skipped: int = 0
+    invalid_skipped: int = 0
     message: str
     skip_reasons: dict[str, int] = Field(default_factory=dict)
 
@@ -62,6 +71,15 @@ class SelectedCollectorItemResult(BaseModel):
     collected_count: int = 0
     saved_count: int = 0
     skipped_count: int = 0
+    mode: str | None = None
+    from_date: str | None = None
+    to_date: str | None = None
+    scanned_count: int = 0
+    matched_count: int = 0
+    name_mismatch_skipped: int = 0
+    duplicate_skipped: int = 0
+    excluded_skipped: int = 0
+    invalid_skipped: int = 0
     message: str | None = None
 
 

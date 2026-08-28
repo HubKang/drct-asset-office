@@ -8,6 +8,7 @@ import StatusBadge from "@/components/common/StatusBadge";
 import UsStocksPanel from "@/components/stocks/UsStocksPanel";
 import { repositories } from "@/services";
 import {
+  buildNaverStockAnalysisUrl,
   buildNaverStockCandleChartUrl,
   createNaverChartSidcode,
   normalizeNaverStockCode,
@@ -373,6 +374,7 @@ function StocksPage() {
                 <tbody>
                   {items.map((s) => {
                     const stockCode = normalizeNaverStockCode(s.stock_code);
+                    const naverAnalysisUrl = buildNaverStockAnalysisUrl(stockCode);
                     const codeTitle = stockCode && stockCode !== s.stock_code ? s.stock_code : undefined;
                     return (
                       <tr key={s.id}>
@@ -386,6 +388,16 @@ function StocksPage() {
                         <td><StockChartImage stockCode={stockCode} stockName={s.stock_name} period="month" label="월봉" sidcode={chartSidcode} onOpen={setZoomedChart} /></td>
                         <td>
                           <div className="stock-management-actions">
+                            {naverAnalysisUrl ? (
+                              <a
+                                className="btn btn-secondary btn-table-sm stock-management-action-button stock-management-analysis-link"
+                                href={naverAnalysisUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                네이버 종목분석
+                              </a>
+                            ) : null}
                             <button className={`btn ${s.is_active === 1 ? "btn-danger" : "btn-secondary"} btn-table-sm stock-management-action-button`} onClick={() => onToggleActive(s.id, s.is_active === 1 ? 0 : 1)}>
                               {s.is_active === 1 ? "비활성" : "활성"}
                             </button>

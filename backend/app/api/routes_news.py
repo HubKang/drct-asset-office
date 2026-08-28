@@ -10,6 +10,8 @@ from backend.app.schemas.news_schema import (
     NewsCollectionTargetResponse,
     NewsListPageResponse,
     NewsResponse,
+    NewsSummarizeRequest,
+    NewsSummarizeResponse,
 )
 from backend.app.services.news_service import NewsService
 
@@ -21,7 +23,7 @@ def list_news(
     stock_id: int | None = None,
     stock_ids: str | None = None,
     keyword: str | None = None,
-    source: str | None = None,
+    summary_status: str | None = Query(default=None, pattern="^(summarized|unsummarized)$"),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
@@ -35,7 +37,7 @@ def list_news(
         stock_id=stock_id,
         stock_ids=parsed_stock_ids,
         keyword=keyword,
-        source=source,
+        summary_status=summary_status,
         limit=limit,
         offset=offset,
     )
@@ -46,7 +48,7 @@ def list_news_page(
     stock_id: int | None = None,
     stock_ids: str | None = None,
     keyword: str | None = None,
-    source: str | None = None,
+    summary_status: str | None = Query(default=None, pattern="^(summarized|unsummarized)$"),
     limit: int = Query(default=20, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
@@ -60,7 +62,7 @@ def list_news_page(
         stock_id=stock_id,
         stock_ids=parsed_stock_ids,
         keyword=keyword,
-        source=source,
+        summary_status=summary_status,
         limit=limit,
         offset=offset,
     )
@@ -71,12 +73,17 @@ def list_news_collection_targets(db: Session = Depends(get_db)) -> list[NewsColl
     return NewsService(db).list_collection_targets()
 
 
-@router.get("/news/{news_id}", response_model=NewsResponse)
-def get_news(news_id: int, db: Session = Depends(get_db)) -> NewsResponse:
-    return NewsService(db).get_news(news_id)
-
-
 @router.post("/news/bulk-delete", response_model=NewsBulkDeleteResponse)
 def delete_news_bulk(payload: NewsBulkDeleteRequest, db: Session = Depends(get_db)) -> NewsBulkDeleteResponse:
     deleted, failed = NewsService(db).delete_news_bulk(payload.news_ids)
     return NewsBulkDeleteResponse(deleted=deleted, failed=failed)
+
+
+@router.post("/news/summarize", response_model=NewsSummarizeResponse)
+def summarize_news(payload: NewsSummarizeRequest, db: Session = Depends(get_db)) -> NewsSummarizeResponse:
+    return NewsService(db).summarize_news(payload.news_ids)
+
+
+@router.get("/news/{news_id}", response_model=NewsResponse)
+def get_news(news_id: int, db: Session = Depends(get_db)) -> NewsResponse:
+    return NewsService(db).get_news(news_id)

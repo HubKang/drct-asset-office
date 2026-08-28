@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useNavigate } from "react-router-dom";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
@@ -6,10 +6,14 @@ import StatusBadge from "@/components/common/StatusBadge";
 import MarketThemeDetailDrawer from "@/components/marketThemes/MarketThemeDetailDrawer";
 import ObservationRadarGrid from "@/components/marketThemes/ObservationRadarGrid";
 import { repositories } from "@/services";
+import {
+  ensureRealtimeThemeSnapshot,
+  getRealtimeThemeSchedulerState,
+  subscribeRealtimeThemeScheduler,
+} from "@/services/realtimeThemeScheduler";
 import type { CollectionRun } from "@/types/collectionRun";
 import type { MarketDataCollectionRun } from "@/types/marketData";
 import type { MarketCalendarEvent, MarketCalendarImportance } from "@/types/marketCalendar";
-import type { MarketSignalCurrentStateItem } from "@/types/marketSignal";
 import type { UsThemeDashboardSummary } from "@/types/usMarketTheme";
 import type {
   MarketTheme,
@@ -24,6 +28,12 @@ import {
   buildNaverWorldIndexChartUrl,
   createNaverChartSidcode,
 } from "@/utils/naverChart";
+import {
+  marketSignalStateLabel,
+  marketSignalTone,
+  selectMeaningfulMarketSignals,
+  type MarketSignalChangeItem,
+} from "@/utils/marketSignalChange";
 
 type DashboardIndicator = {
   title: string;
@@ -70,9 +80,7 @@ type ThemeSummaryData = {
   topPersistence: ThemeSummaryRow[];
 };
 
-type MarketSignalSummaryRow = MarketSignalCurrentStateItem & {
-  isTodayTransition: boolean;
-};
+type KrThemeRankMode = "close" | "realtime";
 
 type UpcomingCalendarData = {
   startDate: string;
@@ -176,43 +184,6 @@ const wait = (milliseconds: number) => new Promise((resolve) => setTimeout(resol
 const formatSignedPercent = (value: number | null) => {
   if (value == null || !Number.isFinite(value)) return "-";
   return `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
-};
-
-const SIGNAL_STATE_LABELS: Record<string, string> = {
-  TREND_WEAKENING: "추세 약화",
-  BREAK_CANDIDATE: "추세 이탈 후보",
-  BREAK_CONFIRMED: "추세 이탈 확인",
-  REVERSAL_CONFIRMED: "반전 확인",
-  FALSE_BREAK: "일시 이탈 후 복귀",
-  TREND_RESUMED: "기존 추세 재개",
-  DATA_SHORTAGE: "데이터 부족",
-  DATA_INSUFFICIENT: "데이터 부족",
-  INSUFFICIENT_DATA: "데이터 부족",
-  ERROR: "평가 오류",
-  NOT_EVALUATED: "미평가",
-};
-
-const SIGNAL_SEVERITY: Record<string, number> = {
-  ERROR: 0,
-  BREAK_CONFIRMED: 1,
-  REVERSAL_CONFIRMED: 2,
-  BREAK_CANDIDATE: 3,
-  TREND_WEAKENING: 4,
-  FALSE_BREAK: 5,
-  TREND_RESUMED: 6,
-  DATA_SHORTAGE: 7,
-  DATA_INSUFFICIENT: 7,
-  INSUFFICIENT_DATA: 7,
-  NOT_EVALUATED: 8,
-};
-
-const MAINTAINED_SIGNAL_STATES = new Set(["TREND_INTACT", "TREND_MAINTAINED", "MAINTAINED"]);
-
-const signalTone = (state: string) => {
-  if (["ERROR", "BREAK_CONFIRMED", "REVERSAL_CONFIRMED"].includes(state)) return "danger";
-  if (["BREAK_CANDIDATE", "TREND_WEAKENING"].includes(state)) return "warning";
-  if (["DATA_SHORTAGE", "DATA_INSUFFICIENT", "INSUFFICIENT_DATA", "NOT_EVALUATED"].includes(state)) return "neutral";
-  return "info";
 };
 
 const calendarImportanceLabel: Record<MarketCalendarImportance, string> = {
@@ -352,6 +323,78 @@ function ThemeRankPanel({
   );
 }
 
+type RealtimeThemeRankPanelProps = {
+  rows: ReturnType<typeof getRealtimeThemeSchedulerState>["snapshot"]["themes"];
+  snapshotAt: string | null;
+  intervalMinutes: string;
+  loading: boolean;
+  error: string;
+  onRetry: () => void;
+  onOpenTheme: (themeId: number) => void;
+  onOpenAll: () => void;
+};
+
+function RealtimeThemeRankPanel({
+  rows,
+  snapshotAt,
+  intervalMinutes,
+  loading,
+  error,
+  onRetry,
+  onOpenTheme,
+  onOpenAll,
+}: RealtimeThemeRankPanelProps) {
+  const rankedRows = [...rows]
+    .filter((row) => row.theme_strength != null && Number.isFinite(row.theme_strength))
+    .sort((a, b) => Number(b.theme_strength) - Number(a.theme_strength) || a.theme_name.localeCompare(b.theme_name, "ko-KR"))
+    .slice(0, 12);
+  const snapshotTime = snapshotAt?.slice(11, 19) || null;
+
+  return (
+    <article className="dashboard-v2-rank-panel dashboard-v2-realtime-rank-panel">
+      <div className="dashboard-v2-rank-head">
+        <div>
+          <h4>실시간 테마 강도 Top12</h4>
+          <span>{snapshotTime ? `최근 Snapshot ${snapshotTime} · ${intervalMinutes}분 주기` : "실시간 Snapshot 대기 중"}</span>
+        </div>
+        <button type="button" className="dashboard-v2-text-button" onClick={onOpenAll}>트리맵 보기</button>
+      </div>
+      {loading ? (
+        <div className="dashboard-v2-rank-skeleton dashboard-v2-realtime-rank-skeleton" aria-label="실시간 테마 순위 불러오는 중">
+          {Array.from({ length: 12 }, (_, index) => <div key={index}><i /><span /><b /></div>)}
+        </div>
+      ) : error ? (
+        <div className="dashboard-v2-rank-state error">
+          <p>실시간 테마 데이터를 불러오지 못했습니다.</p>
+          <button type="button" className="btn btn-secondary" onClick={onRetry}>다시 시도</button>
+        </div>
+      ) : rankedRows.length ? (
+        <ol className="dashboard-v2-rank-list dashboard-v2-realtime-rank-list">
+          {rankedRows.map((row, index) => (
+            <li key={`realtime-${row.theme_id}`}>
+              <button type="button" onClick={() => onOpenTheme(row.theme_id)} aria-label={`${row.theme_name} 실시간 테마 보기`} title={row.theme_name}>
+                <span className={`dashboard-v2-rank-badge ${index === 0 ? "first" : ""}`}>{index + 1}</span>
+                <span className="dashboard-v2-rank-copy">
+                  <strong title={row.theme_name}>{row.theme_name}</strong>
+                  <small>수집 {row.valid_stock_count}/{row.linked_stock_count}종목 · 단순평균 {formatSignedPercent(row.avg_change_rate)}</small>
+                </span>
+                <strong className={Number(row.theme_strength) >= 0 ? "dashboard-v2-return-value" : "dashboard-v2-realtime-negative-value"}>
+                  {formatSignedPercent(row.theme_strength)}
+                </strong>
+              </button>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <div className="dashboard-v2-rank-state">
+          <p>저장된 실시간 Snapshot이 없습니다. 실시간 테마 트리맵에서 수집을 시작해 주세요.</p>
+          <button type="button" className="btn btn-secondary" onClick={onOpenAll}>실시간 트리맵으로 이동</button>
+        </div>
+      )}
+    </article>
+  );
+}
+
 function ReadinessSkeleton() {
   return (
     <article className="dashboard-v2-operation-card dashboard-v2-skeleton" aria-label="데이터 준비 상태 불러오는 중">
@@ -366,6 +409,12 @@ function ReadinessSkeleton() {
 
 function DashboardPage() {
   const navigate = useNavigate();
+  const [krThemeRankMode, setKrThemeRankMode] = useState<KrThemeRankMode>("close");
+  const realtimeThemeScheduler = useSyncExternalStore(
+    subscribeRealtimeThemeScheduler,
+    getRealtimeThemeSchedulerState,
+    getRealtimeThemeSchedulerState,
+  );
   const [isDollarIndexHelpOpen, setIsDollarIndexHelpOpen] = useState(false);
   const [zoomedIndicator, setZoomedIndicator] = useState<{ url: string; alt: string } | null>(null);
   const [chartSidcode, setChartSidcode] = useState(() => createNaverChartSidcode());
@@ -387,7 +436,7 @@ function DashboardPage() {
   const [usThemeError, setUsThemeError] = useState("");
   const [usThemeFeedback, setUsThemeFeedback] = useState<ActionFeedback | null>(null);
   const [isUsThemeRunning, setIsUsThemeRunning] = useState(false);
-  const [marketSignals, setMarketSignals] = useState<MarketSignalSummaryRow[]>([]);
+  const [marketSignals, setMarketSignals] = useState<MarketSignalChangeItem[]>([]);
   const [isMarketSignalsLoading, setIsMarketSignalsLoading] = useState(true);
   const [marketSignalsError, setMarketSignalsError] = useState("");
   const [upcomingCalendar, setUpcomingCalendar] = useState<UpcomingCalendarData | null>(null);
@@ -520,20 +569,7 @@ function DashboardPage() {
       if (transitionResult.status === "rejected" && currentResult.status === "rejected") throw currentResult.reason;
       const todayTransitions = transitionResult.status === "fulfilled" ? transitionResult.value : { items: [] };
       const currentStates = currentResult.status === "fulfilled" ? currentResult.value : todayTransitions;
-      const transitionsById = new Map(todayTransitions.items.map((item) => [item.definition_id, item]));
-      const rows = currentStates.items
-        .map((item): MarketSignalSummaryRow => ({
-          ...item,
-          ...(transitionsById.get(item.definition_id) ?? {}),
-          isTodayTransition: transitionsById.has(item.definition_id),
-        }))
-        .filter((item) => !MAINTAINED_SIGNAL_STATES.has(item.current_state))
-        .sort((a, b) =>
-          Number(b.isTodayTransition) - Number(a.isTodayTransition)
-          || (SIGNAL_SEVERITY[a.current_state] ?? 99) - (SIGNAL_SEVERITY[b.current_state] ?? 99)
-          || String(b.last_transition_at ?? b.evaluated_at ?? "").localeCompare(String(a.last_transition_at ?? a.evaluated_at ?? ""))
-          || String(a.title ?? "").localeCompare(String(b.title ?? ""), "ko-KR"))
-        .slice(0, 5);
+      const rows = selectMeaningfulMarketSignals(currentStates.items, todayTransitions.items).slice(0, 5);
       setMarketSignals(rows);
     } catch (error) {
       setMarketSignalsError(errorMessage(error));
@@ -594,6 +630,10 @@ function DashboardPage() {
       themePollingTokenRef.current += 1;
     };
   }, [loadReadiness, loadThemeSummary, loadMarketSignals, loadUpcomingCalendar, loadObservationSummary, loadUsThemeSummary]);
+
+  useEffect(() => {
+    if (krThemeRankMode === "realtime") void ensureRealtimeThemeSnapshot();
+  }, [krThemeRankMode]);
 
   useEffect(() => {
     if (themeReadiness?.dataDate) setObservationTargetDate(shiftBusinessDay(themeReadiness.dataDate, 1));
@@ -954,12 +994,12 @@ function DashboardPage() {
               <div className="dashboard-v3-signal-list">
                 {marketSignals.map((signal) => (
                   <button key={signal.definition_id} type="button" onClick={() => navigate(`/market-indexes/signals?signal=${signal.definition_id}`)} aria-label={`${signal.title || signal.signal_code || "시장 신호"} 신호 상세 보기`}>
-                    <span className={`dashboard-v3-signal-icon ${signalTone(signal.current_state)}`} aria-hidden="true" />
+                    <span className={`dashboard-v3-signal-icon ${marketSignalTone(signal.current_state)}`} aria-hidden="true" />
                     <span className="dashboard-v3-signal-copy">
                       <strong>{signal.title || signal.signal_code || "시장 신호"}</strong>
                       <small>{signal.missing_reason || signal.explanation || `기준 ${signal.effective_date || "확인 중"}`}</small>
                     </span>
-                    <span className={`dashboard-v3-state-badge ${signalTone(signal.current_state)}`}>{signal.isTodayTransition ? "오늘 전환 · " : ""}{SIGNAL_STATE_LABELS[signal.current_state] || signal.current_state}</span>
+                    <span className={`dashboard-v3-state-badge ${marketSignalTone(signal.current_state)}`}>{signal.isTodayTransition ? "오늘 전환 · " : ""}{marketSignalStateLabel(signal.current_state)}</span>
                   </button>
                 ))}
               </div>
@@ -1037,24 +1077,45 @@ function DashboardPage() {
         <div className="dashboard-v2-section-heading dashboard-v2-theme-summary-heading">
           <div>
             <h3 className="section-title">테마/종목 : 국내 테마 강도 순위</h3>
-            <p>최신 거래일의 상승 강도와 최근 10일 상승 지속 강도를 확인합니다.</p>
+            <p>{krThemeRankMode === "close" ? "최신 거래일의 상승 강도와 최근 10일 상승 지속 강도를 확인합니다." : "실시간 테마 트리맵과 동일한 Snapshot의 테마 강도 상위 12개를 확인합니다."}</p>
           </div>
-          <span>{themeSummary?.dataDate ? `국내 데이터 기준일 ${themeSummary.dataDate}` : "국내 데이터 기준일 확인 중"}</span>
+          <div className={`dashboard-v2-theme-summary-tools ${krThemeRankMode === "realtime" ? "is-realtime" : ""}`}>
+            <span>{krThemeRankMode === "close"
+              ? themeSummary?.dataDate ? `국내 데이터 기준일 ${themeSummary.dataDate}` : "국내 데이터 기준일 확인 중"
+              : realtimeThemeScheduler.snapshot.snapshot_at ? `Snapshot ${realtimeThemeScheduler.snapshot.snapshot_at.slice(0, 19).replace("T", " ")}` : "실시간 Snapshot 확인 중"}</span>
+            <div className="dashboard-v2-theme-basis-toggle" role="group" aria-label="국내 테마 순위 기준">
+              <button type="button" className={krThemeRankMode === "close" ? "active" : ""} aria-pressed={krThemeRankMode === "close"} onClick={() => setKrThemeRankMode("close")}>종가기준 테마</button>
+              <button type="button" className={krThemeRankMode === "realtime" ? "active" : ""} aria-pressed={krThemeRankMode === "realtime"} onClick={() => setKrThemeRankMode("realtime")}>실시간기준 테마</button>
+            </div>
+          </div>
         </div>
-        <div className="dashboard-v2-rank-grid">
-          <ThemeRankPanel
-            kind="gainers" rows={themeSummary?.topGainers ?? []} dataDate={themeSummary?.dataDate ?? themeReadiness?.dataDate ?? null}
-            loading={isThemeSummaryLoading} error={themeSummaryError} onRetry={() => void loadThemeSummary(themeReadiness?.dataDate)}
-            onOpenTheme={(themeId) => setThemeDetailRequest({ themeId, dataDate: themeSummary?.dataDate ?? themeReadiness?.dataDate ?? null })}
-            onOpenAll={() => navigate("/market-themes")} onRefreshTheme={() => void handleThemeRefresh()} refreshDisabled={isThemeRunning}
+        {krThemeRankMode === "close" ? (
+          <div className="dashboard-v2-rank-grid">
+            <ThemeRankPanel
+              kind="gainers" rows={themeSummary?.topGainers ?? []} dataDate={themeSummary?.dataDate ?? themeReadiness?.dataDate ?? null}
+              loading={isThemeSummaryLoading} error={themeSummaryError} onRetry={() => void loadThemeSummary(themeReadiness?.dataDate)}
+              onOpenTheme={(themeId) => setThemeDetailRequest({ themeId, dataDate: themeSummary?.dataDate ?? themeReadiness?.dataDate ?? null })}
+              onOpenAll={() => navigate("/market-themes")} onRefreshTheme={() => void handleThemeRefresh()} refreshDisabled={isThemeRunning}
+            />
+            <ThemeRankPanel
+              kind="persistence" rows={themeSummary?.topPersistence ?? []} dataDate={themeSummary?.dataDate ?? themeReadiness?.dataDate ?? null}
+              loading={isThemeSummaryLoading} error={themeSummaryError} onRetry={() => void loadThemeSummary(themeReadiness?.dataDate)}
+              onOpenTheme={(themeId) => setThemeDetailRequest({ themeId, dataDate: themeSummary?.dataDate ?? themeReadiness?.dataDate ?? null })}
+              onOpenAll={() => navigate("/market-themes")} onRefreshTheme={() => void handleThemeRefresh()} refreshDisabled={isThemeRunning}
+            />
+          </div>
+        ) : (
+          <RealtimeThemeRankPanel
+            rows={realtimeThemeScheduler.snapshot.themes}
+            snapshotAt={realtimeThemeScheduler.snapshot.snapshot_at}
+            intervalMinutes={realtimeThemeScheduler.intervalMinutes}
+            loading={realtimeThemeScheduler.isRefreshing && !realtimeThemeScheduler.snapshot.snapshot_at}
+            error={realtimeThemeScheduler.error ?? ""}
+            onRetry={() => void ensureRealtimeThemeSnapshot()}
+            onOpenTheme={() => navigate("/realtime-theme-treemap")}
+            onOpenAll={() => navigate("/realtime-theme-treemap")}
           />
-          <ThemeRankPanel
-            kind="persistence" rows={themeSummary?.topPersistence ?? []} dataDate={themeSummary?.dataDate ?? themeReadiness?.dataDate ?? null}
-            loading={isThemeSummaryLoading} error={themeSummaryError} onRetry={() => void loadThemeSummary(themeReadiness?.dataDate)}
-            onOpenTheme={(themeId) => setThemeDetailRequest({ themeId, dataDate: themeSummary?.dataDate ?? themeReadiness?.dataDate ?? null })}
-            onOpenAll={() => navigate("/market-themes")} onRefreshTheme={() => void handleThemeRefresh()} refreshDisabled={isThemeRunning}
-          />
-        </div>
+        )}
       </SectionCard>
 
       <SectionCard className="dashboard-v4-observation-section">

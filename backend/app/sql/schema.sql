@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS news_items (
     stock_id INTEGER,
     title TEXT NOT NULL,
     source TEXT,
-    url TEXT UNIQUE,
+      url TEXT,
+    article_fingerprint TEXT,
     published_at TEXT,
     collected_at TEXT NOT NULL,
     raw_text_path TEXT,
@@ -392,6 +393,25 @@ CREATE TABLE IF NOT EXISTS market_theme_stock_candidates (
     FOREIGN KEY (theme_id) REFERENCES market_themes(id) ON DELETE CASCADE,
     FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE CASCADE
 );
+
+CREATE INDEX IF NOT EXISTS ix_news_items_stock_fingerprint
+ON news_items(stock_id, article_fingerprint)
+WHERE article_fingerprint IS NOT NULL;
+
+  CREATE TABLE IF NOT EXISTS news_item_exclusions (
+    target_date TEXT NOT NULL,
+    stock_id INTEGER NOT NULL,
+    article_fingerprint TEXT NOT NULL,
+    PRIMARY KEY (target_date, stock_id, article_fingerprint)
+  );
+
+  CREATE TABLE IF NOT EXISTS news_collection_cursors (
+      stock_id INTEGER PRIMARY KEY,
+      last_completed_date TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE CASCADE
+  );
 
 CREATE TABLE IF NOT EXISTS us_stocks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -750,59 +770,20 @@ CREATE TABLE IF NOT EXISTS telegram_sources (
 
 CREATE TABLE IF NOT EXISTS telegram_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    source_id INTEGER NOT NULL,
-    telegram_message_id INTEGER NOT NULL,
-    message_date TEXT NOT NULL,
-    message_text TEXT,
-    message_text_length INTEGER,
-    item_title TEXT,
-    item_url TEXT,
-    normalized_url TEXT,
-    publisher TEXT,
-    message_type TEXT NOT NULL DEFAULT 'unknown',
-    item_category TEXT NOT NULL DEFAULT '기타',
-    summary_text TEXT,
-    key_points_json TEXT,
-    summary_error_message TEXT,
-    tag TEXT,
-    score INTEGER NOT NULL DEFAULT 50,
-    sentiment TEXT NOT NULL DEFAULT 'neutral',
-    risk_level TEXT NOT NULL DEFAULT 'unknown',
-    event_type TEXT NOT NULL DEFAULT '기타',
-    related_stock_code TEXT,
-    related_stock_name TEXT,
-    related_theme TEXT,
-    llm_model TEXT,
-    summary_status TEXT NOT NULL DEFAULT 'pending',
-    summary_has_content INTEGER NOT NULL DEFAULT 0,
-    analysis_status TEXT NOT NULL DEFAULT 'pending',
-    collected_at TEXT NOT NULL,
-    summarized_at TEXT,
+    collection_date TEXT NOT NULL,
+    message_at TEXT NOT NULL,
+    title TEXT NOT NULL,
+    summary TEXT,
+    source_url TEXT,
+    message_fingerprint TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    updated_at TEXT,
-    FOREIGN KEY (source_id) REFERENCES telegram_sources(id)
+    UNIQUE(collection_date, message_fingerprint)
 );
 
-CREATE TABLE IF NOT EXISTS telegram_daily_summaries (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    summary_date TEXT NOT NULL,
-    source_id INTEGER NOT NULL DEFAULT 0,
-    item_count INTEGER NOT NULL DEFAULT 0,
-    summary_text TEXT,
-    key_points_json TEXT,
-    theme_mentions_json TEXT,
-    stock_mentions_json TEXT,
-    risk_points_json TEXT,
-    top_tags_json TEXT,
-    top_event_types_json TEXT,
-    message_type_stats_json TEXT,
-    market_view TEXT,
-    summary_has_content INTEGER NOT NULL DEFAULT 0,
-    llm_model TEXT,
-    elapsed_seconds INTEGER,
-    created_at TEXT NOT NULL,
-    updated_at TEXT,
-    FOREIGN KEY (source_id) REFERENCES telegram_sources(id)
+CREATE TABLE IF NOT EXISTS telegram_message_exclusions (
+    exclusion_date TEXT NOT NULL,
+    message_fingerprint TEXT NOT NULL,
+    PRIMARY KEY (exclusion_date, message_fingerprint)
 );
 
 CREATE INDEX IF NOT EXISTS idx_kiwoom_condition_searches_source_seq ON kiwoom_condition_searches(source, condition_seq);
@@ -828,13 +809,8 @@ CREATE INDEX IF NOT EXISTS idx_briefing_topic_items_topic_name ON briefing_topic
 CREATE INDEX IF NOT EXISTS idx_briefing_summary_jobs_video_id ON briefing_summary_jobs(video_id);
 CREATE INDEX IF NOT EXISTS idx_briefing_summary_jobs_status ON briefing_summary_jobs(status);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_telegram_sources_channel_username ON telegram_sources(channel_username);
-CREATE UNIQUE INDEX IF NOT EXISTS ux_telegram_items_source_msg ON telegram_items(source_id, telegram_message_id);
-CREATE INDEX IF NOT EXISTS ix_telegram_items_message_date ON telegram_items(message_date);
-CREATE INDEX IF NOT EXISTS ix_telegram_items_source_date ON telegram_items(source_id, message_date);
-CREATE INDEX IF NOT EXISTS ix_telegram_items_message_type ON telegram_items(message_type);
-CREATE INDEX IF NOT EXISTS ix_telegram_items_tag ON telegram_items(tag);
-CREATE INDEX IF NOT EXISTS ix_telegram_items_normalized_url ON telegram_items(normalized_url);
-CREATE UNIQUE INDEX IF NOT EXISTS ux_telegram_daily_summaries_date_source ON telegram_daily_summaries(summary_date, source_id);
+CREATE INDEX IF NOT EXISTS ix_telegram_items_collection_date ON telegram_items(collection_date);
+CREATE INDEX IF NOT EXISTS ix_telegram_items_message_at ON telegram_items(message_at);
 CREATE INDEX IF NOT EXISTS idx_stock_daily_prices_stock_trade_date ON stock_daily_prices(stock_id, trade_date);
 CREATE INDEX IF NOT EXISTS idx_stock_daily_prices_trade_date ON stock_daily_prices(trade_date);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_stock_daily_market_metrics_stock_date_source ON stock_daily_market_metrics(stock_id, trade_date, source);

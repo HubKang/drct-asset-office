@@ -4,20 +4,10 @@ export type NewsItem = {
   stock_code?: string | null;
   stock_name?: string | null;
   title: string;
-  source: string | null;
   url: string | null;
   published_at: string | null;
   collected_at: string;
-  raw_text_path: string | null;
   summary: string | null;
-  sentiment: string | null;
-  importance_score: number;
-  ai_summary?: string | null;
-  ai_sentiment?: string | null;
-  ai_importance_score?: number | null;
-  ai_tags?: string | null;
-  ai_processed_at?: string | null;
-  ai_summary_error?: string | null;
   created_at: string;
 };
 
@@ -25,7 +15,7 @@ export type NewsListParams = {
   stock_id?: number;
   stock_ids?: number[];
   keyword?: string;
-  source?: string;
+  summary_status?: "summarized" | "unsummarized";
   limit?: number;
   offset?: number;
 };
@@ -42,7 +32,7 @@ export type NewsCollectionTarget = {
   stock_code: string;
   stock_name: string;
   news_count: number;
-  ai_processed_count: number;
+  summarized_count: number;
   latest_collected_at: string | null;
 };
 
@@ -73,6 +63,15 @@ export type NewsCollectResponse = {
   collected_count: number;
   saved_count: number;
   skipped_count: number;
+  mode?: string | null;
+  from_date?: string | null;
+  to_date?: string | null;
+  scanned_count?: number;
+  matched_count?: number;
+  name_mismatch_skipped?: number;
+  duplicate_skipped?: number;
+  excluded_skipped?: number;
+  invalid_skipped?: number;
   message: string;
 };
 
@@ -84,6 +83,15 @@ export type NewsCollectSelectedItemResult = {
   collected_count: number;
   saved_count: number;
   skipped_count: number;
+  mode?: string | null;
+  from_date?: string | null;
+  to_date?: string | null;
+  scanned_count?: number;
+  matched_count?: number;
+  name_mismatch_skipped?: number;
+  duplicate_skipped?: number;
+  excluded_skipped?: number;
+  invalid_skipped?: number;
   message: string | null;
 };
 
@@ -99,4 +107,13 @@ export type NewsCollectSelectedResponse = {
 export type NewsBulkDeleteResponse = {
   deleted: number;
   failed: number;
+};
+
+export type NewsSummarizeResponse = {
+  requested: number;
+  summarized: number;
+  skipped_existing: number;
+  missing_url: number;
+  fetch_failed: number;
+  processing_failed: number;
 };

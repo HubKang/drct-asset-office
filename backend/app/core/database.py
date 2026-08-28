@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+import hashlib
 import json
+import re
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
@@ -73,6 +76,118 @@ def _drop_column_if_exists(conn, table_name: str, column_name: str) -> None:  # 
         # Older SQLite versions cannot drop columns. The application no longer
         # reads or writes this legacy preservation column, so leaving it is safe.
         pass
+
+
+def _telegram_canonical_url(value: str | None) -> str | None:
+    raw = (value or "").strip().rstrip(".,;:!?)")
+    if not raw:
+        return None
+    try:
+        parts = urlsplit(raw)
+        if parts.scheme.lower() not in {"http", "https"} or not parts.netloc:
+            return None
+        host = parts.netloc.lower()
+        if host in {"t.me", "telegram.me", "www.t.me"}:
+            return None
+        query = [(key, val) for key, val in parse_qsl(parts.query, keep_blank_values=True)
+                 if not key.lower().startswith("utm_") and key.lower() not in {"fbclid", "gclid", "igshid"}]
+        return urlunsplit((parts.scheme.lower(), host, parts.path.rstrip("/") or "/", urlencode(sorted(query)), ""))
+    except Exception:
+        return None
+
+
+def _telegram_migration_title(item_title: str | None, message_text: str | None) -> str:
+    if (item_title or "").strip():
+        return re.sub(r"\s+", " ", str(item_title)).strip()[:180]
+    for line in (message_text or "").splitlines():
+        clean = re.sub(r"https?://\S+", " ", line, flags=re.IGNORECASE)
+        clean = re.sub(r"\s+", " ", clean).strip(" -|⚡🔥✅")
+        if len(clean) >= 5:
+            return clean[:180]
+    return "제목 확인 필요"
+
+
+def _telegram_fingerprint(message_text: str | None, source_url: str | None, title: str) -> str:
+    canonical = _telegram_canonical_url(source_url)
+    if canonical:
+        source = f"url:{canonical}"
+    else:
+        normalized = re.sub(r"https?://\S+", " ", message_text or "", flags=re.IGNORECASE)
+        normalized = re.sub(r"\s+", " ", normalized).strip().lower() or title.lower()
+        source = f"text:{normalized}"
+    return hashlib.sha256(source.encode("utf-8")).hexdigest()
+
+
+def _news_canonical_url(value: str | None) -> str | None:
+    raw = (value or "").strip().rstrip(".,;:!?)")
+    if not raw:
+        return None
+    try:
+        parts = urlsplit(raw)
+        if parts.scheme.lower() not in {"http", "https"} or not parts.netloc:
+            return None
+        blocked = {"fbclid", "gclid", "igshid", "mc_cid", "mc_eid"}
+        query = [(key, val) for key, val in parse_qsl(parts.query, keep_blank_values=True)
+                 if not key.lower().startswith("utm_") and key.lower() not in blocked]
+        return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/") or "/", urlencode(sorted(query)), ""))
+    except Exception:
+        return None
+
+
+def _ensure_news_url_is_not_globally_unique(conn) -> None:  # type: ignore[no-untyped-def]
+    """Allow one canonical article to be related to multiple stocks."""
+    indexes = conn.exec_driver_sql("PRAGMA index_list(news_items)").fetchall()
+    has_unique_url = False
+    for index in indexes:
+        if not bool(index[2]):
+            continue
+        columns = conn.exec_driver_sql(f"PRAGMA index_info('{index[1]}')").fetchall()
+        if [str(column[2]) for column in columns] == ["url"]:
+            has_unique_url = True
+            break
+    if not has_unique_url:
+        return
+
+    conn.exec_driver_sql("DROP TABLE IF EXISTS news_items_without_global_url_unique")
+    conn.exec_driver_sql("""
+        CREATE TABLE news_items_without_global_url_unique (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            stock_id INTEGER,
+            title TEXT NOT NULL,
+            source TEXT,
+            url TEXT,
+            article_fingerprint TEXT,
+            published_at TEXT,
+            collected_at TEXT NOT NULL,
+            raw_text_path TEXT,
+            summary TEXT,
+            sentiment TEXT,
+            importance_score INTEGER NOT NULL DEFAULT 0,
+            ai_summary TEXT,
+            ai_sentiment TEXT,
+            ai_importance_score INTEGER DEFAULT 0,
+            ai_tags TEXT,
+            ai_processed_at TEXT,
+            ai_summary_error TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE SET NULL
+        )
+    """)
+    conn.exec_driver_sql("""
+        INSERT INTO news_items_without_global_url_unique
+        (id, stock_id, title, source, url, article_fingerprint, published_at, collected_at,
+         raw_text_path, summary, sentiment, importance_score, ai_summary, ai_sentiment,
+         ai_importance_score, ai_tags, ai_processed_at, ai_summary_error, created_at)
+        SELECT id,
+               CASE WHEN stock_id IS NULL OR EXISTS (SELECT 1 FROM stocks WHERE stocks.id = news_items.stock_id)
+                    THEN stock_id ELSE NULL END,
+               title, source, url, article_fingerprint, published_at, collected_at,
+               raw_text_path, summary, sentiment, importance_score, ai_summary, ai_sentiment,
+               ai_importance_score, ai_tags, ai_processed_at, ai_summary_error, created_at
+        FROM news_items
+    """)
+    conn.exec_driver_sql("DROP TABLE news_items")
+    conn.exec_driver_sql("ALTER TABLE news_items_without_global_url_unique RENAME TO news_items")
 
 
 KMS_SETTING_SEEDS: list[tuple[str, str, str, int, list[tuple[str, str, str | None, str | None, str | None, int, int, int]]]] = [
@@ -211,6 +326,51 @@ def ensure_runtime_schema() -> None:
         return
 
     with engine.begin() as conn:
+        news_columns = {str(row[1]) for row in conn.exec_driver_sql("PRAGMA table_info(news_items)").fetchall()}
+        news_v2_migration_needed = bool(news_columns) and "article_fingerprint" not in news_columns
+        if news_columns:
+            _ensure_column(conn, "news_items", "article_fingerprint", "TEXT")
+            if news_v2_migration_needed:
+                rows = conn.exec_driver_sql("SELECT id, url FROM news_items WHERE url IS NOT NULL").fetchall()
+                for news_id, raw_url in rows:
+                    canonical = _news_canonical_url(raw_url)
+                    fingerprint = hashlib.sha256(canonical.encode("utf-8")).hexdigest() if canonical else None
+                    conn.exec_driver_sql(
+                        "UPDATE news_items SET article_fingerprint = ? WHERE id = ?",
+                        (fingerprint, news_id),
+                    )
+                conn.exec_driver_sql("""
+                    UPDATE news_items
+                    SET summary = CASE
+                        WHEN ai_summary IS NOT NULL AND trim(ai_summary) <> '' THEN ai_summary
+                        ELSE NULL
+                    END,
+                    raw_text_path = NULL
+                """)
+            conn.exec_driver_sql("UPDATE news_items SET source = NULL WHERE source = 'naver_news'")
+            _ensure_news_url_is_not_globally_unique(conn)
+            conn.exec_driver_sql("""
+                CREATE INDEX IF NOT EXISTS ix_news_items_stock_fingerprint
+                ON news_items(stock_id, article_fingerprint)
+                WHERE article_fingerprint IS NOT NULL
+            """)
+        conn.exec_driver_sql("""
+            CREATE TABLE IF NOT EXISTS news_item_exclusions (
+                target_date TEXT NOT NULL,
+                stock_id INTEGER NOT NULL,
+                article_fingerprint TEXT NOT NULL,
+                PRIMARY KEY (target_date, stock_id, article_fingerprint)
+            )
+        """)
+        conn.exec_driver_sql("""
+            CREATE TABLE IF NOT EXISTS news_collection_cursors (
+                stock_id INTEGER PRIMARY KEY,
+                last_completed_date TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE CASCADE
+            )
+        """)
         conn.exec_driver_sql("""
             CREATE TABLE IF NOT EXISTS us_stocks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT NOT NULL, name TEXT, name_ko TEXT,
@@ -2548,82 +2708,64 @@ def ensure_runtime_schema() -> None:
             )
             """
         )
-        conn.exec_driver_sql(
-            """
+        conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS ux_telegram_sources_channel_username ON telegram_sources(channel_username)")
+        telegram_item_columns = {str(row[1]) for row in conn.exec_driver_sql(
+            "PRAGMA table_info(telegram_items)"
+        ).fetchall()}
+        if telegram_item_columns and "message_fingerprint" not in telegram_item_columns:
+            conn.exec_driver_sql("""
+                CREATE TABLE telegram_items_v2 (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    collection_date TEXT NOT NULL,
+                    message_at TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    summary TEXT,
+                    source_url TEXT,
+                    message_fingerprint TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(collection_date, message_fingerprint)
+                )
+            """)
+            legacy_rows = conn.exec_driver_sql("""
+                SELECT id, message_date, item_title, message_text,
+                       COALESCE(NULLIF(normalized_url, ''), NULLIF(item_url, '')),
+                       COALESCE(NULLIF(created_at, ''), CURRENT_TIMESTAMP)
+                FROM telegram_items ORDER BY id
+            """).fetchall()
+            for row in legacy_rows:
+                title = _telegram_migration_title(row[2], row[3])
+                source_url = _telegram_canonical_url(row[4])
+                fingerprint = _telegram_fingerprint(row[3], source_url, title)
+                conn.exec_driver_sql("""
+                    INSERT OR IGNORE INTO telegram_items_v2
+                    (id, collection_date, message_at, title, summary, source_url, message_fingerprint, created_at)
+                    VALUES (?, substr(?, 1, 10), ?, ?, NULL, ?, ?, ?)
+                """, (row[0], row[1], row[1], title, source_url, fingerprint, row[5]))
+            conn.exec_driver_sql("DROP TABLE telegram_items")
+            conn.exec_driver_sql("ALTER TABLE telegram_items_v2 RENAME TO telegram_items")
+        conn.exec_driver_sql("""
             CREATE TABLE IF NOT EXISTS telegram_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source_id INTEGER NOT NULL,
-                telegram_message_id INTEGER NOT NULL,
-                message_date TEXT NOT NULL,
-                message_text TEXT,
-                message_text_length INTEGER,
-                item_title TEXT,
-                item_url TEXT,
-                normalized_url TEXT,
-                publisher TEXT,
-                message_type TEXT NOT NULL DEFAULT 'unknown',
-                item_category TEXT NOT NULL DEFAULT '기타',
-                summary_text TEXT,
-                key_points_json TEXT,
-                summary_error_message TEXT,
-                tag TEXT,
-                score INTEGER NOT NULL DEFAULT 50,
-                sentiment TEXT NOT NULL DEFAULT 'neutral',
-                risk_level TEXT NOT NULL DEFAULT 'unknown',
-                event_type TEXT NOT NULL DEFAULT '기타',
-                related_stock_code TEXT,
-                related_stock_name TEXT,
-                related_theme TEXT,
-                llm_model TEXT,
-                summary_status TEXT NOT NULL DEFAULT 'pending',
-                summary_has_content INTEGER NOT NULL DEFAULT 0,
-                analysis_status TEXT NOT NULL DEFAULT 'pending',
-                collected_at TEXT NOT NULL,
-                summarized_at TEXT,
+                collection_date TEXT NOT NULL,
+                message_at TEXT NOT NULL,
+                title TEXT NOT NULL,
+                summary TEXT,
+                source_url TEXT,
+                message_fingerprint TEXT NOT NULL,
                 created_at TEXT NOT NULL,
-                updated_at TEXT,
-                FOREIGN KEY (source_id) REFERENCES telegram_sources(id)
+                UNIQUE(collection_date, message_fingerprint)
             )
-            """
-        )
-        conn.exec_driver_sql(
-            """
-            CREATE TABLE IF NOT EXISTS telegram_daily_summaries (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                summary_date TEXT NOT NULL,
-                source_id INTEGER NOT NULL DEFAULT 0,
-                item_count INTEGER NOT NULL DEFAULT 0,
-                summary_text TEXT,
-                key_points_json TEXT,
-                theme_mentions_json TEXT,
-                stock_mentions_json TEXT,
-                risk_points_json TEXT,
-                top_tags_json TEXT,
-                top_event_types_json TEXT,
-                message_type_stats_json TEXT,
-                market_view TEXT,
-                summary_has_content INTEGER NOT NULL DEFAULT 0,
-                llm_model TEXT,
-                elapsed_seconds INTEGER,
-                created_at TEXT NOT NULL,
-                updated_at TEXT,
-                FOREIGN KEY (source_id) REFERENCES telegram_sources(id)
+        """)
+        conn.exec_driver_sql("""
+            CREATE TABLE IF NOT EXISTS telegram_message_exclusions (
+                exclusion_date TEXT NOT NULL,
+                message_fingerprint TEXT NOT NULL,
+                PRIMARY KEY (exclusion_date, message_fingerprint)
             )
-            """
-        )
-        conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS ux_telegram_sources_channel_username ON telegram_sources(channel_username)")
-        conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS ux_telegram_items_source_msg ON telegram_items(source_id, telegram_message_id)")
-        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_telegram_items_message_date ON telegram_items(message_date)")
-        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_telegram_items_source_date ON telegram_items(source_id, message_date)")
-        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_telegram_items_message_type ON telegram_items(message_type)")
-        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_telegram_items_tag ON telegram_items(tag)")
-        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_telegram_items_normalized_url ON telegram_items(normalized_url)")
-        telegram_item_columns = {
-            str(row[1]) for row in conn.exec_driver_sql("PRAGMA table_info(telegram_items)").fetchall()
-        }
-        if "summary_error_message" not in telegram_item_columns:
-            conn.exec_driver_sql("ALTER TABLE telegram_items ADD COLUMN summary_error_message TEXT")
-        conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS ux_telegram_daily_summaries_date_source ON telegram_daily_summaries(summary_date, source_id)")
+        """)
+        conn.exec_driver_sql("DROP TABLE IF EXISTS telegram_daily_summaries")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_telegram_items_collection_date ON telegram_items(collection_date)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_telegram_items_message_at ON telegram_items(message_at)")
         conn.exec_driver_sql(
             """
             CREATE TABLE IF NOT EXISTS trade_methods (

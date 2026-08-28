@@ -30,7 +30,9 @@ class LMStudioClient:
         message = first.get("message", {}) if isinstance(first, dict) else {}
         delta = first.get("delta", {}) if isinstance(first, dict) else {}
         finish_reason = str(first.get("finish_reason", "unknown")) if isinstance(first, dict) else "unknown"
-        reasoning_text = message.get("reasoning_content") if isinstance(message, dict) else None
+        reasoning_text = None
+        if isinstance(message, dict):
+            reasoning_text = message.get("reasoning_content") or message.get("reasoning")
         reasoning_len = len(reasoning_text) if isinstance(reasoning_text, str) else 0
 
         # reasoning_content is intentionally excluded to avoid storing chain-of-thought.
@@ -98,6 +100,8 @@ class LMStudioClient:
                                 f"[LLM DEBUG] empty content after response_format fallback, "
                                 f"purpose={purpose or 'unknown'}, finish_reason={finish_reason}, reasoning_len={reasoning_len}"
                             )
+                            if finish_reason.lower() in {"length", "max_tokens"} and attempt < retries:
+                                payload["max_tokens"] = self._expanded_max_tokens(payload.get("max_tokens"))
                             continue
                         body_text = response.text or ""
                         lowered = body_text.lower()
@@ -119,6 +123,8 @@ class LMStudioClient:
                     f"[LLM DEBUG] empty content attempt={attempt + 1}/{retries + 1}, "
                     f"purpose={purpose or 'unknown'}, finish_reason={finish_reason}, reasoning_len={reasoning_len}"
                 )
+                if finish_reason.lower() in {"length", "max_tokens"} and attempt < retries:
+                    payload["max_tokens"] = self._expanded_max_tokens(payload.get("max_tokens"))
 
             raise RuntimeError(
                 f"LM Studio returned empty content during {purpose or 'unknown'}. finish_reason={last_finish_reason}"
@@ -133,3 +139,12 @@ class LMStudioClient:
             raise RuntimeError(f"LM Studio API HTTP error during {purpose or 'unknown'}: {exc}") from exc
         except ValueError as exc:
             raise RuntimeError(f"LM Studio returned invalid JSON during {purpose or 'unknown'}") from exc
+
+    @staticmethod
+    def _expanded_max_tokens(value: object) -> int:
+        """Give reasoning models room to emit final content after a length-only response."""
+        try:
+            current = max(1, int(value))
+        except (TypeError, ValueError):
+            current = LLM_MAX_OUTPUT_TOKENS
+        return min(4096, max(current + 512, current * 2))

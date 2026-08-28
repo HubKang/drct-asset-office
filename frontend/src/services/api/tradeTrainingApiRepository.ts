@@ -10,7 +10,6 @@ import type {
   TradeTrainingRiskScenarioRevisionListResponse,
   ScenarioExecutionReview,
   ScenarioHabitsResponse,
-  RiskLevelReachCheckResponse,
   TrainingResult,
   SimulationReview,
   SimulationReviewSaveRequest,
@@ -128,16 +127,7 @@ export const tradeTrainingApiRepository = {
   },
   getRiskScenarioExecutionReview: (scenarioId: number) =>
     apiRequest<ScenarioExecutionReview>(`/trade-training/risk-scenarios/${scenarioId}/execution-review`),
-  checkRiskLevelReach: (sessionId: number, chartDate: string) =>
-    apiRequest<RiskLevelReachCheckResponse>(`/trade-training/sessions/${sessionId}/risk-level-reach-check`, {
-      method: "POST",
-      body: JSON.stringify({ chart_date: chartDate }),
-    }),
-  recordRiskLevelResponse: (sessionId: number, payload: { reach_event_id: number; response_type: "SELL" | "HOLD" | "PLAN_REVISED"; reason?: string }) =>
-    apiRequest<{ event: Record<string, unknown>; pending_responses: import("@/types/tradeTraining").RiskPendingResponse[] }>(`/trade-training/sessions/${sessionId}/risk-level-responses`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),  previewRiskOrder: (sessionId: number, payload: RiskOrderPreviewRequest) =>
+  previewRiskOrder: (sessionId: number, payload: RiskOrderPreviewRequest) =>
     apiRequest<RiskOrderPreview>(`/trade-training/sessions/${sessionId}/risk-order-preview`, {
       method: "POST",
       body: JSON.stringify(payload),

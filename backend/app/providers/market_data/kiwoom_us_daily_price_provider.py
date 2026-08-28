@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from backend.app.clients.kiwoom.kiwoom_rest_client import KiwoomRestClient
+from backend.app.providers.market_data.us_daily_price_provider import (
+    UsDailyPrice,
+    UsDailyPriceFetchResult,
+    UsHistoricalPricePartialError,
+)
 
 
 KIWOOM_US_EXCHANGE_CODES = {
@@ -13,28 +17,6 @@ KIWOOM_US_EXCHANGE_CODES = {
     "NYSE": "NY",
     "NYSE_AMERICAN": "NA",
 }
-
-
-@dataclass(frozen=True)
-class UsDailyPrice:
-    trade_date: str
-    open_price: float
-    high_price: float
-    low_price: float
-    close_price: float
-    volume: int
-
-
-@dataclass(frozen=True)
-class UsDailyPriceFetchResult:
-    prices: list[UsDailyPrice]
-    history_exhausted: bool
-
-
-class UsHistoricalPricePartialError(RuntimeError):
-    def __init__(self, prices: list[UsDailyPrice], reason: str) -> None:
-        super().__init__(reason)
-        self.prices = prices
 
 
 class KiwoomUsDailyPriceProvider:

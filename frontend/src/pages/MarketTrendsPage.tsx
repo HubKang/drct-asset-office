@@ -249,6 +249,14 @@ const SupplyTopStockReturnChart = memo(function SupplyTopStockReturnChart({
   const plotHeight = height - margin.top - margin.bottom;
   const dates = data?.trade_dates ?? [];
   const stocks = data?.stocks ?? [];
+  const legendStocks = [...stocks].sort((a, b) => {
+    const aReturn = a.has_sufficient_price_data && a.latest_cumulative_return != null ? a.latest_cumulative_return : null;
+    const bReturn = b.has_sufficient_price_data && b.latest_cumulative_return != null ? b.latest_cumulative_return : null;
+    if (aReturn == null && bReturn == null) return a.rank - b.rank;
+    if (aReturn == null) return 1;
+    if (bReturn == null) return -1;
+    return bReturn - aReturn || a.rank - b.rank;
+  });
   const plottedStocks = stocks.filter((stock) => stock.has_sufficient_price_data);
   const values = plottedStocks.flatMap((stock) => stock.points.map((point) => point.cumulative_return).filter((value): value is number => value != null));
   const rawMin = Math.min(0, ...(values.length ? values : [0]));
@@ -341,24 +349,40 @@ const SupplyTopStockReturnChart = memo(function SupplyTopStockReturnChart({
             )}
           </div>
           <ol className="monthly-supply-stock-return-legend" aria-label="수급 TOP20 종목 범례">
-            {stocks.map((stock) => {
+            {legendStocks.map((stock, index) => {
               const color = colorByStock.get(stock.stock_id) ?? "#475569";
               const isDimmed = hoveredStockId != null && hoveredStockId !== stock.stock_id;
               return (
                 <li
                   key={`stock-legend-${stock.stock_id}`}
                   className={`${isDimmed ? "dimmed" : ""} ${hoveredStockId === stock.stock_id ? "active" : ""}`}
-                  title={`${stock.price_data_status_name} · 관측 ${stock.price_observation_count}/${stock.expected_trade_date_count}일 · 기준 종가일 ${stock.base_price_date ?? "-"} · 최근 가격일 ${stock.latest_price_date ?? "-"} · 커버리지 ${stock.price_coverage_rate}% · ${stock.has_sufficient_price_data ? "그래프 표시 가능" : "가격 관측 부족"} · ${stock.price_data_reason}`}
                   onMouseEnter={() => setHoveredStockId(stock.stock_id)}
                   onMouseLeave={() => setHoveredStockId(null)}
                 >
-                  <span className="monthly-supply-stock-return-rank">{stock.rank}</span>
+                  <span className="monthly-supply-stock-return-rank">{index + 1}</span>
                   <i style={{ backgroundColor: stock.has_sufficient_price_data ? color : "#cbd5e1" }} />
                   <span className="monthly-supply-stock-return-name" title={`${stock.stock_name} (${stock.stock_code})`}>{stock.stock_name}</span>
                   <span className="monthly-supply-stock-return-count">출현 {stock.appearance_count}회{stock.price_data_status === "READY_WITH_FALLBACK" ? " · 첫 종가 기준" : ""}</span>
-                  <strong className={!stock.has_sufficient_price_data ? "insufficient" : (stock.latest_cumulative_return ?? 0) >= 0 ? "positive" : "negative"}>
-                    {stock.has_sufficient_price_data ? fmtSignedPct(stock.latest_cumulative_return) : stock.price_data_status_name}
-                  </strong>
+                  <span className="monthly-supply-stock-return-value" tabIndex={0} aria-describedby={`stock-return-detail-${stock.stock_id}`}>
+                    <strong className={!stock.has_sufficient_price_data ? "insufficient" : (stock.latest_cumulative_return ?? 0) >= 0 ? "positive" : "negative"}>
+                      {stock.has_sufficient_price_data ? fmtSignedPct(stock.latest_cumulative_return) : stock.price_data_status_name}
+                    </strong>
+                  </span>
+                  <div className="monthly-supply-stock-return-tooltip" id={`stock-return-detail-${stock.stock_id}`} role="tooltip">
+                    <div className="monthly-supply-stock-return-tooltip__header">
+                      <strong>{stock.stock_name}</strong>
+                      <span>{stock.price_data_status_name}</span>
+                    </div>
+                    <dl>
+                      <div><dt>누적등락률 순위</dt><dd>{index + 1}위</dd></div>
+                      <div><dt>수급 출현 순위</dt><dd>{stock.rank}위</dd></div>
+                      <div><dt>가격 관측</dt><dd>{stock.price_observation_count}/{stock.expected_trade_date_count}일</dd></div>
+                      <div><dt>커버리지</dt><dd>{stock.price_coverage_rate}%</dd></div>
+                      <div><dt>기준 종가일</dt><dd>{stock.base_price_date ?? "-"}</dd></div>
+                      <div><dt>최근 가격일</dt><dd>{stock.latest_price_date ?? "-"}</dd></div>
+                    </dl>
+                    <p>{stock.has_sufficient_price_data ? "그래프 표시 가능" : "가격 관측 부족"} · {stock.price_data_reason}</p>
+                  </div>
                 </li>
               );
             })}

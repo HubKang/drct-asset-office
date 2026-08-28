@@ -39,6 +39,14 @@ export function buildNaverStockCandleChartUrl(
   return `https://ssl.pstatic.net/imgfinance/chart/item/candle/${period}/${normalizedCode}.png?sidcode=${sidcode}`;
 }
 
+export function buildNaverStockAnalysisUrl(
+  stockCode: string | number | null | undefined,
+): string {
+  const normalizedCode = normalizeNaverStockCode(stockCode);
+  if (!normalizedCode) return "";
+  return `https://finance.naver.com/item/coinfo.naver?code=${normalizedCode}`;
+}
+
 export function buildNaverTraderChartUrl(
   type: NaverTraderChartType,
   stockCode: string | number | null | undefined,

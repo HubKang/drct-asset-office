@@ -25,7 +25,6 @@ from backend.app.schemas.trade_training_schema import (
     TradeTrainingAccountUpdate,
     TrainingOrderRequest,
     RiskOrderPreviewRequest,
-    RiskLevelResponseRequest,
     TradeTrainingRiskScenarioDraftRequest,
     TrainingSessionCreate,
     MultiPeriodTechnicalAnalysisRequest,
@@ -1323,7 +1322,6 @@ class TradeTrainingService:
             values["status"] = FINISHED_STATUS
         updated = self.repo.update_session(session_id, values)
         self._save_snapshot(updated, prices[next_index])
-        self.check_risk_level_reaches(session_id, str(prices[next_index]["trade_date"]))
         return self.get_session_detail(session_id)
 
     @staticmethod
@@ -1625,7 +1623,6 @@ class TradeTrainingService:
             "requires_plan_before_buy": False,
             "holding_risk": self._holding_risk_summary(self.repo.get_session(int(scenario["simulation_session_id"])) or {}, scenario) if str(scenario.get("status") or "").upper() == "ACTIVE" else None,
             "events": [self._public_risk_event(event) for event in events],
-            "pending_responses": self._pending_risk_responses(events),
         }
 
     def get_current_risk_scenario_detail(self, session_id: int) -> dict[str, Any]:
@@ -1636,7 +1633,7 @@ class TradeTrainingService:
             return {"scenario": None, "buy_steps": [], "sell_steps": [], "latest_revision": None, "preview": None, "requires_plan_before_buy": False, "holding_risk": None, "events": []}
         return self._risk_scenario_detail(self.repo.get_current_risk_scenario(session_id))
 
-    def create_or_update_risk_scenario_draft(self, session_id: int, payload: TradeTrainingRiskScenarioDraftRequest) -> dict[str, Any]:
+    def create_or_update_risk_scenario_draft(self, session_id: int, payload: TradeTrainingRiskScenarioDraftRequest, *, commit: bool = True) -> dict[str, Any]:
         session = self.repo.get_session(session_id)
         if not session:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="training session not found")
@@ -1687,17 +1684,18 @@ class TradeTrainingService:
         self.repo.replace_risk_plan_steps(int(scenario["id"]), [*buy_steps, *sell_steps])
         scenario = self.repo.get_risk_scenario(int(scenario["id"])) or scenario
         self.repo.create_risk_scenario_revision(int(scenario["id"]), revision_type, self._risk_snapshot(scenario, buy_steps, sell_steps, preview), payload.change_reason)
-        self.repo.db.commit()
+        if commit:
+            self.repo.db.commit()
         return self._risk_scenario_detail(scenario)
 
-    def update_active_risk_scenario(self, scenario_id: int, payload: TradeTrainingRiskScenarioDraftRequest) -> dict[str, Any]:
+    def update_active_risk_scenario(self, scenario_id: int, payload: TradeTrainingRiskScenarioDraftRequest, *, commit: bool = True) -> dict[str, Any]:
         scenario = self.repo.get_risk_scenario(scenario_id)
         if not scenario:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="risk scenario not found")
         if str(scenario.get("status") or "") not in {"DRAFT", "ACTIVE"}:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"code": "SCENARIO_NOT_EDITABLE", "message": "Only draft or active scenarios can be edited."})
         if scenario["status"] == "DRAFT":
-            return self.create_or_update_risk_scenario_draft(int(scenario["simulation_session_id"]), payload)
+            return self.create_or_update_risk_scenario_draft(int(scenario["simulation_session_id"]), payload, commit=commit)
         buy_steps = self._normalize_risk_steps(payload.buy_steps, "BUY", "ENTRY")
         sell_steps = self._normalize_risk_steps(payload.sell_steps, "SELL", "TAKE_PROFIT")
         full_stop = next((step for step in sell_steps if str(step.get("plan_type") or "").upper() == "FULL_STOP"), None)
@@ -1724,7 +1722,8 @@ class TradeTrainingService:
         updated = self.repo.update_risk_scenario(scenario_id, values)
         self.repo.replace_risk_plan_steps(scenario_id, [*buy_steps, *sell_steps])
         self.repo.create_risk_scenario_revision(scenario_id, "PRICE_LINES_UPDATED", self._risk_snapshot(updated, buy_steps, sell_steps, preview), payload.change_reason)
-        self.repo.db.commit()
+        if commit:
+            self.repo.db.commit()
         return self._risk_scenario_detail(updated)
     def cancel_risk_scenario_draft(self, scenario_id: int) -> dict[str, Any]:
         scenario = self.repo.get_risk_scenario(scenario_id)
@@ -1743,55 +1742,6 @@ class TradeTrainingService:
         return {"items": self.repo.list_risk_scenario_revisions(scenario_id)}
 
     @staticmethod
-    def _reach_response_event_type(reach_type: str, response_type: str) -> str:
-        prefix = {
-            "TAKE_PROFIT_REACHED": "TAKE_PROFIT",
-            "PARTIAL_STOP_REACHED": "PARTIAL_STOP",
-            "FULL_STOP_REACHED": "FULL_STOP",
-        }.get(reach_type)
-        if not prefix:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="지원하지 않는 도달 이벤트입니다.")
-        normalized = str(response_type or "").upper()
-        if normalized not in {"SELL", "HOLD", "PLAN_REVISED"}:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="지원하지 않는 대응 유형입니다.")
-        return f"{prefix}_RESPONSE_{normalized}"
-
-    @staticmethod
-    def _pending_risk_responses(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        reach_types = {"TAKE_PROFIT_REACHED", "PARTIAL_STOP_REACHED", "FULL_STOP_REACHED"}
-        answered = {
-            int((event.get("actual_value") or {}).get("reach_event_id"))
-            for event in events
-            if "_RESPONSE_" in str(event.get("event_type") or "")
-            and (event.get("actual_value") or {}).get("reach_event_id")
-        }
-        result = []
-        for event in events:
-            if str(event.get("event_type") or "") not in reach_types or int(event["id"]) in answered:
-                continue
-            planned = event.get("planned_value") or {}
-            actual = event.get("actual_value") or {}
-            result.append(
-                {
-                    "reach_event_id": int(event["id"]),
-                    "event_type": event["event_type"],
-                    "chart_date": event.get("chart_date"),
-                    "created_at": event.get("created_at"),
-                    "risk_scenario_id": event.get("risk_scenario_id"),
-                    "risk_scenario_revision_id": event.get("risk_scenario_revision_id"),
-                    "risk_plan_step_id": event.get("risk_plan_step_id"),
-                    "step_no": planned.get("step_no"),
-                    "plan_type": planned.get("plan_type"),
-                    "trigger_price": planned.get("trigger_price"),
-                    "day_high": actual.get("day_high"),
-                    "day_low": actual.get("day_low"),
-                    "position_quantity": actual.get("position_quantity"),
-                    "sequence_unknown": bool(actual.get("sequence_unknown")),
-                }
-            )
-        return result
-
-    @staticmethod
     def _public_risk_event(event: dict[str, Any]) -> dict[str, Any]:
         actual = event.get("actual_value") or {}
         return {
@@ -1807,160 +1757,6 @@ class TradeTrainingService:
             "simulation_trade_id": event.get("simulation_trade_id"),
             "reason": actual.get("reason") or actual.get("unplanned_reason"),
             "sequence_unknown": bool(actual.get("sequence_unknown")),
-        }
-
-    def check_risk_level_reaches(self, session_id: int, chart_date: str) -> dict[str, Any]:
-        session = self.repo.get_session(session_id)
-        if not session:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="training session not found")
-        scenario = self.repo.get_active_risk_scenario(session_id)
-        if not scenario:
-            return {"events": [], "pending_responses": []}
-        prices = self._session_prices(session)
-        candle_index = next((index for index, row in enumerate(prices) if str(row.get("trade_date")) == chart_date), None)
-        candle = prices[candle_index] if candle_index is not None else None
-        if not candle:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="해당 차트 날짜의 가격 데이터가 없습니다.")
-        day_high = float(candle.get("high_price") or 0)
-        day_low = float(candle.get("low_price") or 0)
-        revision = self.repo.get_latest_risk_scenario_revision(int(scenario["id"]))
-        existing_events = self.repo.list_risk_events(session_id)
-        answered_reach_ids = {
-            int((event.get("actual_value") or {}).get("reach_event_id") or 0)
-            for event in existing_events
-            if "_RESPONSE_" in str(event.get("event_type") or "")
-        }
-        reached_rows: list[tuple[dict[str, Any], str]] = []
-        for step in self.repo.list_risk_plan_steps(int(scenario["id"])):
-            if str(step.get("plan_group") or "").upper() != "SELL":
-                continue
-            if str(step.get("status") or "PLANNED").upper() != "PLANNED" or bool(step.get("is_removed")):
-                continue
-            price = self._float_or_none(step.get("trigger_price"))
-            plan_type = str(step.get("plan_type") or "").upper()
-            event_type = {
-                "TAKE_PROFIT": "TAKE_PROFIT_REACHED",
-                "PARTIAL_STOP": "PARTIAL_STOP_REACHED",
-                "FULL_STOP": "FULL_STOP_REACHED",
-            }.get(plan_type)
-            if not event_type or price is None:
-                continue
-            if (event_type == "TAKE_PROFIT_REACHED" and day_high >= price) or (
-                event_type != "TAKE_PROFIT_REACHED" and day_low <= price
-            ):
-                previous_candle = prices[candle_index - 1] if candle_index is not None and candle_index > 0 else None
-                previous_still_reached = bool(
-                    previous_candle
-                    and (
-                        (event_type == "TAKE_PROFIT_REACHED" and float(previous_candle.get("high_price") or 0) >= price)
-                        or (event_type != "TAKE_PROFIT_REACHED" and float(previous_candle.get("low_price") or 0) <= price)
-                    )
-                )
-                unresolved_episode = any(
-                    int(event.get("risk_plan_step_id") or 0) == int(step["id"])
-                    and str(event.get("event_type") or "") == event_type
-                    and int(event.get("id") or 0) not in answered_reach_ids
-                    for event in existing_events
-                )
-                if previous_still_reached and unresolved_episode:
-                    continue
-                reached_rows.append((step, event_type))
-        sequence_unknown = len(reached_rows) > 1
-        created = []
-        for step, event_type in reached_rows:
-            planned_value = {
-                "plan_type": str(step.get("plan_type") or "").upper(),
-                "step_no": int(step.get("step_no") or 0),
-                "trigger_price": float(step.get("trigger_price") or 0),
-            }
-            actual_value = {
-                "day_high": day_high,
-                "day_low": day_low,
-                "day_open": self._float_or_none(candle.get("open_price")),
-                "day_close": self._float_or_none(candle.get("close_price")),
-                "position_quantity": int(session.get("position_qty") or 0),
-                "current_price": self._float_or_none(candle.get("close_price")),
-                "sequence_unknown": sequence_unknown,
-            }
-            event = self.repo.insert_risk_event_no_commit(
-                {
-                    "training_account_id": int(scenario["training_account_id"]),
-                    "simulation_session_id": session_id,
-                    "risk_scenario_id": int(scenario["id"]),
-                    "risk_scenario_revision_id": int(revision["id"]) if revision else None,
-                    "risk_plan_step_id": int(step["id"]),
-                    "simulation_trade_id": None,
-                    "event_key": f"scenario:{scenario['id']}:step:{step['id']}:date:{chart_date}:event:{event_type}",
-                    "event_type": event_type,
-                    "severity": "WARNING" if event_type == "FULL_STOP_REACHED" else "CAUTION",
-                    "planned_value": planned_value,
-                    "actual_value": actual_value,
-                    "message": "계획 가격에 도달했습니다. 자동 매도하지 않으며 대응을 선택해 기록합니다.",
-                    "acknowledged": False,
-                    "acknowledgement_note": None,
-                    "chart_date": chart_date,
-                }
-            )
-            created.append(self.repo.get_risk_event(int(event["id"])) or event)
-        self.repo.db.commit()
-        all_events = self.repo.list_risk_events(session_id)
-        return {
-            "events": [self._public_risk_event(event) for event in created],
-            "pending_responses": self._pending_risk_responses(all_events),
-        }
-
-    def record_risk_level_response(self, session_id: int, payload: RiskLevelResponseRequest) -> dict[str, Any]:
-        session = self.repo.get_session(session_id)
-        reach = self.repo.get_risk_event(payload.reach_event_id)
-        if not session or not reach or int(reach.get("simulation_session_id") or 0) != session_id:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="도달 이벤트를 찾을 수 없습니다.")
-        event_type = self._reach_response_event_type(str(reach.get("event_type") or ""), payload.response_type)
-        existing = next(
-            (
-                event
-                for event in self.repo.list_risk_events(session_id)
-                if "_RESPONSE_" in str(event.get("event_type") or "")
-                and int((event.get("actual_value") or {}).get("reach_event_id") or 0) == int(reach["id"])
-            ),
-            None,
-        )
-        if existing:
-            return {
-                "event": self._public_risk_event(existing),
-                "pending_responses": self._pending_risk_responses(self.repo.list_risk_events(session_id)),
-            }
-        candle = self._current_price_row(session)
-        actual_value = {
-            "reach_event_id": int(reach["id"]),
-            "response_type": str(payload.response_type).upper(),
-            "reason": (payload.reason or "").strip() or None,
-            "position_quantity": int(session.get("position_qty") or 0),
-            "current_price": self._float_or_none(candle.get("close_price")),
-        }
-        event = self.repo.insert_risk_event_no_commit(
-            {
-                "training_account_id": int(reach["training_account_id"]),
-                "simulation_session_id": session_id,
-                "risk_scenario_id": int(reach["risk_scenario_id"]),
-                "risk_scenario_revision_id": reach.get("risk_scenario_revision_id"),
-                "risk_plan_step_id": reach.get("risk_plan_step_id"),
-                "simulation_trade_id": None,
-                "event_key": f"reach:{reach['id']}:response",
-                "event_type": event_type,
-                "severity": "INFO",
-                "planned_value": reach.get("planned_value") or {},
-                "actual_value": actual_value,
-                "message": "계획 가격 도달 대응을 기록했습니다.",
-                "acknowledged": True,
-                "acknowledgement_note": actual_value["reason"],
-                "chart_date": session.get("current_date"),
-            }
-        )
-        self.repo.db.commit()
-        decoded = self.repo.get_risk_event(int(event["id"])) or event
-        return {
-            "event": self._public_risk_event(decoded),
-            "pending_responses": self._pending_risk_responses(self.repo.list_risk_events(session_id)),
         }
 
     @staticmethod
@@ -2743,16 +2539,33 @@ class TradeTrainingService:
             if linked_account:
                 raise self._insufficient_cash(cash, amount + fee, float(payload.price), fee_rate)
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="현금이 부족합니다.")
-        risk_order_preview = self.calculate_risk_order_preview(
-            session_id,
-            RiskOrderPreviewRequest(side="BUY", price=payload.price, quantity=payload.quantity, risk_plan_step_id=payload.risk_plan_step_id),
-        ) if linked_account else None
-        if risk_order_preview:
-            self._require_risk_warning_acknowledgement(risk_order_preview, payload)
         if linked_account:
             self.repo.db.info["trade_training_atomic_order"] = True
         try:
-            risk_scenario, risk_revision_id, risk_step_id = self.activate_risk_scenario_for_first_buy(session, {"risk_plan_step_id": payload.risk_plan_step_id})
+            if linked_account and payload.risk_plan_draft is not None:
+                active = self.repo.get_active_risk_scenario(session_id)
+                if active:
+                    self.update_active_risk_scenario(int(active["id"]), payload.risk_plan_draft, commit=False)
+                else:
+                    self.create_or_update_risk_scenario_draft(session_id, payload.risk_plan_draft, commit=False)
+            effective_requested_step_id = payload.risk_plan_step_id
+            if linked_account and payload.risk_plan_draft is not None and not effective_requested_step_id:
+                current_scenario = self.repo.get_active_risk_scenario(session_id) or self.repo.get_current_risk_scenario(session_id)
+                planned_buy = [
+                    step for step in self.repo.list_risk_plan_steps(int(current_scenario["id"]))
+                    if str(step.get("plan_group") or "").upper() == "BUY"
+                    and str(step.get("status") or "PLANNED").upper() == "PLANNED"
+                    and step.get("trigger_price") is not None
+                ] if current_scenario else []
+                if planned_buy:
+                    effective_requested_step_id = int(min(planned_buy, key=lambda step: abs(float(step.get("trigger_price") or payload.price) - float(payload.price)))["id"])
+            risk_order_preview = self.calculate_risk_order_preview(
+                session_id,
+                RiskOrderPreviewRequest(side="BUY", price=payload.price, quantity=payload.quantity, risk_plan_step_id=effective_requested_step_id),
+            ) if linked_account else None
+            if risk_order_preview:
+                self._require_risk_warning_acknowledgement(risk_order_preview, payload)
+            risk_scenario, risk_revision_id, risk_step_id = self.activate_risk_scenario_for_first_buy(session, {"risk_plan_step_id": effective_requested_step_id})
             prev_qty = int(session.get("position_qty") or 0)
             prev_avg = float(session.get("avg_price") or 0)
             next_qty = prev_qty + int(payload.quantity)

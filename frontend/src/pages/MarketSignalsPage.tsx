@@ -2,12 +2,24 @@ import { useEffect, useMemo, useState } from "react";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import { repositories } from "@/services";
-import { MARKET_INDICATOR_GROUPS, matchesMarketIndicatorGroup, type MarketIndicatorGroupCode } from "@/utils/marketIndicatorGroups";
+import { getMarketIndicatorGroup, getMarketIndicatorGroupLabel, MARKET_INDICATOR_GROUPS, matchesMarketIndicatorGroup, type MarketIndicatorGroupCode } from "@/utils/marketIndicatorGroups";
+import {
+  isMarketSignalDataUnavailable,
+  isMarketSignalRecovery,
+  marketSignalChangeGroup,
+  marketSignalItemCode,
+  marketSignalStateLabel,
+  marketSignalTone,
+  selectMeaningfulMarketSignals,
+  type MarketSignalChangeGroup,
+  type MarketSignalChangeItem,
+} from "@/utils/marketSignalChange";
 import type {
   MarketSignalCatalogItem,
   MarketSignalCatalogResponse,
   MarketSignalCondition,
   MarketSignalCurrentStatesResponse,
+  MarketSignalCurrentStateItem,
   MarketSignalTodayTransitionsResponse,
   MarketSignalDefinition,
   MarketSignalIndicatorCatalogItem,
@@ -386,6 +398,196 @@ function defaultPreviewPeriod(frequency?: string | null) {
   if (value === "MONTHLY") return "3Y";
   if (value === "WEEKLY") return "1Y";
   return "3M";
+}
+
+type MarketChangeFilter = "ALL" | MarketSignalChangeGroup;
+
+const MARKET_CHANGE_FILTERS: { value: MarketChangeFilter; label: string }[] = [
+  { value: "ALL", label: "전체" },
+  { value: "BREAK", label: "이탈" },
+  { value: "WEAKENING", label: "약화" },
+  { value: "RECOVERY", label: "회복" },
+  { value: "OTHER", label: "기타" },
+];
+
+function formatMarketSignalDate(value: string | null | undefined, withTime = false): string {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return new Intl.DateTimeFormat("ko-KR", withTime
+    ? { timeZone: "Asia/Seoul", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }
+    : { timeZone: "Asia/Seoul", month: "2-digit", day: "2-digit" }).format(parsed);
+}
+
+function marketSignalArea(item: MarketSignalCurrentStateItem): MarketIndicatorGroupCode {
+  return getMarketIndicatorGroup({ item_code: marketSignalItemCode(item), category: item.category });
+}
+
+function marketSignalCurrentValue(item: MarketSignalCurrentStateItem): string | null {
+  const value = item.conditions.find((condition) => typeof condition.value === "number")?.value;
+  if (typeof value !== "number") return null;
+  return value.toLocaleString("ko-KR", { maximumFractionDigits: 4 });
+}
+
+function buildMarketBriefingSummary(
+  riskSignals: MarketSignalChangeItem[],
+  recoverySignals: MarketSignalChangeItem[],
+  todayCount: number,
+): string[] {
+  if (!riskSignals.length && !recoverySignals.length) {
+    return ["현재 추세 유지 상태를 벗어난 의미 있는 시장 변화 신호가 없습니다."];
+  }
+  const lines: string[] = [];
+  lines.push(`현재 확인이 필요한 경계 신호는 ${riskSignals.length}개${recoverySignals.length ? `, 회복·완화 신호는 ${recoverySignals.length}개` : ""}입니다.`);
+  if (riskSignals.length) {
+    const areaCounts = new Map<MarketIndicatorGroupCode, number>();
+    riskSignals.forEach((item) => areaCounts.set(marketSignalArea(item), (areaCounts.get(marketSignalArea(item)) ?? 0) + 1));
+    const [topArea, topAreaCount] = Array.from(areaCounts.entries()).sort((a, b) => b[1] - a[1])[0];
+    lines.push(`${getMarketIndicatorGroupLabel(topArea)} 영역에 경계 신호 ${topAreaCount}개가 집중되어 있습니다.`);
+    const topSignals = riskSignals.slice(0, 3).map((item) => `${item.title ?? item.signal_code ?? "시장 신호"}(${marketSignalStateLabel(item.current_state)})`);
+    lines.push(`우선 확인 대상은 ${topSignals.join(", ")}입니다.`);
+  }
+  if (todayCount) lines.push(`오늘 실제 상태가 바뀐 신호는 ${todayCount}개입니다.`);
+  else if (recoverySignals.length) lines.push("오늘 신규 전환은 없으며, 기존 회복·완화 상태를 함께 표시합니다.");
+  else lines.push("오늘 새로 발생한 상태 전환은 없습니다.");
+  return lines.slice(0, 4);
+}
+
+function MarketChangeBriefing({
+  currentStates,
+  todayTransitions,
+  onOpenSignal,
+}: {
+  currentStates: MarketSignalCurrentStatesResponse | null;
+  todayTransitions: MarketSignalTodayTransitionsResponse | null;
+  onOpenSignal: (item: MarketSignalCurrentStateItem) => void;
+}) {
+  const [filter, setFilter] = useState<MarketChangeFilter>("ALL");
+  const [areaFilter, setAreaFilter] = useState<MarketIndicatorGroupCode>("ALL");
+  const [showAll, setShowAll] = useState(false);
+  const currentItems = currentStates?.items ?? [];
+  const todayItems = todayTransitions?.items ?? [];
+  const meaningfulSignals = useMemo(
+    () => selectMeaningfulMarketSignals(currentItems, todayItems),
+    [currentItems, todayItems],
+  );
+  const recoverySignals = useMemo(() => meaningfulSignals.filter((item) => isMarketSignalRecovery(item.current_state)), [meaningfulSignals]);
+  const riskSignals = useMemo(() => meaningfulSignals.filter((item) => !isMarketSignalRecovery(item.current_state)), [meaningfulSignals]);
+  const shortageItems = useMemo(() => currentItems.filter(isMarketSignalDataUnavailable), [currentItems]);
+  const filteredSignals = useMemo(() => meaningfulSignals.filter((item) => {
+    if (filter !== "ALL" && marketSignalChangeGroup(item.current_state) !== filter) return false;
+    return areaFilter === "ALL" || marketSignalArea(item) === areaFilter;
+  }), [areaFilter, filter, meaningfulSignals]);
+  const visibleSignals = showAll ? filteredSignals : filteredSignals.slice(0, 10);
+  const meaningfulById = useMemo(() => new Map(meaningfulSignals.map((item) => [item.definition_id, item])), [meaningfulSignals]);
+  const areaRows = useMemo(() => MARKET_INDICATOR_GROUPS.filter((group) => group.code !== "ALL").map((group) => {
+    const groupItems = currentItems.filter((item) => !isMarketSignalDataUnavailable(item) && marketSignalArea(item) === group.code);
+    const changes = groupItems.map((item) => meaningfulById.get(item.definition_id)).filter((item): item is MarketSignalChangeItem => Boolean(item));
+    const risks = changes.filter((item) => !isMarketSignalRecovery(item.current_state));
+    const recoveries = changes.filter((item) => isMarketSignalRecovery(item.current_state));
+    return { ...group, total: groupItems.length, risks, recoveries };
+  }).filter((row) => row.total > 0), [currentItems, meaningfulById]);
+  const summaryLines = useMemo(
+    () => buildMarketBriefingSummary(riskSignals, recoverySignals, todayItems.length),
+    [recoverySignals, riskSignals, todayItems.length],
+  );
+  const evaluatedAt = currentStates?.last_evaluated_at ?? todayTransitions?.last_evaluated_at;
+
+  return (
+    <div className="market-change-briefing">
+      <section className="market-change-summary-section" aria-label="시장 변화 요약">
+        <div className="market-change-summary-heading">
+          <div><h2>시장 변화</h2><p>추세 유지 상태를 제외한 현재 신호와 오늘 발생한 전환을 함께 확인합니다.</p></div>
+          <span>평가 기준 {evaluatedAt ? new Date(evaluatedAt).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" }) : "미평가"}</span>
+        </div>
+        <dl className="market-change-summary-strip">
+          <div className="danger"><dt>현재 경계</dt><dd>{riskSignals.length}개</dd></div>
+          <div className="today"><dt>오늘 새 전환</dt><dd>{todayItems.length}개</dd></div>
+          <div className="recovery"><dt>회복·완화</dt><dd>{recoverySignals.length}개</dd></div>
+          <div className="neutral"><dt>데이터 부족</dt><dd>{shortageItems.length}개</dd></div>
+        </dl>
+      </section>
+
+      <section className="market-change-brief-panel">
+        <span className="market-change-section-eyebrow">오늘의 시장 요약</span>
+        {summaryLines.map((line) => <p key={line}>{line}</p>)}
+      </section>
+
+      <section className="market-change-main-section">
+        <header className="market-change-section-header">
+          <div><h3>현재 의미있는 변화</h3><p>Dashboard와 같은 기준으로 선별한 전체 현재 신호입니다.</p></div>
+          <div className="market-change-filter-chips" aria-label="상태 필터">
+            {MARKET_CHANGE_FILTERS.map((item) => (
+              <button key={item.value} type="button" className={filter === item.value ? "active" : ""} aria-pressed={filter === item.value} onClick={() => { setFilter(item.value); setShowAll(false); }}>{item.label}</button>
+            ))}
+          </div>
+        </header>
+        {areaFilter !== "ALL" ? <div className="market-change-active-filter"><span>{getMarketIndicatorGroupLabel(areaFilter)} 영역만 표시 중</span><button type="button" onClick={() => setAreaFilter("ALL")}>필터 해제</button></div> : null}
+        <div className="market-change-signal-list">
+          {visibleSignals.length ? visibleSignals.map((item) => {
+            const tone = marketSignalTone(item.current_state);
+            const currentValue = marketSignalCurrentValue(item);
+            return (
+              <button key={item.definition_id} type="button" className={`market-change-signal-row ${tone}`} onClick={() => onOpenSignal(item)}>
+                <span className={`market-change-signal-dot ${tone}`} aria-hidden="true" />
+                <span className="market-change-signal-copy">
+                  <span className="market-change-signal-title"><strong>{item.title ?? item.signal_code ?? "시장 신호"}</strong><em className={tone}>{item.isTodayTransition ? "오늘 전환 · " : ""}{marketSignalStateLabel(item.current_state)}</em></span>
+                  <small>{item.explanation ?? item.missing_reason ?? `${marketSignalStateLabel(item.current_state)} 상태입니다.`}</small>
+                  <span className="market-change-signal-meta"><b>{getMarketIndicatorGroupLabel(marketSignalArea(item))}</b>{currentValue ? <span>현재값 {currentValue}</span> : null}<span>최근 상태변경 {formatMarketSignalDate(item.last_transition_at)}</span></span>
+                </span>
+              </button>
+            );
+          }) : <p className="market-change-compact-empty">선택한 조건에 해당하는 현재 변화 신호가 없습니다.</p>}
+        </div>
+        {filteredSignals.length > 10 ? <button type="button" className="market-change-expand-button" onClick={() => setShowAll((value) => !value)}>{showAll ? "상위 10개만 보기" : `전체 ${filteredSignals.length}개 보기`}</button> : null}
+      </section>
+
+      <section className="market-change-area-section">
+        <header className="market-change-section-header"><div><h3>시장 영역별 상태</h3><p>영역별 경계 신호 수와 회복 상태를 집계합니다.</p></div></header>
+        <div className="market-change-area-grid">
+          {areaRows.map((row) => (
+            <button
+              key={row.code}
+              type="button"
+              className={`${row.risks.length ? "danger" : row.recoveries.length ? "recovery" : "normal"}${areaFilter === row.code ? " active" : ""}`}
+              aria-pressed={areaFilter === row.code}
+              onClick={() => { setAreaFilter((value) => value === row.code ? "ALL" : row.code); setShowAll(false); }}
+            >
+              <strong>{row.label}</strong>
+              <span className={row.risks.length ? "danger" : row.recoveries.length ? "recovery" : "normal"}>{row.risks.length ? `경계 ${row.risks.length}` : row.recoveries.length ? `회복 ${row.recoveries.length}` : "정상"}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="market-change-transition-section">
+        <header className="market-change-section-header"><div><h3>오늘 새로 발생한 전환</h3><p>최초 평가는 전환으로 집계하지 않습니다.</p></div><strong>{todayItems.length}건</strong></header>
+        {todayItems.length ? <div className="market-change-transition-list">{todayItems.map((item) => (
+          <button key={item.definition_id} type="button" onClick={() => onOpenSignal(item)}>
+            <time>{formatMarketSignalDate(item.last_transition_at, true)}</time>
+            <strong>{item.title ?? item.signal_code ?? "시장 신호"}</strong>
+            <span>{marketSignalStateLabel(item.from_state)} → {marketSignalStateLabel(item.to_state ?? item.current_state)}</span>
+          </button>
+        ))}</div> : <p className="market-change-compact-empty">오늘 새로 발생한 상태 전환은 없습니다.</p>}
+      </section>
+
+      {shortageItems.length ? (
+        <details className="market-signal-shortage-panel market-change-shortage-panel">
+          <summary>데이터 부족 {shortageItems.length}건 <span>펼쳐보기</span></summary>
+          <div className="market-signal-shortage-list">
+            {shortageItems.map((item) => (
+              <article key={item.definition_id}>
+                <strong>{item.title ?? item.signal_code ?? "지표 신호"}</strong>
+                {item.missing_indicators.length ? item.missing_indicators.map((missing, index) => (
+                  <p key={`${item.definition_id}-${String(missing.indicator_code ?? missing.item_code)}-${index}`}>부족 지표: {String(missing.indicator_code ?? missing.item_code ?? "-")} · 보유 {String(missing.available_count ?? "-")}개 / 필요 {String(missing.required_count ?? "-")}개 · 최신 관측일 {String(missing.latest_observation_date ?? "-")}</p>
+                )) : <p>{item.missing_reason ?? "필수 관측값이 부족합니다."}</p>}
+              </article>
+            ))}
+          </div>
+        </details>
+      ) : null}
+    </div>
+  );
 }
 
 function MarketSignalsPage() {
@@ -872,7 +1074,6 @@ function MarketSignalsPage() {
   const singleCards = overview?.single_indicator_signals ?? [];
   const compositeCards = overview?.composite_indicator_signals ?? [];
   const phenomenonCards = overview?.objective_phenomena ?? [];
-  const dataShortageItems = currentStates?.items.filter((item) => item.evaluation_status === "DATA_SHORTAGE") ?? [];
   const filteredPhenomenonCards = useMemo(() => phenomenonCards.filter((item) => {
     if (phenomenonFilter === "OFFICIAL") return item.operation_grade === "OFFICIAL";
     if (phenomenonFilter === "REFERENCE") return item.operation_grade === "REFERENCE";
@@ -967,7 +1168,7 @@ function MarketSignalsPage() {
 
       <div className="market-signal-tabs" role="tablist">
         {[
-          ["today", "오늘의 전환"],
+          ["today", "시장 변화"],
           ["signals", "시그널"],
           ["phenomena", "객관적 현상"],
           ["studio", "룰 스튜디오"],
@@ -978,58 +1179,15 @@ function MarketSignalsPage() {
       </div>
 
       {mainTab === "today" ? (
-        todayTransitions?.items.length ? (
-          <section className="market-signal-card-grid">
-            {todayTransitions.items.map((item) => (
-              <article key={item.definition_id} className={cardClass(item.evaluation_status)}>
-                <header>
-                  <div><strong>{item.title ?? item.signal_code ?? "지표 신호"}</strong><small>{item.effective_date ?? todayTransitions.date}</small></div>
-                  <StatusPair rule={item.from_state} evalStatus={item.to_state} />
-                </header>
-                <div className="market-signal-card-body">
-                  <div className="market-signal-card-reading">
-                    <b>{typeof item.score === "number" ? `${item.score.toFixed(1)}점` : label(item.current_state)}</b>
-                    <span>{item.explanation ?? (item.current_state_changed ? `현재 상태가 ${label(item.current_state)}(으)로 변경되었습니다.` : `${label(item.current_state)} 상태입니다.`)}</span>
-                  </div>
-                </div>
-                <footer>
-                  <span>시작 조건 {item.required.satisfied}/{item.required.total}</span>
-                  <span>지속 확인 {item.confirm.satisfied}/{item.confirm.total}</span>
-                  <span>반대/부족 {item.opposing.satisfied}/{item.opposing.total}{item.missing_indicators.length ? ` · 부족 ${item.missing_indicators.length}` : ""}</span>
-                </footer>
-              </article>
-            ))}
-          </section>
-        ) : (
-          <section className="market-signal-today-empty">
-            <strong>오늘 새롭게 발생한 상태 전환이 없습니다.</strong>
-            <p>최초 평가는 현재 상태만 설정하며 전환으로 표시하지 않습니다.</p>
-            <dl>
-              <div><dt>마지막 평가</dt><dd>{currentStates?.last_evaluated_at ? new Date(currentStates.last_evaluated_at).toLocaleString("ko-KR") : "미평가"}</dd></div>
-              <div><dt>현재 ACTIVE</dt><dd>{currentStates?.summary.ACTIVE ?? 0}개</dd></div>
-              <div><dt>현재 LIVE</dt><dd>{currentStates?.summary.LIVE ?? 0}개</dd></div>
-              <div><dt>데이터 부족</dt><dd>{currentStates?.summary.DATA_SHORTAGE ?? 0}개</dd></div>
-            </dl>
-          </section>
-        )
-      ) : null}
-
-      {mainTab === "today" && dataShortageItems.length ? (
-        <details className="market-signal-shortage-panel">
-          <summary>데이터 부족 {dataShortageItems.length}건</summary>
-          <div className="market-signal-shortage-list">
-            {dataShortageItems.map((item) => (
-              <article key={item.definition_id}>
-                <strong>{item.title ?? item.signal_code ?? "지표 신호"}</strong>
-                {item.missing_indicators.length ? item.missing_indicators.map((missing, index) => (
-                  <p key={`${item.definition_id}-${String(missing.indicator_code ?? missing.item_code)}-${index}`}>
-                    부족 지표: {String(missing.indicator_code ?? missing.item_code ?? "-")} · 보유 {String(missing.available_count ?? "-")}개 / 필요 {String(missing.required_count ?? "-")}개 · 최신 관측일 {String(missing.latest_observation_date ?? "-")}
-                  </p>
-                )) : <p>{item.missing_reason ?? "필수 관측값이 부족합니다."}</p>}
-              </article>
-            ))}
-          </div>
-        </details>
+        <MarketChangeBriefing
+          currentStates={currentStates}
+          todayTransitions={todayTransitions}
+          onOpenSignal={(item) => {
+            setMainTab("signals");
+            setSignalTab(String(item.signal_type ?? "").includes("COMPOSITE") ? "composite" : "single");
+            void loadDetail(item.definition_id);
+          }}
+        />
       ) : null}
       {mainTab === "signals" ? (
         <>

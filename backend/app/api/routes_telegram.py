@@ -14,18 +14,17 @@ from backend.app.schemas.telegram_schema import (
     TelegramCollectDateRequest,
     TelegramCollectAllResult,
     TelegramCollectResult,
-    TelegramDailySummaryGenerateRequest,
-    TelegramDailySummaryResponse,
     TelegramItemListResponse,
     TelegramItemsDeleteRequest,
     TelegramItemsDeleteResponse,
-    TelegramItemSummarizeResponse,
+    TelegramItemsSummarizeRequest,
+    TelegramItemsSummarizeResponse,
     TelegramSourceCreate,
     TelegramSourceConnectionTestResponse,
     TelegramSourceResponse,
     TelegramSourceUpdate,
 )
-from backend.app.services.telegram_service import TelegramService
+from backend.app.services.telegram_v2_service import TelegramService
 
 router = APIRouter(prefix="/telegram", tags=["telegram"])
 
@@ -82,9 +81,6 @@ async def collect_by_date(payload: TelegramCollectDateRequest, db: Session = Dep
     return await TelegramService(db).collect_source_by_date(
         source_id=payload.source_id,
         target_date=payload.target_date,
-        summarize_new_items=payload.summarize_new_items,
-        include_notice=payload.include_notice,
-        include_advertisement=payload.include_advertisement,
     )
 
 
@@ -92,51 +88,25 @@ async def collect_by_date(payload: TelegramCollectDateRequest, db: Session = Dep
 async def collect_all_by_date(payload: TelegramCollectDateAllRequest, db: Session = Depends(get_db)):
     return await TelegramService(db).collect_all_sources_by_date(
         target_date=payload.target_date,
-        summarize_new_items=payload.summarize_new_items,
-        include_notice=payload.include_notice,
-        include_advertisement=payload.include_advertisement,
     )
 
 
 @router.get("/items", response_model=TelegramItemListResponse)
 def list_items(
-    source_id: int | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
     keyword: str | None = None,
-    message_type: str | None = None,
-    tag: str | None = None,
-    sentiment: str | None = None,
-    risk_level: str | None = None,
-    event_type: str | None = None,
-    related_stock_name: str | None = None,
-    related_theme: str | None = None,
-    summary_status: str | None = None,
     limit: int = Query(default=20, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ):
     return TelegramService(db).list_items(
-        source_id=source_id,
         date_from=date_from,
         date_to=date_to,
         keyword=keyword,
-        message_type=message_type,
-        tag=tag,
-        sentiment=sentiment,
-        risk_level=risk_level,
-        event_type=event_type,
-        related_stock_name=related_stock_name,
-        related_theme=related_theme,
-        summary_status=summary_status,
         limit=limit,
         offset=offset,
     )
-
-
-@router.post("/items/{item_id}/summarize", response_model=TelegramItemSummarizeResponse)
-def summarize_item(item_id: int, db: Session = Depends(get_db)):
-    return TelegramService(db).summarize_item(item_id)
 
 
 @router.delete("/items/{item_id}", response_model=TelegramItemsDeleteResponse)
@@ -149,6 +119,6 @@ def delete_items(payload: TelegramItemsDeleteRequest, db: Session = Depends(get_
     return TelegramService(db).delete_items(payload.item_ids)
 
 
-@router.post("/daily-summaries/generate", response_model=TelegramDailySummaryResponse)
-def generate_daily_summary(payload: TelegramDailySummaryGenerateRequest, db: Session = Depends(get_db)):
-    return TelegramService(db).generate_daily_summary(target_date=payload.target_date, source_id=payload.source_id)
+@router.post("/items/summarize", response_model=TelegramItemsSummarizeResponse)
+def summarize_items(payload: TelegramItemsSummarizeRequest, db: Session = Depends(get_db)):
+    return TelegramService(db).summarize_items(payload.item_ids)

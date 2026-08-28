@@ -1,4 +1,3 @@
-import type { AiSummarizeResponse } from "@/types/analysis";
 import type {
   NewsCollectRequest,
   NewsCollectionTarget,
@@ -10,6 +9,7 @@ import type {
   NewsItem,
   NewsListPageResponse,
   NewsListParams,
+  NewsSummarizeResponse,
 } from "@/types/news";
 
 const sample: NewsItem[] = [
@@ -17,14 +17,10 @@ const sample: NewsItem[] = [
     id: 1,
     stock_id: 1,
     title: "삼성전자 관련 샘플 뉴스",
-    source: "naver_news",
     url: "https://news.naver.com/",
     published_at: "2026-05-09T09:00:00+09:00",
     collected_at: "2026-05-09T09:10:00+09:00",
-    raw_text_path: "data/raw/news/naver/005930_20260509_response.json",
     summary: "샘플 요약 데이터입니다.",
-    sentiment: null,
-    importance_score: 0,
     created_at: "2026-05-09T09:10:00+09:00",
   },
 ];
@@ -38,7 +34,8 @@ export const newsMockRepository = {
       const keyword = params.keyword;
       result = result.filter((n) => n.title.includes(keyword) || (n.summary || "").includes(keyword));
     }
-    if (params?.source) result = result.filter((n) => (n.source || "") === params.source);
+    if (params?.summary_status === "summarized") result = result.filter((n) => Boolean(n.summary));
+    if (params?.summary_status === "unsummarized") result = result.filter((n) => !n.summary);
     const offset = params?.offset ?? 0;
     const limit = params?.limit ?? 50;
     return result.slice(offset, offset + limit);
@@ -50,7 +47,7 @@ export const newsMockRepository = {
         stock_code: "005930",
         stock_name: "삼성전자",
         news_count: 1,
-        ai_processed_count: 0,
+        summarized_count: 1,
         latest_collected_at: "2026-05-09T09:10:00+09:00",
       },
     ];
@@ -113,15 +110,14 @@ export const newsMockRepository = {
       })),
     };
   },
-  async summarizeSelectedNews(newsIds: number[]): Promise<AiSummarizeResponse> {
+  async summarizeSelectedNews(newsIds: number[]): Promise<NewsSummarizeResponse> {
     return {
-      status: "success",
-      target: "news",
-      processed_count: newsIds.length,
-      success_count: newsIds.length,
-      failed_count: 0,
-      skipped_count: 0,
-      message: "mock mode: selected news summarize completed",
+      requested: newsIds.length,
+      summarized: newsIds.length,
+      skipped_existing: 0,
+      missing_url: 0,
+      fetch_failed: 0,
+      processing_failed: 0,
     };
   },
 };

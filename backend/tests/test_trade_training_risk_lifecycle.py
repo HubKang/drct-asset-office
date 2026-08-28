@@ -2,6 +2,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 from backend.app.repositories.trade_training_repository import TradeTrainingRepository
+from backend.app.schemas.trade_training_schema import TradeTrainingRiskScenarioDraftRequest
 from backend.app.services.trade_training_service import TradeTrainingService
 
 
@@ -21,6 +22,7 @@ def build_repository() -> tuple[Session, TradeTrainingRepository]:
             status TEXT DEFAULT '진행중',
             options_json TEXT,
             training_account_id INTEGER,
+            created_at TEXT,
             updated_at TEXT
         )
     """))
@@ -114,6 +116,98 @@ def test_active_scenario_remains_active_until_explicit_close() -> None:
     assert current is not None
     assert current["id"] == scenario["id"]
     assert current["status"] == "ACTIVE"
+
+
+def test_next_day_does_not_check_or_create_plan_price_reach_alerts() -> None:
+    class NextDayRepository:
+        def get_session(self, _session_id: int):
+            return {"id": 7, "status": "진행중", "current_index": 0}
+
+        def update_session(self, _session_id: int, values: dict):
+            return {"id": 7, "status": values.get("status", "진행중"), **values}
+
+    service = TradeTrainingService.__new__(TradeTrainingService)
+    service.repo = NextDayRepository()  # type: ignore[assignment]
+    service._session_prices = lambda _session: [  # type: ignore[method-assign]
+        {"trade_date": "2026-01-02"},
+        {"trade_date": "2026-01-05"},
+        {"trade_date": "2026-01-06"},
+    ]
+    service._save_snapshot = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+    service.get_session_detail = lambda _session_id: {  # type: ignore[method-assign]
+        "session": {"id": 7, "current_date": "2026-01-05", "status": "진행중"}
+    }
+    service.check_risk_level_reaches = lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("removed reach feature was called"))  # type: ignore[attr-defined]
+
+    detail = service.next_day(7)
+
+    assert detail["session"]["current_date"] == "2026-01-05"
+
+
+def test_active_scenario_price_reset_soft_removes_every_saved_line() -> None:
+    db, repo = build_repository()
+    account = repo.create_training_account({
+        "name": "가격 초기화 테스트",
+        "description": "",
+        "initial_capital": 10_000_000,
+        "commission_rate": 0,
+        "risk_per_trade_pct": 1,
+        "max_open_risk_pct": 5,
+        "max_position_count": 5,
+        "display_days_default": 80,
+        "moving_average_periods_default": [5, 10, 20, 60, 120],
+    })
+    db.execute(text("""
+        INSERT INTO simulation_sessions (
+            id, stock_code, start_date, end_date, initial_cash, cash,
+            position_qty, avg_price, status, training_account_id
+        ) VALUES (3, '211270', '2026-01-01', '2026-12-31', 10000000, 9000000, 100, 10000, '진행중', :account_id)
+    """), {"account_id": account["id"]})
+    values = scenario_values(session_id=3, cycle_no=1)
+    values["training_account_id"] = account["id"]
+    scenario = repo.create_risk_scenario(values)
+    repo.replace_risk_plan_steps(scenario["id"], [
+        {
+            "plan_group": "BUY", "plan_type": "ENTRY", "step_no": 1, "status": "EXECUTED",
+            "trigger_type": "PRICE_LINE", "trigger_price": 10000, "trigger_text": "1차 매수",
+            "planned_ratio_pct": None, "planned_quantity": None, "planned_amount": None,
+            "memo": None, "executed_trade_id": None,
+        },
+        {
+            "plan_group": "SELL", "plan_type": "TAKE_PROFIT", "step_no": 2, "status": "PLANNED",
+            "trigger_type": "PRICE_LINE", "trigger_price": 11000, "trigger_text": "1차 익절",
+            "planned_ratio_pct": None, "planned_quantity": None, "planned_amount": None,
+            "memo": None, "executed_trade_id": None,
+        },
+        {
+            "plan_group": "SELL", "plan_type": "FULL_STOP", "step_no": 3, "status": "PLANNED",
+            "trigger_type": "PRICE_LINE", "trigger_price": 9000, "trigger_text": "전량 손절",
+            "planned_ratio_pct": 100, "planned_quantity": None, "planned_amount": None,
+            "memo": None, "executed_trade_id": None,
+        },
+    ])
+    repo.activate_risk_scenario(scenario["id"], activation_values())
+    db.commit()
+    service = TradeTrainingService(db)
+    service._current_price_row = lambda _session: {"close": 10000}
+
+    detail = service.update_active_risk_scenario(
+        scenario["id"],
+        TradeTrainingRiskScenarioDraftRequest(
+            profit_scenario_text="재지정 예정",
+            stop_scenario_text="재지정 예정",
+            buy_steps=[],
+            sell_steps=[],
+            change_reason="가격 초기화",
+        ),
+    )
+
+    assert detail["scenario"]["status"] == "ACTIVE"
+    assert detail["buy_steps"] == []
+    assert detail["sell_steps"] == []
+    stored_steps = repo.list_risk_plan_steps(scenario["id"])
+    assert len(stored_steps) == 3
+    assert all(bool(step["is_removed"]) for step in stored_steps)
 
 
 def test_position_with_missing_active_scenario_recovers_from_draft() -> None:

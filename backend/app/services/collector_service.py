@@ -1,13 +1,13 @@
 ﻿from __future__ import annotations
 
 import html
-import json
+import hashlib
 import logging
-import os
 import re
+import unicodedata
 from datetime import date, datetime, timedelta
 from email.utils import parsedate_to_datetime
-from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException, status
@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.collectors.disclosures.dart_disclosure_collector import DartDisclosureCollector
 from backend.app.collectors.news.naver_news_collector import NaverNewsCollector
-from backend.app.core.config import DART_DISCLOSURE_DEFAULT_DAYS, DART_PAGE_COUNT, PROJECT_ROOT, now_kst
+from backend.app.core.config import DART_DISCLOSURE_DEFAULT_DAYS, DART_PAGE_COUNT, now_kst
 from backend.app.entities.disclosure import Disclosure
 from backend.app.entities.news import NewsItem
 from backend.app.repositories.collection_run_repository import CollectionRunRepository
@@ -28,6 +28,11 @@ logger = logging.getLogger(__name__)
 
 
 class CollectorService:
+    NEWS_INITIAL_LIMIT = 20
+    NEWS_SAFETY_DAYS = 90
+    NEWS_PROVIDER_PAGE_SIZE = 100
+    NEWS_PROVIDER_MAX_RESULTS = 1000
+
     def __init__(self, db: Session) -> None:
         self.db = db
         self.stock_repo = StockRepository(db)
@@ -47,6 +52,20 @@ class CollectorService:
         cleaned = re.sub(r"<[^>]+>", "", value)
         cleaned = html.unescape(cleaned)
         return cleaned.strip()
+
+    @staticmethod
+    def _normalize_news_match_text(value: str | None) -> str:
+        normalized = unicodedata.normalize("NFKC", value or "")
+        return re.sub(r"\s+", " ", normalized).strip().casefold()
+
+    def _news_published_date(self, pub_date: str | None) -> date | None:
+        converted = self._convert_pub_date(pub_date)
+        if not converted:
+            return None
+        try:
+            return datetime.fromisoformat(converted).date()
+        except ValueError:
+            return None
 
     def _convert_pub_date(self, pub_date: str | None) -> str | None:
         if not pub_date:
@@ -78,21 +97,28 @@ class CollectorService:
             return code[1:]
         return code
 
-    def _news_raw_dir(self) -> Path:
-        raw_dir = os.getenv("NEWS_RAW_DIR", "./data/raw/news")
-        base = Path(raw_dir)
-        if not base.is_absolute():
-            base = PROJECT_ROOT / base
-        path = base / "naver"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+    @staticmethod
+    def _canonicalize_news_url(value: str | None) -> str | None:
+        raw = (value or "").strip().rstrip(".,;:!?)")
+        if not raw:
+            return None
+        try:
+            parts = urlsplit(raw)
+            if parts.scheme.lower() not in {"http", "https"} or not parts.netloc:
+                return None
+            blocked = {"fbclid", "gclid", "igshid", "mc_cid", "mc_eid"}
+            query = [(key, val) for key, val in parse_qsl(parts.query, keep_blank_values=True)
+                     if not key.lower().startswith("utm_") and key.lower() not in blocked]
+            return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/") or "/", urlencode(sorted(query)), ""))
+        except Exception:
+            return None
 
-    def _save_news_raw_response(self, stock_code: str, response_payload: dict) -> str:
-        raw_dir = self._news_raw_dir()
-        file_name = f"{stock_code}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_response.json"
-        path = raw_dir / file_name
-        path.write_text(json.dumps(response_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        return str(path.relative_to(PROJECT_ROOT)).replace("\\", "/")
+    @classmethod
+    def _news_fingerprint(cls, url: str) -> tuple[str, str] | None:
+        canonical = cls._canonicalize_news_url(url)
+        if not canonical:
+            return None
+        return canonical, hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     def collect_news_for_stock(
         self,
@@ -109,17 +135,135 @@ class CollectorService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="stock not found")
 
         target = stock.stock_code
-        search_keyword = (keyword or stock.stock_name or "").strip()
+        official_stock_name = (stock.stock_name or "").strip()
+        search_keyword = (keyword or official_stock_name).strip()
         if not search_keyword:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="keyword is empty")
+        normalized_stock_name = self._normalize_news_match_text(official_stock_name)
+        if not normalized_stock_name:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="official stock name is empty")
+
+        today = self._today_kst()
+        cursor_text = self.news_repo.get_collection_cursor(stock.id)
+        try:
+            cursor_date = date.fromisoformat(cursor_text) if cursor_text else None
+        except ValueError:
+            cursor_date = None
+        if cursor_date is None:
+            mode = "INITIAL"
+            from_date = today - timedelta(days=self.NEWS_SAFETY_DAYS - 1)
+            save_limit = min(max(int(display), 1), self.NEWS_INITIAL_LIMIT)
+        elif cursor_date >= today:
+            mode = "SAME_DAY"
+            from_date = today
+            save_limit = max(int(display), 1)
+        else:
+            mode = "INCREMENTAL"
+            from_date = cursor_date + timedelta(days=1)
+            save_limit = max(int(display), 1)
+        to_date = today
 
         run = self.run_repo.create_running("naver_news_collector", target)
         collector = NaverNewsCollector()
 
+        news_to_save: list[NewsItem] = []
+        skipped_count = 0
+        skip_reasons: dict[str, int] = {}
+        seen_fingerprints: set[str] = set()
+        target_date = today.isoformat()
+        self.news_repo.cleanup_exclusions(target_date)
+        scanned_count = 0
+        matched_count = 0
+        total = 0
+
+        def add_skip(reason: str, count: int = 1) -> None:
+            skip_reasons[reason] = skip_reasons.get(reason, 0) + count
+
         try:
-            response_payload = collector.collect_by_keyword(keyword=search_keyword, display=display, start=1, sort=sort)
-            items = response_payload.get("items", [])
-            total = int(response_payload.get("total") or 0)
+            start = 1
+            while start <= self.NEWS_PROVIDER_MAX_RESULTS and len(news_to_save) < save_limit:
+                response_payload = collector.collect_by_keyword(
+                    keyword=search_keyword,
+                    display=self.NEWS_PROVIDER_PAGE_SIZE,
+                    start=start,
+                    sort=sort,
+                )
+                items = list(response_payload.get("items") or [])
+                total = int(response_payload.get("total") or 0)
+                if not items:
+                    break
+
+                scanned_count += len(items)
+                reached_older_range = False
+                for item in items:
+                    published_date = self._news_published_date(item.get("pubDate"))
+                    if published_date is None:
+                        skipped_count += 1
+                        add_skip("invalid_date")
+                        continue
+                    if published_date > to_date:
+                        continue
+                    if published_date < from_date:
+                        reached_older_range = True
+                        continue
+
+                    title = self._normalize_text(item.get("title"))
+                    if not title:
+                        skipped_count += 1
+                        add_skip("no_title")
+                        continue
+                    if normalized_stock_name not in self._normalize_news_match_text(title):
+                        skipped_count += 1
+                        add_skip("name_mismatch")
+                        continue
+                    matched_count += 1
+
+                    raw_url = item.get("originallink") or item.get("link")
+                    fingerprint_result = self._news_fingerprint(raw_url)
+                    if not fingerprint_result:
+                        skipped_count += 1
+                        add_skip("missing_url")
+                        continue
+                    url, fingerprint = fingerprint_result
+                    if fingerprint in seen_fingerprints:
+                        skipped_count += 1
+                        add_skip("duplicate_url")
+                        continue
+                    if self.news_repo.is_excluded(target_date, stock.id, fingerprint):
+                        skipped_count += 1
+                        add_skip("deleted_today")
+                        continue
+                    if self.news_repo.get_by_stock_and_fingerprint(stock.id, fingerprint):
+                        skipped_count += 1
+                        add_skip("duplicate_url")
+                        continue
+                    seen_fingerprints.add(fingerprint)
+
+                    now = now_kst()
+                    news_to_save.append(NewsItem(
+                        stock_id=stock.id,
+                        title=title,
+                        source=None,
+                        url=url,
+                        article_fingerprint=fingerprint,
+                        published_at=self._convert_pub_date(item.get("pubDate")),
+                        collected_at=now,
+                        raw_text_path=None,
+                        summary=None,
+                        sentiment=None,
+                        importance_score=0,
+                        created_at=now,
+                    ))
+                    if len(news_to_save) >= save_limit:
+                        break
+
+                if len(news_to_save) >= save_limit:
+                    break
+                if sort == "date" and reached_older_range:
+                    break
+                start += self.NEWS_PROVIDER_PAGE_SIZE
+                if start > min(total, self.NEWS_PROVIDER_MAX_RESULTS):
+                    break
         except ValueError as exc:
             self.run_repo.mark_failed(run, str(exc))
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -127,60 +271,18 @@ class CollectorService:
             self.run_repo.mark_failed(run, f"collector error: {exc}")
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="news collection failed") from exc
 
-        response_raw_path = self._save_news_raw_response(target, response_payload)
-
-        news_to_save: list[NewsItem] = []
-        skipped_count = 0
-        skip_reasons: dict[str, int] = {}
-        seen_urls: set[str] = set()
-
-        def add_skip(reason: str, count: int = 1) -> None:
-            skip_reasons[reason] = skip_reasons.get(reason, 0) + count
-
-        for item in items:
-            url = item.get("originallink") or item.get("link")
-            title = self._normalize_text(item.get("title")) or "(no title)"
-            if not url:
-                skipped_count += 1
-                add_skip("missing_url")
-                continue
-            if url and url in seen_urls:
-                skipped_count += 1
-                add_skip("duplicate_url")
-                continue
-            if url and self.news_repo.get_by_url(url):
-                skipped_count += 1
-                add_skip("duplicate_url")
-                continue
-            if url:
-                seen_urls.add(url)
-
-            now = now_kst()
-            news_to_save.append(
-                NewsItem(
-                    stock_id=stock.id,
-                    title=title,
-                    source="naver_news",
-                    url=url,
-                    published_at=self._convert_pub_date(item.get("pubDate")),
-                    collected_at=now,
-                    raw_text_path=response_raw_path,
-                    summary=self._normalize_text(item.get("description")),
-                    sentiment=None,
-                    importance_score=0,
-                    created_at=now,
-                )
-            )
-
         saved_count, skipped_bulk = self.news_repo.bulk_create_skip_duplicates(news_to_save)
         skipped_count += skipped_bulk
         if skipped_bulk > 0:
             add_skip("duplicate_url", skipped_bulk)
-        collected_count = len(items)
+        collected_count = scanned_count
+        completed_at = now_kst()
+        self.news_repo.update_collection_cursor(stock.id, to_date.isoformat(), completed_at)
         skip_reason_text = ",".join(f"{k}:{v}" for k, v in sorted(skip_reasons.items())) if skip_reasons else "none"
 
         message = (
-            f"keyword={search_keyword}, total={total}, collected_count={collected_count}, "
+            f"keyword={search_keyword}, mode={mode}, range={from_date.isoformat()}..{to_date.isoformat()}, "
+            f"total={total}, scanned_count={scanned_count}, matched_count={matched_count}, "
             f"saved_count={saved_count}, skipped_count={skipped_count}, skip_reasons={{{skip_reason_text}}}"
         )
         self.run_repo.mark_success(run, message)
@@ -189,9 +291,18 @@ class CollectorService:
             "collector_name": collector.name,
             "status": "success",
             "target": target,
+            "mode": mode,
+            "from_date": from_date.isoformat(),
+            "to_date": to_date.isoformat(),
             "collected_count": collected_count,
+            "scanned_count": scanned_count,
+            "matched_count": matched_count,
             "saved_count": saved_count,
             "skipped_count": skipped_count,
+            "name_mismatch_skipped": skip_reasons.get("name_mismatch", 0),
+            "duplicate_skipped": skip_reasons.get("duplicate_url", 0),
+            "excluded_skipped": skip_reasons.get("deleted_today", 0),
+            "invalid_skipped": skip_reasons.get("no_title", 0) + skip_reasons.get("invalid_date", 0) + skip_reasons.get("missing_url", 0),
             "message": message,
             "skip_reasons": skip_reasons,
         }
@@ -332,6 +443,15 @@ class CollectorService:
                         "collected_count": result["collected_count"],
                         "saved_count": result["saved_count"],
                         "skipped_count": result["skipped_count"],
+                        "mode": result["mode"],
+                        "from_date": result["from_date"],
+                        "to_date": result["to_date"],
+                        "scanned_count": result["scanned_count"],
+                        "matched_count": result["matched_count"],
+                        "name_mismatch_skipped": result["name_mismatch_skipped"],
+                        "duplicate_skipped": result["duplicate_skipped"],
+                        "excluded_skipped": result["excluded_skipped"],
+                        "invalid_skipped": result["invalid_skipped"],
                         "message": result["message"],
                     }
                 )

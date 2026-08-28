@@ -57,7 +57,7 @@ export type UsHistoricalCollectionMode = "MISSING" | "SELECTED" | "ALL_ACTIVE";
 export type UsPriceCollectionMode = "INCREMENTAL" | UsHistoricalCollectionMode;
 export type UsPriceCollectionResponse = {
   mode: UsPriceCollectionMode; requested_stock_count: number; success_stock_count: number; failed_stock_count: number;
-  inserted_count: number; updated_count: number; affected_date_from: string | null; affected_date_to: string | null;
+  inserted_count: number; updated_count: number; unchanged_count: number; normalized_open_boundary_count: number; affected_date_from: string | null; affected_date_to: string | null;
   recalculated_theme_count: number; latest_price_date: string | null;
   failures: Array<{ stock_id: number; symbol: string; reason: string }>; message: string;
 };

@@ -115,13 +115,26 @@ class MarketDataCollectionService:
             text("SELECT * FROM market_data_collection_runs ORDER BY id DESC LIMIT :limit"),
             {"limit": limit},
         ).mappings().all()
-        return {"items": [dict(row) for row in rows]}
+        return {"items": [self._serialize_run(row) for row in rows]}
 
     def get_run(self, run_id: int) -> dict[str, Any]:
         row = self.db.execute(text("SELECT * FROM market_data_collection_runs WHERE id = :id"), {"id": run_id}).mappings().first()
         if not row:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="collection run not found")
-        return dict(row)
+        return self._serialize_run(row)
+
+    @staticmethod
+    def _serialize_run(row: Any) -> dict[str, Any]:
+        item = dict(row)
+        for field in ("started_at", "finished_at"):
+            value = item.get(field)
+            if not value:
+                continue
+            timestamp = str(value).strip().replace(" ", "T")
+            if not timestamp.endswith("Z") and "+" not in timestamp[10:] and "-" not in timestamp[10:]:
+                timestamp += "Z"
+            item[field] = timestamp
+        return item
 
     def list_run_items(self, run_id: int) -> dict[str, Any]:
         rows = self.db.execute(

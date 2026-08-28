@@ -11,20 +11,10 @@ class NewsResponse(BaseModel):
     stock_code: str | None = None
     stock_name: str | None = None
     title: str
-    source: str | None
     url: str | None
     published_at: str | None
     collected_at: str
-    raw_text_path: str | None
     summary: str | None
-    sentiment: str | None
-    importance_score: int
-    ai_summary: str | None
-    ai_sentiment: str | None
-    ai_importance_score: int | None
-    ai_tags: str | None
-    ai_processed_at: str | None
-    ai_summary_error: str | None
     created_at: str
 
 
@@ -33,7 +23,7 @@ class NewsCollectionTargetResponse(BaseModel):
     stock_code: str
     stock_name: str
     news_count: int
-    ai_processed_count: int
+    summarized_count: int
     latest_collected_at: str | None
 
 
@@ -51,3 +41,16 @@ class NewsBulkDeleteRequest(BaseModel):
 class NewsBulkDeleteResponse(BaseModel):
     deleted: int
     failed: int
+
+
+class NewsSummarizeRequest(BaseModel):
+    news_ids: list[int]
+
+
+class NewsSummarizeResponse(BaseModel):
+    requested: int
+    summarized: int
+    skipped_existing: int
+    missing_url: int
+    fetch_failed: int
+    processing_failed: int

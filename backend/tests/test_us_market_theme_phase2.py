@@ -77,12 +77,12 @@ def test_price_upsert_theme_return_and_strength_parity(isolated_api_client: Test
     def fake_fetch(_self, *, symbol: str, **_kwargs):
         return UsDailyPriceFetchResult([UsDailyPrice(day, close, close, close, close, 1000) for day, close in samples[symbol]], history_exhausted=True)
 
-    monkeypatch.setattr(us_market_data_service.KiwoomUsDailyPriceProvider, "fetch_history", fake_fetch)
+    monkeypatch.setattr(us_market_data_service.YFinanceUsDailyPriceProvider, "fetch_history", fake_fetch)
     first = client.post("/us-stocks/prices/collect", json={"mode": "BACKFILL", "trading_days": 260})
     assert first.status_code == 200
     assert first.json()["inserted_count"] == 9
     second = client.post("/us-stocks/prices/collect", json={"mode": "BACKFILL", "trading_days": 260})
-    assert second.json()["inserted_count"] == 0 and second.json()["updated_count"] == 9
+    assert second.json()["inserted_count"] == 0 and second.json()["unchanged_count"] == 9
 
     recalculated = client.post("/us-market-themes/returns/recalculate", json={})
     assert recalculated.status_code == 200 and recalculated.json()["upserted_count"] == 2
@@ -176,7 +176,7 @@ def test_missing_collection_calls_only_stocks_without_prices(isolated_api_client
         calls.append(symbol)
         return UsDailyPriceFetchResult([UsDailyPrice("2026-08-20", 10, 10, 10, 10, 100)], history_exhausted=True)
 
-    monkeypatch.setattr(us_market_data_service.KiwoomUsDailyPriceProvider, "fetch_history", fake_history)
+    monkeypatch.setattr(us_market_data_service.YFinanceUsDailyPriceProvider, "fetch_history", fake_history)
     assert client.post("/us-stocks/prices/collect", json={"mode": "SELECTED", "stock_ids": [existing["id"]]}).json()["requested_stock_count"] == 1
     missing = _stock(client, "NEWONE")
     result = client.post("/us-stocks/prices/collect", json={"mode": "MISSING"}).json()
@@ -204,7 +204,7 @@ def test_partial_history_is_preserved_and_retry_completes(isolated_api_client: T
             UsDailyPrice("2026-08-20", 10, 10, 10, 10, 100),
         ], history_exhausted=True)
 
-    monkeypatch.setattr(us_market_data_service.KiwoomUsDailyPriceProvider, "fetch_history", fake_history)
+    monkeypatch.setattr(us_market_data_service.YFinanceUsDailyPriceProvider, "fetch_history", fake_history)
     first = client.post("/us-stocks/prices/collect", json={"mode": "SELECTED", "stock_ids": [stock["id"]]}).json()
     assert first["failed_stock_count"] == 1 and first["inserted_count"] == 1
     row = client.get("/us-stocks", params={"keyword": "PART"}).json()["items"][0]
@@ -233,7 +233,7 @@ def test_selected_targets_and_only_linked_themes_are_recalculated(isolated_api_c
             UsDailyPrice("2026-08-20", 10, 10, 10, 10, 100),
         ], history_exhausted=True)
 
-    monkeypatch.setattr(us_market_data_service.KiwoomUsDailyPriceProvider, "fetch_history", fake_history)
+    monkeypatch.setattr(us_market_data_service.YFinanceUsDailyPriceProvider, "fetch_history", fake_history)
     result = client.post("/us-stocks/prices/collect", json={"mode": "SELECTED", "stock_ids": [selected["id"], other["id"]]}).json()
     assert result["requested_stock_count"] == 2 and set(calls) == {"SEL1", "SEL2"}
     assert result["recalculated_theme_count"] == 1
@@ -251,7 +251,7 @@ def test_all_active_and_incremental_target_rules(isolated_api_client: TestClient
         calls.append(symbol)
         return UsDailyPriceFetchResult([UsDailyPrice("2026-08-20", 10, 10, 10, 10, 100)], history_exhausted=True)
 
-    monkeypatch.setattr(us_market_data_service.KiwoomUsDailyPriceProvider, "fetch_history", fake_history)
+    monkeypatch.setattr(us_market_data_service.YFinanceUsDailyPriceProvider, "fetch_history", fake_history)
     client.post("/us-stocks/prices/collect", json={"mode": "SELECTED", "stock_ids": [with_price["id"]]})
     calls.clear()
     incremental = client.post("/us-stocks/prices/collect", json={"mode": "INCREMENTAL"}).json()
@@ -277,7 +277,7 @@ def test_selected_incremental_collects_only_selected_stock_and_provides_return(i
             UsDailyPrice("2026-08-20", 100, 102, 99, 100, 1000),
         ], history_exhausted=False)
 
-    monkeypatch.setattr(us_market_data_service.KiwoomUsDailyPriceProvider, "fetch_history", fake_history)
+    monkeypatch.setattr(us_market_data_service.YFinanceUsDailyPriceProvider, "fetch_history", fake_history)
     result = client.post("/us-stocks/prices/collect", json={"mode": "INCREMENTAL", "stock_ids": [selected["id"]]}).json()
     assert result["requested_stock_count"] == 1
     assert result["success_stock_count"] == 1
@@ -304,13 +304,13 @@ def test_incremental_collection_refreshes_provisional_latest_trading_day(isolate
             UsDailyPrice("2026-08-25", latest_close, latest_close, latest_close, latest_close, 2_000),
         ], history_exhausted=False)
 
-    monkeypatch.setattr(us_market_data_service.KiwoomUsDailyPriceProvider, "fetch_history", fake_history)
+    monkeypatch.setattr(us_market_data_service.YFinanceUsDailyPriceProvider, "fetch_history", fake_history)
     first = client.post("/us-stocks/prices/collect", json={"mode": "INCREMENTAL", "stock_ids": [coin["id"]]}).json()
     assert first["inserted_count"] == 2 and first["updated_count"] == 0
 
     second = client.post("/us-stocks/prices/collect", json={"mode": "INCREMENTAL", "stock_ids": [coin["id"]]}).json()
-    assert second["inserted_count"] == 0 and second["updated_count"] == 2
-    assert second["affected_date_from"] == "2026-08-24"
+    assert second["inserted_count"] == 0 and second["updated_count"] == 1 and second["unchanged_count"] == 1
+    assert second["affected_date_from"] == "2026-08-25"
     assert second["affected_date_to"] == "2026-08-25"
 
     row = client.get("/us-stocks", params={"keyword": "COIN"}).json()["items"][0]
@@ -343,12 +343,12 @@ def test_incremental_collection_overlaps_two_sessions_and_inserts_a_new_session(
             ]
         return UsDailyPriceFetchResult(rows, history_exhausted=False)
 
-    monkeypatch.setattr(us_market_data_service.KiwoomUsDailyPriceProvider, "fetch_history", fake_history)
-    first = client.post("/us-stocks/prices/collect", json={"mode": "INCREMENTAL", "stock_ids": [stock["id"]]}).json()
+    monkeypatch.setattr(us_market_data_service.YFinanceUsDailyPriceProvider, "fetch_history", fake_history)
+    first = client.post("/us-stocks/prices/collect", json={"mode": "SELECTED", "stock_ids": [stock["id"]], "trading_days": 260}).json()
     assert first["inserted_count"] == 3
 
     second = client.post("/us-stocks/prices/collect", json={"mode": "INCREMENTAL", "stock_ids": [stock["id"]]}).json()
-    assert second["inserted_count"] == 1 and second["updated_count"] == 2
+    assert second["inserted_count"] == 1 and second["updated_count"] == 1 and second["unchanged_count"] == 1
     prices = client.get(f"/us-stocks/{stock['id']}/prices").json()["items"]
     assert [row["trade_date"] for row in prices] == ["2026-08-21", "2026-08-24", "2026-08-25", "2026-08-26"]
     assert next(row for row in prices if row["trade_date"] == "2026-08-25")["close_price"] == 113
@@ -364,10 +364,10 @@ def test_incremental_collection_uses_provider_sessions_without_synthetic_weekend
             UsDailyPrice("2026-08-28", 101, 102, 100, 101, 1_100),
         ], history_exhausted=False)
 
-    monkeypatch.setattr(us_market_data_service.KiwoomUsDailyPriceProvider, "fetch_history", fake_history)
+    monkeypatch.setattr(us_market_data_service.YFinanceUsDailyPriceProvider, "fetch_history", fake_history)
     client.post("/us-stocks/prices/collect", json={"mode": "INCREMENTAL", "stock_ids": [stock["id"]]})
     second = client.post("/us-stocks/prices/collect", json={"mode": "INCREMENTAL", "stock_ids": [stock["id"]]}).json()
-    assert second["inserted_count"] == 0 and second["updated_count"] == 2
+    assert second["inserted_count"] == 0 and second["updated_count"] == 0 and second["unchanged_count"] == 2
     prices = client.get(f"/us-stocks/{stock['id']}/prices").json()["items"]
     assert [row["trade_date"] for row in prices] == ["2026-08-27", "2026-08-28"]
 
@@ -392,7 +392,7 @@ def test_market_refresh_completes_linked_history_and_recalculates_all_active_the
             UsDailyPrice("2026-08-20", base + 20, base + 20, base + 20, base + 20, 120),
         ], history_exhausted=True)
 
-    monkeypatch.setattr(us_market_data_service.KiwoomUsDailyPriceProvider, "fetch_history", fake_history)
+    monkeypatch.setattr(us_market_data_service.YFinanceUsDailyPriceProvider, "fetch_history", fake_history)
     client.post("/us-stocks/prices/collect", json={"mode": "SELECTED", "stock_ids": [c["id"]], "trading_days": 260})
     calls.clear()
     response = client.post("/us-market-themes/refresh", json={"mode": "INCREMENTAL", "trading_days": 260})

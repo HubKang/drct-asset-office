@@ -55,6 +55,8 @@ def _service() -> tuple[MarketSignalService, Session, dict[str, object]]:
         "signal_code": "TEST_CURRENT",
         "signal_name": "현재 상태 테스트",
         "signal_type": "COMPOSITE",
+        "category": "RATE",
+        "trend_item_code": "BASE_RATE",
         "status": "ACTIVE",
         "current_version": 3,
     }
@@ -123,6 +125,13 @@ def test_today_transition_uses_kst_current_state_and_excludes_draft() -> None:
     assert today["items"][0]["from_state"] == "LIVE"
     assert today["items"][0]["to_state"] == "ACTIVE"
     assert today["items"][0]["conditions"] == []
+
+    current_state = service.list_current_signal_states()
+    assert current_state["items"][0]["category"] == "RATE"
+    assert current_state["items"][0]["item_code"] == "BASE_RATE"
+    assert current_state["items"][0]["from_state"] == "LIVE"
+    assert current_state["items"][0]["to_state"] == "ACTIVE"
+    assert current_state["items"][0]["last_transition_at"] is not None
 
     session.execute(text("UPDATE market_signal_definitions SET status='DRAFT' WHERE id=1"))
     session.commit()

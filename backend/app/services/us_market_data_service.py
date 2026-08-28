@@ -12,11 +12,12 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import now_kst
-from backend.app.providers.market_data.kiwoom_us_daily_price_provider import (
-    KiwoomUsDailyPriceProvider,
+from backend.app.providers.market_data.us_daily_price_provider import (
     UsDailyPrice,
     UsHistoricalPricePartialError,
+    normalize_and_validate_us_daily_price,
 )
+from backend.app.providers.market_data.yfinance_us_daily_price_provider import YFinanceUsDailyPriceProvider
 from backend.app.schemas.us_market_theme_schema import (
     UsMarketRefreshRequest,
     UsMarketRefreshResponse,
@@ -45,12 +46,13 @@ from backend.app.services.realtime_theme_service import calculate_theme_strength
 
 logger = logging.getLogger(__name__)
 _refresh_lock = Lock()
+_YFINANCE_ORIGINAL_FETCH_HISTORY = YFinanceUsDailyPriceProvider.fetch_history
 
 
 class UsMarketDataService:
-    def __init__(self, db: Session, provider: KiwoomUsDailyPriceProvider | None = None) -> None:
+    def __init__(self, db: Session, provider: object | None = None) -> None:
         self.db = db
-        self.provider = provider or KiwoomUsDailyPriceProvider()
+        self.provider = provider or YFinanceUsDailyPriceProvider()
         self._last_recalculation: UsThemeReturnRecalculateResponse | None = None
 
     def list_prices(self, stock_id: int, *, start_date: str | None, end_date: str | None) -> UsStockPriceListResponse:
@@ -82,28 +84,64 @@ class UsMarketDataService:
             params.update({f"stock_{index}": stock_id for index, stock_id in enumerate(stock_ids)})
         return self.db.execute(text(f"SELECT s.id,s.symbol,s.exchange,s.historical_price_status FROM us_stocks s WHERE {' AND '.join(where)} ORDER BY s.symbol"), params).mappings().all()
 
-    def _upsert_price_rows(self, *, stock_id: int, prices: list[UsDailyPrice], timestamp: str) -> tuple[int, int, list[str]]:
+    def _upsert_price_rows(
+        self,
+        *,
+        stock_id: int,
+        prices: list[UsDailyPrice],
+        timestamp: str,
+    ) -> tuple[int, int, int, list[str]]:
         if not prices:
-            return 0, 0, []
-        existing_dates = set(self.db.scalars(text("SELECT trade_date FROM us_stock_daily_prices WHERE us_stock_id=:id"), {"id": stock_id}).all())
-        inserted = updated = 0
+            return 0, 0, 0, []
+        normalized_prices = [normalize_and_validate_us_daily_price(row)[0] for row in prices]
+        placeholders = ",".join(f":date_{index}" for index, _ in enumerate(normalized_prices))
+        params = {"id": stock_id, **{f"date_{index}": row.trade_date for index, row in enumerate(normalized_prices)}}
+        existing_rows = self.db.execute(text(f"""
+            SELECT trade_date,open_price,high_price,low_price,close_price,volume,source
+            FROM us_stock_daily_prices
+            WHERE us_stock_id=:id AND trade_date IN ({placeholders})
+        """), params).mappings().all()
+        existing = {str(row["trade_date"]): row for row in existing_rows}
+        source = "YFINANCE" if isinstance(self.provider, YFinanceUsDailyPriceProvider) else "KIWOOM"
+        inserted = updated = unchanged = 0
         dates: list[str] = []
-        for row in prices:
+        for row in normalized_prices:
+            current = existing.get(row.trade_date)
+            incoming_values = (
+                row.open_price,
+                row.high_price,
+                row.low_price,
+                row.close_price,
+                row.volume,
+                source,
+            )
+            if current is not None:
+                current_values = (
+                    float(current["open_price"]),
+                    float(current["high_price"]),
+                    float(current["low_price"]),
+                    float(current["close_price"]),
+                    int(current["volume"]),
+                    str(current["source"]),
+                )
+                if current_values == incoming_values:
+                    unchanged += 1
+                    continue
             self.db.execute(text("""
                 INSERT INTO us_stock_daily_prices
                   (us_stock_id,trade_date,open_price,high_price,low_price,close_price,volume,source,collected_at,created_at,updated_at)
-                VALUES (:stock_id,:trade_date,:open_price,:high_price,:low_price,:close_price,:volume,'KIWOOM',:timestamp,:timestamp,:timestamp)
+                VALUES (:stock_id,:trade_date,:open_price,:high_price,:low_price,:close_price,:volume,:source,:timestamp,:timestamp,:timestamp)
                 ON CONFLICT(us_stock_id,trade_date) DO UPDATE SET
                   open_price=excluded.open_price,high_price=excluded.high_price,low_price=excluded.low_price,
-                  close_price=excluded.close_price,volume=excluded.volume,source='KIWOOM',
+                  close_price=excluded.close_price,volume=excluded.volume,source=excluded.source,
                   collected_at=excluded.collected_at,updated_at=excluded.updated_at
-            """), {"stock_id": stock_id, "trade_date": row.trade_date, "open_price": row.open_price, "high_price": row.high_price, "low_price": row.low_price, "close_price": row.close_price, "volume": row.volume, "timestamp": timestamp})
-            if row.trade_date in existing_dates:
+            """), {"stock_id": stock_id, "trade_date": row.trade_date, "open_price": row.open_price, "high_price": row.high_price, "low_price": row.low_price, "close_price": row.close_price, "volume": row.volume, "source": source, "timestamp": timestamp})
+            if current is not None:
                 updated += 1
             else:
                 inserted += 1
             dates.append(row.trade_date)
-        return inserted, updated, dates
+        return inserted, updated, unchanged, dates
 
     def _affected_theme_ids(self, stock_ids: list[int]) -> list[int]:
         if not stock_ids:
@@ -122,11 +160,24 @@ class UsMarketDataService:
         try:
             stocks = self.resolve_historical_collection_targets(payload)
             failures: list[UsPriceCollectionFailure] = []
-            inserted_count = updated_count = success_count = 0
+            inserted_count = updated_count = unchanged_count = success_count = normalized_count = 0
             affected_dates: list[str] = []
             affected_stock_ids: list[int] = []
             today = date.today().isoformat()
             historical_mode = payload.mode != "INCREMENTAL"
+            batch_results = None
+            batch_failures: dict[str, str] = {}
+            if (
+                isinstance(self.provider, YFinanceUsDailyPriceProvider)
+                and type(self.provider).fetch_history is _YFINANCE_ORIGINAL_FETCH_HISTORY
+                and stocks
+            ):
+                batch = self.provider.fetch_many_history(
+                    symbols=[str(stock["symbol"]) for stock in stocks],
+                    trading_days=payload.trading_days,
+                )
+                batch_results = batch.results
+                batch_failures = batch.failures
             for stock in stocks:
                 stock_id = int(stock["id"])
                 symbol = str(stock["symbol"])
@@ -150,19 +201,26 @@ class UsMarketDataService:
                             # A user-selected stock without history still needs two closes
                             # so the list can show both the latest close and its return.
                             request_count = 2
-                    result = self.provider.fetch_history(symbol=symbol, exchange=str(stock["exchange"]), start_date=today, trading_days=request_count)
-                    prices = result.prices
+                    if batch_results is not None:
+                        result = batch_results.get(symbol)
+                        if result is None:
+                            raise ValueError(batch_failures.get(symbol, "price_history_missing"))
+                    else:
+                        result = self.provider.fetch_history(symbol=symbol, exchange=str(stock["exchange"]), start_date=today, trading_days=request_count)
+                    prices = result.prices[-request_count:]
+                    normalized_count += result.normalized_open_boundary_count
                     if payload.mode == "INCREMENTAL" and overlap_start:
                         # Revisit the latest two actual provider trading sessions. This
                         # corrects provisional candles without relying on calendar-day
                         # arithmetic across US weekends, holidays, or the KST date gap.
                         prices = [row for row in prices if row.trade_date >= overlap_start]
                     if historical_mode and not prices:
-                        raise ValueError("Kiwoom에서 과거가격을 찾지 못했습니다.")
+                        raise ValueError("yfinance에서 과거가격을 찾지 못했습니다.")
                     timestamp = now_kst()
-                    inserted, updated, dates = self._upsert_price_rows(stock_id=stock_id, prices=prices, timestamp=timestamp)
+                    inserted, updated, unchanged, dates = self._upsert_price_rows(stock_id=stock_id, prices=prices, timestamp=timestamp)
                     inserted_count += inserted
                     updated_count += updated
+                    unchanged_count += unchanged
                     affected_dates.extend(dates)
                     if dates:
                         affected_stock_ids.append(stock_id)
@@ -186,9 +244,10 @@ class UsMarketDataService:
                 except UsHistoricalPricePartialError as exc:
                     self.db.rollback()
                     timestamp = now_kst()
-                    inserted, updated, dates = self._upsert_price_rows(stock_id=stock_id, prices=exc.prices, timestamp=timestamp)
+                    inserted, updated, unchanged, dates = self._upsert_price_rows(stock_id=stock_id, prices=exc.prices, timestamp=timestamp)
                     inserted_count += inserted
                     updated_count += updated
+                    unchanged_count += unchanged
                     affected_dates.extend(dates)
                     if dates:
                         affected_stock_ids.append(stock_id)
@@ -214,7 +273,7 @@ class UsMarketDataService:
                 message = "과거가격 수집이 필요한 종목이 없습니다." if payload.mode == "MISSING" else "수집 대상 종목이 없습니다."
             else:
                 label = "최신 종가 수집" if payload.mode == "INCREMENTAL" else "260일 과거가격 수집"
-                message = f"{label} 완료: {success_count}종목 성공, {len(failures)}종목 실패, {inserted_count}건 신규, {updated_count}건 갱신"
+                message = f"{label} 완료: {success_count}종목 성공, {len(failures)}종목 실패, {inserted_count}건 신규, {updated_count}건 갱신, {unchanged_count}건 동일"
             response = UsPriceCollectionResponse(
                 mode=payload.mode,
                 requested_stock_count=len(stocks),
@@ -222,6 +281,8 @@ class UsMarketDataService:
                 failed_stock_count=len(failures),
                 inserted_count=inserted_count,
                 updated_count=updated_count,
+                unchanged_count=unchanged_count,
+                normalized_open_boundary_count=normalized_count,
                 affected_date_from=min(affected_dates) if affected_dates else None,
                 affected_date_to=max(affected_dates) if affected_dates else None,
                 recalculated_theme_count=recalc_result.processed_theme_count if recalc_result else 0,

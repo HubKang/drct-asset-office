@@ -472,7 +472,6 @@ class TradeTrainingRiskScenarioDetail(BaseModel):
     requires_plan_before_buy: bool = False
     holding_risk: dict | None = None
     events: list[dict] = Field(default_factory=list)
-    pending_responses: list[dict] = Field(default_factory=list)
 
 
 class TradeTrainingRiskScenarioRevisionListResponse(BaseModel):
@@ -484,16 +483,6 @@ class RiskOrderPreviewRequest(BaseModel):
     price: float = Field(gt=0)
     quantity: int = Field(gt=0)
     risk_plan_step_id: int | None = None
-
-class RiskLevelReachCheckRequest(BaseModel):
-    chart_date: str
-
-
-class RiskLevelResponseRequest(BaseModel):
-    reach_event_id: int
-    response_type: str
-    reason: str | None = None
-
 
 class RiskOrderWarning(BaseModel):
     code: str
@@ -538,6 +527,7 @@ class TrainingOrderRequest(BaseModel):
     unplanned_reason: str | None = None
     risk_warning_acknowledged: bool = False
     risk_warning_acknowledgement_note: str | None = None
+    risk_plan_draft: TradeTrainingRiskScenarioDraftRequest | None = None
 
 
 class TrainingSessionResponse(BaseModel):

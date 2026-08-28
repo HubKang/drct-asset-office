@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
@@ -36,23 +36,16 @@ class TelegramSourceResponse(BaseModel):
     memo: str | None
     created_at: str
     updated_at: str | None
-
     model_config = {"from_attributes": True}
 
 
 class TelegramCollectDateRequest(BaseModel):
     source_id: int
     target_date: str
-    summarize_new_items: bool = True
-    include_notice: bool = False
-    include_advertisement: bool = False
 
 
 class TelegramCollectDateAllRequest(BaseModel):
     target_date: str
-    summarize_new_items: bool = True
-    include_notice: bool = False
-    include_advertisement: bool = False
 
 
 class TelegramCollectResult(BaseModel):
@@ -64,15 +57,14 @@ class TelegramCollectResult(BaseModel):
     telegram_connected: bool
     session_exists: bool
     channel_accessible: bool
-    fetched_message_count: int
-    new_item_count: int
-    duplicate_count: int
-    summarized_count: int
-    failed_count: int
+    collected: int
+    inserted: int
+    duplicate_skipped: int
+    excluded_skipped: int
+    processing_failed: int
     error_code: str | None = None
     error_message: str | None = None
     diagnostics: dict[str, bool] = Field(default_factory=dict)
-    collection_run_id: int
 
 
 class TelegramCollectAllResult(BaseModel):
@@ -83,11 +75,11 @@ class TelegramCollectAllResult(BaseModel):
     telegram_connected: bool
     session_exists: bool
     channel_accessible: bool
-    fetched_message_count: int
-    new_item_count: int
-    duplicate_count: int
-    summarized_count: int
-    failed_count: int
+    collected: int
+    inserted: int
+    duplicate_skipped: int
+    excluded_skipped: int
+    processing_failed: int
     error_code: str | None = None
     error_message: str | None = None
     diagnostics: dict[str, bool] = Field(default_factory=dict)
@@ -136,77 +128,28 @@ class TelegramAuthVerifyPasswordRequest(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
-class TelegramAuthVerifyResponse(BaseModel):
-    success: bool
-    auth_stage: str
-    authorized: bool
-    error_code: str | None = None
-    message: str
+class TelegramAuthVerifyResponse(TelegramAuthStartResponse):
+    pass
 
 
 class TelegramItemResponse(BaseModel):
     id: int
-    source_id: int
-    source_name: str
-    telegram_message_id: int
-    message_date: str
-    message_text: str | None
-    item_title: str | None = None
-    summary_text: str | None
-    key_points_json: str | None = None
-    message_type: str
-    item_category: str
-    tag: str | None
-    score: int
-    sentiment: str
-    risk_level: str
-    event_type: str
-    related_stock_name: str | None
-    related_stock_code: str | None
-    related_theme: str | None
-    summary_status: str
-    summary_has_content: int
-    summary_error_message: str | None = None
-    item_url: str | None
-    normalized_url: str | None = None
-    updated_at: str | None = None
+    collection_date: str
+    message_at: str
+    title: str
+    summary: str | None
+    source_url: str | None
+    created_at: str
+    model_config = {"from_attributes": True}
 
 
 class TelegramItemListResponse(BaseModel):
     items: list[TelegramItemResponse]
     total_count: int
+    with_summary_count: int
+    title_only_count: int
     limit: int
     offset: int
-
-
-class TelegramDailySummaryGenerateRequest(BaseModel):
-    target_date: str
-    source_id: int | None = None
-
-
-class TelegramDailySummaryResponse(BaseModel):
-    id: int
-    summary_date: str
-    source_id: int
-    item_count: int
-    summary_text: str | None
-    key_points: list[str]
-    top_tags: list[str]
-    top_event_types: list[str]
-    message_type_stats: list[dict[str, int | str]]
-    theme_mentions: list[str]
-    stock_mentions: list[str]
-    risk_points: list[str]
-    summary_has_content: int
-    llm_model: str | None
-
-
-class TelegramItemSummarizeResponse(BaseModel):
-    item_id: int
-    summary_status: str
-    summary_has_content: int
-    summary_text: str | None
-    summary_error_message: str | None = None
 
 
 class TelegramItemsDeleteRequest(BaseModel):
@@ -216,3 +159,16 @@ class TelegramItemsDeleteRequest(BaseModel):
 class TelegramItemsDeleteResponse(BaseModel):
     requested_count: int
     deleted_count: int
+
+
+class TelegramItemsSummarizeRequest(BaseModel):
+    item_ids: list[int] = Field(min_length=1, max_length=20)
+
+
+class TelegramItemsSummarizeResponse(BaseModel):
+    requested: int
+    summarized: int
+    skipped_existing: int
+    missing_url: int
+    fetch_failed: int
+    processing_failed: int

@@ -13,7 +13,8 @@ class NewsItem(Base):
     stock_id: Mapped[int | None] = mapped_column(ForeignKey("stocks.id", ondelete="SET NULL"), nullable=True)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     source: Mapped[str | None] = mapped_column(Text, nullable=True)
-    url: Mapped[str | None] = mapped_column(Text, nullable=True, unique=True)
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    article_fingerprint: Mapped[str | None] = mapped_column(Text, nullable=True)
     published_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     collected_at: Mapped[str] = mapped_column(Text, nullable=False)
     raw_text_path: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -27,3 +28,20 @@ class NewsItem(Base):
     ai_processed_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     ai_summary_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class NewsItemExclusion(Base):
+    __tablename__ = "news_item_exclusions"
+
+    target_date: Mapped[str] = mapped_column(Text, primary_key=True)
+    stock_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    article_fingerprint: Mapped[str] = mapped_column(Text, primary_key=True)
+
+
+class NewsCollectionCursor(Base):
+    __tablename__ = "news_collection_cursors"
+
+    stock_id: Mapped[int] = mapped_column(ForeignKey("stocks.id", ondelete="CASCADE"), primary_key=True)
+    last_completed_date: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)

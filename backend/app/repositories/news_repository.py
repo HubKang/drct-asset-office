@@ -1,9 +1,10 @@
 ﻿from __future__ import annotations
 
-from sqlalchemy import Select, case, func, not_, select
+from sqlalchemy import Select, case, delete, func, not_, or_, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
-from backend.app.entities.news import NewsItem
+from backend.app.entities.news import NewsCollectionCursor, NewsItem, NewsItemExclusion
 from backend.app.entities.stock import Stock
 from backend.app.entities.watchlist import Watchlist
 
@@ -21,10 +22,26 @@ class NewsRepository:
     def get_by_id(self, news_id: int) -> NewsItem | None:
         return self.db.get(NewsItem, news_id)
 
-    def get_by_url(self, url: str) -> NewsItem | None:
-        return self.db.scalar(select(NewsItem).where(NewsItem.url == url))
+    def get_with_stock(self, news_id: int) -> tuple[NewsItem, Stock | None] | None:
+        return self.db.execute(
+            select(NewsItem, Stock)
+            .join(Stock, NewsItem.stock_id == Stock.id, isouter=True)
+            .where(NewsItem.id == news_id)
+        ).one_or_none()
 
-    def list(self, stock_id: int | None, stock_ids: list[int] | None, keyword: str | None, source: str | None, limit: int, offset: int) -> list[NewsItem]:
+    @staticmethod
+    def _latest_news_order():
+        """Order by the article time users see, with durable fallbacks for legacy rows."""
+        return (
+            func.coalesce(
+                func.nullif(NewsItem.published_at, ""),
+                func.nullif(NewsItem.collected_at, ""),
+                NewsItem.created_at,
+            ).desc(),
+            NewsItem.id.desc(),
+        )
+
+    def list(self, stock_id: int | None, stock_ids: list[int] | None, keyword: str | None, summary_status: str | None, limit: int, offset: int) -> list[NewsItem]:
         stmt: Select[tuple[NewsItem]] = select(NewsItem)
         if stock_id is not None:
             stmt = stmt.where(NewsItem.stock_id == stock_id)
@@ -33,12 +50,14 @@ class NewsRepository:
         if keyword:
             keyword_like = f"%{keyword}%"
             stmt = stmt.where((NewsItem.title.like(keyword_like)) | (NewsItem.summary.like(keyword_like)))
-        if source:
-            stmt = stmt.where(NewsItem.source == source)
-        stmt = stmt.order_by(NewsItem.created_at.desc(), NewsItem.id.desc()).limit(limit).offset(offset)
+        if summary_status == "summarized":
+            stmt = stmt.where(NewsItem.summary.is_not(None), func.trim(NewsItem.summary) != "")
+        elif summary_status == "unsummarized":
+            stmt = stmt.where(or_(NewsItem.summary.is_(None), func.trim(NewsItem.summary) == ""))
+        stmt = stmt.order_by(*self._latest_news_order()).limit(limit).offset(offset)
         return list(self.db.scalars(stmt).all())
 
-    def list_with_stock(self, stock_id: int | None, stock_ids: list[int] | None, keyword: str | None, source: str | None, limit: int, offset: int) -> list[tuple[NewsItem, Stock | None]]:
+    def list_with_stock(self, stock_id: int | None, stock_ids: list[int] | None, keyword: str | None, summary_status: str | None, limit: int, offset: int) -> list[tuple[NewsItem, Stock | None]]:
         stmt: Select[tuple[NewsItem, Stock | None]] = select(NewsItem, Stock).join(Stock, NewsItem.stock_id == Stock.id, isouter=True)
         if stock_id is not None:
             stmt = stmt.where(NewsItem.stock_id == stock_id)
@@ -47,12 +66,14 @@ class NewsRepository:
         if keyword:
             keyword_like = f"%{keyword}%"
             stmt = stmt.where((NewsItem.title.like(keyword_like)) | (NewsItem.summary.like(keyword_like)))
-        if source:
-            stmt = stmt.where(NewsItem.source == source)
-        stmt = stmt.order_by(NewsItem.created_at.desc(), NewsItem.id.desc()).limit(limit).offset(offset)
+        if summary_status == "summarized":
+            stmt = stmt.where(NewsItem.summary.is_not(None), func.trim(NewsItem.summary) != "")
+        elif summary_status == "unsummarized":
+            stmt = stmt.where(or_(NewsItem.summary.is_(None), func.trim(NewsItem.summary) == ""))
+        stmt = stmt.order_by(*self._latest_news_order()).limit(limit).offset(offset)
         return list(self.db.execute(stmt).all())
 
-    def count(self, stock_id: int | None, stock_ids: list[int] | None, keyword: str | None, source: str | None) -> int:
+    def count(self, stock_id: int | None, stock_ids: list[int] | None, keyword: str | None, summary_status: str | None) -> int:
         stmt = select(func.count(NewsItem.id))
         if stock_id is not None:
             stmt = stmt.where(NewsItem.stock_id == stock_id)
@@ -61,28 +82,69 @@ class NewsRepository:
         if keyword:
             keyword_like = f"%{keyword}%"
             stmt = stmt.where((NewsItem.title.like(keyword_like)) | (NewsItem.summary.like(keyword_like)))
-        if source:
-            stmt = stmt.where(NewsItem.source == source)
+        if summary_status == "summarized":
+            stmt = stmt.where(NewsItem.summary.is_not(None), func.trim(NewsItem.summary) != "")
+        elif summary_status == "unsummarized":
+            stmt = stmt.where(or_(NewsItem.summary.is_(None), func.trim(NewsItem.summary) == ""))
         return int(self.db.scalar(stmt) or 0)
 
     def list_collection_targets(self) -> list[tuple[int, str, str, int, int, str | None]]:
-        ai_processed_count = func.sum(case((NewsItem.ai_processed_at.is_not(None), 1), else_=0))
+        summarized_count = func.sum(case((
+            NewsItem.summary.is_not(None) & (func.trim(NewsItem.summary) != ""), 1,
+        ), else_=0))
         stmt = (
             select(
                 Stock.id,
                 Stock.stock_code,
                 Stock.stock_name,
                 func.count(NewsItem.id),
-                ai_processed_count,
-                func.max(NewsItem.collected_at),
+                summarized_count,
+                func.coalesce(NewsCollectionCursor.last_completed_date, func.max(NewsItem.collected_at)),
             )
             .join(Watchlist, Watchlist.stock_id == Stock.id)
             .join(NewsItem, NewsItem.stock_id == Stock.id, isouter=True)
+            .join(NewsCollectionCursor, NewsCollectionCursor.stock_id == Stock.id, isouter=True)
             .where(Watchlist.is_active == 1)
-            .group_by(Stock.id, Stock.stock_code, Stock.stock_name)
+            .group_by(Stock.id, Stock.stock_code, Stock.stock_name, NewsCollectionCursor.last_completed_date)
             .order_by(Stock.stock_name.asc())
         )
         return list(self.db.execute(stmt).all())
+
+    def get_collection_cursor(self, stock_id: int) -> str | None:
+        row = self.db.get(NewsCollectionCursor, stock_id)
+        return row.last_completed_date if row else None
+
+    def update_collection_cursor(self, stock_id: int, completed_date: str, timestamp: str) -> None:
+        row = self.db.get(NewsCollectionCursor, stock_id)
+        if row:
+            row.last_completed_date = completed_date
+            row.updated_at = timestamp
+        else:
+            self.db.add(NewsCollectionCursor(
+                stock_id=stock_id,
+                last_completed_date=completed_date,
+                created_at=timestamp,
+                updated_at=timestamp,
+            ))
+        self.db.commit()
+
+    def get_by_stock_and_fingerprint(self, stock_id: int, fingerprint: str) -> NewsItem | None:
+        return self.db.scalar(select(NewsItem).where(
+            NewsItem.stock_id == stock_id, NewsItem.article_fingerprint == fingerprint,
+        ))
+
+    def is_excluded(self, target_date: str, stock_id: int, fingerprint: str) -> bool:
+        return self.db.get(NewsItemExclusion, (target_date, stock_id, fingerprint)) is not None
+
+    def cleanup_exclusions(self, target_date: str) -> int:
+        result = self.db.execute(delete(NewsItemExclusion).where(NewsItemExclusion.target_date != target_date))
+        self.db.commit()
+        return int(result.rowcount or 0)
+
+    def update_summary(self, item: NewsItem, summary: str) -> None:
+        item.summary = summary
+        self.db.add(item)
+        self.db.commit()
 
     def list_recent_by_stock(self, stock_id: int, limit: int) -> list[NewsItem]:
         stmt: Select[tuple[NewsItem]] = (
@@ -172,13 +234,17 @@ class NewsRepository:
     def bulk_create_skip_duplicates(self, items: list[NewsItem]) -> tuple[int, int]:
         saved = 0
         skipped = 0
-        seen_urls: set[str] = set()
+        seen_keys: set[tuple[int | None, str | None]] = set()
         for item in items:
-            if item.url:
-                if item.url in seen_urls or self.get_by_url(item.url):
+            key = (item.stock_id, item.article_fingerprint)
+            if item.article_fingerprint:
+                if key in seen_keys or (
+                    item.stock_id is not None
+                    and self.get_by_stock_and_fingerprint(item.stock_id, item.article_fingerprint)
+                ):
                     skipped += 1
                     continue
-                seen_urls.add(item.url)
+                seen_keys.add(key)
             self.db.add(item)
             saved += 1
         self.db.commit()
@@ -192,4 +258,23 @@ class NewsRepository:
         for item in items:
             self.db.delete(item)
         self.db.commit()
+        return len(items)
+
+    def delete_by_ids_with_exclusion(self, ids: list[int], target_date: str) -> int:
+        if not ids:
+            return 0
+        items = list(self.db.scalars(select(NewsItem).where(NewsItem.id.in_(ids))).all())
+        try:
+            for item in items:
+                if item.stock_id is not None and item.article_fingerprint:
+                    self.db.execute(sqlite_insert(NewsItemExclusion).values(
+                        target_date=target_date,
+                        stock_id=item.stock_id,
+                        article_fingerprint=item.article_fingerprint,
+                    ).on_conflict_do_nothing(index_elements=["target_date", "stock_id", "article_fingerprint"]))
+                self.db.delete(item)
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
         return len(items)

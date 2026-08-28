@@ -323,29 +323,6 @@ export type TradeTrainingRiskScenarioDetail = {
   requires_plan_before_buy: boolean;
   holding_risk?: ActiveRiskSummary | null;
   events?: Array<Record<string, unknown>>;
-  pending_responses?: RiskPendingResponse[];
-};
-
-export type RiskPendingResponse = {
-  reach_event_id: number;
-  event_type: string;
-  chart_date?: string | null;
-  created_at?: string | null;
-  risk_scenario_id?: number | null;
-  risk_scenario_revision_id?: number | null;
-  risk_plan_step_id?: number | null;
-  step_no?: number | null;
-  plan_type?: string | null;
-  trigger_price?: number | null;
-  day_high?: number | null;
-  day_low?: number | null;
-  position_quantity?: number | null;
-  sequence_unknown?: boolean;
-};
-
-export type RiskLevelReachCheckResponse = {
-  events: Array<Record<string, unknown>>;
-  pending_responses: RiskPendingResponse[];
 };
 
 export type ScenarioCategoryScore = {
@@ -541,6 +518,7 @@ export type TrainingOrderRequest = {
   unplanned_reason?: string | null;
   risk_warning_acknowledged?: boolean;
   risk_warning_acknowledgement_note?: string | null;
+  risk_plan_draft?: TradeTrainingRiskScenarioDraftRequest | null;
 };
 
 export type TrainingSession = {
