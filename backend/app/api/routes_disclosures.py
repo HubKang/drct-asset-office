@@ -4,10 +4,15 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from backend.app.core.database import get_db
-from backend.app.schemas.disclosure_schema import DisclosureBulkDeleteRequest, DisclosureBulkDeleteResponse, DisclosureResponse
+from backend.app.schemas.disclosure_schema import DisclosureBulkDeleteRequest, DisclosureBulkDeleteResponse, DisclosureCollectionTargetResponse, DisclosureResponse
 from backend.app.services.disclosure_service import DisclosureService
 
 router = APIRouter()
+
+
+@router.get("/disclosures/collection-targets", response_model=list[DisclosureCollectionTargetResponse])
+def list_disclosure_collection_targets(db: Session = Depends(get_db)) -> list[DisclosureCollectionTargetResponse]:
+    return DisclosureService(db).list_collection_targets()
 
 
 @router.get("/disclosures", response_model=list[DisclosureResponse])

@@ -5,6 +5,7 @@ import hashlib
 import logging
 import re
 import unicodedata
+import calendar
 from datetime import date, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -32,6 +33,8 @@ class CollectorService:
     NEWS_SAFETY_DAYS = 90
     NEWS_PROVIDER_PAGE_SIZE = 100
     NEWS_PROVIDER_MAX_RESULTS = 1000
+    DISCLOSURE_INITIAL_LIMIT = 10
+    DISCLOSURE_INITIAL_WINDOWS = (("3M", 3), ("6M", 6), ("1Y", 12), ("2Y", 24))
 
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -90,6 +93,13 @@ class CollectorService:
 
     def _today_kst(self) -> date:
         return datetime.now(ZoneInfo("Asia/Seoul")).date()
+
+    @staticmethod
+    def _months_before(value: date, months: int) -> date:
+        month_index = value.year * 12 + value.month - 1 - months
+        year, month_zero = divmod(month_index, 12)
+        month = month_zero + 1
+        return date(year, month, min(value.day, calendar.monthrange(year, month)[1]))
 
     def _normalize_stock_code_for_dart(self, stock_code: str | None) -> str:
         code = (stock_code or "").strip()
@@ -490,119 +500,157 @@ class CollectorService:
             "results": results,
         }
 
-    def collect_disclosures_for_stock(self, stock_id: int, days: int = DART_DISCLOSURE_DEFAULT_DAYS, page_count: int = DART_PAGE_COUNT) -> dict:
+    def collect_disclosures_for_stock(
+        self,
+        stock_id: int,
+        days: int = DART_DISCLOSURE_DEFAULT_DAYS,
+        page_count: int = DART_PAGE_COUNT,
+        *,
+        collection_state=None,
+        today_exclusions: set[tuple[int, str]] | None = None,
+        skip_exclusion_cleanup: bool = False,
+    ) -> dict:
+        """Collect DART disclosures using a searched-through cursor.
+
+        ``days`` remains in the public signature for backward compatibility only.
+        The range is determined exclusively by collection state.
+        """
         stock = self.stock_repo.get_by_id(stock_id)
         if not stock:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="stock not found")
 
         run = self.run_repo.create_running("dart_disclosure_collector", stock.stock_code)
         collector = DartDisclosureCollector()
+        today = self._today_kst()
+        today_text = today.isoformat()
 
         try:
+            if not skip_exclusion_cleanup:
+                self.disclosure_repo.cleanup_expired_exclusions(today_text)
+            if collection_state is None:
+                collection_state = self.disclosure_repo.get_collection_states([stock.id]).get(stock.id)
+            if today_exclusions is None:
+                today_exclusions = self.disclosure_repo.list_today_exclusions(today_text, [stock.id])
+
             collector.ensure_corp_code_file()
             normalized_code = self._normalize_stock_code_for_dart(stock.stock_code)
             corp_code = collector.find_corp_code_by_stock_code(normalized_code)
             if not corp_code:
-                message = f"{stock.stock_code} {stock.stock_name}: DART 기업코드를 찾을 수 없어 공시 수집을 건너뜀"
+                message = f"{stock.stock_code} {stock.stock_name}: DART 고유번호를 찾지 못해 수집하지 않았습니다."
                 self.run_repo.mark_success(run, message)
                 return {
-                    "collector_name": collector.name,
-                    "status": "skipped",
-                    "target": stock.stock_code,
-                    "collected_count": 0,
-                    "saved_count": 0,
-                    "skipped_count": 1,
-                    "message": message,
-                    "skip_reasons": {"corp_code_not_found": 1},
-                    "normalized_stock_code": normalized_code,
-                    "corp_code": None,
+                    "collector_name": collector.name, "status": "skipped", "target": stock.stock_code,
+                    "collected_count": 0, "saved_count": 0, "skipped_count": 1,
+                    "mode": None, "from_date": None, "to_date": today_text, "initial_window": None,
+                    "scanned_count": 0, "matched_count": 0, "duplicate_skipped": 0,
+                    "excluded_skipped": 0, "invalid_skipped": 0, "message": message,
+                    "skip_reasons": {"corp_code_not_found": 1}, "normalized_stock_code": normalized_code, "corp_code": None,
                 }
 
-            today = self._today_kst()
-            safe_days = days if days > 0 else DART_DISCLOSURE_DEFAULT_DAYS
-            bgn_de = (today - timedelta(days=safe_days)).strftime("%Y%m%d")
-            end_de = today.strftime("%Y%m%d")
-            logger.info(
-                "[DART] request stock_code=%s normalized_stock_code=%s stock_name=%s corp_code=%s bgn_de=%s end_de=%s page_no=1 page_count=%s",
-                stock.stock_code,
-                normalized_code,
-                stock.stock_name,
-                corp_code,
-                bgn_de,
-                end_de,
-                page_count,
-            )
+            cursor_text = getattr(collection_state, "last_successful_collection_date", None)
+            initial_window: str | None = None
+            scanned_count = 0
+            provider_items_by_receipt: dict[str, dict] = {}
 
-            response_payload = collector.collect_by_corp_code(
-                corp_code=corp_code,
-                bgn_de=bgn_de,
-                end_de=end_de,
-                page_count=page_count,
-            )
-            response_raw = response_payload.get("response", {})
-            response_preview = json.dumps(response_raw, ensure_ascii=False)[:300]
-            logger.info(
-                "[DART] response stock_code=%s normalized_stock_code=%s corp_code=%s status=%s message=%s list_count=%s response_preview=%s",
-                stock.stock_code,
-                normalized_code,
-                corp_code,
-                response_raw.get("status"),
-                response_raw.get("message"),
-                len(response_payload.get("list", [])),
-                response_preview,
-            )
-            response_raw_path = collector.save_disclosure_response(stock.stock_code, response_payload)
-            items = response_payload.get("list", [])
+            if not cursor_text:
+                mode = "INITIAL"
+                from_date = self._months_before(today, 3)
+                for label, months in self.DISCLOSURE_INITIAL_WINDOWS:
+                    stage_from = self._months_before(today, months)
+                    response = collector.collect_by_corp_code(
+                        corp_code=corp_code,
+                        bgn_de=stage_from.strftime("%Y%m%d"),
+                        end_de=today.strftime("%Y%m%d"),
+                        page_count=max(page_count, 100),
+                    )
+                    stage_items = response.get("list", [])
+                    scanned_count += len(stage_items)
+                    for item in stage_items:
+                        receipt_no = (item.get("rcept_no") or "").strip()
+                        if receipt_no:
+                            provider_items_by_receipt[receipt_no] = item
+                    from_date = stage_from
+                    initial_window = label
+                    if len(provider_items_by_receipt) >= self.DISCLOSURE_INITIAL_LIMIT:
+                        break
+                provider_items = sorted(
+                    provider_items_by_receipt.values(),
+                    key=lambda item: ((item.get("rcept_dt") or ""), (item.get("rcept_no") or "")),
+                    reverse=True,
+                )[: self.DISCLOSURE_INITIAL_LIMIT]
+            else:
+                try:
+                    cursor_date = date.fromisoformat(cursor_text)
+                except ValueError:
+                    cursor_date = today - timedelta(days=1)
+                if cursor_date >= today:
+                    mode = "SAME_DAY_REFRESH"
+                    from_date = today
+                else:
+                    mode = "INCREMENTAL"
+                    from_date = cursor_date + timedelta(days=1)
+                response = collector.collect_by_corp_code(
+                    corp_code=corp_code,
+                    bgn_de=from_date.strftime("%Y%m%d"),
+                    end_de=today.strftime("%Y%m%d"),
+                    page_count=max(page_count, 100),
+                )
+                provider_items = response.get("list", [])
+                scanned_count = len(provider_items)
 
             disclosure_to_save: list[Disclosure] = []
-            for item in items:
+            invalid_skipped = 0
+            for item in provider_items:
                 receipt_no = (item.get("rcept_no") or "").strip()
-                report_nm = (item.get("report_nm") or "").strip() or "(no title)"
-                disclosure_type = (item.get("pblntf_detail_ty") or item.get("pblntf_ty") or "").strip() or None
-                disclosed_at = self._format_dart_disclosed_at(item.get("rcept_dt"))
-                url = f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={receipt_no}" if receipt_no else None
-
+                report_nm = (item.get("report_nm") or "").strip()
+                if not receipt_no or not report_nm:
+                    invalid_skipped += 1
+                    continue
                 disclosure_to_save.append(
                     Disclosure(
                         stock_id=stock.id,
-                        dart_receipt_no=receipt_no or None,
+                        dart_receipt_no=receipt_no,
                         disclosure_title=report_nm,
-                        disclosure_type=disclosure_type,
-                        disclosed_at=disclosed_at,
-                        url=url,
-                        raw_text_path=response_raw_path,
+                        disclosure_type=(item.get("pblntf_detail_ty") or item.get("pblntf_ty") or "").strip() or None,
+                        disclosed_at=self._format_dart_disclosed_at(item.get("rcept_dt")),
+                        url=f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={receipt_no}",
+                        raw_text_path=None,
                         summary=None,
                         importance_score=0,
                         created_at=now_kst(),
                     )
                 )
 
-            saved_count, skipped_count = self.disclosure_repo.bulk_create_skip_duplicates(disclosure_to_save)
-            collected_count = len(items)
-
-            if collected_count == 0:
-                message = (
-                    f"corp_code={corp_code}, 조회기간={bgn_de[:4]}-{bgn_de[4:6]}-{bgn_de[6:8]}~{end_de[:4]}-{end_de[4:6]}-{end_de[6:8]}, "
-                    "DART 정상 응답, 해당 기간 공시 0건, 저장 0건"
-                )
-            else:
-                message = (
-                    f"corp_code={corp_code}, collected_count={collected_count}, "
-                    f"saved_count={saved_count}, skipped_count={skipped_count}"
-                )
+            excluded_receipts = {receipt for excluded_stock_id, receipt in today_exclusions if excluded_stock_id == stock.id}
+            completed_at = now_kst()
+            saved_count, duplicate_skipped, excluded_skipped = self.disclosure_repo.save_collection_result(
+                disclosure_to_save,
+                stock_id=stock.id,
+                completed_date=today_text,
+                completed_at=completed_at,
+                excluded_receipts=excluded_receipts,
+            )
+            collected_count = len(disclosure_to_save)
+            skipped_count = duplicate_skipped + excluded_skipped + invalid_skipped
+            message = (
+                f"{mode} · 조회 {from_date.isoformat()}~{today_text}"
+                f"{f' · 최초범위 {initial_window}' if initial_window else ''} · 신규 {saved_count}"
+                f" · 중복 {duplicate_skipped} · 당일삭제제외 {excluded_skipped} · 무효 {invalid_skipped}"
+            )
             self.run_repo.mark_success(run, message)
-
             return {
-                "collector_name": collector.name,
-                "status": "success",
-                "target": stock.stock_code,
-                "collected_count": collected_count,
-                "saved_count": saved_count,
-                "skipped_count": skipped_count,
-                "message": message,
-                "skip_reasons": {"duplicate_receipt_no": skipped_count} if skipped_count > 0 else {},
-                "normalized_stock_code": normalized_code,
-                "corp_code": corp_code,
+                "collector_name": collector.name, "status": "success", "target": stock.stock_code,
+                "collected_count": collected_count, "saved_count": saved_count, "skipped_count": skipped_count,
+                "mode": mode, "from_date": from_date.isoformat(), "to_date": today_text,
+                "initial_window": initial_window, "scanned_count": scanned_count, "matched_count": collected_count,
+                "duplicate_skipped": duplicate_skipped, "excluded_skipped": excluded_skipped,
+                "invalid_skipped": invalid_skipped, "message": message,
+                "skip_reasons": {
+                    "duplicate_receipt_no": duplicate_skipped,
+                    "same_day_deleted": excluded_skipped,
+                    "invalid_item": invalid_skipped,
+                },
+                "normalized_stock_code": normalized_code, "corp_code": corp_code,
             }
         except HTTPException:
             raise
@@ -682,6 +730,10 @@ class CollectorService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="선택된 종목이 없습니다.")
 
         active_watchlist_stock_ids = set(self.watchlist_repo.list_active_stock_ids())
+        today_text = self._today_kst().isoformat()
+        self.disclosure_repo.cleanup_expired_exclusions(today_text)
+        collection_states = self.disclosure_repo.get_collection_states(selected_ids)
+        today_exclusions = self.disclosure_repo.list_today_exclusions(today_text, selected_ids)
         run_codes: list[str] = []
         for stock_id in selected_ids:
             stock = self.stock_repo.get_by_id(stock_id)
@@ -734,6 +786,9 @@ class CollectorService:
                     stock_id=stock.id,
                     days=days,
                     page_count=page_count,
+                    collection_state=collection_states.get(stock.id),
+                    today_exclusions=today_exclusions,
+                    skip_exclusion_cleanup=True,
                 )
                 if result.get("status") == "skipped":
                     skipped_count += 1
@@ -750,6 +805,15 @@ class CollectorService:
                         "collected_count": result["collected_count"],
                         "saved_count": result["saved_count"],
                         "skipped_count": result["skipped_count"],
+                        "mode": result.get("mode"),
+                        "from_date": result.get("from_date"),
+                        "to_date": result.get("to_date"),
+                        "initial_window": result.get("initial_window"),
+                        "scanned_count": result.get("scanned_count", 0),
+                        "matched_count": result.get("matched_count", 0),
+                        "duplicate_skipped": result.get("duplicate_skipped", 0),
+                        "excluded_skipped": result.get("excluded_skipped", 0),
+                        "invalid_skipped": result.get("invalid_skipped", 0),
                         "message": result["message"],
                     }
                 )

@@ -49,7 +49,8 @@ function summarizeResultText(result: NewsSummarizeResponse): string {
     `요약 완료 ${result.summarized}`,
     `기존 요약 ${result.skipped_existing}`,
     `URL 없음 ${result.missing_url}`,
-    `본문 조회 실패 ${result.fetch_failed}`,
+    `URL 조회 실패 ${result.fetch_failed}`,
+    `본문 확인 실패 ${result.extraction_failed}`,
     `처리 실패 ${result.processing_failed}`,
   ].join(" · ");
 }
@@ -78,6 +79,7 @@ function NewsPage() {
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
   const [feedbackError, setFeedbackError] = useState("");
+  const [contentFailureIds, setContentFailureIds] = useState<number[]>([]);
   const [policyOpen, setPolicyOpen] = useState(false);
   const policyRef = useRef<HTMLDivElement | null>(null);
   const pageSize = 20;
@@ -184,6 +186,11 @@ function NewsPage() {
     setSummarizeLoading(true); setFeedback(""); setFeedbackError("");
     try {
       const result = await repositories.news.summarizeSelectedNews(ids);
+      if (ids.length === 1) {
+        setContentFailureIds((previous) => result.extraction_failed
+          ? Array.from(new Set([...previous, ids[0]]))
+          : previous.filter((id) => id !== ids[0]));
+      }
       setFeedback(summarizeResultText(result)); setCheckedNewsIds([]);
       await loadTargets();
       const refreshed = await loadNews(currentStockId, newsPage, summaryFilter);
@@ -286,7 +293,7 @@ function NewsPage() {
     {isDrawerOpen && selectedNews ? <div className="news-detail-overlay" onClick={() => setIsDrawerOpen(false)}><aside className="news-detail-drawer" role="dialog" aria-modal="true" aria-label="뉴스 상세" onClick={(e) => e.stopPropagation()}>
       <header><div><span>NEWS DETAIL</span><h3>뉴스 상세</h3></div><button type="button" onClick={() => setIsDrawerOpen(false)} aria-label="닫기"><X size={19} /></button></header>
       <div className="news-detail-content"><div className="news-detail-meta"><span>{selectedNews.stock_name ?? "관심종목"}</span><span>{selectedNews.stock_code ?? "-"}</span><span>발행 {formatDate(selectedNews.published_at)}</span><span>수집 {formatDate(selectedNews.collected_at)}</span></div><h4>{selectedNews.title}</h4>
-        <section className={`news-detail-summary ${selectedNews.summary ? "" : "empty"}`}><div><span>기사 요약</span>{selectedNews.summary ? <b>요약 완료</b> : <b>미요약</b>}</div>{selectedNews.summary ? <p>{selectedNews.summary}</p> : <><p>아직 요약하지 않은 기사입니다. 원문을 확인한 뒤 필요할 때만 요약하세요.</p><button type="button" className="btn btn-primary" disabled={summarizeLoading || !selectedNews.url} onClick={() => void summarize([selectedNews.id])}><Sparkles size={15} />이 기사 요약</button></>}</section>
+        <section className={`news-detail-summary ${selectedNews.summary ? "" : "empty"}`}><div><span>기사 요약</span>{selectedNews.summary ? <b>요약 완료</b> : contentFailureIds.includes(selectedNews.id) ? <b>본문 확인 실패</b> : <b>미요약</b>}</div>{selectedNews.summary ? <p>{selectedNews.summary}</p> : <>{contentFailureIds.includes(selectedNews.id) ? <p>원문 기사 본문을 정확히 확인하지 못해 요약하지 않았습니다.</p> : <p>아직 요약하지 않은 기사입니다. 원문을 확인한 뒤 필요할 때만 요약하세요.</p>}<button type="button" className="btn btn-primary" disabled={summarizeLoading || !selectedNews.url} onClick={() => void summarize([selectedNews.id])}><Sparkles size={15} />이 기사 요약</button></>}</section>
         {selectedNews.url ? <a className="btn btn-secondary news-detail-source-link" href={selectedNews.url} target="_blank" rel="noreferrer">원문 기사 열기 <ExternalLink size={15} /></a> : <p className="news-detail-no-url">원문 링크가 없습니다.</p>}
       </div>
       <footer><button type="button" className="btn btn-secondary danger" onClick={() => void deleteNews([selectedNews.id])}><Trash2 size={15} />삭제</button></footer>

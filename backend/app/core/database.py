@@ -372,6 +372,24 @@ def ensure_runtime_schema() -> None:
             )
         """)
         conn.exec_driver_sql("""
+            CREATE TABLE IF NOT EXISTS stock_disclosure_collection_states (
+                stock_id INTEGER PRIMARY KEY,
+                last_successful_collection_date TEXT NOT NULL,
+                last_successful_at TEXT NOT NULL,
+                FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE CASCADE
+            )
+        """)
+        conn.exec_driver_sql("""
+            CREATE TABLE IF NOT EXISTS disclosure_item_exclusions (
+                exclusion_date TEXT NOT NULL,
+                stock_id INTEGER NOT NULL,
+                rcept_no TEXT NOT NULL,
+                PRIMARY KEY (exclusion_date, stock_id, rcept_no),
+                FOREIGN KEY (stock_id) REFERENCES stocks(id) ON DELETE CASCADE
+            )
+        """)
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_disclosure_exclusions_stock_date ON disclosure_item_exclusions(stock_id, exclusion_date)")
+        conn.exec_driver_sql("""
             CREATE TABLE IF NOT EXISTS us_stocks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT NOT NULL, name TEXT, name_ko TEXT,
                 exchange TEXT NOT NULL, stock_type TEXT NOT NULL DEFAULT 'COMMON', naver_code TEXT,

@@ -171,4 +171,5 @@ class TelegramItemsSummarizeResponse(BaseModel):
     skipped_existing: int
     missing_url: int
     fetch_failed: int
+    extraction_failed: int
     processing_failed: int

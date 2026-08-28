@@ -35,3 +35,13 @@ class DisclosureBulkDeleteRequest(BaseModel):
 class DisclosureBulkDeleteResponse(BaseModel):
     deleted: int
     failed: int
+
+
+class DisclosureCollectionTargetResponse(BaseModel):
+    stock_id: int
+    stock_code: str
+    stock_name: str
+    disclosure_count: int
+    summarized_count: int
+    last_successful_collection_date: str | None = None
+    last_successful_at: str | None = None

@@ -27,7 +27,7 @@ export type TelegramCollectResult = {
 export type TelegramCollectAllResult = Omit<TelegramCollectResult, "source_id" | "source_name"> & { source_count: number };
 export type TelegramSummarizeResult = {
   requested: number; summarized: number; skipped_existing: number; missing_url: number;
-  fetch_failed: number; processing_failed: number;
+  fetch_failed: number; extraction_failed: number; processing_failed: number;
 };
 export type TelegramSourceConnectionTest = {
   source_id: number; source_name: string; channel_username: string; normalized_channel_username: string | null;

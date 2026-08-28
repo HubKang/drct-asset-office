@@ -2,6 +2,8 @@
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from backend.app.repositories.disclosure_repository import DisclosureRepository
 from backend.app.schemas.disclosure_schema import DisclosureResponse
@@ -49,6 +51,10 @@ class DisclosureService:
         selected = sorted(set(int(disclosure_id) for disclosure_id in disclosure_ids if isinstance(disclosure_id, int) and int(disclosure_id) > 0))
         if not selected:
             return 0, 0
-        deleted = self.repo.delete_by_ids(selected)
+        exclusion_date = datetime.now(ZoneInfo("Asia/Seoul")).date().isoformat()
+        deleted = self.repo.delete_by_ids_with_exclusion(selected, exclusion_date)
         failed = max(0, len(selected) - deleted)
         return deleted, failed
+
+    def list_collection_targets(self):
+        return self.repo.list_collection_targets()

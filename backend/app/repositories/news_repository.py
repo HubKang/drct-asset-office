@@ -171,6 +171,17 @@ class NewsRepository:
         stmt: Select[tuple[NewsItem]] = select(NewsItem).where(NewsItem.id.in_(ids)).order_by(NewsItem.id.desc())
         return list(self.db.scalars(stmt).all())
 
+    def list_by_ids_with_stock(self, ids: list[int]) -> list[tuple[NewsItem, Stock | None]]:
+        if not ids:
+            return []
+        stmt = (
+            select(NewsItem, Stock)
+            .join(Stock, NewsItem.stock_id == Stock.id, isouter=True)
+            .where(NewsItem.id.in_(ids))
+            .order_by(NewsItem.id.desc())
+        )
+        return list(self.db.execute(stmt).all())
+
     def list_recent_unused_by_stock(self, stock_id: int, exclude_ids: set[int], limit: int) -> list[NewsItem]:
         stmt: Select[tuple[NewsItem]] = select(NewsItem).where(NewsItem.stock_id == stock_id)
         if exclude_ids:

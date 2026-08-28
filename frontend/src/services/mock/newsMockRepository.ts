@@ -117,6 +117,7 @@ export const newsMockRepository = {
       skipped_existing: 0,
       missing_url: 0,
       fetch_failed: 0,
+      extraction_failed: 0,
       processing_failed: 0,
     };
   },

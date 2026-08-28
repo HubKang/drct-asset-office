@@ -115,5 +115,6 @@ export type NewsSummarizeResponse = {
   skipped_existing: number;
   missing_url: number;
   fetch_failed: number;
+  extraction_failed: number;
   processing_failed: number;
 };

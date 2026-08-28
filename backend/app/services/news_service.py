@@ -74,23 +74,31 @@ class NewsService:
 
     def summarize_news(self, news_ids: list[int]) -> NewsSummarizeResponse:
         selected = list(dict.fromkeys(int(value) for value in news_ids if isinstance(value, int) and value > 0))[:20]
-        rows = self.repo.list_by_ids_any(selected)
+        rows = self.repo.list_by_ids_with_stock(selected)
         totals = {"requested": len(selected), "summarized": 0, "skipped_existing": 0,
-                  "missing_url": 0, "fetch_failed": 0, "processing_failed": 0}
-        for item in rows:
+                  "missing_url": 0, "fetch_failed": 0, "extraction_failed": 0,
+                  "processing_failed": 0}
+        fetch_failures = {
+            "URL_FETCH_FAILED", "REDIRECT_LOCATION_MISSING", "TOO_MANY_REDIRECTS",
+            "UNSUPPORTED_CONTENT_TYPE", "RESPONSE_TOO_LARGE", "SOURCE_INPUT_MISSING",
+        }
+        for item, stock in rows:
             if item.summary and item.summary.strip():
                 totals["skipped_existing"] += 1
                 continue
             if not item.url:
                 totals["missing_url"] += 1
                 continue
-            article_text = self.article_service.fetch_text(item.url)
-            if not article_text:
-                totals["fetch_failed"] += 1
+            extraction = self.article_service.fetch_article(
+                item.url, item.title, stock.stock_name if stock else None,
+            )
+            if not extraction.success:
+                target = "fetch_failed" if extraction.failure_reason in fetch_failures else "extraction_failed"
+                totals[target] += 1
                 continue
             if self.llm_service is None:
                 self.llm_service = TelegramLLMService()
-            result = self.llm_service.summarize_article(article_text, item.title)
+            result = self.llm_service.summarize_article(extraction.text, item.title)
             if not result.get("success") or not result.get("summary"):
                 totals["processing_failed"] += 1
                 continue

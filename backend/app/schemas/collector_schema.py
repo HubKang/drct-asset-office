@@ -26,7 +26,7 @@ class CollectSelectedWatchlistNewsRequest(BaseModel):
 
 class CollectDisclosuresRequest(BaseModel):
     stock_id: int
-    days: int = 30
+    days: int = 30  # compatibility only; collection range is cursor-driven
     page_count: int = 100
 
 
@@ -51,6 +51,7 @@ class CollectorResultResponse(BaseModel):
     mode: str | None = None
     from_date: str | None = None
     to_date: str | None = None
+    initial_window: str | None = None
     scanned_count: int = 0
     matched_count: int = 0
     name_mismatch_skipped: int = 0
@@ -74,6 +75,7 @@ class SelectedCollectorItemResult(BaseModel):
     mode: str | None = None
     from_date: str | None = None
     to_date: str | None = None
+    initial_window: str | None = None
     scanned_count: int = 0
     matched_count: int = 0
     name_mismatch_skipped: int = 0

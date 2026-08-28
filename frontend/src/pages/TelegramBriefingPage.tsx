@@ -80,7 +80,7 @@ function TelegramBriefingPage() {
     setSummarizing(true); setNotice("");
     try {
       const result = await repositories.telegram.summarizeItems(ids);
-      setNotice(`요약 완료 ${result.summarized} · 기존 요약 ${result.skipped_existing} · URL 없음 ${result.missing_url} · 본문 조회 실패 ${result.fetch_failed} · 처리 실패 ${result.processing_failed}`);
+      setNotice(`요약 완료 ${result.summarized} · 기존 요약 ${result.skipped_existing} · URL 없음 ${result.missing_url} · URL 조회 실패 ${result.fetch_failed} · 본문 확인 실패 ${result.extraction_failed} · 처리 실패 ${result.processing_failed}`);
       await loadItems(page);
     } catch (error) { setNotice(error instanceof Error ? error.message : "기사 요약에 실패했습니다."); }
     finally { setSummarizing(false); }

@@ -27,3 +27,19 @@ class Disclosure(Base):
     ai_processed_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     ai_summary_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class DisclosureItemExclusion(Base):
+    __tablename__ = "disclosure_item_exclusions"
+
+    exclusion_date: Mapped[str] = mapped_column(Text, primary_key=True)
+    stock_id: Mapped[int] = mapped_column(ForeignKey("stocks.id", ondelete="CASCADE"), primary_key=True)
+    rcept_no: Mapped[str] = mapped_column(Text, primary_key=True)
+
+
+class StockDisclosureCollectionState(Base):
+    __tablename__ = "stock_disclosure_collection_states"
+
+    stock_id: Mapped[int] = mapped_column(ForeignKey("stocks.id", ondelete="CASCADE"), primary_key=True)
+    last_successful_collection_date: Mapped[str] = mapped_column(Text, nullable=False)
+    last_successful_at: Mapped[str] = mapped_column(Text, nullable=False)

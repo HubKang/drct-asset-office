@@ -157,7 +157,11 @@ class TelegramService(LegacyTelegramAuthService):
         rows = self.repo.get_items(unique_ids)
         totals = {
             "requested": len(unique_ids), "summarized": 0, "skipped_existing": 0,
-            "missing_url": 0, "fetch_failed": 0, "processing_failed": 0,
+            "missing_url": 0, "fetch_failed": 0, "extraction_failed": 0, "processing_failed": 0,
+        }
+        fetch_failures = {
+            "URL_FETCH_FAILED", "REDIRECT_LOCATION_MISSING", "TOO_MANY_REDIRECTS",
+            "UNSUPPORTED_CONTENT_TYPE", "RESPONSE_TOO_LARGE", "SOURCE_INPUT_MISSING",
         }
         for item in rows:
             if item.summary:
@@ -166,13 +170,14 @@ class TelegramService(LegacyTelegramAuthService):
             if not item.source_url:
                 totals["missing_url"] += 1
                 continue
-            article_text = self.article_service.fetch_text(item.source_url)
-            if not article_text:
-                totals["fetch_failed"] += 1
+            extraction = self.article_service.fetch_article(item.source_url, item.title)
+            if not extraction.success:
+                target = "fetch_failed" if extraction.failure_reason in fetch_failures else "extraction_failed"
+                totals[target] += 1
                 continue
             if self.llm_service is None:
                 self.llm_service = TelegramLLMService()
-            result = self.llm_service.summarize_article(article_text, item.title)
+            result = self.llm_service.summarize_article(extraction.text, item.title)
             if not result.get("success") or not result.get("summary"):
                 totals["processing_failed"] += 1
                 continue

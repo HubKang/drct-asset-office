@@ -11,6 +11,7 @@ from backend.app.entities.stock import Stock
 from backend.app.repositories.news_repository import NewsRepository
 from backend.app.services.collector_service import CollectorService
 from backend.app.services.news_service import NewsService
+from backend.app.services.telegram_article_service import ArticleExtractionResult
 
 
 def make_session() -> Session:
@@ -214,8 +215,9 @@ def test_selected_summary_updates_only_durable_summary() -> None:
     service = NewsService(db)
 
     class Article:
-        def fetch_text(self, _url):
-            return "기사 본문 " * 100
+        def fetch_article(self, _url, _title, _stock_name=None):
+            text = "기사 본문 " * 100
+            return ArticleExtractionResult(True, text, "TITLE_ANCHOR_ARTICLE_BODY", 1.0, len(text), 3)
 
     class Llm:
         def summarize_article(self, _text, _title=None):
@@ -231,6 +233,34 @@ def test_selected_summary_updates_only_durable_summary() -> None:
     assert refreshed.ai_summary == "기존 AI 필드"
     assert refreshed.ai_importance_score == 77
     assert refreshed.source == "naver_news"
+    db.close()
+
+
+def test_selected_summary_does_not_call_llm_when_extraction_fails() -> None:
+    db = make_session(); stock = add_stock(db)
+    row = add_news(db, stock.id, url="https://news.example.com/not-an-article", fingerprint="f" * 64)
+    service = NewsService(db)
+
+    class Article:
+        def fetch_article(self, _url, _title, _stock_name=None):
+            return ArticleExtractionResult(False, failure_reason="TITLE_ANCHOR_NOT_FOUND")
+
+    class Llm:
+        calls = 0
+
+        def summarize_article(self, _text, _title=None):
+            self.calls += 1
+            return {"success": True, "summary": "호출되면 안 되는 요약입니다."}
+
+    llm = Llm()
+    service.article_service = Article()  # type: ignore[assignment]
+    service.llm_service = llm  # type: ignore[assignment]
+    result = service.summarize_news([row.id])
+
+    assert result.extraction_failed == 1
+    assert result.summarized == 0
+    assert llm.calls == 0
+    assert db.get(NewsItem, row.id).summary is None
     db.close()
 
 
