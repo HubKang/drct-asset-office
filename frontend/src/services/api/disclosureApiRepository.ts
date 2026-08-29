@@ -5,6 +5,7 @@ import type {
   DisclosureBulkDeleteResponse,
   DisclosureCollectRequest,
   DisclosureCollectResponse,
+  DisclosureCollectionTarget,
   DisclosureCollectSelectedResponse,
   DisclosureCollectSelectedWatchlistRequest,
   DisclosureCollectWatchlistRequest,
@@ -12,6 +13,7 @@ import type {
 } from "@/types/disclosure";
 
 export const disclosureApiRepository = {
+  listCollectionTargets: () => apiRequest<DisclosureCollectionTarget[]>("/disclosures/collection-targets"),
   listDisclosures: (params?: DisclosureListParams) => {
     const search = new URLSearchParams();
     if (params?.stock_id !== undefined) search.set("stock_id", String(params.stock_id));

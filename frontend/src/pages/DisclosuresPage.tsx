@@ -5,12 +5,11 @@ import SectionCard from "@/components/common/SectionCard";
 import StatusBadge from "@/components/common/StatusBadge";
 import { repositories } from "@/services";
 import type { AiSummarizeResponse } from "@/types/analysis";
-import type { Disclosure, DisclosureCollectSelectedResponse } from "@/types/disclosure";
-import type { Watchlist } from "@/types/watchlist";
+import type { Disclosure, DisclosureCollectionTarget, DisclosureCollectSelectedResponse } from "@/types/disclosure";
 
 const PANEL_KEY = "drct.disclosures.leftPanelCollapsed";
 type SummaryFilter = "all" | "unsummarized" | "summarized";
-type DisclosureTarget = { stock_id: number; stock_code: string; stock_name: string; disclosure_count: number; summarized_count: number; latest_collected_at: string | null };
+type DisclosureTarget = DisclosureCollectionTarget;
 type SimpleSummary = { summary: string; keywords: string[] };
 
 function formatDate(value?: string | null): string {
@@ -97,22 +96,10 @@ function DisclosuresPage() {
   }, [items, sortOrder, summaryFilter]);
   const allChecked = visibleItems.length > 0 && visibleItems.every((item) => checkedIds.includes(item.id));
 
-  const buildTargets = (watchlist: Watchlist[], disclosures: Disclosure[]): DisclosureTarget[] => watchlist.map((watch) => {
-    const stockItems = disclosures.filter((item) => item.stock_id === watch.stock_id);
-    return {
-      stock_id: watch.stock_id, stock_code: watch.stock_code, stock_name: watch.stock_name,
-      disclosure_count: stockItems.length, summarized_count: stockItems.filter(hasSummary).length,
-      latest_collected_at: stockItems.map((item) => item.created_at).filter(Boolean).sort((a, b) => b.localeCompare(a))[0] ?? null,
-    };
-  });
   const loadTargets = async () => {
     setTargetLoading(true);
     try {
-      const [watchlist, disclosures] = await Promise.all([
-        repositories.watchlist.list({ is_active: 1, limit: 200, offset: 0 }),
-        repositories.disclosures.listDisclosures({ limit: 500, offset: 0 }),
-      ]);
-      const next = buildTargets(watchlist, disclosures);
+      const next = await repositories.disclosures.listCollectionTargets();
       setTargets(next); setCurrentStockId((previous) => previous ?? next[0]?.stock_id ?? null);
     } finally { setTargetLoading(false); }
   };
@@ -144,10 +131,12 @@ function DisclosuresPage() {
     if (!stockIds.length) { setFeedbackError("관심종목 목록에서 수집할 종목을 선택해 주세요."); return; }
     setCollectLoading(true); setFeedback(""); setFeedbackError("");
     try {
-      const result: DisclosureCollectSelectedResponse = await repositories.disclosures.collectDisclosuresForSelectedWatchlist({ stock_ids: stockIds, days: 30, page_count: 10 });
+      const result: DisclosureCollectSelectedResponse = await repositories.disclosures.collectDisclosuresForSelectedWatchlist({ stock_ids: stockIds });
       const saved = result.results.reduce((sum, item) => sum + item.saved_count, 0);
-      const skipped = result.results.reduce((sum, item) => sum + item.skipped_count, 0);
-      setFeedback(`수집 완료 · 신규 ${saved} · 중복/제외 ${skipped} · 실패 ${result.failed_count}`);
+      const duplicate = result.results.reduce((sum, item) => sum + (item.duplicate_skipped ?? 0), 0);
+      const excluded = result.results.reduce((sum, item) => sum + (item.excluded_skipped ?? 0), 0);
+      const modes = [...new Set(result.results.map((item) => item.mode).filter(Boolean))].join(", ");
+      setFeedback(`수집 완료${modes ? ` · ${modes}` : ""} · 신규 ${saved} · 중복 ${duplicate} · 당일삭제 제외 ${excluded} · 실패 ${result.failed_count}`);
       await loadTargets(); await loadItems(currentStockId);
     } catch (cause) { setFeedbackError(toUserError(cause, "선택한 관심종목의 공시 수집에 실패했습니다.")); }
     finally { setCollectLoading(false); }
@@ -182,7 +171,16 @@ function DisclosuresPage() {
       <select className="select-control" value={sortOrder} onChange={(e) => setSortOrder(e.target.value)} aria-label="공시 정렬"><option value="latest">최신순</option><option value="oldest">오래된순</option></select>
       <div className="news-collect-action" ref={policyRef}><button type="button" className="btn btn-primary" disabled={collectLoading || (!currentStockId && !checkedStockIds.length)} onClick={() => void collectSelected()}>{collectLoading ? "수집 중…" : "선택 공시 수집"}</button>
         <button type="button" className="news-policy-info" aria-label="공시 수집 정책 보기" aria-expanded={policyOpen} onClick={() => setPolicyOpen((open) => !open)}><Info size={16} /></button>
-        {policyOpen ? <div className="news-policy-popover" role="dialog"><strong>공시 수집 정책</strong><ul><li><b>수집 범위</b><span>선택한 관심종목의 최근 30일 DART 공시를 확인합니다.</span></li><li><b>중복 방지</b><span>접수번호가 같은 공시는 다시 저장하지 않습니다.</span></li><li><b>선택 요약</b><span>수집할 때는 요약하지 않고, 필요한 공시를 선택한 뒤 요약합니다.</span></li></ul></div> : null}
+        {policyOpen ? <div className="news-policy-popover disclosure-policy-popover" role="dialog"><strong>공시 수집 정책</strong><ul>
+          <li><b>최초 수집</b><span>3개월부터 단계적으로 범위를 넓혀 최신 유효 공시를 최대 10건 수집하며, 최대 2년까지만 조회합니다.</span></li>
+          <li><b>이후 수집</b><span>종목별 검색 완료일 다음 날부터 오늘까지 증분 조회합니다.</span></li>
+          <li><b>오늘 재확인</b><span>오늘 이미 검색했어도 오늘 구간을 다시 조회해 장중 신규 공시를 확인합니다.</span></li>
+          <li><b>관련 공시</b><span>종목명 제목 검색이 아닌 DART 고유번호(corp_code)로 해당 기업 공시만 조회합니다.</span></li>
+          <li><b>중복 방지</b><span>DART 접수번호가 같은 공시는 다시 저장하지 않습니다.</span></li>
+          <li><b>삭제 공시</b><span>오늘 삭제한 공시는 당일 재수집하지 않습니다.</span></li>
+          <li><b>다음 날</b><span>당일 삭제 제외는 다음 날 자동 해제되어 다시 수집할 수 있습니다.</span></li>
+          <li><b>선택 요약</b><span>수집 중에는 LLM을 실행하지 않으며, 필요한 공시를 선택한 뒤에만 요약합니다.</span></li>
+        </ul></div> : null}
       </div>
     </div></SectionCard>
     {feedback ? <div className="news-inbox-feedback" role="status">{feedback}</div> : null}
@@ -191,12 +189,12 @@ function DisclosuresPage() {
       <aside className="drct-left-panel"><div className="drct-left-panel-rail"><button type="button" className="sije-icon-button" onClick={() => setPanelCollapsed(false)} aria-label="관심종목 목록 펼치기"><ListTree size={17} /></button><span className="drct-left-panel-rail-label">관심종목</span></div>
         {!panelCollapsed ? <SectionCard title={<span className="drct-left-panel-title"><span>관심종목 Inbox</span><button type="button" className="sije-icon-button" onClick={() => setPanelCollapsed(true)} aria-label="관심종목 목록 접기"><ListCollapse size={17} /></button></span>}><div className="watchlist-selection-count mb-2">수집 선택 {checkedStockIds.length}종목</div><div className="news-target-list">
           {targetLoading ? <p className="text-sm text-muted py-3">관심종목을 불러오는 중입니다.</p> : null}{!targetLoading && !filteredTargets.length ? <p className="text-sm text-muted py-3">관심종목이 없습니다.</p> : null}
-          {filteredTargets.map((target) => <button key={target.stock_id} type="button" className={`news-target-item ${currentStockId === target.stock_id ? "selected" : ""}`} onClick={() => setCurrentStockId(target.stock_id)}><input type="checkbox" aria-label={`${target.stock_name} 수집 선택`} checked={checkedStockIds.includes(target.stock_id)} onClick={(e) => e.stopPropagation()} onChange={() => toggleStock(target.stock_id)} /><span className="stock-cell min-w-0"><strong>{target.stock_name}</strong><span className="news-target-metrics"><span>공시 <b>{target.disclosure_count}</b></span><i>·</i><span>요약 <b>{target.summarized_count}</b></span><i>·</i><span>최종수집 <b>{target.latest_collected_at ? formatDate(target.latest_collected_at).slice(5, 10).replace("-", ".") : "-"}</b></span></span></span></button>)}
+          {filteredTargets.map((target) => <button key={target.stock_id} type="button" className={`news-target-item ${currentStockId === target.stock_id ? "selected" : ""}`} onClick={() => setCurrentStockId(target.stock_id)}><input type="checkbox" aria-label={`${target.stock_name} 수집 선택`} checked={checkedStockIds.includes(target.stock_id)} onClick={(e) => e.stopPropagation()} onChange={() => toggleStock(target.stock_id)} /><span className="stock-cell min-w-0"><strong>{target.stock_name}</strong><span className="news-target-metrics"><span>공시 <b>{target.disclosure_count}</b></span><i>·</i><span>요약 <b>{target.summarized_count}</b></span><i>·</i><span title={target.last_successful_at ? `마지막 성공 ${formatDate(target.last_successful_at)}` : "아직 검색하지 않음"}>검색 완료 <b>{target.last_successful_collection_date ? target.last_successful_collection_date.slice(5).replace("-", ".") : "-"}</b></span></span></span></button>)}
         </div></SectionCard> : null}
       </aside>
       <main className="drct-main-panel"><SectionCard className="news-inbox-list-card"><div className="news-list-header"><h3 className="section-title m-0">{activeTarget ? `${activeTarget.stock_name} 공시 Inbox` : "공시 Inbox"}</h3><div className="news-inbox-actions"><button type="button" className="btn btn-secondary" disabled={!checkedIds.length || summarizeLoading} onClick={() => void summarize(checkedIds)}><Sparkles size={15} />{summarizeLoading ? "요약 중…" : `선택 요약 ${checkedIds.length || ""}`}</button><button type="button" className="btn btn-secondary danger" disabled={!checkedIds.length || loading} onClick={() => void deleteItems(checkedIds)}><Trash2 size={15} />{`선택 삭제 ${checkedIds.length || ""}`}</button></div></div>
         <div className="news-inbox-filter" role="group" aria-label="요약 상태 필터">{(["all", "unsummarized", "summarized"] as SummaryFilter[]).map((filter) => <button key={filter} type="button" className={summaryFilter === filter ? "active" : ""} onClick={() => setSummaryFilter(filter)}>{filter === "all" ? "전체" : filter === "unsummarized" ? "미요약" : "요약"}</button>)}</div>
-        {!currentStockId ? <p className="news-inbox-empty">관심종목을 선택하세요.</p> : null}{loading ? <p className="news-inbox-empty">공시를 불러오는 중입니다.</p> : null}{error ? <p className="news-inbox-empty error">{error}</p> : null}{!loading && !error && currentStockId && !visibleItems.length ? <p className="news-inbox-empty">조건에 맞는 공시가 없습니다.</p> : null}
+        {!currentStockId ? <p className="news-inbox-empty">관심종목을 선택하세요.</p> : null}{loading ? <p className="news-inbox-empty">공시를 불러오는 중입니다.</p> : null}{error ? <p className="news-inbox-empty error">{error}</p> : null}{!loading && !error && currentStockId && !visibleItems.length ? <p className="news-inbox-empty">최근 최대 2년 범위에서 조건에 맞는 공시가 없습니다.</p> : null}
         {!loading && !error && visibleItems.length ? <div className="news-inbox-table-shell"><table className="news-inbox-table"><thead><tr><th><input type="checkbox" aria-label="현재 목록 전체 선택" checked={allChecked} onChange={(e) => setCheckedIds(e.target.checked ? visibleItems.map((item) => item.id) : [])} /></th><th>일시</th><th>공시</th><th>원문</th><th>작업</th></tr></thead><tbody>
           {visibleItems.map((item) => { const date = formatShortDate(item.disclosed_at || item.created_at); const summary = parseSummary(item); return <tr key={item.id} tabIndex={0} onClick={() => { setSelected(item); setDrawerOpen(true); }} onKeyDown={(e) => { if (e.key === "Enter") { setSelected(item); setDrawerOpen(true); } }}><td onClick={(e) => e.stopPropagation()}><input type="checkbox" aria-label={`${item.disclosure_title} 선택`} checked={checkedIds.includes(item.id)} onChange={(e) => setCheckedIds((previous) => e.target.checked ? [...previous, item.id] : previous.filter((id) => id !== item.id))} /></td><td><strong>{date.date}</strong><small>{date.time}</small></td><td><strong className="news-inbox-title">{item.disclosure_title}</strong>{summary.summary ? <p className="news-inbox-summary">{summary.summary}</p> : <span className="news-inbox-unsummarized">미요약</span>}</td><td onClick={(e) => e.stopPropagation()}>{item.url ? <a className="news-inbox-link" href={item.url} target="_blank" rel="noreferrer">공시 열기 <ExternalLink size={13} /></a> : <span className="cell-muted">URL 없음</span>}</td><td onClick={(e) => e.stopPropagation()}><button type="button" className="news-row-delete" aria-label={`${item.disclosure_title} 삭제`} onClick={() => void deleteItems([item.id])}><Trash2 size={15} /></button></td></tr>; })}
         </tbody></table></div> : null}<div className="disclosure-inbox-count">전체 {visibleItems.length}건</div>

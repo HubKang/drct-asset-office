@@ -507,6 +507,7 @@ class CollectorService:
         page_count: int = DART_PAGE_COUNT,
         *,
         collection_state=None,
+        collection_state_loaded: bool = False,
         today_exclusions: set[tuple[int, str]] | None = None,
         skip_exclusion_cleanup: bool = False,
     ) -> dict:
@@ -527,7 +528,7 @@ class CollectorService:
         try:
             if not skip_exclusion_cleanup:
                 self.disclosure_repo.cleanup_expired_exclusions(today_text)
-            if collection_state is None:
+            if not collection_state_loaded:
                 collection_state = self.disclosure_repo.get_collection_states([stock.id]).get(stock.id)
             if today_exclusions is None:
                 today_exclusions = self.disclosure_repo.list_today_exclusions(today_text, [stock.id])
@@ -551,6 +552,7 @@ class CollectorService:
             initial_window: str | None = None
             scanned_count = 0
             provider_items_by_receipt: dict[str, dict] = {}
+            provider_invalid_count = 0
 
             if not cursor_text:
                 mode = "INITIAL"
@@ -567,8 +569,11 @@ class CollectorService:
                     scanned_count += len(stage_items)
                     for item in stage_items:
                         receipt_no = (item.get("rcept_no") or "").strip()
-                        if receipt_no:
+                        report_nm = (item.get("report_nm") or "").strip()
+                        if receipt_no and report_nm:
                             provider_items_by_receipt[receipt_no] = item
+                        else:
+                            provider_invalid_count += 1
                     from_date = stage_from
                     initial_window = label
                     if len(provider_items_by_receipt) >= self.DISCLOSURE_INITIAL_LIMIT:
@@ -599,7 +604,7 @@ class CollectorService:
                 scanned_count = len(provider_items)
 
             disclosure_to_save: list[Disclosure] = []
-            invalid_skipped = 0
+            invalid_skipped = provider_invalid_count
             for item in provider_items:
                 receipt_no = (item.get("rcept_no") or "").strip()
                 report_nm = (item.get("report_nm") or "").strip()
@@ -787,6 +792,7 @@ class CollectorService:
                     days=days,
                     page_count=page_count,
                     collection_state=collection_states.get(stock.id),
+                    collection_state_loaded=True,
                     today_exclusions=today_exclusions,
                     skip_exclusion_cleanup=True,
                 )

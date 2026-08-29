@@ -1,9 +1,7 @@
 ﻿from __future__ import annotations
 
-import json
 import xml.etree.ElementTree as ET
 import zipfile
-from datetime import datetime
 from pathlib import Path
 
 import requests
@@ -20,9 +18,7 @@ class DartDisclosureCollector(BaseDisclosureCollector):
         self.api_key = DART_API_KEY or ""
         self.raw_dir = self._resolve_raw_dir()
         self.corp_codes_dir = self.raw_dir / "corp_codes"
-        self.disclosures_dir = self.raw_dir / "disclosures"
         self.corp_codes_dir.mkdir(parents=True, exist_ok=True)
-        self.disclosures_dir.mkdir(parents=True, exist_ok=True)
 
     @property
     def name(self) -> str:
@@ -126,11 +122,4 @@ class DartDisclosureCollector(BaseDisclosureCollector):
             "page_no": int(data.get("page_no") or 1),
             "total_page": int(data.get("total_page") or 0),
             "list": data.get("list", []),
-            "response": data,
         }
-
-    def save_disclosure_response(self, stock_code: str, response_payload: dict) -> str:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        file_path = self.disclosures_dir / f"{stock_code}_{ts}_response.json"
-        file_path.write_text(json.dumps(response_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        return str(file_path.relative_to(PROJECT_ROOT)).replace("\\", "/")

@@ -42,8 +42,8 @@ export type DisclosureCollectWatchlistRequest = {
 
 export type DisclosureCollectSelectedWatchlistRequest = {
   stock_ids: number[];
-  days: number;
-  page_count: number;
+  days?: number;
+  page_count?: number;
 };
 
 export type DisclosureCollectResponse = {
@@ -64,7 +64,26 @@ export type DisclosureCollectSelectedItemResult = {
   collected_count: number;
   saved_count: number;
   skipped_count: number;
+  mode?: "INITIAL" | "INCREMENTAL" | "SAME_DAY_REFRESH" | null;
+  from_date?: string | null;
+  to_date?: string | null;
+  initial_window?: string | null;
+  scanned_count?: number;
+  matched_count?: number;
+  duplicate_skipped?: number;
+  excluded_skipped?: number;
+  invalid_skipped?: number;
   message: string | null;
+};
+
+export type DisclosureCollectionTarget = {
+  stock_id: number;
+  stock_code: string;
+  stock_name: string;
+  disclosure_count: number;
+  summarized_count: number;
+  last_successful_collection_date: string | null;
+  last_successful_at: string | null;
 };
 
 export type DisclosureCollectSelectedResponse = {

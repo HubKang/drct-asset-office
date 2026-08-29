@@ -4,6 +4,7 @@ import type {
   DisclosureBulkDeleteResponse,
   DisclosureCollectRequest,
   DisclosureCollectResponse,
+  DisclosureCollectionTarget,
   DisclosureCollectSelectedResponse,
   DisclosureCollectSelectedWatchlistRequest,
   DisclosureCollectWatchlistRequest,
@@ -27,6 +28,13 @@ const sample: Disclosure[] = [
 ];
 
 export const disclosureMockRepository = {
+  async listCollectionTargets(): Promise<DisclosureCollectionTarget[]> {
+    return [{
+      stock_id: 1, stock_code: "005930", stock_name: "삼성전자",
+      disclosure_count: sample.length, summarized_count: 0,
+      last_successful_collection_date: null, last_successful_at: null,
+    }];
+  },
   async listDisclosures(params?: DisclosureListParams): Promise<Disclosure[]> {
     let result = [...sample];
     if (params?.stock_id !== undefined) result = result.filter((d) => d.stock_id === params.stock_id);
@@ -78,9 +86,9 @@ export const disclosureMockRepository = {
         stock_code: `MOCK-${stockId}`,
         stock_name: `Mock Stock ${stockId}`,
         status: "success",
-        collected_count: payload.page_count,
+        collected_count: payload.page_count ?? 0,
         saved_count: 0,
-        skipped_count: payload.page_count,
+        skipped_count: payload.page_count ?? 0,
         message: "mock success",
       })),
     };
