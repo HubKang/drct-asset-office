@@ -56,7 +56,13 @@ class ChartPreviewRepo:
     def get_session(self, session_id: int) -> dict:
         return self.session
 
-    def list_prices(self, stock_id: int, source: str, start_date: str, end_date: str) -> list[dict]:
+    def list_prices(
+        self,
+        stock_id: int,
+        source: str,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> list[dict]:
         return self.session_prices
 
     def list_prices_before(self, stock_id: int, source: str, before_date: str, limit: int) -> list[dict]:
@@ -100,3 +106,17 @@ def test_session_detail_starts_with_first_training_candle_without_history() -> N
     assert len(detail["candles"]) == 1
     assert detail["candles"][0]["trade_date"] == detail["session"]["start_date"]
     assert detail["current_candle"]["trade_date"] == detail["session"]["start_date"]
+
+
+def test_weekly_session_detail_filters_future_daily_rows_at_replay_cutoff() -> None:
+    service, repo = build_service(history_count=0, moving_averages=[5, 20])
+    repo.session_prices[1]["high_price"] = 999_999
+    repo.session_prices[1]["volume"] = 999_999
+
+    detail = service.get_session_detail(1, "WEEK")
+
+    assert detail["timeframe"] == "WEEK"
+    assert len(detail["candles"]) == 1
+    assert detail["candles"][0]["trade_date"] == repo.session["start_date"]
+    assert detail["candles"][0]["high"] != 999_999
+    assert detail["candles"][0]["volume"] != 999_999

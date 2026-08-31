@@ -38,6 +38,11 @@ from backend.app.services.technical_analysis_service import (
     normalize_configuration,
 )
 from backend.app.services.trade_training_multi_period_preview import build_multi_period_preview
+from backend.app.services.price_bar_aggregation import (
+    PriceBarTimeframe,
+    aggregate_price_bars,
+    decorate_price_bars,
+)
 
 
 RUNNING_STATUS = "진행중"
@@ -1181,28 +1186,7 @@ class TradeTrainingService:
 
     @staticmethod
     def _decorate_candles(rows: list[dict[str, Any]], moving_averages: list[int]) -> list[dict[str, Any]]:
-        decorated: list[dict[str, Any]] = []
-        closes: list[float | None] = []
-        for row in rows:
-            close = None if row.get("close_price") is None else float(row["close_price"])
-            closes.append(close)
-            ma_values: dict[str, float | None] = {}
-            for window in moving_averages:
-                recent = [v for v in closes[-window:] if v is not None]
-                ma_values[f"ma{window}"] = round(sum(recent) / window, 4) if len(recent) == window else None
-            decorated.append(
-                {
-                    "trade_date": row["trade_date"],
-                    "open": row.get("open_price"),
-                    "high": row.get("high_price"),
-                    "low": row.get("low_price"),
-                    "close": row.get("close_price"),
-                    "volume": row.get("volume"),
-                    "trading_value": row.get("trading_value"),
-                    "moving_averages": ma_values,
-                }
-            )
-        return decorated
+        return decorate_price_bars(rows, moving_averages)
 
     def _response_session(self, session: dict[str, Any]) -> dict[str, Any]:
         data = dict(session)
@@ -1216,7 +1200,11 @@ class TradeTrainingService:
         data.pop("options_json", None)
         return data
 
-    def get_session_detail(self, session_id: int) -> dict[str, Any]:
+    def get_session_detail(
+        self,
+        session_id: int,
+        timeframe: PriceBarTimeframe | str = PriceBarTimeframe.DAY,
+    ) -> dict[str, Any]:
         session = self.repo.get_session(session_id)
         if not session:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="훈련 세션을 찾을 수 없습니다.")
@@ -1225,19 +1213,36 @@ class TradeTrainingService:
         current_candle = prices[current_index] if prices else None
         options = self._parse_options(session)
         moving_averages = self._clean_mas(list(options.get("moving_averages") or [5, 20, 60]))
-        visible_prices = prices[: current_index + 1]
-        indicator_warmup_count = max(moving_averages, default=1) - 1
-        history_limit = TRAINING_PREVIEW_CANDLE_COUNT + indicator_warmup_count
-        history_prices = self.repo.list_prices_before(
-            stock_id=int(options.get("stock_id") or 0),
-            source=str(options.get("source") or ""),
-            before_date=str(session["start_date"]),
-            limit=history_limit,
-        ) if history_limit > 0 else []
-        decorated_with_history = self._decorate_candles([*history_prices, *visible_prices], moving_averages)
-        preview_count = min(TRAINING_PREVIEW_CANDLE_COUNT, len(history_prices))
-        decorated = decorated_with_history[len(history_prices) - preview_count:]
+        normalized_timeframe = PriceBarTimeframe(str(getattr(timeframe, "value", timeframe)).upper())
+        if normalized_timeframe is PriceBarTimeframe.DAY:
+            # Preserve the existing day-chart range and moving-average behavior.
+            visible_prices = prices[: current_index + 1]
+            indicator_warmup_count = max(moving_averages, default=1) - 1
+            history_limit = TRAINING_PREVIEW_CANDLE_COUNT + indicator_warmup_count
+            history_prices = self.repo.list_prices_before(
+                stock_id=int(options.get("stock_id") or 0),
+                source=str(options.get("source") or ""),
+                before_date=str(session["start_date"]),
+                limit=history_limit,
+            ) if history_limit > 0 else []
+            decorated_with_history = self._decorate_candles([*history_prices, *visible_prices], moving_averages)
+            preview_count = min(TRAINING_PREVIEW_CANDLE_COUNT, len(history_prices))
+            decorated = decorated_with_history[len(history_prices) - preview_count:]
+        else:
+            cutoff_date = str(current_candle["trade_date"]) if current_candle else str(session.get("current_date") or session["start_date"])
+            # All source rows through the replay cutoff are calculation input. Only the
+            # final display slice is returned, so long-period MAs keep enough warm-up.
+            source_rows = self.repo.list_prices(
+                stock_id=int(options.get("stock_id") or 0),
+                source=str(options.get("source") or ""),
+                end_date=cutoff_date,
+            )
+            aggregated = aggregate_price_bars(source_rows, normalized_timeframe, cutoff_date=cutoff_date)
+            calculated = self._decorate_candles(aggregated, moving_averages)
+            display_count = max(20, int(options.get("display_days") or 80))
+            decorated = calculated[-display_count:]
         return {
+            "timeframe": normalized_timeframe.value,
             "session": self._response_session(session),
             "trade_method": self.repo.get_trade_method(int(session["method_id"])) if session.get("method_id") else None,
             "candles": decorated,

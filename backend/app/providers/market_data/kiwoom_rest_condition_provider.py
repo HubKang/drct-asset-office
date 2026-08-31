@@ -373,8 +373,8 @@ class KiwoomRestConditionProvider:
                     "stock_code_raw": raw_code or None,
                     "stock_name": row.get("stock_name") or row.get("stk_nm") or row.get("name") or row.get("item_name") or row.get("hname") or row.get("302") or row.get("종목명"),
                     "current_price": self._to_int_or_none(row.get("current_price") or row.get("cur_prc") or row.get("price") or row.get("now_prc") or row.get("close") or row.get("10") or row.get("현재가")),
-                    "change_rate": self._to_float_or_none(row.get("change_rate") or row.get("flu_rt") or row.get("chg_rt") or row.get("rate") or row.get("12") or row.get("등락률")),
-                    "intraday_change_rate": self._to_float_or_none(row.get("intraday_change_rate") or row.get("open_pric_pre")),
+                    "change_rate": self._get_condition_rate(row, ("change_rate", "flu_rt", "chg_rt", "rate", "12", "등락률")),
+                    "intraday_change_rate": self._get_condition_rate(row, ("intraday_change_rate", "open_pric_pre")),
                     "volume": self._to_int_or_none(row.get("volume") or row.get("trde_qty") or row.get("acc_volume") or row.get("now_trde_qty") or row.get("13") or row.get("거래량")),
                     "trading_value": self._to_int_or_none(row.get("trading_value") or row.get("trde_prica") or row.get("acc_trading_value") or row.get("거래대금")),
                     "source_api": "CNSRREQ",
@@ -401,3 +401,22 @@ class KiwoomRestConditionProvider:
             return float(str(value).replace(",", "").replace("%", "").strip())
         except Exception:
             return None
+
+    @classmethod
+    def _get_condition_rate(cls, row: dict[str, Any], keys: tuple[str, ...]) -> float | None:
+        for key in keys:
+            if key not in row or row[key] is None:
+                continue
+            raw_text = str(row[key]).replace(",", "").replace("%", "").strip()
+            if not raw_text:
+                continue
+            try:
+                rate = float(raw_text)
+            except Exception:
+                return None
+            # CNSRREQ real-time FIDs encode 0.64% as +000000064, while
+            # named fields may already contain a decimal such as 0.64.
+            if "." not in raw_text and "e" not in raw_text.lower():
+                rate /= 100.0
+            return rate
+        return None

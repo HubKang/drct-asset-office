@@ -27,8 +27,8 @@ class UsMarketThemeRepository:
         counts = (
             select(
                 UsTheme.theme_group_id.label("group_id"),
-                func.count(UsTheme.id).label("theme_count"),
-                func.sum(case((UsTheme.active == 1, 1), else_=0)).label("active_theme_count"),
+                func.count(func.distinct(UsTheme.id)).label("theme_count"),
+                func.count(func.distinct(case((UsTheme.active == 1, UsTheme.id), else_=None))).label("active_theme_count"),
                 func.count(func.distinct(case((UsThemeStock.active == 1, UsThemeStock.us_stock_id), else_=None))).label("linked_stock_count"),
             )
             .outerjoin(UsThemeStock, UsThemeStock.theme_id == UsTheme.id)

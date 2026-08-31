@@ -32,6 +32,11 @@ export const stockTrackingApiRepository = {
     apiRequest<StockTrackingGroup>("/stock-tracking/groups", { method: "POST", body: JSON.stringify(payload) }),
   updateGroup: (groupId: number, payload: UpdateStockTrackingGroupPayload) =>
     apiRequest<StockTrackingGroup>(`/stock-tracking/groups/${groupId}`, { method: "PUT", body: JSON.stringify(payload) }),
+  setGroupActive: (groupId: number, isActive: boolean) =>
+    apiRequest<StockTrackingGroup>(`/stock-tracking/groups/${groupId}/active`, {
+      method: "PATCH",
+      body: JSON.stringify({ is_active: isActive ? 1 : 0 }),
+    }),
   deleteGroup: (groupId: number) => apiRequest<{ success: boolean; group_id: number }>(`/stock-tracking/groups/${groupId}`, { method: "DELETE" }),
   listGroupAnalysis: (params?: { active_only?: boolean; group_id?: number; from_date?: string; to_date?: string; min_completed_count?: number }) => {
     const search = new URLSearchParams();
@@ -50,6 +55,9 @@ export const stockTrackingApiRepository = {
     from_date?: string;
     to_date?: string;
     keyword?: string;
+    active_groups_only?: boolean;
+    sort_by?: "tracking_base_date" | "stock_name" | "tracking_return_pct";
+    sort_direction?: "asc" | "desc";
     limit?: number;
     offset?: number;
   }) => {
@@ -60,6 +68,9 @@ export const stockTrackingApiRepository = {
     if (params?.from_date) search.set("from_date", params.from_date);
     if (params?.to_date) search.set("to_date", params.to_date);
     if (params?.keyword) search.set("keyword", params.keyword);
+    if (params?.active_groups_only !== undefined) search.set("active_groups_only", String(params.active_groups_only));
+    if (params?.sort_by) search.set("sort_by", params.sort_by);
+    if (params?.sort_direction) search.set("sort_direction", params.sort_direction);
     if (params?.limit !== undefined) search.set("limit", String(params.limit));
     if (params?.offset !== undefined) search.set("offset", String(params.offset));
     const query = search.toString();

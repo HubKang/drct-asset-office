@@ -142,7 +142,10 @@ class StockTrackingService:
                 """
                 SELECT g.*,
                        COUNT(i.id) AS item_count,
-                       SUM(CASE WHEN i.status = 'TRACKING' THEN 1 ELSE 0 END) AS tracking_count
+                       SUM(CASE WHEN i.status = 'TRACKING' THEN 1 ELSE 0 END) AS tracking_count,
+                       SUM(CASE WHEN i.status = 'SUCCESS' THEN 1 ELSE 0 END) AS success_count,
+                       SUM(CASE WHEN i.status = 'FAIL' THEN 1 ELSE 0 END) AS fail_count,
+                       SUM(CASE WHEN i.status = 'HOLD' THEN 1 ELSE 0 END) AS hold_count
                 FROM stock_tracking_groups g
                 LEFT JOIN stock_tracking_items i ON i.group_id = g.id
                 WHERE g.id = :group_id
@@ -167,6 +170,9 @@ class StockTrackingService:
             is_active=int(row.get("is_active") or 0),
             item_count=int(row.get("item_count") or 0),
             tracking_count=int(row.get("tracking_count") or 0),
+            success_count=int(row.get("success_count") or 0),
+            fail_count=int(row.get("fail_count") or 0),
+            hold_count=int(row.get("hold_count") or 0),
             created_at=str(row["created_at"]),
             updated_at=str(row["updated_at"]),
         )
@@ -178,7 +184,10 @@ class StockTrackingService:
                 f"""
                 SELECT g.*,
                        COUNT(i.id) AS item_count,
-                       SUM(CASE WHEN i.status = 'TRACKING' THEN 1 ELSE 0 END) AS tracking_count
+                       SUM(CASE WHEN i.status = 'TRACKING' THEN 1 ELSE 0 END) AS tracking_count,
+                       SUM(CASE WHEN i.status = 'SUCCESS' THEN 1 ELSE 0 END) AS success_count,
+                       SUM(CASE WHEN i.status = 'FAIL' THEN 1 ELSE 0 END) AS fail_count,
+                       SUM(CASE WHEN i.status = 'HOLD' THEN 1 ELSE 0 END) AS hold_count
                 FROM stock_tracking_groups g
                 LEFT JOIN stock_tracking_items i ON i.group_id = g.id
                 {where}
@@ -217,7 +226,7 @@ class StockTrackingService:
         return self._to_group_response(self._group_row(int(result.lastrowid)))
 
     def update_group(self, group_id: int, payload: StockTrackingGroupUpdateRequest) -> StockTrackingGroupResponse:
-        self._group_row(group_id)
+        current = self._group_row(group_id)
         name = payload.name.strip()
         if not name:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="그룹명을 입력해 주세요.")
@@ -246,7 +255,66 @@ class StockTrackingService:
                 "updated_at": now_kst(),
             },
         )
+        if int(current.get("is_active") or 0) != (1 if payload.is_active else 0):
+            self._sync_group_collection_targets(group_id, bool(payload.is_active), now_kst())
         self.db.commit()
+        return self._to_group_response(self._group_row(group_id))
+
+    def _sync_group_collection_targets(self, group_id: int, is_active: bool, updated_at: str) -> None:
+        if is_active:
+            self.db.execute(
+                text(
+                    """
+                    UPDATE price_collection_targets
+                    SET status = 'ACTIVE', end_date = NULL, error_message = NULL, updated_at = :updated_at
+                    WHERE source_type = 'STOCK_TRACKING'
+                      AND source_id IN (
+                          SELECT id
+                          FROM stock_tracking_items
+                          WHERE group_id = :group_id
+                            AND status IN ('TRACKING', 'HOLD')
+                            AND COALESCE(price_status, 'NOT_COLLECTED') != 'STOPPED'
+                      )
+                    """
+                ),
+                {"group_id": group_id, "updated_at": updated_at},
+            )
+            return
+        self.db.execute(
+            text(
+                """
+                UPDATE price_collection_targets
+                SET status = 'PAUSED', updated_at = :updated_at
+                WHERE source_type = 'STOCK_TRACKING'
+                  AND status != 'STOPPED'
+                  AND source_id IN (
+                      SELECT id FROM stock_tracking_items WHERE group_id = :group_id
+                  )
+                """
+            ),
+            {"group_id": group_id, "updated_at": updated_at},
+        )
+
+    def set_group_active(self, group_id: int, is_active: bool) -> StockTrackingGroupResponse:
+        self._group_row(group_id)
+        now = now_kst()
+        next_active = 1 if is_active else 0
+        try:
+            self.db.execute(
+                text(
+                    """
+                    UPDATE stock_tracking_groups
+                    SET is_active = :is_active, updated_at = :updated_at
+                    WHERE id = :group_id
+                    """
+                ),
+                {"group_id": group_id, "is_active": next_active, "updated_at": now},
+            )
+            self._sync_group_collection_targets(group_id, is_active, now)
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
         return self._to_group_response(self._group_row(group_id))
 
     def delete_group(self, group_id: int) -> dict[str, object]:
@@ -397,7 +465,7 @@ class StockTrackingService:
         row = self.db.execute(
             text(
                 """
-                SELECT i.*, g.name AS group_name
+                SELECT i.*, g.name AS group_name, g.is_active AS group_is_active
                 FROM stock_tracking_items i
                 JOIN stock_tracking_groups g ON g.id = i.group_id
                 WHERE i.id = :item_id
@@ -418,6 +486,9 @@ class StockTrackingService:
         from_date: str | None = None,
         to_date: str | None = None,
         keyword: str | None = None,
+        active_groups_only: bool = True,
+        sort_by: str | None = None,
+        sort_direction: str = "asc",
         limit: int = 200,
         offset: int = 0,
     ) -> StockTrackingItemListResponse:
@@ -441,8 +512,29 @@ class StockTrackingService:
         if keyword:
             clauses.append("(i.stock_name LIKE :keyword OR i.stock_code LIKE :keyword OR i.condition_name LIKE :keyword)")
             params["keyword"] = f"%{keyword.strip()}%"
+        if active_groups_only:
+            clauses.append("g.is_active = 1")
         where_sql = " AND ".join(clauses)
-        total = self.db.execute(text(f"SELECT COUNT(*) FROM stock_tracking_items i WHERE {where_sql}"), params).scalar_one()
+        sort_columns = {
+            "tracking_base_date": "i.tracking_base_date",
+            "stock_name": "COALESCE(i.stock_name, i.stock_code, '') COLLATE NOCASE",
+            "tracking_return_pct": "i.tracking_return_pct",
+        }
+        if sort_by is not None and sort_by not in sort_columns:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="지원하지 않는 정렬 기준입니다.")
+        normalized_direction = sort_direction.lower()
+        if normalized_direction not in {"asc", "desc"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="정렬 방향은 asc 또는 desc여야 합니다.")
+        if sort_by:
+            sort_column = sort_columns[sort_by]
+            nulls_last = "CASE WHEN i.tracking_return_pct IS NULL THEN 1 ELSE 0 END ASC, " if sort_by == "tracking_return_pct" else ""
+            order_sql = f"{nulls_last}{sort_column} {normalized_direction.upper()}, i.id DESC"
+        else:
+            order_sql = "i.tracking_base_date DESC, i.updated_at DESC, i.id DESC"
+        total = self.db.execute(
+            text(f"SELECT COUNT(*) FROM stock_tracking_items i JOIN stock_tracking_groups g ON g.id = i.group_id WHERE {where_sql}"),
+            params,
+        ).scalar_one()
         rows = self.db.execute(
             text(
                 f"""
@@ -450,7 +542,7 @@ class StockTrackingService:
                 FROM stock_tracking_items i
                 JOIN stock_tracking_groups g ON g.id = i.group_id
                 WHERE {where_sql}
-                ORDER BY i.tracking_base_date DESC, i.updated_at DESC, i.id DESC
+                ORDER BY {order_sql}
                 LIMIT :limit OFFSET :offset
                 """
             ),
@@ -1172,7 +1264,17 @@ class StockTrackingService:
                 text(
                     """
                     UPDATE price_collection_targets
-                    SET status = 'ACTIVE', end_date = NULL, updated_at = :updated_at
+                    SET status = CASE
+                            WHEN EXISTS (
+                                SELECT 1
+                                FROM stock_tracking_items i
+                                JOIN stock_tracking_groups g ON g.id = i.group_id
+                                WHERE i.id = :item_id AND g.is_active = 1
+                            ) THEN 'ACTIVE'
+                            ELSE 'PAUSED'
+                        END,
+                        end_date = NULL,
+                        updated_at = :updated_at
                     WHERE source_type = 'STOCK_TRACKING' AND source_id = :item_id
                     """
                 ),
@@ -1265,11 +1367,13 @@ class StockTrackingService:
         rows = self.db.execute(
             text(
                 """
-                SELECT id
-                FROM stock_tracking_items
-                WHERE status IN ('TRACKING', 'HOLD')
-                  AND COALESCE(price_status, 'NOT_COLLECTED') != 'STOPPED'
-                ORDER BY tracking_base_date DESC, updated_at DESC, id DESC
+                SELECT i.id
+                FROM stock_tracking_items i
+                JOIN stock_tracking_groups g ON g.id = i.group_id
+                WHERE g.is_active = 1
+                  AND i.status IN ('TRACKING', 'HOLD')
+                  AND COALESCE(i.price_status, 'NOT_COLLECTED') != 'STOPPED'
+                ORDER BY i.tracking_base_date DESC, i.updated_at DESC, i.id DESC
                 """
             )
         ).mappings().all()
@@ -1316,6 +1420,18 @@ class StockTrackingService:
         for item_id in item_ids:
             try:
                 item = self._item_row(item_id)
+                if int(item.get("group_is_active") or 0) != 1:
+                    partial_count += 1
+                    results.append({
+                        "item_id": item_id,
+                        "stock_code": item.get("stock_code"),
+                        "stock_name": item.get("stock_name"),
+                        "status": "SKIPPED",
+                        "collected_count": 0,
+                        "last_collected_date": self._latest_price_date(int(item["stock_id"]), source=payload.source) if item.get("stock_id") else None,
+                        "message": "비활성 그룹의 종목은 가격 수집 대상에서 제외됩니다.",
+                    })
+                    continue
                 if str(item.get("status")) not in {"TRACKING", "HOLD"}:
                     partial_count += 1
                     results.append({

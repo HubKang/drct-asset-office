@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, ExternalLink, LoaderCircle, Search, Sparkles, Trash2, X } from "lucide-react";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
@@ -34,6 +34,13 @@ function TelegramBriefingPage() {
   const [notice, setNotice] = useState("");
   const [sourceName, setSourceName] = useState("");
   const [channel, setChannel] = useState("");
+  const selectionDragRef = useRef<{ active: boolean; checked: boolean; visited: Set<number> }>({
+    active: false,
+    checked: false,
+    visited: new Set(),
+  });
+  const pointerSelectionRef = useRef<{ itemId: number; checked: boolean } | null>(null);
+  const [selectionDragging, setSelectionDragging] = useState(false);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const activeSources = useMemo(() => sources.filter((source) => source.is_active === 1), [sources]);
@@ -54,6 +61,22 @@ function TelegramBriefingPage() {
   }
 
   useEffect(() => { void Promise.all([loadSources(), loadItems(1)]); }, []);
+
+  useEffect(() => {
+    const finishSelectionDrag = () => {
+      if (!selectionDragRef.current.active) return;
+      selectionDragRef.current = { active: false, checked: false, visited: new Set() };
+      setSelectionDragging(false);
+    };
+    window.addEventListener("pointerup", finishSelectionDrag);
+    window.addEventListener("pointercancel", finishSelectionDrag);
+    window.addEventListener("blur", finishSelectionDrag);
+    return () => {
+      window.removeEventListener("pointerup", finishSelectionDrag);
+      window.removeEventListener("pointercancel", finishSelectionDrag);
+      window.removeEventListener("blur", finishSelectionDrag);
+    };
+  }, []);
 
   async function collect() {
     setBusy(true); setNotice("");
@@ -108,6 +131,29 @@ function TelegramBriefingPage() {
     try { await loadItems(next); } finally { setBusy(false); }
   }
 
+  function setItemChecked(itemId: number, checked: boolean) {
+    setSelected((current) => {
+      if (checked) return current.includes(itemId) ? current : [...current, itemId];
+      return current.filter((id) => id !== itemId);
+    });
+  }
+
+  function continueSelectionDrag(itemId: number) {
+    const drag = selectionDragRef.current;
+    if (!drag.active || drag.visited.has(itemId)) return;
+    drag.visited.add(itemId);
+    setItemChecked(itemId, drag.checked);
+  }
+
+  function startSelectionDrag(event: ReactPointerEvent<HTMLInputElement>, itemId: number, currentlyChecked: boolean) {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    const checked = !currentlyChecked;
+    pointerSelectionRef.current = { itemId, checked };
+    selectionDragRef.current = { active: true, checked, visited: new Set([itemId]) };
+    setSelectionDragging(true);
+    setItemChecked(itemId, checked);
+  }
+
   const allSelected = items.length > 0 && items.every((item) => selected.includes(item.id));
 
   return <div className="telegram-briefing-page">
@@ -143,12 +189,28 @@ function TelegramBriefingPage() {
       <section className="telegram-list-surface">
         <div className="telegram-list-section">
           <div className="telegram-list-heading"><div><h3>브리핑 목록</h3><p>총 {total}건 · {page}/{totalPages} 페이지 · 선택 {selected.length}건</p></div><div className="telegram-list-actions"><button className="telegram-summary-action" disabled={!selected.length || summarizing} onClick={() => void summarizeItems(selected)}>{summarizing ? <LoaderCircle size={16} className="animate-spin" /> : <Sparkles size={16} />}선택 요약{selected.length ? ` ${selected.length}` : ""}</button><button className="telegram-delete-action" disabled={!selected.length || busy} onClick={() => void removeItems(selected)}><Trash2 size={16} />선택 삭제{selected.length ? ` ${selected.length}` : ""}</button></div></div>
-          <div className="telegram-inbox-list">
+          <div className={`telegram-inbox-list ${selectionDragging ? "is-drag-selecting" : ""}`}>
             <div className="telegram-list-columns"><input type="checkbox" checked={allSelected} onChange={(e) => setSelected(e.target.checked ? items.map((item) => item.id) : [])} aria-label="현재 페이지 전체 선택" /><span>일시</span><span>브리핑</span><span>기사</span><span>작업</span></div>
             {items.map((item) => {
               const date = item.message_at.replace("T", " ");
-              return <article key={item.id} className="telegram-inbox-row">
-                <input type="checkbox" checked={selected.includes(item.id)} onChange={(e) => setSelected((current) => e.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id))} aria-label={`${item.title} 선택`} />
+              const isSelected = selected.includes(item.id);
+              return <article key={item.id} className={`telegram-inbox-row ${isSelected ? "is-selected" : ""}`} onPointerEnter={() => continueSelectionDrag(item.id)}>
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  title="클릭한 채 위아래로 드래그하면 연속 선택·해제됩니다."
+                  onPointerDown={(event) => startSelectionDrag(event, item.id, isSelected)}
+                  onChange={(event) => {
+                    const pointerSelection = pointerSelectionRef.current;
+                    if (pointerSelection?.itemId === item.id) {
+                      setItemChecked(item.id, pointerSelection.checked);
+                      pointerSelectionRef.current = null;
+                    } else {
+                      setItemChecked(item.id, event.target.checked);
+                    }
+                  }}
+                  aria-label={`${item.title} 선택`}
+                />
                 <time dateTime={item.message_at}><b>{date.slice(5, 10).replace("-", ".")}</b><span>{date.slice(11, 16)}</span></time>
                 <button className="telegram-briefing-content" onClick={() => setDetail(item)}><strong>{item.title}</strong>{item.summary ? <span>{item.summary}</span> : null}</button>
                 <div className="telegram-article-cell">{item.source_url ? <a href={item.source_url} target="_blank" rel="noreferrer">기사 열기 <ExternalLink size={14} /></a> : <span>URL 없음</span>}</div>

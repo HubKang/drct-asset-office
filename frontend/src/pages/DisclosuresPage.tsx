@@ -1,5 +1,5 @@
 import { ExternalLink, Info, ListCollapse, ListTree, Search, Sparkles, Trash2, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import StatusBadge from "@/components/common/StatusBadge";
@@ -84,6 +84,13 @@ function DisclosuresPage() {
   const [feedbackError, setFeedbackError] = useState("");
   const [policyOpen, setPolicyOpen] = useState(false);
   const policyRef = useRef<HTMLDivElement | null>(null);
+  const disclosureSelectionDragRef = useRef({
+    active: false,
+    checked: true,
+    visited: new Set<number>(),
+  });
+  const disclosurePointerSelectionRef = useRef<{ itemId: number; checked: boolean } | null>(null);
+  const [disclosureSelectionDragging, setDisclosureSelectionDragging] = useState(false);
 
   const filteredTargets = useMemo(() => {
     const query = targetFilter.trim().toLowerCase();
@@ -124,8 +131,46 @@ function DisclosuresPage() {
     window.addEventListener("keydown", onKeyDown); window.addEventListener("mousedown", onPointerDown);
     return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("mousedown", onPointerDown); };
   }, []);
+  useEffect(() => {
+    const finishSelectionDrag = () => {
+      disclosureSelectionDragRef.current.active = false;
+      disclosureSelectionDragRef.current.visited.clear();
+      setDisclosureSelectionDragging(false);
+    };
+    window.addEventListener("pointerup", finishSelectionDrag);
+    window.addEventListener("pointercancel", finishSelectionDrag);
+    window.addEventListener("blur", finishSelectionDrag);
+    return () => {
+      window.removeEventListener("pointerup", finishSelectionDrag);
+      window.removeEventListener("pointercancel", finishSelectionDrag);
+      window.removeEventListener("blur", finishSelectionDrag);
+    };
+  }, []);
 
   const toggleStock = (stockId: number) => setCheckedStockIds((previous) => previous.includes(stockId) ? previous.filter((id) => id !== stockId) : [...previous, stockId]);
+  const setDisclosureChecked = (itemId: number, checked: boolean) => {
+    setCheckedIds((previous) => checked
+      ? (previous.includes(itemId) ? previous : [...previous, itemId])
+      : previous.filter((id) => id !== itemId));
+  };
+  const continueDisclosureSelectionDrag = (itemId: number) => {
+    const drag = disclosureSelectionDragRef.current;
+    if (!drag.active || drag.visited.has(itemId)) return;
+    drag.visited.add(itemId);
+    setDisclosureChecked(itemId, drag.checked);
+  };
+  const startDisclosureSelectionDrag = (
+    event: ReactPointerEvent<HTMLInputElement>,
+    itemId: number,
+    currentlyChecked: boolean,
+  ) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    const checked = !currentlyChecked;
+    disclosurePointerSelectionRef.current = { itemId, checked };
+    disclosureSelectionDragRef.current = { active: true, checked, visited: new Set([itemId]) };
+    setDisclosureSelectionDragging(true);
+    setDisclosureChecked(itemId, checked);
+  };
   const collectSelected = async () => {
     const stockIds = checkedStockIds.length ? checkedStockIds : currentStockId ? [currentStockId] : [];
     if (!stockIds.length) { setFeedbackError("관심종목 목록에서 수집할 종목을 선택해 주세요."); return; }
@@ -195,8 +240,8 @@ function DisclosuresPage() {
       <main className="drct-main-panel"><SectionCard className="news-inbox-list-card"><div className="news-list-header"><h3 className="section-title m-0">{activeTarget ? `${activeTarget.stock_name} 공시 Inbox` : "공시 Inbox"}</h3><div className="news-inbox-actions"><button type="button" className="btn btn-secondary" disabled={!checkedIds.length || summarizeLoading} onClick={() => void summarize(checkedIds)}><Sparkles size={15} />{summarizeLoading ? "요약 중…" : `선택 요약 ${checkedIds.length || ""}`}</button><button type="button" className="btn btn-secondary danger" disabled={!checkedIds.length || loading} onClick={() => void deleteItems(checkedIds)}><Trash2 size={15} />{`선택 삭제 ${checkedIds.length || ""}`}</button></div></div>
         <div className="news-inbox-filter" role="group" aria-label="요약 상태 필터">{(["all", "unsummarized", "summarized"] as SummaryFilter[]).map((filter) => <button key={filter} type="button" className={summaryFilter === filter ? "active" : ""} onClick={() => setSummaryFilter(filter)}>{filter === "all" ? "전체" : filter === "unsummarized" ? "미요약" : "요약"}</button>)}</div>
         {!currentStockId ? <p className="news-inbox-empty">관심종목을 선택하세요.</p> : null}{loading ? <p className="news-inbox-empty">공시를 불러오는 중입니다.</p> : null}{error ? <p className="news-inbox-empty error">{error}</p> : null}{!loading && !error && currentStockId && !visibleItems.length ? <p className="news-inbox-empty">최근 최대 2년 범위에서 조건에 맞는 공시가 없습니다.</p> : null}
-        {!loading && !error && visibleItems.length ? <div className="news-inbox-table-shell"><table className="news-inbox-table"><thead><tr><th><input type="checkbox" aria-label="현재 목록 전체 선택" checked={allChecked} onChange={(e) => setCheckedIds(e.target.checked ? visibleItems.map((item) => item.id) : [])} /></th><th>일시</th><th>공시</th><th>원문</th><th>작업</th></tr></thead><tbody>
-          {visibleItems.map((item) => { const date = formatShortDate(item.disclosed_at || item.created_at); const summary = parseSummary(item); return <tr key={item.id} tabIndex={0} onClick={() => { setSelected(item); setDrawerOpen(true); }} onKeyDown={(e) => { if (e.key === "Enter") { setSelected(item); setDrawerOpen(true); } }}><td onClick={(e) => e.stopPropagation()}><input type="checkbox" aria-label={`${item.disclosure_title} 선택`} checked={checkedIds.includes(item.id)} onChange={(e) => setCheckedIds((previous) => e.target.checked ? [...previous, item.id] : previous.filter((id) => id !== item.id))} /></td><td><strong>{date.date}</strong><small>{date.time}</small></td><td><strong className="news-inbox-title">{item.disclosure_title}</strong>{summary.summary ? <p className="news-inbox-summary">{summary.summary}</p> : <span className="news-inbox-unsummarized">미요약</span>}</td><td onClick={(e) => e.stopPropagation()}>{item.url ? <a className="news-inbox-link" href={item.url} target="_blank" rel="noreferrer">공시 열기 <ExternalLink size={13} /></a> : <span className="cell-muted">URL 없음</span>}</td><td onClick={(e) => e.stopPropagation()}><button type="button" className="news-row-delete" aria-label={`${item.disclosure_title} 삭제`} onClick={() => void deleteItems([item.id])}><Trash2 size={15} /></button></td></tr>; })}
+        {!loading && !error && visibleItems.length ? <div className={`news-inbox-table-shell${disclosureSelectionDragging ? " is-drag-selecting" : ""}`}><table className="news-inbox-table"><thead><tr><th><input type="checkbox" aria-label="현재 목록 전체 선택" checked={allChecked} onChange={(e) => setCheckedIds(e.target.checked ? visibleItems.map((item) => item.id) : [])} /></th><th>일시</th><th>공시</th><th>원문</th><th>작업</th></tr></thead><tbody>
+          {visibleItems.map((item) => { const date = formatShortDate(item.disclosed_at || item.created_at); const summary = parseSummary(item); const checked = checkedIds.includes(item.id); return <tr key={item.id} className={checked ? "is-selected" : ""} tabIndex={0} onPointerEnter={() => continueDisclosureSelectionDrag(item.id)} onClick={() => { setSelected(item); setDrawerOpen(true); }} onKeyDown={(e) => { if (e.key === "Enter") { setSelected(item); setDrawerOpen(true); } }}><td onClick={(e) => e.stopPropagation()}><input type="checkbox" aria-label={`${item.disclosure_title} 선택`} title="누른 채 위아래로 드래그하여 연속 선택 또는 해제" checked={checked} onPointerDown={(event) => startDisclosureSelectionDrag(event, item.id, checked)} onChange={(event) => { const pointerSelection = disclosurePointerSelectionRef.current; if (pointerSelection?.itemId === item.id) { setDisclosureChecked(item.id, pointerSelection.checked); disclosurePointerSelectionRef.current = null; } else { setDisclosureChecked(item.id, event.target.checked); } }} /></td><td><strong>{date.date}</strong><small>{date.time}</small></td><td><strong className="news-inbox-title">{item.disclosure_title}</strong>{summary.summary ? <p className="news-inbox-summary">{summary.summary}</p> : <span className="news-inbox-unsummarized">미요약</span>}</td><td onClick={(e) => e.stopPropagation()}>{item.url ? <a className="news-inbox-link" href={item.url} target="_blank" rel="noreferrer">공시 열기 <ExternalLink size={13} /></a> : <span className="cell-muted">URL 없음</span>}</td><td onClick={(e) => e.stopPropagation()}><button type="button" className="news-row-delete" aria-label={`${item.disclosure_title} 삭제`} onClick={() => void deleteItems([item.id])}><Trash2 size={15} /></button></td></tr>; })}
         </tbody></table></div> : null}<div className="disclosure-inbox-count">전체 {visibleItems.length}건</div>
       </SectionCard></main>
     </div>

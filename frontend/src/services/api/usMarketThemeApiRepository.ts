@@ -34,4 +34,6 @@ export const usMarketThemeApiRepository = {
     return apiRequest<UsThemeReturnDetail>(`/us-market-themes/themes/${themeId}/detail${query}`);
   },
   refresh: (mode: "INCREMENTAL" | "BACKFILL" = "INCREMENTAL") => apiRequest<UsMarketRefreshResponse>("/us-market-themes/refresh", { method: "POST", body: JSON.stringify({ mode, trading_days: 260 }), timeoutMs: 300000 }),
+  refreshGroup: (groupId: number) => apiRequest<UsMarketRefreshResponse>(`/us-market-themes/groups/${groupId}/refresh`, { method: "POST", body: JSON.stringify({ mode: "INCREMENTAL", trading_days: 260 }), timeoutMs: 300000 }),
+  refreshTheme: (themeId: number) => apiRequest<UsMarketRefreshResponse>(`/us-market-themes/themes/${themeId}/refresh`, { method: "POST", body: JSON.stringify({ mode: "INCREMENTAL", trading_days: 260 }), timeoutMs: 300000 }),
 };

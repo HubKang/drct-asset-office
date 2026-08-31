@@ -24,6 +24,10 @@ class StockTrackingGroupUpdateRequest(StockTrackingGroupBase):
     pass
 
 
+class SetStockTrackingGroupActiveRequest(BaseModel):
+    is_active: int = Field(ge=0, le=1)
+
+
 class StockTrackingGroupResponse(BaseModel):
     id: int
     name: str
@@ -34,6 +38,9 @@ class StockTrackingGroupResponse(BaseModel):
     is_active: int
     item_count: int = 0
     tracking_count: int = 0
+    success_count: int = 0
+    fail_count: int = 0
+    hold_count: int = 0
     created_at: str
     updated_at: str
 

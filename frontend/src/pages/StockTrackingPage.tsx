@@ -53,6 +53,9 @@ type TrackingCollectionScope = "all" | "checked" | "detail";
 type TrackingCollectionMode = "recent" | "full";
 type TrackingFullRefreshTarget = Exclude<TrackingCollectionScope, "detail">;
 type StockTrackingFilters = { group_id: string; status: string; price_status: string; keyword: string };
+type StockTrackingSortKey = "tracking_base_date" | "stock_name" | "tracking_return_pct";
+type SortDirection = "asc" | "desc";
+type StockTrackingSort = { key: StockTrackingSortKey; direction: SortDirection } | null;
 const DEFAULT_ITEM_FILTERS: StockTrackingFilters = { group_id: "", status: "TRACKING", price_status: "", keyword: "" };
 const todayInKst = () => new Intl.DateTimeFormat("en-CA", {
   timeZone: "Asia/Seoul",
@@ -631,6 +634,7 @@ function StockTrackingPage() {
   const [items, setItems] = useState<StockTrackingItem[]>([]);
   const [itemTotal, setItemTotal] = useState(0);
   const [itemPage, setItemPage] = useState(1);
+  const [itemSort, setItemSort] = useState<StockTrackingSort>(null);
   const [selectedItem, setSelectedItem] = useState<StockTrackingItem | null>(null);
   const [checkedItemIds, setCheckedItemIds] = useState<Set<number>>(() => new Set());
   const [editingGroup, setEditingGroup] = useState<StockTrackingGroup | null>(null);
@@ -667,21 +671,11 @@ function StockTrackingPage() {
   const [registerSearching, setRegisterSearching] = useState(false);
   const [registerSaving, setRegisterSaving] = useState(false);
   const [registerError, setRegisterError] = useState("");
+  const [togglingGroupId, setTogglingGroupId] = useState<number | null>(null);
 
   const activeGroups = useMemo(() => groups.filter((group) => group.is_active === 1), [groups]);
-  const trackingCount = useMemo(() => items.filter((item) => item.status === "TRACKING").length, [items]);
-  const completedCount = useMemo(() => items.filter((item) => item.status === "SUCCESS" || item.status === "FAIL").length, [items]);
-  const groupStatusCounts = useMemo(() => {
-    const map = new Map<number, { success: number; fail: number; hold: number }>();
-    for (const item of items) {
-      const current = map.get(item.group_id) ?? { success: 0, fail: 0, hold: 0 };
-      if (item.status === "SUCCESS") current.success += 1;
-      if (item.status === "FAIL") current.fail += 1;
-      if (item.status === "HOLD") current.hold += 1;
-      map.set(item.group_id, current);
-    }
-    return map;
-  }, [items]);
+  const trackingCount = useMemo(() => activeGroups.reduce((sum, group) => sum + group.tracking_count, 0), [activeGroups]);
+  const completedCount = useMemo(() => activeGroups.reduce((sum, group) => sum + (group.success_count ?? 0) + (group.fail_count ?? 0), 0), [activeGroups]);
   const collectableItems = useMemo(() => items.filter(canCollectItem), [items]);
   const checkedCollectableItems = useMemo(() => collectableItems.filter((item) => checkedItemIds.has(item.id)), [checkedItemIds, collectableItems]);
   const allCollectableChecked = collectableItems.length > 0 && checkedCollectableItems.length === collectableItems.length;
@@ -747,7 +741,7 @@ function StockTrackingPage() {
     }
   };
 
-  const loadItems = async (page = itemPage, appliedFilters: StockTrackingFilters = filters) => {
+  const loadItems = async (page = itemPage, appliedFilters: StockTrackingFilters = filters, appliedSort: StockTrackingSort = itemSort) => {
     const requestId = itemRequestIdRef.current + 1;
     itemRequestIdRef.current = requestId;
     const nextPage = Math.max(1, page);
@@ -756,6 +750,9 @@ function StockTrackingPage() {
       status: appliedFilters.status as StockTrackingStatus | "",
       price_status: appliedFilters.price_status as StockTrackingPriceStatus | "",
       keyword: appliedFilters.keyword.trim() || undefined,
+      active_groups_only: true,
+      sort_by: appliedSort?.key,
+      sort_direction: appliedSort?.direction,
       limit: ITEM_PAGE_SIZE,
       offset: (nextPage - 1) * ITEM_PAGE_SIZE,
     });
@@ -827,6 +824,73 @@ function StockTrackingPage() {
       await loadGroups();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const toggleItemSort = async (key: StockTrackingSortKey) => {
+    const nextSort: StockTrackingSort = itemSort?.key === key
+      ? { key, direction: itemSort.direction === "asc" ? "desc" : "asc" }
+      : { key, direction: "asc" };
+    setItemSort(nextSort);
+    setLoading(true);
+    try {
+      await loadItems(1, filters, nextSort);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const renderSortableHeader = (key: StockTrackingSortKey, label: string) => {
+    const active = itemSort?.key === key;
+    const directionLabel = active ? (itemSort.direction === "asc" ? "오름차순" : "내림차순") : "정렬 안 함";
+    return (
+      <button
+        type="button"
+        className={`stock-tracking-sort-button ${active ? "active" : ""}`}
+        aria-label={`${label} 정렬, 현재 ${directionLabel}`}
+        onClick={() => void toggleItemSort(key)}
+      >
+        <span>{label}</span>
+        <span className="stock-tracking-sort-icon" aria-hidden="true">{active ? (itemSort.direction === "asc" ? "▲" : "▼") : "↕"}</span>
+      </button>
+    );
+  };
+
+  const toggleGroupActive = async (group: StockTrackingGroup) => {
+    const nextActive = group.is_active !== 1;
+    const confirmed = window.confirm(nextActive
+      ? `「${group.name}」 그룹을 활성화할까요? 진행 중이던 종목의 가격 수집 대상이 다시 활성화됩니다.`
+      : `「${group.name}」 그룹을 비활성화할까요? 기존 데이터는 보존되지만 신규 등록, 종목 목록, 그룹 분석, 가격 수집 대상에서 제외됩니다.`);
+    if (!confirmed) return;
+
+    setTogglingGroupId(group.id);
+    setMessage("");
+    setError("");
+    const nextFilters = !nextActive && filters.group_id === String(group.id)
+      ? { ...filters, group_id: "" }
+      : filters;
+    try {
+      await repositories.stockTracking.setGroupActive(group.id, nextActive);
+      if (nextFilters !== filters) setFilters(nextFilters);
+      if (!nextActive && selectedItem?.group_id === group.id) {
+        setSelectedItem(null);
+        setChart(null);
+        setImageRows([]);
+        setAppImageRows([]);
+        setPreviewAppImage(null);
+      }
+      setCheckedItemIds(new Set());
+      await Promise.all([loadGroups(), loadItems(1, nextFilters)]);
+      if (activeTab === "analysis") await loadAnalysis();
+      setMessage(nextActive
+        ? `「${group.name}」 그룹을 활성화했습니다.`
+        : `「${group.name}」 그룹을 비활성화했습니다. 기존 데이터는 보존됩니다.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTogglingGroupId(null);
     }
   };
 
@@ -1200,7 +1264,7 @@ function StockTrackingPage() {
         description="조건검색 후보를 그룹별로 추적하고 성공/실패 패턴을 복기합니다."
         action={(
           <div className="stock-tracking-kpis">
-            <span>그룹 {groups.length}</span>
+            <span>활성 그룹 {activeGroups.length}</span>
             <span>트래킹중 {trackingCount}</span>
             <span>판단완료 {completedCount}</span>
           </div>
@@ -1239,19 +1303,26 @@ function StockTrackingPage() {
                 </thead>
                 <tbody>
                   {groups.map((group) => {
-                    const counts = groupStatusCounts.get(group.id) ?? { success: 0, fail: 0, hold: 0 };
                     return (
-                      <tr key={group.id}>
+                      <tr key={group.id} className={group.is_active === 1 ? "" : "stock-tracking-group-row-inactive"}>
                         <td><strong>{group.name}</strong></td>
                         <td className="stock-tracking-muted-cell">{group.description || "-"}</td>
-                        <td>{group.is_active ? "활성" : "비활성"}</td>
+                        <td><span className={`stock-tracking-group-status ${group.is_active ? "is-active" : "is-inactive"}`}>{group.is_active ? "활성" : "비활성"}</span></td>
                         <td>{group.tracking_count}</td>
-                        <td>{counts.success}</td>
-                        <td>{counts.fail}</td>
-                        <td>{counts.hold}</td>
+                        <td>{group.success_count ?? 0}</td>
+                        <td>{group.fail_count ?? 0}</td>
+                        <td>{group.hold_count ?? 0}</td>
                         <td>
                           <div className="stock-tracking-row-actions">
                             <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => editGroup(group)}>수정</button>
+                            <button
+                              type="button"
+                              className={`btn btn-table-sm stock-tracking-group-toggle ${group.is_active ? "is-deactivate" : "is-activate"}`}
+                              disabled={togglingGroupId === group.id}
+                              onClick={() => void toggleGroupActive(group)}
+                            >
+                              {togglingGroupId === group.id ? "처리 중" : group.is_active ? "비활성화" : "활성화"}
+                            </button>
                             <button type="button" className="btn btn-danger btn-table-sm" onClick={() => void deleteGroup(group)}>삭제</button>
                           </div>
                         </td>
@@ -1360,7 +1431,7 @@ function StockTrackingPage() {
             {loading ? <p className="text-muted">조회 중...</p> : null}
             <div className="table-shell stock-tracking-list-shell">
               <table className="data-table compact-table stock-tracking-table">
-                <thead><tr><th className="stock-tracking-check-col"><input type="checkbox" className="stock-tracking-checkbox" aria-label="갱신 가능 종목 전체 선택" checked={allCollectableChecked} disabled={collectableItems.length === 0} onChange={toggleAllCheckedItems} onClick={(event) => event.stopPropagation()} /></th><th>상태</th><th>기준일</th><th>종목</th><th>그룹</th><th className="text-right">트래킹 등락률</th><th>가격상태</th><th>판단일</th></tr></thead>
+                <thead><tr><th className="stock-tracking-check-col"><input type="checkbox" className="stock-tracking-checkbox" aria-label="갱신 가능 종목 전체 선택" checked={allCollectableChecked} disabled={collectableItems.length === 0} onChange={toggleAllCheckedItems} onClick={(event) => event.stopPropagation()} /></th><th>상태</th><th aria-sort={itemSort?.key === "tracking_base_date" ? (itemSort.direction === "asc" ? "ascending" : "descending") : "none"}>{renderSortableHeader("tracking_base_date", "기준일")}</th><th aria-sort={itemSort?.key === "stock_name" ? (itemSort.direction === "asc" ? "ascending" : "descending") : "none"}>{renderSortableHeader("stock_name", "종목")}</th><th>그룹</th><th className="stock-tracking-return-col" aria-sort={itemSort?.key === "tracking_return_pct" ? (itemSort.direction === "asc" ? "ascending" : "descending") : "none"}>{renderSortableHeader("tracking_return_pct", "트래킹 등락률")}</th><th>가격상태</th><th>판단일</th></tr></thead>
                 <tbody>
                   {items.map((item) => (
                     <tr key={item.id} className={selectedItem?.id === item.id ? "stock-tracking-row-selected selected" : ""} onClick={() => selectItem(item)}>
@@ -1371,7 +1442,7 @@ function StockTrackingPage() {
                       <td>{fmtDate(item.tracking_base_date)}</td>
                       <td><strong>{item.stock_name || "-"}</strong><small>{item.stock_code || "-"}</small></td>
                       <td>{item.group_name}</td>
-                      <td className={`text-right ${getReturnClass(item.tracking_return_pct)}`} title={item.entry_close_date && item.latest_close_date ? `${item.entry_close_date} 종가 대비 ${item.latest_close_date} 종가` : "기준 종가 대비 최신 종가"}>{fmtSignedPct(item.tracking_return_pct)}</td>
+                      <td className={`stock-tracking-return-col ${getReturnClass(item.tracking_return_pct)}`} title={item.entry_close_date && item.latest_close_date ? `${item.entry_close_date} 종가 대비 ${item.latest_close_date} 종가` : "기준 종가 대비 최신 종가"}>{fmtSignedPct(item.tracking_return_pct)}</td>
                       <td><span className={`tracking-price-badge price-${item.price_status.toLowerCase()}`}>{PRICE_STATUS_LABELS[item.price_status]}</span></td>
                       <td>{fmtDate(item.review_date)}</td>
                     </tr>

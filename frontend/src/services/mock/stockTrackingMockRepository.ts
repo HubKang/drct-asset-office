@@ -11,6 +11,7 @@
   StockTrackingImage,
   StockTrackingImageType,
   StockTrackingItem,
+  StockTrackingPriceStatus,
   StockTrackingStatus,
   UpdateStockTrackingGroupPayload,
   UpdateStockTrackingReviewPayload,
@@ -178,6 +179,9 @@ const refreshGroupCounts = () => {
       ...group,
       item_count: groupItems.length,
       tracking_count: groupItems.filter((item) => item.status === "TRACKING").length,
+      success_count: groupItems.filter((item) => item.status === "SUCCESS").length,
+      fail_count: groupItems.filter((item) => item.status === "FAIL").length,
+      hold_count: groupItems.filter((item) => item.status === "HOLD").length,
     };
   });
 };
@@ -206,6 +210,10 @@ export const stockTrackingMockRepository = {
   },
   updateGroup: async (groupId: number, payload: UpdateStockTrackingGroupPayload) => {
     groups = groups.map((group) => (group.id === groupId ? { ...group, ...payload, updated_at: new Date().toISOString() } : group));
+    return groups.find((group) => group.id === groupId)!;
+  },
+  setGroupActive: async (groupId: number, isActive: boolean) => {
+    groups = groups.map((group) => (group.id === groupId ? { ...group, is_active: isActive ? 1 : 0, updated_at: new Date().toISOString() } : group));
     return groups.find((group) => group.id === groupId)!;
   },
   deleteGroup: async (groupId: number) => {
@@ -286,13 +294,32 @@ export const stockTrackingMockRepository = {
     }).filter((row) => params?.min_completed_count === undefined || row.completed_count >= params.min_completed_count);
     return { items: rows.sort((a, b) => b.completed_count - a.completed_count || (b.success_rate ?? -1) - (a.success_rate ?? -1)) };
   },
-  listItems: async (params?: { group_id?: number; status?: StockTrackingStatus | ""; keyword?: string; limit?: number; offset?: number }) => {
+  listItems: async (params?: { group_id?: number; status?: StockTrackingStatus | ""; price_status?: StockTrackingPriceStatus | ""; keyword?: string; active_groups_only?: boolean; sort_by?: "tracking_base_date" | "stock_name" | "tracking_return_pct"; sort_direction?: "asc" | "desc"; limit?: number; offset?: number }) => {
     let rows = [...items];
+    if (params?.active_groups_only !== false) {
+      const activeGroupIds = new Set(groups.filter((group) => group.is_active === 1).map((group) => group.id));
+      rows = rows.filter((item) => activeGroupIds.has(item.group_id));
+    }
     if (params?.group_id) rows = rows.filter((item) => item.group_id === params.group_id);
     if (params?.status) rows = rows.filter((item) => item.status === params.status);
+    if (params?.price_status) rows = rows.filter((item) => item.price_status === params.price_status);
     if (params?.keyword) {
       const keyword = params.keyword.toLowerCase();
       rows = rows.filter((item) => `${item.stock_name ?? ""} ${item.stock_code ?? ""}`.toLowerCase().includes(keyword));
+    }
+    if (params?.sort_by) {
+      const direction = params.sort_direction === "desc" ? -1 : 1;
+      const sortBy = params.sort_by;
+      rows.sort((a, b) => {
+        if (sortBy === "tracking_return_pct") {
+          if (a.tracking_return_pct == null) return b.tracking_return_pct == null ? b.id - a.id : 1;
+          if (b.tracking_return_pct == null) return -1;
+          return ((a.tracking_return_pct - b.tracking_return_pct) * direction) || b.id - a.id;
+        }
+        const aValue = sortBy === "stock_name" ? (a.stock_name || a.stock_code || "") : a.tracking_base_date;
+        const bValue = sortBy === "stock_name" ? (b.stock_name || b.stock_code || "") : b.tracking_base_date;
+        return aValue.localeCompare(bValue, "ko") * direction || b.id - a.id;
+      });
     }
     const total = rows.length;
     const offset = params?.offset ?? 0;
@@ -301,6 +328,7 @@ export const stockTrackingMockRepository = {
   },
   registerFromConditionResults: async (payload: CreateTrackingFromConditionResultsPayload) => {
     const group = groups.find((row) => row.id === payload.group_id);
+    if (!group || group.is_active !== 1) throw new Error("비활성 그룹에는 종목을 등록할 수 없습니다.");
     const createdIds: number[] = [];
     let skippedCount = 0;
     const resultItems = payload.items.map((source) => {
@@ -357,6 +385,7 @@ export const stockTrackingMockRepository = {
   },
   registerFromCandidates: async (payload: RegisterTrackingItemsFromCandidatesPayload) => {
     const group = groups.find((row) => row.id === payload.group_id);
+    if (!group || group.is_active !== 1) throw new Error("비활성 그룹에는 종목을 등록할 수 없습니다.");
     const createdIds: number[] = [];
     const resultItems = payload.candidate_ids.map((candidateId) => {
       const duplicate = items.find((item) => item.group_id === payload.group_id && item.candidate_id === candidateId);
@@ -413,12 +442,13 @@ export const stockTrackingMockRepository = {
     let successCount = 0;
     let partialCount = 0;
     const action = payload.action ?? (payload.force_full_refresh ? "selected_full" : "selected_recent_7d");
+    const activeGroupIds = new Set(groups.filter((group) => group.is_active === 1).map((group) => group.id));
     const targetIds = action.startsWith("all_")
-      ? items.filter((row) => ["TRACKING", "HOLD"].includes(row.status) && row.price_status !== "STOPPED").map((row) => row.id)
+      ? items.filter((row) => activeGroupIds.has(row.group_id) && ["TRACKING", "HOLD"].includes(row.status) && row.price_status !== "STOPPED").map((row) => row.id)
       : payload.item_ids;
     const results = targetIds.map((itemId) => {
       const item = items.find((row) => row.id === itemId);
-      if (!item || !["TRACKING", "HOLD"].includes(item.status)) {
+      if (!item || !activeGroupIds.has(item.group_id) || !["TRACKING", "HOLD"].includes(item.status)) {
         partialCount += 1;
         return { item_id: itemId, stock_code: item?.stock_code ?? null, stock_name: item?.stock_name ?? null, status: "SKIPPED" as const, collected_count: 0, saved_count: 0, pages_fetched: 0, stop_reason: "skipped", last_collected_date: null, message: "갱신 대상이 아닙니다." };
       }

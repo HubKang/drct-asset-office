@@ -46,6 +46,16 @@ def refresh_us_market(payload: UsMarketRefreshRequest, db: Session = Depends(get
     return UsMarketDataService(db).refresh(payload)
 
 
+@router.post("/groups/{group_id}/refresh", response_model=UsMarketRefreshResponse)
+def refresh_us_theme_group(group_id: int, payload: UsMarketRefreshRequest, db: Session = Depends(get_db)) -> UsMarketRefreshResponse:
+    return UsMarketDataService(db).refresh_group(group_id, payload)
+
+
+@router.post("/themes/{theme_id}/refresh", response_model=UsMarketRefreshResponse)
+def refresh_us_theme(theme_id: int, payload: UsMarketRefreshRequest, db: Session = Depends(get_db)) -> UsMarketRefreshResponse:
+    return UsMarketDataService(db).refresh_theme(theme_id, payload)
+
+
 @router.post("/returns/recalculate", response_model=UsThemeReturnRecalculateResponse)
 def recalculate_us_theme_returns(payload: UsThemeReturnRecalculateRequest, db: Session = Depends(get_db)) -> UsThemeReturnRecalculateResponse:
     return UsMarketDataService(db).recalculate_returns(payload)

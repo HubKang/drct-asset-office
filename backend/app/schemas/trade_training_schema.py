@@ -601,6 +601,7 @@ class TrainingTradeResponse(BaseModel):
 
 
 class TrainingSessionDetailResponse(BaseModel):
+    timeframe: str = "DAY"
     session: TrainingSessionResponse
     trade_method: TradeMethodResponse | None = None
     candles: list[TrainingCandle] = Field(default_factory=list)

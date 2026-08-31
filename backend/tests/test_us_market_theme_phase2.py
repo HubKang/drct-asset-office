@@ -67,6 +67,10 @@ def test_price_upsert_theme_return_and_strength_parity(isolated_api_client: Test
     theme = client.post("/us-market-themes/themes", json={"theme_group_id": group["id"], "name": "AI 인프라", "sort_order": 1}).json()
     for stock, role in ((a, "LEADER"), (b, "CORE"), (etf, "ETF")):
         assert client.post(f"/us-market-themes/themes/{theme['id']}/stocks", json={"us_stock_id": stock["id"], "role": role, "is_representative": int(role == "LEADER"), "sort_order": 1}).status_code == 201
+    group_counts = client.get("/us-market-themes/groups").json()[0]
+    assert group_counts["active_theme_count"] == 1
+    assert group_counts["theme_count"] == 1
+    assert group_counts["linked_stock_count"] == 3
 
     samples = {
         "AAA": [("2026-08-18", 100), ("2026-08-19", 110), ("2026-08-20", 121)],
@@ -290,6 +294,45 @@ def test_selected_incremental_collects_only_selected_stock_and_provides_return(i
     assert row["historical_price_row_count"] == 2
 
 
+def test_historical_collection_saves_valid_rows_and_marks_partial_when_provider_skips_null_candle(isolated_api_client: TestClient, monkeypatch) -> None:
+    client = isolated_api_client
+    stock = _stock(client, "PARTIALNULL")
+    attempts = 0
+
+    def fake_history(_self, **_kwargs):
+        nonlocal attempts
+        attempts += 1
+        return UsDailyPriceFetchResult(
+            [
+                UsDailyPrice("2026-08-26", 98, 101, 97, 100, 900),
+                UsDailyPrice("2026-08-27", 100, 103, 99, 102, 1_000),
+                *([UsDailyPrice("2026-08-28", 102, 105, 101, 104, 1_100)] if attempts > 1 else []),
+            ],
+            history_exhausted=True,
+            incomplete_row_count=1 if attempts == 1 else 0,
+        )
+
+    monkeypatch.setattr(us_market_data_service.YFinanceUsDailyPriceProvider, "fetch_history", fake_history)
+    result = client.post(
+        "/us-stocks/prices/collect",
+        json={"mode": "SELECTED", "stock_ids": [stock["id"]], "trading_days": 260},
+    ).json()
+
+    assert result["inserted_count"] == 2
+    assert result["success_stock_count"] == 0
+    assert result["failed_stock_count"] == 1
+    assert "결측 일봉 1건" in result["failures"][0]["reason"]
+    row = client.get("/us-stocks", params={"keyword": "PARTIALNULL"}).json()["items"][0]
+    assert row["historical_price_status"] == "PARTIAL"
+    assert row["historical_price_row_count"] == 2
+
+    repaired = client.post("/us-stocks/prices/collect", json={"mode": "INCREMENTAL", "stock_ids": [stock["id"]]}).json()
+    assert repaired["inserted_count"] == 1
+    repaired_row = client.get("/us-stocks", params={"keyword": "PARTIALNULL"}).json()["items"][0]
+    assert repaired_row["historical_price_status"] == "COMPLETE"
+    assert repaired_row["historical_price_row_count"] == 3
+
+
 def test_incremental_collection_refreshes_provisional_latest_trading_day(isolated_api_client: TestClient, monkeypatch) -> None:
     client = isolated_api_client
     coin = _stock(client, "COIN")
@@ -406,3 +449,66 @@ def test_market_refresh_completes_linked_history_and_recalculates_all_active_the
     assert dict(calls)["RFA"] == 260 and dict(calls)["RFB"] == 260
     latest = client.get("/us-market-themes/returns/latest").json()
     assert {item["theme_id"] for item in latest["items"] if item["trade_date"] == "2026-08-20"} == {theme_a["id"], theme_b["id"]}
+
+
+def test_group_refresh_updates_only_group_stocks_and_group_theme_returns(isolated_api_client: TestClient, monkeypatch) -> None:
+    client = isolated_api_client
+    a, b, c, d = (_stock(client, symbol) for symbol in ("GRA", "GRB", "GRC", "GRD"))
+    group_a = client.post("/us-market-themes/groups", json={"name": "그룹 A", "sort_order": 1}).json()
+    group_b = client.post("/us-market-themes/groups", json={"name": "그룹 B", "sort_order": 2}).json()
+    theme_a = client.post("/us-market-themes/themes", json={"theme_group_id": group_a["id"], "name": "테마 A", "sort_order": 1}).json()
+    theme_b = client.post("/us-market-themes/themes", json={"theme_group_id": group_b["id"], "name": "테마 B", "sort_order": 1}).json()
+    for theme, stock in ((theme_a, a), (theme_a, b), (theme_b, c), (theme_b, d)):
+        client.post(f"/us-market-themes/themes/{theme['id']}/stocks", json={"us_stock_id": stock["id"], "role": "CORE", "sort_order": 1})
+    calls: list[str] = []
+
+    def fake_history(_self, *, symbol: str, **_kwargs):
+        calls.append(symbol)
+        base = {"GRA": 100, "GRB": 200, "GRC": 300, "GRD": 400}[symbol]
+        return UsDailyPriceFetchResult([
+            UsDailyPrice("2026-08-27", base, base, base, base, 100),
+            UsDailyPrice("2026-08-28", base + 10, base + 10, base + 10, base + 10, 110),
+        ], history_exhausted=True)
+
+    monkeypatch.setattr(us_market_data_service.YFinanceUsDailyPriceProvider, "fetch_history", fake_history)
+    response = client.post(f"/us-market-themes/groups/{group_a['id']}/refresh", json={"mode": "INCREMENTAL", "trading_days": 260})
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["price"]["requested_stock_count"] == 2
+    assert result["returns"]["processed_theme_count"] == 1
+    assert set(calls) == {"GRA", "GRB"}
+    latest = client.get("/us-market-themes/returns/latest").json()["items"]
+    assert next(item for item in latest if item["theme_id"] == theme_a["id"])["trade_date"] == "2026-08-28"
+    assert next(item for item in latest if item["theme_id"] == theme_b["id"])["trade_date"] is None
+
+
+def test_theme_refresh_updates_only_theme_stocks_and_theme_return(isolated_api_client: TestClient, monkeypatch) -> None:
+    client = isolated_api_client
+    a, b, c = (_stock(client, symbol) for symbol in ("TRA", "TRB", "TRC"))
+    group = client.post("/us-market-themes/groups", json={"name": "테마 갱신 그룹", "sort_order": 1}).json()
+    theme_a = client.post("/us-market-themes/themes", json={"theme_group_id": group["id"], "name": "갱신 대상", "sort_order": 1}).json()
+    theme_b = client.post("/us-market-themes/themes", json={"theme_group_id": group["id"], "name": "비대상", "sort_order": 2}).json()
+    for theme, stock in ((theme_a, a), (theme_a, b), (theme_b, c)):
+        client.post(f"/us-market-themes/themes/{theme['id']}/stocks", json={"us_stock_id": stock["id"], "role": "CORE", "sort_order": 1})
+    calls: list[str] = []
+
+    def fake_history(_self, *, symbol: str, **_kwargs):
+        calls.append(symbol)
+        base = {"TRA": 100, "TRB": 200, "TRC": 300}[symbol]
+        return UsDailyPriceFetchResult([
+            UsDailyPrice("2026-08-27", base, base, base, base, 100),
+            UsDailyPrice("2026-08-28", base + 10, base + 10, base + 10, base + 10, 110),
+        ], history_exhausted=True)
+
+    monkeypatch.setattr(us_market_data_service.YFinanceUsDailyPriceProvider, "fetch_history", fake_history)
+    response = client.post(f"/us-market-themes/themes/{theme_a['id']}/refresh", json={"mode": "INCREMENTAL", "trading_days": 260})
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["price"]["requested_stock_count"] == 2
+    assert result["returns"]["processed_theme_count"] == 1
+    assert set(calls) == {"TRA", "TRB"}
+    latest = client.get("/us-market-themes/returns/latest").json()["items"]
+    assert next(item for item in latest if item["theme_id"] == theme_a["id"])["trade_date"] == "2026-08-28"
+    assert next(item for item in latest if item["theme_id"] == theme_b["id"])["trade_date"] is None

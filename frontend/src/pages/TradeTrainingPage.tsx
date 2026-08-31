@@ -16,6 +16,7 @@ import type {
   SimulationReview,
   RiskOrderPreview,
   TrainingCandle,
+  TrainingChartTimeframe,
   TrainingEquityCurvePoint,
   TrainingGptPackage,
   TrainingLaunchMode,
@@ -459,6 +460,9 @@ function maStyle(key: string): { color: string; width: number } {
 }
 
 function CandleChart({
+  timeframe,
+  timeframeLoading,
+  onTimeframeChange,
   sessionId,
   stockId,
   stockName,
@@ -489,6 +493,9 @@ function CandleChart({
   onPlanPriceReset,
   onPlanPriceComplete,
 }: {
+  timeframe: TrainingChartTimeframe;
+  timeframeLoading: boolean;
+  onTimeframeChange: (timeframe: TrainingChartTimeframe) => void;
   sessionId?: number | string | null;
   stockId?: number | null;
   stockName?: string | null;
@@ -604,12 +611,12 @@ function CandleChart({
   }, [sessionId, stockId, onShowExistingChartMarkersChange]);
 
   useEffect(() => {
-    if (!stockId || !candles.length) { setChartMarkerEvents([]); return; }
+    if (timeframe !== "DAY" || !stockId || !candles.length) { setChartMarkerEvents([]); return; }
     const endDate = candles[candles.length - 1]?.trade_date;
     Promise.all([repositories.chartMarkers.catalog(true), repositories.chartMarkers.listStockEvents(stockId, endDate)])
       .then(([catalog, events]) => { setChartMarkerGroups(catalog.items); setChartMarkerEvents(events.items); })
       .catch((error) => setChartMarkerError(error instanceof Error ? error.message : "차트마커를 불러오지 못했습니다."));
-  }, [sessionId, stockId, candles[candles.length - 1]?.trade_date]);
+  }, [sessionId, stockId, timeframe, candles[candles.length - 1]?.trade_date]);
 
   useEffect(() => {
     if (selectedChartMarkerGroup && chartMarkerGroupId !== selectedChartMarkerGroup.id) setChartMarkerGroupId(selectedChartMarkerGroup.id);
@@ -834,13 +841,34 @@ function CandleChart({
 
   return (
     <div className="training-chart-card">
-      {planPriceEditor && onPlanPriceComplete ? (
-        <div className="training-plan-price-toolbar-row">
-          <span>계획 가격</span>
-          <RiskPlanPriceToolbar editor={planPriceEditor} saving={planPriceSaving} onReset={onPlanPriceReset} onComplete={onPlanPriceComplete} />
-          {planPriceEditor.message ? <small>{planPriceEditor.message}</small> : null}
+      <div className="training-chart-primary-controls">
+        <div className="training-chart-plan-panel">
+          {planPriceEditor && onPlanPriceComplete ? (
+            <div className="training-plan-price-toolbar-row">
+              <span>계획 가격</span>
+              <RiskPlanPriceToolbar editor={planPriceEditor} saving={planPriceSaving} onReset={onPlanPriceReset} onComplete={onPlanPriceComplete} />
+              {planPriceEditor.message ? <small>{planPriceEditor.message}</small> : null}
+            </div>
+          ) : <span className="training-chart-plan-placeholder">계획 가격</span>}
         </div>
-      ) : null}
+        <div className="training-timeframe-panel">
+          <span className="training-timeframe-label">주기</span>
+          <div className="training-chart-tool-group training-timeframe-toggle" aria-label="차트 주기">
+            {([ ["DAY", "일봉"], ["WEEK", "주봉"], ["MONTH", "월봉"] ] as const).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                className={`training-chart-tool-btn ${timeframe === value ? "active" : ""}`}
+                aria-pressed={timeframe === value}
+                onClick={() => onTimeframeChange(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {timeframeLoading ? <small className="training-timeframe-loading" aria-live="polite">불러오는 중…</small> : null}
+        </div>
+      </div>
       <div className="training-chart-tools">
         <div className="training-chart-tool-group" aria-label="작도">
           <span>작도</span>
@@ -850,8 +878,8 @@ function CandleChart({
         <div className="training-chart-tool-separator" />
         <div className="training-chart-tool-group" aria-label="분석">
           <span>분석</span>
-          <button title="메인 차트에서는 최근 80봉으로 현재 추세를 간편 분석합니다. 1개월·3개월·6개월·1년·전체 기간 비교는 기술분석 상세에서 확인할 수 있습니다." className={`training-chart-tool-btn ${technicalEnabled ? "active" : ""}`} type="button" onClick={onToggleTechnical}>자동 추세분석</button>
-          <button title="현재 캔들의 추세, 이동평균, 거래량, 전고점·전저점 위치를 확인합니다." className="training-chart-tool-btn" type="button" onClick={onOpenTechnical}>기술분석 상세</button>
+          <button title={timeframe === "DAY" ? "메인 차트에서는 최근 80봉으로 현재 추세를 간편 분석합니다." : "기술분석은 일봉에서만 지원합니다."} disabled={timeframe !== "DAY"} className={`training-chart-tool-btn ${technicalEnabled ? "active" : ""}`} type="button" onClick={onToggleTechnical}>자동 추세분석</button>
+          <button title={timeframe === "DAY" ? "현재 캔들의 기술분석을 확인합니다." : "기술분석은 일봉에서만 지원합니다."} disabled={timeframe !== "DAY"} className="training-chart-tool-btn" type="button" onClick={onOpenTechnical}>기술분석 상세</button>
         </div>
         <div className="training-chart-tool-separator" />
         <div className="training-chart-tool-group" aria-label="비교"><span>비교</span>{marketIndexControls}</div>
@@ -884,7 +912,7 @@ function CandleChart({
             height={height}
             viewBox={`0 0 ${width} ${height}`}
             role="img"
-            aria-label="일봉 훈련 차트"
+            aria-label={`${timeframe === "DAY" ? "일봉" : timeframe === "WEEK" ? "주봉" : "월봉"} 훈련 차트`}
             onMouseLeave={() => {
               setTooltip(null);
               setMarkerTooltip(null);
@@ -979,6 +1007,7 @@ function CandleChart({
                   setTooltip(null);
                 }}
                 onContextMenu={(event) => {
+                  if (timeframe !== "DAY") return;
                   event.preventDefault(); if(drawingTool)return;
                   setChartMarkerMenu({date:candle.trade_date,x:event.clientX,y:event.clientY}); setTooltip(null); setMarkerTooltip(null);
                 }}
@@ -4464,9 +4493,8 @@ function OrderModal({
 
   const calculateQuantity = (nextPercent: number, nextPrice = price) => {
     if (mode === "BUY") {
-      const targetAmount = detail.session.initial_cash * (nextPercent / 100);
-      const cashLimitedAmount = Math.min(targetAmount, availableCash);
-      return Math.max(0, Math.floor(cashLimitedAmount / Math.max(1, nextPrice * (1 + feeRate))));
+      const targetBudget = availableCash * (nextPercent / 100);
+      return Math.max(0, Math.floor(targetBudget / Math.max(1, nextPrice * (1 + feeRate))));
     }
     return Math.max(0, Math.floor(detail.session.position_qty * (nextPercent / 100)));
   };
@@ -4476,7 +4504,7 @@ function OrderModal({
     setPrice(close);
     setPercent(defaultPercent);
     setQuantity(initialQuantity);
-    setOrderAmountInput(close * initialQuantity);
+    setOrderAmountInput(Math.floor(availableCash * (defaultPercent / 100)));
     setSelectedQuickAmounts([]);
   }, [detail.session.id, mode]);
 
@@ -4558,11 +4586,12 @@ function OrderModal({
   }, [detail.session.id, linkedAccount, mode, price, quantity, selectedRiskPlanStepId, riskDetail?.scenario?.id, riskDetail?.scenario?.updated_at]);
   const onQuantityChange = (nextQuantity: number) => {
     const safeQuantity = Math.max(0, Math.min(nextQuantity || 0, maxAffordableQuantity));
+    const nextTotalCost = safeQuantity * price * (1 + feeRate);
     setQuantity(safeQuantity);
-    setOrderAmountInput(safeQuantity * price);
+    setOrderAmountInput(Math.floor(nextTotalCost));
     setSelectedQuickAmounts([]);
     if (mode === "BUY") {
-      const nextPercent = Math.min(100, Math.round(((safeQuantity * price) / Math.max(1, detail.session.initial_cash)) * 100));
+      const nextPercent = Math.min(100, Math.round((nextTotalCost / Math.max(1, availableCash)) * 100));
       setPercent(nextPercent);
     } else {
       const nextPercent = Math.min(100, Math.round((safeQuantity / Math.max(1, detail.session.position_qty)) * 100));
@@ -4573,22 +4602,22 @@ function OrderModal({
   const applyPercent = (nextPercent: number) => {
     const safePercent = Math.max(0, Math.min(100, nextPercent || 0));
     const nextQuantity = calculateQuantity(safePercent, price);
+    const targetBudget = mode === "BUY" ? Math.floor(availableCash * (safePercent / 100)) : 0;
     setPercent(safePercent);
     setQuantity(nextQuantity);
-    setOrderAmountInput(nextQuantity * price);
+    setOrderAmountInput(mode === "BUY" ? targetBudget : nextQuantity * price);
     setSelectedQuickAmounts([]);
   };
 
   const applyBuyAmount = (requestedAmount: number, selectedAmounts: number[] = []) => {
-    const safeAmount = Math.max(0, Math.floor(requestedAmount || 0));
-    const orderPrice = Math.max(1, close || price);
-    const affordableQuantity = Math.floor(availableCash / Math.max(1, orderPrice * (1 + feeRate)));
-    const nextQuantity = Math.max(0, Math.min(Math.floor(safeAmount / orderPrice), affordableQuantity));
+    const requestedBudget = Math.max(0, Math.floor(requestedAmount || 0));
+    const budget = Math.min(requestedBudget, availableCash);
+    const orderPrice = Math.max(1, price || close);
+    const nextQuantity = Math.max(0, Math.floor(budget / Math.max(1, orderPrice * (1 + feeRate))));
     const actualAmount = orderPrice * nextQuantity;
-    setPrice(orderPrice);
     setQuantity(nextQuantity);
-    setOrderAmountInput(safeAmount);
-    setPercent(Math.min(100, Math.round((actualAmount / Math.max(1, detail.session.initial_cash)) * 100)));
+    setOrderAmountInput(requestedBudget);
+    setPercent(Math.min(100, Math.round(((actualAmount * (1 + feeRate)) / Math.max(1, availableCash)) * 100)));
     setSelectedQuickAmounts(selectedAmounts);
   };
 
@@ -4600,10 +4629,10 @@ function OrderModal({
     const safeQuantity = Math.max(0, Math.min(quantity, affordableQuantity));
     setPrice(safePrice);
     setQuantity(safeQuantity);
-    setOrderAmountInput(safePrice * safeQuantity);
+    setOrderAmountInput(Math.floor(safePrice * safeQuantity * (mode === "BUY" ? 1 + feeRate : 1)));
     setSelectedQuickAmounts([]);
     setPercent(mode === "BUY"
-      ? Math.min(100, Math.round(((safeQuantity * safePrice) / Math.max(1, detail.session.initial_cash)) * 100))
+      ? Math.min(100, Math.round(((safeQuantity * safePrice * (1 + feeRate)) / Math.max(1, availableCash)) * 100))
       : Math.min(100, Math.round((safeQuantity / Math.max(1, detail.session.position_qty)) * 100)));
   };
 
@@ -4775,11 +4804,13 @@ function OrderModal({
                     className="input-control"
                     type="number"
                     min={0}
-                    step={10000}
+                    step={1}
                     value={orderAmountInput}
                     onFocus={(event) => event.currentTarget.select()}
                     onChange={(event) => applyBuyAmount(Number(event.target.value) || 0)}
+                    aria-describedby="training-order-amount-help"
                   />
+                  <small id="training-order-amount-help">수수료를 포함해 입력 금액을 넘지 않는 최대 수량으로 자동 계산됩니다.</small>
                 </label>
               ) : null}
             </div>
@@ -5314,6 +5345,8 @@ function TradeTrainingPage() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [detail, setDetail] = useState<TrainingSessionDetail | null>(null);
+  const [chartTimeframe, setChartTimeframe] = useState<TrainingChartTimeframe>("DAY");
+  const [chartTimeframeLoading, setChartTimeframeLoading] = useState(false);
   const [technicalEnabled, setTechnicalEnabled] = useState(false);
   const [technicalData, setTechnicalData] = useState<TechnicalAnalysisPreview | null>(null);
   const [technicalLoading, setTechnicalLoading] = useState(false);
@@ -5359,6 +5392,8 @@ function TradeTrainingPage() {
   const [riskControlsOpen, setRiskControlsOpen] = useState(false);
   const [mainRiskPlanSaving, setMainRiskPlanSaving] = useState(false);
   const technicalRequestRef = useRef(0);
+  const chartTimeframeRequestRef = useRef(0);
+  const chartTimeframeAbortRef = useRef<AbortController | null>(null);
   const multiTechnicalRequestRef = useRef(0);
   const multiTechnicalCacheRef = useRef<Map<string, MultiPeriodTechnicalAnalysis>>(new Map());
   const mainRiskEditor = useRiskPlanPriceEditor(
@@ -5393,8 +5428,19 @@ function TradeTrainingPage() {
     setTechnicalDrawerOpen(false);
   }, [detail?.session.id]);
 
+  useEffect(() => () => chartTimeframeAbortRef.current?.abort(), []);
+
   useEffect(() => {
-    if (!technicalEnabled || !detail?.session.id || !detail.session.current_date) return;
+    if (chartTimeframe === "DAY") return;
+    setTechnicalEnabled(false);
+    setTechnicalDrawerOpen(false);
+    setSelectedMarketIndex(null);
+    setRiskControlsOpen(false);
+    setShowExistingChartMarkers(false);
+  }, [chartTimeframe]);
+
+  useEffect(() => {
+    if (chartTimeframe !== "DAY" || !technicalEnabled || !detail?.session.id || !detail.session.current_date) return;
     const controller = new AbortController();
     const requestId = ++technicalRequestRef.current;
     setTechnicalLoading(true);
@@ -5414,7 +5460,7 @@ function TradeTrainingPage() {
       if (requestId === technicalRequestRef.current) setTechnicalLoading(false);
     });
     return () => controller.abort();
-  }, [technicalEnabled, technicalRetryKey, detail?.session.id, detail?.session.current_date]);
+  }, [chartTimeframe, technicalEnabled, technicalRetryKey, detail?.session.id, detail?.session.current_date]);
 
   useEffect(() => {
     if (!technicalDrawerOpen || !detail?.session.id || !detail.session.current_date) return;
@@ -5451,6 +5497,10 @@ function TradeTrainingPage() {
   }, [technicalDrawerOpen, technicalPeriod, technicalConfigurations, multiTechnicalRetryKey, detail?.session.id, detail?.session.current_date]);
 
   const openTechnicalDrawer = () => {
+    if (chartTimeframe !== "DAY") {
+      setMessage("기술분석은 일봉에서만 지원합니다.");
+      return;
+    }
     setTechnicalEnabled(true);
     setTechnicalPeriod("6M");
     setTechnicalDrawerOpen(true);
@@ -5460,6 +5510,40 @@ function TradeTrainingPage() {
   const retryMultiTechnicalAnalysis = () => {
     multiTechnicalCacheRef.current.clear();
     setMultiTechnicalRetryKey((current) => current + 1);
+  };
+
+  const changeChartTimeframe = async (nextTimeframe: TrainingChartTimeframe) => {
+    if (!detail || nextTimeframe === chartTimeframe) return;
+    const previousTimeframe = chartTimeframe;
+    chartTimeframeAbortRef.current?.abort();
+    const controller = new AbortController();
+    chartTimeframeAbortRef.current = controller;
+    const requestId = ++chartTimeframeRequestRef.current;
+    setChartTimeframe(nextTimeframe);
+    setChartTimeframeLoading(true);
+    setError("");
+    try {
+      const response = await repositories.tradeTraining.getSession(detail.session.id, nextTimeframe, controller.signal);
+      if (requestId !== chartTimeframeRequestRef.current || controller.signal.aborted) return;
+      setDetail(response);
+      setScrollTargetDate(null);
+      setHighlightedTradeDate(null);
+      setHighlightedTradeId(null);
+    } catch (nextError) {
+      if (controller.signal.aborted || requestId !== chartTimeframeRequestRef.current) return;
+      setChartTimeframe(previousTimeframe);
+      setError(nextError instanceof Error ? nextError.message : "차트 주기를 변경하지 못했습니다.");
+    } finally {
+      if (requestId === chartTimeframeRequestRef.current) setChartTimeframeLoading(false);
+    }
+  };
+
+  const detailForCurrentTimeframe = async (response: TrainingSessionDetail) => {
+    chartTimeframeAbortRef.current?.abort();
+    chartTimeframeRequestRef.current += 1;
+    setChartTimeframeLoading(false);
+    if (chartTimeframe === "DAY") return response;
+    return repositories.tradeTraining.getSession(response.session.id, chartTimeframe);
   };
   const loadStocks = async (keyword = q, page = 1) => {
     setLoading(true);
@@ -5576,6 +5660,7 @@ function TradeTrainingPage() {
         moving_averages: normalizeMas(movingAverageText),
         training_account_id: linkedTrainingAccount?.id ?? null,
       });
+      setChartTimeframe("DAY");
       setDetail(response);
       setShowAvgPriceLine(false);
       setScrollTargetDate(null);
@@ -5629,11 +5714,12 @@ function TradeTrainingPage() {
     setMessage("");
     try {
       const response = await action();
-      setDetail(response);
+      const resolvedResponse = await detailForCurrentTimeframe(response);
+      setDetail(resolvedResponse);
       setScrollTargetDate(null);
       setMessage(successMessage);
-      if (response.session.status === "완료") {
-        await openResultReport(response.session.id);
+      if (resolvedResponse.session.status === "완료") {
+        await openResultReport(resolvedResponse.session.id);
       }
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "요청을 처리하지 못했습니다.");
@@ -5667,7 +5753,7 @@ function TradeTrainingPage() {
       submittedMode === "BUY"
         ? await repositories.tradeTraining.buy(detail.session.id, payload)
         : await repositories.tradeTraining.sell(detail.session.id, payload);
-    setDetail(response);
+    setDetail(await detailForCurrentTimeframe(response));
     setScrollTargetDate(null);
     setOrderMode(null);
     setMessage(submittedMode === "BUY" ? "매수 체결되었습니다." : "매도 체결되었습니다.");
@@ -5715,6 +5801,10 @@ function TradeTrainingPage() {
 
   const handleToggleMarketIndex = async (indexCode: MarketIndexCode) => {
     if (!detail) return;
+    if (chartTimeframe !== "DAY") {
+      setMessage("시장지수 비교는 일봉에서만 지원합니다.");
+      return;
+    }
     if (selectedMarketIndex === indexCode) {
       setSelectedMarketIndex(null);
       setMarketIndexError(null);
@@ -5832,8 +5922,9 @@ function TradeTrainingPage() {
     setMessage("");
     setResult(null);
     try {
-      const response = await repositories.tradeTraining.getSession(sessionId);
+      const response = await repositories.tradeTraining.getSession(sessionId, "DAY");
       const options = response.session.options || {};
+      setChartTimeframe("DAY");
       setDetail(response);
       setDisplayDays(Number(options.display_days || displayDays || 80));
       setMovingAverageText(Array.isArray(options.moving_averages) ? options.moving_averages.join(",") : movingAverageText);
@@ -5950,6 +6041,10 @@ function TradeTrainingPage() {
                 onOpenPlan={() => { setRiskPlanEditOnly(true); setOrderInitialTab("risk"); setOrderMode("BUY"); }}
               />
               <CandleChart
+                key={`${detail.session.id}:${chartTimeframe}`}
+                timeframe={chartTimeframe}
+                timeframeLoading={chartTimeframeLoading}
+                onTimeframeChange={(value) => void changeChartTimeframe(value)}
                 sessionId={detail.session.id}
                 stockId={detail.session.stock_id}
                 stockName={detail.session.stock_name}
@@ -5957,8 +6052,8 @@ function TradeTrainingPage() {
                 trades={detail.trades}
                 avgPriceLine={showAvgPriceLine && detail.session.position_qty > 0 ? detail.session.avg_price : null}
                 riskPlanLines={showRiskPlanLines ? [...(detail.risk_scenario?.buy_steps ?? []), ...(detail.risk_scenario?.sell_steps ?? [])] : []}
-                showTradeMarkers={showTradeMarkers}
-                showExistingChartMarkers={showExistingChartMarkers}
+                showTradeMarkers={chartTimeframe === "DAY" && showTradeMarkers}
+                showExistingChartMarkers={chartTimeframe === "DAY" && showExistingChartMarkers}
                 displayDays={displayDays}
                 scrollTargetDate={scrollTargetDate}
                 highlightedTradeDate={highlightedTradeDate}
@@ -5984,7 +6079,8 @@ function TradeTrainingPage() {
                         key={indexCode}
                         className={`training-chart-tool-btn training-market-index-toggle ${selectedMarketIndex === indexCode ? "active" : ""}`}
                         type="button"
-                        disabled={marketIndexLoadingCode === indexCode}
+                        disabled={chartTimeframe !== "DAY" || marketIndexLoadingCode === indexCode}
+                        title={chartTimeframe === "DAY" ? `${MARKET_INDEX_LABELS[indexCode]} 비교` : "시장지수 비교는 일봉에서만 지원합니다."}
                         onClick={() => void handleToggleMarketIndex(indexCode)}
                       >
                         {MARKET_INDEX_LABELS[indexCode]}
@@ -6024,7 +6120,7 @@ function TradeTrainingPage() {
                     </div>
                   </>
                 }
-                renderMarketIndexPanel={(chartLayout) => selectedMarketIndex ? (
+                renderMarketIndexPanel={(chartLayout) => chartTimeframe === "DAY" && selectedMarketIndex ? (
                   <MarketIndexReplayChart
                     indexCode={selectedMarketIndex}
                     indexName={MARKET_INDEX_LABELS[selectedMarketIndex]}

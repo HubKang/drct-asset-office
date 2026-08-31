@@ -225,11 +225,17 @@ class UsMarketDataService:
                     if dates:
                         affected_stock_ids.append(stock_id)
                     if historical_mode:
-                        historical_status = "COMPLETE" if len(result.prices) >= payload.trading_days or result.history_exhausted else "PARTIAL"
+                        historical_status = "COMPLETE" if result.incomplete_row_count == 0 and (len(result.prices) >= payload.trading_days or result.history_exhausted) else "PARTIAL"
                     else:
-                        historical_status = "PARTIAL" if latest is None else str(stock["historical_price_status"])
-                    update_historical_status = historical_mode or latest is None
-                    completed_at = timestamp if historical_mode and historical_status == "COMPLETE" else None
+                        existing_status = str(stock["historical_price_status"])
+                        repaired_history = (
+                            existing_status == "PARTIAL"
+                            and result.incomplete_row_count == 0
+                            and (len(result.prices) >= payload.trading_days or result.history_exhausted)
+                        )
+                        historical_status = "COMPLETE" if repaired_history else ("PARTIAL" if latest is None else existing_status)
+                    update_historical_status = historical_mode or latest is None or historical_status != str(stock["historical_price_status"])
+                    completed_at = timestamp if historical_status == "COMPLETE" else None
                     self.db.execute(text("""
                         UPDATE us_stocks SET last_synced_at=:timestamp, updated_at=:timestamp,
                           historical_price_status=CASE WHEN :update_historical_status=1 THEN :historical_status ELSE historical_price_status END,
@@ -238,7 +244,12 @@ class UsMarketDataService:
                     """), {"timestamp": timestamp, "update_historical_status": int(update_historical_status), "historical_status": historical_status, "completed_at": completed_at, "id": stock_id})
                     self.db.commit()
                     if historical_mode and historical_status == "PARTIAL":
-                        failures.append(UsPriceCollectionFailure(stock_id=stock_id, symbol=symbol, reason="공급자 과거 데이터 끝에 도달하기 전에 수집이 중단됐습니다."))
+                        reason = (
+                            f"공급자 결측 일봉 {result.incomplete_row_count}건을 제외하고 정상 일봉을 저장했습니다. 이후 증분 수집에서 다시 보완합니다."
+                            if result.incomplete_row_count
+                            else "공급자 과거 데이터 끝에 도달하기 전에 수집이 중단됐습니다."
+                        )
+                        failures.append(UsPriceCollectionFailure(stock_id=stock_id, symbol=symbol, reason=reason))
                     else:
                         success_count += 1
                 except UsHistoricalPricePartialError as exc:
@@ -656,6 +667,172 @@ class UsMarketDataService:
                 f"미국 종가·테마 전체 갱신 완료: 연결 종목 {price.requested_stock_count}개 중 "
                 f"{price.success_stock_count}개 성공, {price.failed_stock_count}개 실패 · "
                 f"활성 테마 {returns.processed_theme_count}개 재계산"
+            )
+            return UsMarketRefreshResponse(price=price.model_dump(), returns=returns, message=message)
+        finally:
+            _refresh_lock.release()
+
+    def refresh_group(self, group_id: int, payload: UsMarketRefreshRequest) -> UsMarketRefreshResponse:
+        if not _refresh_lock.acquire(blocking=False):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="미국 가격 또는 테마 갱신이 이미 진행 중입니다.")
+        try:
+            group = self.db.execute(text("SELECT id,name,active FROM us_theme_groups WHERE id=:id"), {"id": group_id}).mappings().first()
+            if not group:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="미국 테마그룹을 찾을 수 없습니다.")
+            if int(group["active"]) != 1:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="비활성 테마그룹은 갱신할 수 없습니다.")
+
+            theme_ids = [int(value) for value in self.db.scalars(text("""
+                SELECT id FROM us_themes
+                WHERE theme_group_id=:group_id AND active=1
+                ORDER BY id
+            """), {"group_id": group_id}).all()]
+            linked_stocks = self.db.execute(text("""
+                SELECT DISTINCT s.id,s.historical_price_status
+                FROM us_stocks s
+                JOIN us_theme_stocks mts ON mts.us_stock_id=s.id AND mts.active=1
+                JOIN us_themes t ON t.id=mts.theme_id AND t.active=1
+                WHERE t.theme_group_id=:group_id AND s.is_active=1
+                ORDER BY s.id
+            """), {"group_id": group_id}).mappings().all()
+            incomplete_ids = [int(row["id"]) for row in linked_stocks if str(row["historical_price_status"]) != "COMPLETE"]
+            complete_ids = [int(row["id"]) for row in linked_stocks if str(row["historical_price_status"]) == "COMPLETE"]
+            price_results: list[UsPriceCollectionResponse] = []
+            if incomplete_ids:
+                price_results.append(self.collect_prices(
+                    UsPriceCollectionRequest(mode="SELECTED", stock_ids=incomplete_ids, trading_days=payload.trading_days),
+                    acquire_lock=False,
+                    recalculate=False,
+                ))
+            if complete_ids:
+                price_results.append(self.collect_prices(
+                    UsPriceCollectionRequest(mode="INCREMENTAL", stock_ids=complete_ids, trading_days=payload.trading_days),
+                    acquire_lock=False,
+                    recalculate=False,
+                ))
+
+            linked_range = self.db.execute(text("""
+                SELECT MIN(p.trade_date) date_from,MAX(p.trade_date) date_to
+                FROM us_stock_daily_prices p
+                JOIN us_theme_stocks mts ON mts.us_stock_id=p.us_stock_id AND mts.active=1
+                JOIN us_themes t ON t.id=mts.theme_id AND t.active=1
+                JOIN us_stocks s ON s.id=p.us_stock_id AND s.is_active=1
+                WHERE t.theme_group_id=:group_id
+            """), {"group_id": group_id}).mappings().one()
+            if theme_ids:
+                returns = self.recalculate_returns(UsThemeReturnRecalculateRequest(
+                    start_date=str(linked_range["date_from"]) if linked_range["date_from"] else None,
+                    end_date=str(linked_range["date_to"]) if linked_range["date_to"] else None,
+                    theme_ids=theme_ids,
+                ))
+            else:
+                returns = UsThemeReturnRecalculateResponse(
+                    processed_theme_count=0, processed_date_count=0, upserted_count=0, skipped_count=0,
+                    date_from=None, date_to=None, message="갱신할 활성 테마가 없습니다.",
+                )
+
+            failures = [failure for result in price_results for failure in result.failures]
+            affected_from = [result.affected_date_from for result in price_results if result.affected_date_from]
+            affected_to = [result.affected_date_to for result in price_results if result.affected_date_to]
+            price = UsPriceCollectionResponse(
+                mode="INCREMENTAL",
+                requested_stock_count=sum(result.requested_stock_count for result in price_results),
+                success_stock_count=sum(result.success_stock_count for result in price_results),
+                failed_stock_count=len(failures),
+                inserted_count=sum(result.inserted_count for result in price_results),
+                updated_count=sum(result.updated_count for result in price_results),
+                unchanged_count=sum(result.unchanged_count for result in price_results),
+                normalized_open_boundary_count=sum(result.normalized_open_boundary_count for result in price_results),
+                affected_date_from=min(affected_from) if affected_from else None,
+                affected_date_to=max(affected_to) if affected_to else None,
+                recalculated_theme_count=returns.processed_theme_count,
+                latest_price_date=str(linked_range["date_to"]) if linked_range["date_to"] else None,
+                failures=failures,
+                message=f"{group['name']} 연결 종목 가격 갱신 완료",
+            )
+            message = (
+                f"{group['name']} 테마그룹 갱신 완료: 연결 종목 {price.requested_stock_count}개 중 "
+                f"{price.success_stock_count}개 성공, {price.failed_stock_count}개 실패 · "
+                f"활성 테마 {returns.processed_theme_count}개 재계산"
+            )
+            return UsMarketRefreshResponse(price=price.model_dump(), returns=returns, message=message)
+        finally:
+            _refresh_lock.release()
+
+    def refresh_theme(self, theme_id: int, payload: UsMarketRefreshRequest) -> UsMarketRefreshResponse:
+        if not _refresh_lock.acquire(blocking=False):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="미국 가격 또는 테마 갱신이 이미 진행 중입니다.")
+        try:
+            theme = self.db.execute(text("""
+                SELECT t.id,t.name,t.active,g.active AS group_active
+                FROM us_themes t
+                JOIN us_theme_groups g ON g.id=t.theme_group_id
+                WHERE t.id=:id
+            """), {"id": theme_id}).mappings().first()
+            if not theme:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="미국 테마를 찾을 수 없습니다.")
+            if int(theme["active"]) != 1 or int(theme["group_active"]) != 1:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="활성 테마와 활성 테마그룹만 갱신할 수 있습니다.")
+
+            linked_stocks = self.db.execute(text("""
+                SELECT DISTINCT s.id,s.historical_price_status
+                FROM us_stocks s
+                JOIN us_theme_stocks mts ON mts.us_stock_id=s.id AND mts.active=1
+                WHERE mts.theme_id=:theme_id AND s.is_active=1
+                ORDER BY s.id
+            """), {"theme_id": theme_id}).mappings().all()
+            incomplete_ids = [int(row["id"]) for row in linked_stocks if str(row["historical_price_status"]) != "COMPLETE"]
+            complete_ids = [int(row["id"]) for row in linked_stocks if str(row["historical_price_status"]) == "COMPLETE"]
+            price_results: list[UsPriceCollectionResponse] = []
+            if incomplete_ids:
+                price_results.append(self.collect_prices(
+                    UsPriceCollectionRequest(mode="SELECTED", stock_ids=incomplete_ids, trading_days=payload.trading_days),
+                    acquire_lock=False,
+                    recalculate=False,
+                ))
+            if complete_ids:
+                price_results.append(self.collect_prices(
+                    UsPriceCollectionRequest(mode="INCREMENTAL", stock_ids=complete_ids, trading_days=payload.trading_days),
+                    acquire_lock=False,
+                    recalculate=False,
+                ))
+
+            linked_range = self.db.execute(text("""
+                SELECT MIN(p.trade_date) date_from,MAX(p.trade_date) date_to
+                FROM us_stock_daily_prices p
+                JOIN us_theme_stocks mts ON mts.us_stock_id=p.us_stock_id AND mts.active=1
+                JOIN us_stocks s ON s.id=p.us_stock_id AND s.is_active=1
+                WHERE mts.theme_id=:theme_id
+            """), {"theme_id": theme_id}).mappings().one()
+            returns = self.recalculate_returns(UsThemeReturnRecalculateRequest(
+                start_date=str(linked_range["date_from"]) if linked_range["date_from"] else None,
+                end_date=str(linked_range["date_to"]) if linked_range["date_to"] else None,
+                theme_ids=[theme_id],
+            ))
+
+            failures = [failure for result in price_results for failure in result.failures]
+            affected_from = [result.affected_date_from for result in price_results if result.affected_date_from]
+            affected_to = [result.affected_date_to for result in price_results if result.affected_date_to]
+            price = UsPriceCollectionResponse(
+                mode="INCREMENTAL",
+                requested_stock_count=sum(result.requested_stock_count for result in price_results),
+                success_stock_count=sum(result.success_stock_count for result in price_results),
+                failed_stock_count=len(failures),
+                inserted_count=sum(result.inserted_count for result in price_results),
+                updated_count=sum(result.updated_count for result in price_results),
+                unchanged_count=sum(result.unchanged_count for result in price_results),
+                normalized_open_boundary_count=sum(result.normalized_open_boundary_count for result in price_results),
+                affected_date_from=min(affected_from) if affected_from else None,
+                affected_date_to=max(affected_to) if affected_to else None,
+                recalculated_theme_count=returns.processed_theme_count,
+                latest_price_date=str(linked_range["date_to"]) if linked_range["date_to"] else None,
+                failures=failures,
+                message=f"{theme['name']} 연결 종목 가격 갱신 완료",
+            )
+            message = (
+                f"{theme['name']} 테마 갱신 완료: 연결 종목 {price.requested_stock_count}개 중 "
+                f"{price.success_stock_count}개 성공, {price.failed_stock_count}개 실패 · "
+                f"테마등락률 재계산 {returns.processed_theme_count}개"
             )
             return UsMarketRefreshResponse(price=price.model_dump(), returns=returns, message=message)
         finally:

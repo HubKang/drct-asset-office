@@ -11,6 +11,7 @@ from backend.app.schemas.stock_tracking_schema import (
     CreateTrackingFromConditionResultsResponse,
     RegisterTrackingItemsFromCandidatesRequest,
     RegisterTrackingItemsFromCandidatesResponse,
+    SetStockTrackingGroupActiveRequest,
     StockTrackingGroupAnalysisListResponse,
     StockTrackingGroupCreateRequest,
     StockTrackingGroupResponse,
@@ -52,6 +53,15 @@ def update_stock_tracking_group(
     return StockTrackingService(db).update_group(group_id, payload)
 
 
+@router.patch("/stock-tracking/groups/{group_id}/active", response_model=StockTrackingGroupResponse)
+def set_stock_tracking_group_active(
+    group_id: int,
+    payload: SetStockTrackingGroupActiveRequest,
+    db: Session = Depends(get_db),
+) -> StockTrackingGroupResponse:
+    return StockTrackingService(db).set_group_active(group_id, bool(payload.is_active))
+
+
 @router.delete("/stock-tracking/groups/{group_id}")
 def delete_stock_tracking_group(group_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
     return StockTrackingService(db).delete_group(group_id)
@@ -65,6 +75,9 @@ def list_stock_tracking_items(
     from_date: str | None = Query(default=None),
     to_date: str | None = Query(default=None),
     keyword: str | None = Query(default=None),
+    active_groups_only: bool = Query(default=True),
+    sort_by: str | None = Query(default=None),
+    sort_direction: str = Query(default="asc"),
     limit: int = Query(default=200, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
@@ -76,6 +89,9 @@ def list_stock_tracking_items(
         from_date=from_date,
         to_date=to_date,
         keyword=keyword,
+        active_groups_only=active_groups_only,
+        sort_by=sort_by,
+        sort_direction=sort_direction,
         limit=limit,
         offset=offset,
     )

@@ -1,5 +1,5 @@
 import { ExternalLink, Info, ListCollapse, ListTree, Search, Sparkles, Trash2, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import StatusBadge from "@/components/common/StatusBadge";
@@ -82,6 +82,13 @@ function NewsPage() {
   const [contentFailureIds, setContentFailureIds] = useState<number[]>([]);
   const [policyOpen, setPolicyOpen] = useState(false);
   const policyRef = useRef<HTMLDivElement | null>(null);
+  const newsSelectionDragRef = useRef<{ active: boolean; checked: boolean; visited: Set<number> }>({
+    active: false,
+    checked: false,
+    visited: new Set(),
+  });
+  const newsPointerSelectionRef = useRef<{ itemId: number; checked: boolean } | null>(null);
+  const [newsSelectionDragging, setNewsSelectionDragging] = useState(false);
   const pageSize = 20;
 
   const filteredTargets = useMemo(() => {
@@ -151,10 +158,43 @@ function NewsPage() {
     window.addEventListener("mousedown", onPointerDown);
     return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("mousedown", onPointerDown); };
   }, []);
+  useEffect(() => {
+    const finishNewsSelectionDrag = () => {
+      if (!newsSelectionDragRef.current.active) return;
+      newsSelectionDragRef.current = { active: false, checked: false, visited: new Set() };
+      setNewsSelectionDragging(false);
+    };
+    window.addEventListener("pointerup", finishNewsSelectionDrag);
+    window.addEventListener("pointercancel", finishNewsSelectionDrag);
+    window.addEventListener("blur", finishNewsSelectionDrag);
+    return () => {
+      window.removeEventListener("pointerup", finishNewsSelectionDrag);
+      window.removeEventListener("pointercancel", finishNewsSelectionDrag);
+      window.removeEventListener("blur", finishNewsSelectionDrag);
+    };
+  }, []);
 
   const toggleStock = (stockId: number) => setCheckedStockIds((previous) =>
     previous.includes(stockId) ? previous.filter((id) => id !== stockId) : [...previous, stockId],
   );
+  const setNewsChecked = (newsId: number, checked: boolean) => setCheckedNewsIds((previous) => {
+    if (checked) return previous.includes(newsId) ? previous : [...previous, newsId];
+    return previous.filter((id) => id !== newsId);
+  });
+  const continueNewsSelectionDrag = (newsId: number) => {
+    const drag = newsSelectionDragRef.current;
+    if (!drag.active || drag.visited.has(newsId)) return;
+    drag.visited.add(newsId);
+    setNewsChecked(newsId, drag.checked);
+  };
+  const startNewsSelectionDrag = (event: ReactPointerEvent<HTMLInputElement>, newsId: number, currentlyChecked: boolean) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    const checked = !currentlyChecked;
+    newsPointerSelectionRef.current = { itemId: newsId, checked };
+    newsSelectionDragRef.current = { active: true, checked, visited: new Set([newsId]) };
+    setNewsSelectionDragging(true);
+    setNewsChecked(newsId, checked);
+  };
   const openDetail = (news: NewsItem) => { setSelectedNews(news); setIsDrawerOpen(true); };
 
   const collectSelected = async () => {
@@ -275,9 +315,24 @@ function NewsPage() {
           {error ? <p className="news-inbox-empty error">{error}</p> : null}
           {!loading && !error && currentStockId && !items.length ? <p className="news-inbox-empty">조건에 맞는 뉴스가 없습니다.</p> : null}
           {!loading && !error && items.length ? <>
-            <div className="news-inbox-table-shell"><table className="news-inbox-table"><thead><tr><th><input type="checkbox" aria-label="현재 페이지 전체 선택" checked={allChecked} onChange={(e) => setCheckedNewsIds(e.target.checked ? items.map((item) => item.id) : [])} /></th><th>일시</th><th>뉴스</th><th>기사</th><th>작업</th></tr></thead><tbody>
-              {items.map((news) => { const date = formatShortDate(news.published_at); const checked = checkedNewsIds.includes(news.id); return <tr key={news.id} tabIndex={0} onClick={() => openDetail(news)} onKeyDown={(e) => { if (e.key === "Enter") openDetail(news); }}>
-                <td onClick={(e) => e.stopPropagation()}><input type="checkbox" aria-label={`${news.title} 선택`} checked={checked} onChange={(e) => setCheckedNewsIds((previous) => e.target.checked ? [...previous, news.id] : previous.filter((id) => id !== news.id))} /></td>
+            <div className={`news-inbox-table-shell ${newsSelectionDragging ? "is-drag-selecting" : ""}`}><table className="news-inbox-table"><thead><tr><th><input type="checkbox" aria-label="현재 페이지 전체 선택" checked={allChecked} onChange={(e) => setCheckedNewsIds(e.target.checked ? items.map((item) => item.id) : [])} /></th><th>일시</th><th>뉴스</th><th>기사</th><th>작업</th></tr></thead><tbody>
+              {items.map((news) => { const date = formatShortDate(news.published_at); const checked = checkedNewsIds.includes(news.id); return <tr key={news.id} className={checked ? "is-selected" : ""} tabIndex={0} onPointerEnter={() => continueNewsSelectionDrag(news.id)} onClick={() => openDetail(news)} onKeyDown={(e) => { if (e.key === "Enter") openDetail(news); }}>
+                <td onClick={(e) => e.stopPropagation()}><input
+                  type="checkbox"
+                  aria-label={`${news.title} 선택`}
+                  title="클릭한 채 위아래로 드래그하면 연속 선택·해제됩니다."
+                  checked={checked}
+                  onPointerDown={(event) => startNewsSelectionDrag(event, news.id, checked)}
+                  onChange={(event) => {
+                    const pointerSelection = newsPointerSelectionRef.current;
+                    if (pointerSelection?.itemId === news.id) {
+                      setNewsChecked(news.id, pointerSelection.checked);
+                      newsPointerSelectionRef.current = null;
+                    } else {
+                      setNewsChecked(news.id, event.target.checked);
+                    }
+                  }}
+                /></td>
                 <td><strong>{date.date}</strong><small>{date.time}</small></td>
                 <td><strong className="news-inbox-title">{news.title}</strong>{news.summary ? <p className="news-inbox-summary">{news.summary}</p> : <span className="news-inbox-unsummarized">미요약</span>}</td>
                 <td onClick={(e) => e.stopPropagation()}>{news.url ? <a className="news-inbox-link" href={news.url} target="_blank" rel="noreferrer">기사 열기 <ExternalLink size={13} /></a> : <span className="cell-muted">URL 없음</span>}</td>

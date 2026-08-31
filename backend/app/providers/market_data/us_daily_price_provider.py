@@ -20,6 +20,7 @@ class UsDailyPriceFetchResult:
     prices: list[UsDailyPrice]
     history_exhausted: bool
     normalized_open_boundary_count: int = 0
+    incomplete_row_count: int = 0
 
 
 class UsDailyPriceValidationError(ValueError):

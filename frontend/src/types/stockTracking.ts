@@ -11,6 +11,9 @@ export type StockTrackingGroup = {
   is_active: number;
   item_count: number;
   tracking_count: number;
+  success_count?: number;
+  fail_count?: number;
+  hold_count?: number;
   created_at: string;
   updated_at: string;
 };

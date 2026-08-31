@@ -94,6 +94,18 @@ const THEME_FLOW_COLLECTOR = "market_theme_price_flow_refresh";
 const todayInKst = () =>
   new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Seoul" }).format(new Date());
 
+const formatMarketSignalEvaluationDate = (value: string | null) => {
+  if (!value) return "미평가";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "미평가";
+  return new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+  }).format(date);
+};
+
 const shiftKstDate = (dateValue: string, days: number) => {
   const date = new Date(`${dateValue}T12:00:00+09:00`);
   date.setDate(date.getDate() + days);
@@ -437,6 +449,7 @@ function DashboardPage() {
   const [usThemeFeedback, setUsThemeFeedback] = useState<ActionFeedback | null>(null);
   const [isUsThemeRunning, setIsUsThemeRunning] = useState(false);
   const [marketSignals, setMarketSignals] = useState<MarketSignalChangeItem[]>([]);
+  const [marketSignalsEvaluatedAt, setMarketSignalsEvaluatedAt] = useState<string | null>(null);
   const [isMarketSignalsLoading, setIsMarketSignalsLoading] = useState(true);
   const [marketSignalsError, setMarketSignalsError] = useState("");
   const [upcomingCalendar, setUpcomingCalendar] = useState<UpcomingCalendarData | null>(null);
@@ -561,16 +574,18 @@ function DashboardPage() {
   const loadMarketSignals = useCallback(async () => {
     setIsMarketSignalsLoading(true);
     setMarketSignalsError("");
+    setMarketSignalsEvaluatedAt(null);
     try {
       const [transitionResult, currentResult] = await Promise.allSettled([
         repositories.marketSignals.todayTransitions(),
         repositories.marketSignals.currentStates(),
       ]);
       if (transitionResult.status === "rejected" && currentResult.status === "rejected") throw currentResult.reason;
-      const todayTransitions = transitionResult.status === "fulfilled" ? transitionResult.value : { items: [] };
+      const todayTransitions = transitionResult.status === "fulfilled" ? transitionResult.value : { items: [], last_evaluated_at: null };
       const currentStates = currentResult.status === "fulfilled" ? currentResult.value : todayTransitions;
       const rows = selectMeaningfulMarketSignals(currentStates.items, todayTransitions.items).slice(0, 5);
       setMarketSignals(rows);
+      setMarketSignalsEvaluatedAt(currentStates.last_evaluated_at ?? todayTransitions.last_evaluated_at ?? null);
     } catch (error) {
       setMarketSignalsError(errorMessage(error));
     } finally {
@@ -983,7 +998,7 @@ function DashboardPage() {
         <div className="dashboard-v3-market-check-grid">
           <article className="dashboard-v3-check-panel">
             <header>
-              <div><h4>시장 변화 신호</h4><p>추세 유지 상태를 제외한 현재 신호입니다.</p></div>
+              <div><h4>시장 변화 신호</h4><p className="dashboard-v3-signal-header-info"><span>평가 기준 {formatMarketSignalEvaluationDate(marketSignalsEvaluatedAt)}</span><span>추세 유지 상태를 제외한 현재 신호입니다.</span></p></div>
               <button type="button" className="dashboard-v2-text-button" onClick={() => navigate("/market-indexes/signals")}>전체 보기</button>
             </header>
             {isMarketSignalsLoading ? (

@@ -39,6 +39,7 @@ from backend.app.schemas.trade_training_schema import (
     TechnicalAnalysisPreviewResponse,
 )
 from backend.app.services.trade_training_service import TradeTrainingService
+from backend.app.services.price_bar_aggregation import PriceBarTimeframe
 from backend.app.services.stock_price_service import StockPriceService
 
 router = APIRouter(tags=["trade-training"])
@@ -135,8 +136,12 @@ def create_training_session(payload: TrainingSessionCreate, db: Session = Depend
 
 
 @router.get("/trade-training/sessions/{session_id}", response_model=TrainingSessionDetailResponse)
-def get_training_session(session_id: int, db: Session = Depends(get_db)) -> dict:
-    return TradeTrainingService(db).get_session_detail(session_id)
+def get_training_session(
+    session_id: int,
+    timeframe: PriceBarTimeframe = Query(default=PriceBarTimeframe.DAY),
+    db: Session = Depends(get_db),
+) -> dict:
+    return TradeTrainingService(db).get_session_detail(session_id, timeframe)
 
 
 @router.post("/trade-training/technical-analysis/preview", response_model=TechnicalAnalysisPreviewResponse)

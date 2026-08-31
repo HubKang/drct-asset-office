@@ -98,9 +98,29 @@ def test_yfinance_rejects_nan_invalid_candle_and_duplicate_date() -> None:
         retry_count=0,
         now_factory=lambda: datetime(2026, 8, 27, 9, tzinfo=NY),
     )
-    for expected in ("null", "outside low/high", "duplicate"):
+    partial = provider.fetch_many_history(symbols=["NVDA"], trading_days=20)
+    assert "NVDA" in partial.results
+    assert partial.results["NVDA"].incomplete_row_count == 1
+    assert [row.trade_date for row in partial.results["NVDA"].prices] == ["2026-08-25"]
+    for expected in ("outside low/high", "duplicate"):
         batch = provider.fetch_many_history(symbols=["NVDA"], trading_days=20)
         assert expected in batch.failures["NVDA"]
+
+
+def test_yfinance_skips_only_incomplete_candle_and_keeps_valid_history() -> None:
+    frame = _single_frame()
+    frame.loc[pd.Timestamp("2026-08-26"), "Volume"] = math.nan
+    frame.loc[pd.Timestamp("2026-08-27")] = [210.0, 212.0, 208.0, 211.0, 211.0, 300]
+    provider = YFinanceUsDailyPriceProvider(
+        downloader=lambda **_kwargs: frame,
+        retry_count=0,
+        now_factory=lambda: datetime(2026, 8, 28, 9, tzinfo=NY),
+    )
+
+    result = provider.fetch_history(symbol="NVDA", exchange="NASDAQ", start_date="", trading_days=20)
+
+    assert [row.trade_date for row in result.prices] == ["2026-08-25", "2026-08-27"]
+    assert result.incomplete_row_count == 1
 
 
 def test_current_new_york_daily_row_is_not_treated_as_final() -> None:
@@ -114,6 +134,37 @@ def test_current_new_york_daily_row_is_not_treated_as_final() -> None:
     assert not is_us_daily_row_complete("2026-08-26", now=datetime(2026, 8, 26, 13, 30, tzinfo=NY))
     assert is_us_daily_row_complete("2026-08-26", now=datetime(2026, 8, 26, 16, 20, tzinfo=NY))
     assert not is_us_daily_row_complete("2026-08-29", now=datetime(2026, 8, 29, 18, 0, tzinfo=NY))
+
+
+def test_current_incomplete_new_york_row_is_ignored_without_marking_history_partial() -> None:
+    frame = _single_frame()
+    frame.loc[pd.Timestamp("2026-08-26"), "Volume"] = math.nan
+    provider = YFinanceUsDailyPriceProvider(
+        downloader=lambda **_kwargs: frame,
+        retry_count=0,
+        now_factory=lambda: datetime(2026, 8, 26, 15, 59, tzinfo=NY),
+    )
+
+    result = provider.fetch_history(symbol="NVDA", exchange="NASDAQ", start_date="", trading_days=2)
+
+    assert [row.trade_date for row in result.prices] == ["2026-08-25"]
+    assert result.incomplete_row_count == 0
+
+
+def test_incomplete_batch_candle_is_retried_individually() -> None:
+    incomplete = _single_frame()
+    incomplete.loc[pd.Timestamp("2026-08-26"), "Volume"] = math.nan
+    frames = iter([incomplete, _single_frame()])
+    provider = YFinanceUsDailyPriceProvider(
+        downloader=lambda **_kwargs: next(frames),
+        retry_count=1,
+        now_factory=lambda: datetime(2026, 8, 27, 9, tzinfo=NY),
+    )
+
+    result = provider.fetch_history(symbol="NVDA", exchange="NASDAQ", start_date="", trading_days=2)
+
+    assert [row.trade_date for row in result.prices] == ["2026-08-25", "2026-08-26"]
+    assert result.incomplete_row_count == 0
 
 
 def test_common_candle_validation_allows_zero_volume_but_rejects_negative() -> None:

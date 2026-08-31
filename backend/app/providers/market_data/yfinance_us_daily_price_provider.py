@@ -113,19 +113,28 @@ class YFinanceUsDailyPriceProvider:
         seen_dates: set[str] = set()
         prices: list[UsDailyPrice] = []
         normalized_dates: set[str] = set()
+        incomplete_row_count = 0
         now = self._now_factory()
         for index, values in frame.sort_index().iterrows():
             if all(pd.isna(values[column]) for column in required):
                 continue
-            if any(pd.isna(values[column]) for column in required):
-                raise UsDailyPriceValidationError(f"{index}: OHLCV contains null")
             timestamp = pd.Timestamp(index)
             trade_date = timestamp.date().isoformat()
+            if not is_us_daily_row_complete(trade_date, now=now):
+                continue
+            if any(pd.isna(values[column]) for column in required):
+                incomplete_row_count += 1
+                missing = ",".join(column for column in required if pd.isna(values[column]))
+                logger.warning(
+                    "Yahoo US daily incomplete candle skipped symbol=%s trade_date=%s missing=%s",
+                    symbol,
+                    trade_date,
+                    missing,
+                )
+                continue
             if trade_date in seen_dates:
                 raise UsDailyPriceValidationError(f"{trade_date}: duplicate daily candle")
             seen_dates.add(trade_date)
-            if not is_us_daily_row_complete(trade_date, now=now):
-                continue
             row = UsDailyPrice(
                 trade_date=trade_date,
                 open_price=float(values["Open"]),
@@ -148,6 +157,7 @@ class YFinanceUsDailyPriceProvider:
             prices=selected,
             history_exhausted=True,
             normalized_open_boundary_count=returned_normalized_count,
+            incomplete_row_count=incomplete_row_count,
         )
 
     def _parse_download(
@@ -189,7 +199,11 @@ class YFinanceUsDailyPriceProvider:
 
         # Retry only missing symbols, individually, without disturbing successful data.
         for _ in range(self.retry_count):
-            retry_symbols = [symbol for symbol in normalized if symbol not in results]
+            retry_symbols = [
+                symbol
+                for symbol in normalized
+                if symbol not in results or results[symbol].incomplete_row_count > 0
+            ]
             if not retry_symbols:
                 break
             for symbol in retry_symbols:

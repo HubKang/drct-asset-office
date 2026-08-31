@@ -556,6 +556,8 @@ export type TrainingCandle = {
   moving_averages: Record<string, number | null>;
 };
 
+export type TrainingChartTimeframe = "DAY" | "WEEK" | "MONTH";
+
 export type TrainingAccount = {
   current_price: number;
   evaluation_amount: number;
@@ -592,6 +594,7 @@ export type TrainingTrade = {
 };
 
 export type TrainingSessionDetail = {
+  timeframe: TrainingChartTimeframe;
   session: TrainingSession;
   trade_method?: TradeMethod | null;
   candles: TrainingCandle[];

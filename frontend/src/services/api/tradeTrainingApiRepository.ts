@@ -26,6 +26,7 @@ import type {
   TradeTrainingPriceCollectionResult,
   TrainingSessionCreate,
   TrainingSessionDetail,
+  TrainingChartTimeframe,
   TrainingStockListResponse,
   TechnicalAnalysisPreview,
   TechnicalAnalysisPreviewRequest,
@@ -87,7 +88,8 @@ export const tradeTrainingApiRepository = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  getSession: (sessionId: number) => apiRequest<TrainingSessionDetail>(`/trade-training/sessions/${sessionId}`),
+  getSession: (sessionId: number, timeframe: TrainingChartTimeframe = "DAY", signal?: AbortSignal) =>
+    apiRequest<TrainingSessionDetail>(`/trade-training/sessions/${sessionId}?timeframe=${timeframe}`, { signal }),
   previewTechnicalAnalysis: (payload: TechnicalAnalysisPreviewRequest, signal?: AbortSignal) =>
     apiRequest<TechnicalAnalysisPreview>("/trade-training/technical-analysis/preview", {
       method: "POST", body: JSON.stringify(payload), signal,
