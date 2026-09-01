@@ -20,6 +20,7 @@ from backend.app.services.analysis_indicator_defaults import (
 )
 from backend.app.services.gpt_prompt_template_defaults import DEFAULT_GPT_PROMPTS
 from backend.app.services.market_theme_defaults import DEFAULT_MARKET_THEMES, keywords_json
+from backend.app.services.drct_stock_signal_defaults import INITIAL_DRCT_SIGNAL_SEARCHES
 
 
 class Base(DeclarativeBase):
@@ -4926,3 +4927,72 @@ def ensure_market_signal_schema() -> None:
                 updated_at = CURRENT_TIMESTAMP
             """
         )
+
+
+def ensure_drct_stock_signal_schema() -> None:
+    """Create the DrCT signal management/rule tables and seed immutable HTS reference v1 rows."""
+    if not DATABASE_URL.startswith("sqlite"):
+        return
+
+    with engine.begin() as conn:
+        conn.exec_driver_sql("""
+            CREATE TABLE IF NOT EXISTS drct_signal_searches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, search_key TEXT NOT NULL UNIQUE, name TEXT NOT NULL UNIQUE,
+                description TEXT, lifecycle_status TEXT NOT NULL DEFAULT 'REFERENCE',
+                display_order INTEGER NOT NULL DEFAULT 100, is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CHECK(lifecycle_status IN ('REFERENCE','LEARNING','SHADOW','ACTIVE','INACTIVE'))
+            )
+        """)
+        conn.exec_driver_sql("""
+            CREATE TABLE IF NOT EXISTS drct_signal_search_versions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, search_id INTEGER NOT NULL, version_no INTEGER NOT NULL,
+                hts_reference_conditions TEXT NOT NULL, hts_condition_expression TEXT NOT NULL,
+                drct_rule_text TEXT, change_note TEXT, is_current INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(search_id, version_no),
+                FOREIGN KEY(search_id) REFERENCES drct_signal_searches(id) ON DELETE RESTRICT
+            )
+        """)
+        conn.exec_driver_sql("""
+            CREATE TABLE IF NOT EXISTS drct_signal_search_marker_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, search_id INTEGER NOT NULL, marker_definition_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(search_id, marker_definition_id),
+                FOREIGN KEY(search_id) REFERENCES drct_signal_searches(id) ON DELETE RESTRICT,
+                FOREIGN KEY(marker_definition_id) REFERENCES chart_markers(id) ON DELETE RESTRICT
+            )
+        """)
+        conn.exec_driver_sql("""
+            CREATE TABLE IF NOT EXISTS drct_signal_search_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, search_version_id INTEGER NOT NULL UNIQUE,
+                schema_version INTEGER NOT NULL DEFAULT 1, rule_json TEXT NOT NULL,
+                validation_status TEXT NOT NULL DEFAULT 'DRAFT',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CHECK(validation_status IN ('DRAFT','VALID','INVALID')),
+                FOREIGN KEY(search_version_id) REFERENCES drct_signal_search_versions(id) ON DELETE RESTRICT
+            )
+        """)
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_drct_signal_searches_order ON drct_signal_searches(display_order, id)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_drct_signal_search_versions_search ON drct_signal_search_versions(search_id, version_no DESC)")
+        conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS uq_drct_signal_search_current_version ON drct_signal_search_versions(search_id) WHERE is_current=1")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_drct_signal_marker_links_marker ON drct_signal_search_marker_links(marker_definition_id, search_id)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_drct_signal_rules_version ON drct_signal_search_rules(search_version_id)")
+
+        for default in INITIAL_DRCT_SIGNAL_SEARCHES:
+            existing_id = conn.exec_driver_sql(
+                "SELECT id FROM drct_signal_searches WHERE search_key=? OR name=? LIMIT 1",
+                (default["search_key"], default["name"]),
+            ).scalar()
+            if existing_id:
+                continue
+            conn.exec_driver_sql("""
+                INSERT INTO drct_signal_searches
+                (search_key, name, description, lifecycle_status, display_order, is_active)
+                VALUES (?, ?, ?, 'REFERENCE', ?, 1)
+            """, (default["search_key"], default["name"], default["description"], default["display_order"]))
+            search_id = conn.exec_driver_sql("SELECT last_insert_rowid()").scalar_one()
+            conn.exec_driver_sql("""
+                INSERT INTO drct_signal_search_versions
+                (search_id, version_no, hts_reference_conditions, hts_condition_expression,
+                 drct_rule_text, change_note, is_current)
+                VALUES (?, 1, ?, ?, NULL, 'DrCT 검색식.txt 원본 초기 등록', 1)
+            """, (search_id, default["hts_reference_conditions"], default["hts_condition_expression"]))

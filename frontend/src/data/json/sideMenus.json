@@ -15,6 +15,11 @@
     "routeKey": "realtime-theme-treemap"
   },
   {
+    "menuKey": "home",
+    "title": "DrCT 종목 시그널",
+    "routeKey": "drct-stock-signals"
+  },
+  {
     "menuKey": "stocks",
     "title": "종목 관리",
     "routeKey": "stocks"
@@ -136,16 +141,6 @@
     ]
   },
   {
-    "menuKey": "trade",
-    "title": "매매기준 백테스트",
-    "routeKey": "backtest"
-  },
-  {
-    "menuKey": "trade",
-    "title": "매매패턴 AI연구",
-    "routeKey": "pattern-research"
-  },
-  {
     "menuKey": "system",
     "title": "설정",
     "routeKey": "settings",
@@ -170,6 +165,16 @@
         "routeKey": "schema-comments"
       }
     ]
+  },
+  {
+    "menuKey": "warehouse",
+    "title": "매매기준 백테스트",
+    "routeKey": "backtest"
+  },
+  {
+    "menuKey": "warehouse",
+    "title": "매매패턴 AI연구",
+    "routeKey": "pattern-research"
   },
   {
     "menuKey": "warehouse",

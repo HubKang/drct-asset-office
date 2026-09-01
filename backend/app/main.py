@@ -13,6 +13,7 @@ from backend.app.api.routes_collectors import router as collectors_router
 from backend.app.api.routes_collection_runs import router as collection_runs_router
 from backend.app.api.routes_classification_rules import router as classification_rules_router
 from backend.app.api.routes_disclosures import router as disclosures_router
+from backend.app.api.routes_drct_stock_signals import router as drct_stock_signals_router
 from backend.app.api.routes_dashboard import router as dashboard_router
 from backend.app.api.routes_economic_briefing import router as economic_briefing_router
 from backend.app.api.routes_external_kiwoom import router as external_kiwoom_router
@@ -49,7 +50,7 @@ from backend.app.api.routes_trade_journals import router as trade_journals_route
 from backend.app.api.routes_trade_reviews import router as trade_reviews_router
 from backend.app.api.routes_watchlist import router as watchlist_router
 from backend.app.api.routes_watchlist_evaluation import router as watchlist_evaluation_router
-from backend.app.core.database import ensure_market_data_collection_schema, ensure_market_signal_schema, ensure_runtime_schema
+from backend.app.core.database import ensure_drct_stock_signal_schema, ensure_market_data_collection_schema, ensure_market_signal_schema, ensure_runtime_schema
 from backend.app.core.config import PROJECT_ROOT
 from backend.app.core.logging import setup_logging
 
@@ -57,6 +58,7 @@ setup_logging()
 ensure_runtime_schema()
 ensure_market_data_collection_schema()
 ensure_market_signal_schema()
+ensure_drct_stock_signal_schema()
 
 app = FastAPI(title="DrCT Asset API")
 app.add_middleware(
@@ -114,6 +116,7 @@ app.include_router(economic_briefing_router)
 app.include_router(telegram_router)
 app.include_router(trade_training_router)
 app.include_router(chart_markers_router)
+app.include_router(drct_stock_signals_router)
 app.include_router(backtest_router)
 app.include_router(pattern_research_router)
 app.include_router(trade_journals_router)
