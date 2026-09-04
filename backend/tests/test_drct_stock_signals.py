@@ -48,10 +48,10 @@ def _seed_marker_cases(db: Session) -> tuple[int, int]:
                (2,1,'지지 라인 - 이평조정 10선','V',20,1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
     """))
     cases = [
-        (1, 1, 1, date(2026, 1, 2), "SUCCESS"),
-        (2, 1, 1, date(2026, 1, 3), "FAILURE"),
+        (1, 1, 1, date(2026, 1, 2), "S"),
+        (2, 1, 1, date(2026, 1, 3), "F"),
         (3, 1, 1, date(2026, 1, 4), None),
-        (4, 1, 2, date(2026, 1, 5), "SUCCESS"),
+        (4, 1, 2, date(2026, 1, 5), "S"),
     ]
     db.execute(text("""
         INSERT INTO chart_marker_events

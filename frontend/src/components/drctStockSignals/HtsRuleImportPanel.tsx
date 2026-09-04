@@ -1,65 +1,58 @@
-import { useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, Sparkles, X } from "lucide-react";
-
+import { useEffect, useMemo, useState } from "react";
+import { AlertTriangle, Check, CheckCircle2, ChevronRight, FileText, Sparkles, X } from "lucide-react";
 import { repositories } from "@/services";
-import type { DrctHtsImportPreview, DrctSignalSearchDetail } from "@/types/drctStockSignal";
+import type { DrctHtsImportCondition, DrctHtsImportPreview, DrctSignalSearchDetail } from "@/types/drctStockSignal";
 
 type Props = { detail: DrctSignalSearchDetail; onVersionCreated: () => Promise<void> | void; onError: (message: string | null) => void };
+type Filter = "review" | "all" | "auto" | "unsupported";
 const messageOf = (reason: unknown) => reason instanceof Error ? reason.message : "요청을 처리하지 못했습니다.";
-const tone = (status: string) => status === "AUTO_CONVERTED" ? "ready" : status === "NEEDS_CONFIRMATION" ? "review" : "invalid";
 
-function HtsRuleImportPanel({ detail, onVersionCreated, onError }: Props) {
-  const [open, setOpen] = useState(false);
-  const [source, setSource] = useState(detail.current_version.hts_reference_conditions);
-  const [preview, setPreview] = useState<DrctHtsImportPreview | null>(null);
-  const [resolutions, setResolutions] = useState<Record<string, Record<string, string | number>>>({});
-  const [note, setNote] = useState("HTS 참조식 DrCT 자동 변환");
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    setSource(detail.current_version.hts_reference_conditions);
-    setPreview(null); setResolutions({});
-  }, [detail.id, detail.current_version.id, detail.current_version.hts_reference_conditions]);
-
-  const canDetect = detail.current_version.structured_rule?.validation_status === "VALID";
-  const conditionCount = detail.current_version.structured_rule?.rule.conditions.length ?? 0;
-  const analyze = async (next = resolutions) => {
-    setBusy(true); onError(null);
-    try { setPreview(await repositories.drctStockSignals.importHtsRule(source, detail.current_version.hts_condition_expression, next)); }
-    catch (reason) { onError(messageOf(reason)); } finally { setBusy(false); }
-  };
-  const resolve = (code: string, key: string, value: string | number) => {
-    const next = { ...resolutions, [code]: { ...(resolutions[code] ?? {}), [key]: value } };
-    setResolutions(next); void analyze(next);
-  };
-  const save = async () => {
-    if (!preview?.rule || preview.status !== "READY") return;
-    setBusy(true); onError(null);
-    try {
-      const checked = await repositories.drctStockSignals.validateRule(preview.rule);
-      if (checked.status !== "VALID") throw new Error(checked.errors[0]?.message || "완성된 조건을 다시 확인해 주세요.");
-      await repositories.drctStockSignals.createRuleVersion(detail.id, preview.rule, note.trim() || "HTS 참조식 DrCT 자동 변환", source, preview.normalized_expression);
-      setOpen(false); setPreview(null); setResolutions({}); await onVersionCreated();
-    } catch (reason) { onError(messageOf(reason)); } finally { setBusy(false); }
-  };
-
-  return <article className="drct-rule-import-panel">
-    <header><div><h4>DrCT 실행 조건</h4><p>HTS 참조식을 자동 변환하고 사람이 최종 확인합니다.</p></div><span className={canDetect ? "is-ready" : "is-draft"}>{canDetect ? "실행 가능" : "변환 필요"}</span></header>
-    {canDetect ? <div className="drct-rule-human-summary"><CheckCircle2 size={19} /><div><strong>현재 v{detail.current_version.version_no} 실행 조건이 준비되었습니다.</strong><p>조건 {conditionCount}개 · 사용자 확인 완료 {conditionCount}개 · 미지원 0개</p></div><details><summary>기술 상세 보기</summary><pre>{JSON.stringify(detail.current_version.structured_rule?.rule, null, 2)}</pre></details></div> : <div className="drct-rule-human-summary muted"><AlertTriangle size={19} /><div><strong>아직 실행 조건이 없습니다.</strong><p>불완전한 항목만 직접 확인해 완성하세요.</p></div></div>}
-    <button type="button" className="btn btn-primary drct-rule-import-button" onClick={() => { setOpen(true); void analyze(); }}><Sparkles size={16} /> {canDetect ? "조건 검토 · 다시 변환" : "HTS 참조식 자동 변환"}</button>
-
-    {open ? <div className="drct-signal-modal-backdrop" role="presentation"><section className="drct-signal-modal is-wide drct-rule-import-modal" role="dialog" aria-modal="true" aria-label="HTS 검색식 자동 변환"><header><div><h3>HTS 검색식 자동 변환</h3><p>한국어로 검토하고 불완전한 항목만 직접 완성합니다.</p></div><button type="button" aria-label="닫기" disabled={busy} onClick={() => setOpen(false)}><X size={19} /></button></header><div className="drct-rule-import-body">
-      <label className="drct-rule-source-input">HTS 참조 조건<textarea rows={10} value={source} onChange={(event) => { setSource(event.target.value); setPreview(null); }} /></label>
-      <div className="drct-rule-expression"><strong>조건 조합</strong><span>{preview?.expression_korean || detail.current_version.hts_condition_expression.replace(/and/gi, "그리고").replace(/or/gi, "또는")}</span></div>
-      <button type="button" className="btn btn-secondary" disabled={busy || !source.trim()} onClick={() => void analyze()}>{busy ? "분석 중" : "자동 변환 결과 새로고침"}</button>
-      {preview ? <><div className={`drct-rule-import-status status-${preview.status.toLowerCase()}`}><strong>{preview.status_label}</strong><span>전체 {preview.summary.total} · 자동 완료 {preview.summary.auto_converted} · 확인 필요 {preview.summary.needs_confirmation} · 미지원 {preview.summary.unsupported}</span></div><div className="drct-rule-review-list">{preview.conditions.map((condition) => <article key={condition.code} className={`tone-${tone(condition.status)} ${condition.required ? "" : "is-unused"}`}><header><b>{condition.code}</b><div><strong>{condition.title}</strong><small>{condition.used_label}</small></div><span>{condition.status_label}</span></header><p>{condition.human_description}</p><details><summary>HTS 원문 보기</summary><pre>{condition.source_text || "원문 없음"}</pre></details>
-        {condition.required && condition.resolution_kind === "RELATION" ? <label>관계 선택<select value={String(resolutions[condition.code]?.relation ?? "")} onChange={(event) => resolve(condition.code, "relation", event.target.value)}><option value="">선택해 주세요</option>{condition.resolution_options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label> : null}
-        {condition.required && condition.resolution_kind === "PRICE_FIELD" ? <label>가격 종류 선택<select value={String(resolutions[condition.code]?.price_field ?? "")} onChange={(event) => resolve(condition.code, "price_field", event.target.value)}><option value="">선택해 주세요</option>{condition.resolution_options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label> : null}
-        {condition.required && condition.resolution_kind === "THRESHOLD" ? <label>거래대금 기준(원)<input type="number" min={1} placeholder="예: 10000000000" value={String(resolutions[condition.code]?.threshold ?? "")} onBlur={(event) => event.target.value && resolve(condition.code, "threshold", Number(event.target.value))} onChange={(event) => setResolutions({ ...resolutions, [condition.code]: { ...(resolutions[condition.code] ?? {}), threshold: event.target.value } })} /></label> : null}
-        {condition.issue ? <small className="drct-rule-issue">{condition.issue}</small> : null}</article>)}</div>{preview.rule ? <details className="drct-rule-tech"><summary>기술 상세 보기</summary><pre>{JSON.stringify(preview.rule, null, 2)}</pre></details> : null}</> : null}
-    </div><footer><label>변경 메모<input value={note} onChange={(event) => setNote(event.target.value)} /></label><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>취소</button><button type="button" className="btn btn-primary" disabled={busy || preview?.status !== "READY" || !preview.rule} onClick={() => void save()}>새 Version으로 저장</button></footer></section></div> : null}
-
-  </article>;
+function savedResolutions(preview: DrctHtsImportPreview, detail: DrctSignalSearchDetail) {
+  const conditions = (detail.current_version.structured_rule?.rule.conditions ?? []) as Array<{ code: string; params?: Record<string, unknown>; predicates?: Array<{ params: Record<string, unknown> }> }>;
+  const restored: Record<string, Record<string, string | number>> = {};
+  preview.conditions.forEach(item => {
+    if (!item.resolution_kind) return;
+    const saved = conditions.find(condition => condition.code === item.code);
+    if (!saved) return;
+    const params = saved.predicates?.[0]?.params ?? saved.params;
+    if (!params) return;
+    if (item.resolution_kind === "RELATION" && typeof params.operator === "string") restored[item.code] = { relation: params.operator };
+    if (item.resolution_kind === "PRICE_FIELD" && typeof params.price_field === "string") restored[item.code] = { price_field: params.price_field };
+    if (item.resolution_kind === "THRESHOLD" && typeof params.value === "number") restored[item.code] = { threshold: params.value };
+  });
+  return restored;
 }
 
-export default HtsRuleImportPanel;
+const canonical = (value: unknown): unknown => Array.isArray(value)
+  ? value.map(canonical)
+  : value && typeof value === "object"
+    ? Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, child]) => [key, canonical(child)]))
+    : value;
+const sameRule = (left: unknown, right: unknown) => JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
+
+export default function HtsRuleImportPanel({ detail, onVersionCreated, onError }: Props) {
+  const [open, setOpen] = useState(false), [sourceOpen, setSourceOpen] = useState(false), [busy, setBusy] = useState(false), [dirty, setDirty] = useState(false);
+  const [source, setSource] = useState(detail.current_version.hts_reference_conditions), [note, setNote] = useState("HTS 참조식 DrCT 자동 변환");
+  const [preview, setPreview] = useState<DrctHtsImportPreview | null>(null), [resolutions, setResolutions] = useState<Record<string, Record<string, string | number>>>({});
+  const [reviewCodes, setReviewCodes] = useState<string[]>([]), [filter, setFilter] = useState<Filter>("review"), [guard, setGuard] = useState<"close" | "analyze" | null>(null);
+  useEffect(() => { setSource(detail.current_version.hts_reference_conditions); setPreview(null); setResolutions({}); setDirty(false); }, [detail.id, detail.current_version.id, detail.current_version.hts_reference_conditions]);
+  const current = detail.current_version.version_no, nextVersion = current + 1;
+  const canDetect = detail.current_version.structured_rule?.validation_status === "VALID";
+  const analyze = async (next = resolutions, reset = false) => { setBusy(true); onError(null); try { let result = await repositories.drctStockSignals.importHtsRule(source, detail.current_version.hts_condition_expression, next); if (reset && detail.current_version.structured_rule) { const restored = savedResolutions(result, detail); if (Object.keys(restored).length) { setResolutions(restored); result = await repositories.drctStockSignals.importHtsRule(source, detail.current_version.hts_condition_expression, restored); } } setPreview(result); if (reset) { const codes=result.conditions.filter(c => c.required && c.status === "NEEDS_CONFIRMATION").map(c => c.code); setReviewCodes(codes); setFilter(codes.length ? "review" : "all"); } } catch (e) { onError(messageOf(e)); } finally { setBusy(false); } };
+  const begin = () => { setOpen(true); setFilter("review"); setResolutions({}); setDirty(false); void analyze({}, true); };
+  const close = () => { setOpen(false); setSourceOpen(false); setGuard(null); setDirty(false); setPreview(null); setResolutions({}); };
+  const requestClose = () => dirty ? setGuard("close") : close();
+  const resolve = (code: string, key: string, value: string | number) => { const next = { ...resolutions, [code]: { ...(resolutions[code] ?? {}), [key]: value } }; setResolutions(next); setDirty(true); void analyze(next); };
+  const save = async () => { if (!preview?.rule || preview.status !== "READY") return; setBusy(true); onError(null); try { const checked = await repositories.drctStockSignals.validateRule(preview.rule); if (checked.status !== "VALID") throw new Error(checked.errors[0]?.message || "완성된 조건을 다시 확인해 주세요."); await repositories.drctStockSignals.createRuleVersion(detail.id, preview.rule, note.trim() || "HTS 참조식 DrCT 자동 변환", source, preview.normalized_expression); close(); await onVersionCreated(); } catch (e) { onError(messageOf(e)); } finally { setBusy(false); } };
+  useEffect(() => { if (!open) return; const fn = (e: KeyboardEvent) => { if (e.key === "Escape") { e.preventDefault(); sourceOpen ? setSourceOpen(false) : requestClose(); } }; addEventListener("keydown", fn); return () => removeEventListener("keydown", fn); }, [open, sourceOpen, dirty]);
+  const completed = reviewCodes.filter(code => resolutions[code] && !preview?.conditions.some(c => c.code === code && c.status === "NEEDS_CONFIRMATION"));
+  const remaining = reviewCodes.length - completed.length, used = preview?.conditions.filter(c => c.required).length ?? 0;
+  const reviewed = preview?.conditions.filter(c => c.required && !["NEEDS_CONFIRMATION", "UNSUPPORTED", "INVALID_SOURCE"].includes(c.status)).length ?? 0;
+  const unchanged = Boolean(preview?.rule && detail.current_version.structured_rule && sameRule(preview.rule, detail.current_version.structured_rule.rule) && source.trim() === detail.current_version.hts_reference_conditions.trim() && preview.normalized_expression.trim() === detail.current_version.hts_condition_expression.trim());
+  const visible = useMemo(() => preview?.conditions.filter(c => filter === "review" ? reviewCodes.includes(c.code) : filter === "auto" ? c.status === "AUTO_CONVERTED" && !reviewCodes.includes(c.code) : filter === "unsupported" ? ["UNSUPPORTED", "INVALID_SOURCE"].includes(c.status) : true) ?? [], [filter, preview, reviewCodes]);
+  const card = (c: DrctHtsImportCondition) => { const review = reviewCodes.includes(c.code), done = completed.includes(c.code); return <article key={c.code} className={`drct-rule-review-card tone-${done || c.status === "AUTO_CONVERTED" ? "ready" : c.status === "NEEDS_CONFIRMATION" ? "review" : "invalid"}${review ? "" : " is-compact"}`}><header><b>{c.code}</b><div><strong>{c.title}</strong><small>{c.used_label}</small></div><span>{done ? <><Check size={13} /> 사용자 확인 완료</> : c.status_label}</span></header><p>{c.human_description}</p>{review ? <><details><summary>해당 HTS 원문 보기</summary><pre>{c.source_text || "원문 없음"}</pre></details>{c.required && (c.resolution_kind === "RELATION" || c.resolution_kind === "PRICE_FIELD") ? <fieldset className="drct-rule-choice-group"><legend>DrCT에서 확인할 내용</legend><p>{c.issue || "문장의 의미에 맞는 항목을 선택해 주세요."}</p><div>{c.resolution_options.map(o => { const key = c.resolution_kind === "RELATION" ? "relation" : "price_field", selected = String(resolutions[c.code]?.[key] ?? "") === o.value; return <button type="button" key={o.value} className={selected ? "is-selected" : ""} aria-pressed={selected} onClick={() => resolve(c.code, key, o.value)}>{selected && <Check size={14} />}{o.label}</button>; })}</div></fieldset> : null}{c.required && c.resolution_kind === "THRESHOLD" ? <label className="drct-rule-threshold">거래대금 기준(원)<input type="number" min={1} value={String(resolutions[c.code]?.threshold ?? "")} onChange={e => { setDirty(true); setResolutions({ ...resolutions, [c.code]: { ...(resolutions[c.code] ?? {}), threshold: e.target.value } }); }} onBlur={e => e.target.value && resolve(c.code, "threshold", Number(e.target.value))} /></label> : null}</> : <details><summary>상세 보기</summary><pre>{c.source_text || "원문 없음"}</pre></details>}</article>; };
+  const saveLabel = preview?.summary.unsupported ? "지원 불가 조건 확인 필요" : remaining > 0 ? `${remaining}개 조건 확인 필요` : unchanged ? `현재 v${current}에 저장된 조건` : `v${nextVersion} 새 Version 저장`;
+  return <article className="drct-rule-import-panel"><header><div><h4>DrCT 실행 조건</h4><p>HTS 참조식을 자동 변환하고 사람이 최종 확인합니다.</p></div><span className={canDetect ? "is-ready" : "is-draft"}>{canDetect ? "실행 가능" : "변환 필요"}</span></header>{canDetect ? <div className="drct-rule-human-summary"><CheckCircle2 size={19} /><div><strong>현재 v{current} 실행 조건이 준비되었습니다.</strong><p>조건 {detail.current_version.structured_rule?.rule.conditions.length ?? 0}개</p></div></div> : <div className="drct-rule-human-summary muted"><AlertTriangle size={19} /><div><strong>아직 실행 조건이 없습니다.</strong><p>불완전한 항목만 직접 확인해 완성하세요.</p></div></div>}<button className="btn btn-primary drct-rule-import-button" onClick={begin}><Sparkles size={16} /> {canDetect ? "조건 검토 · 다시 변환" : "HTS 참조식 자동 변환"}</button>
+  {open && <div className="drct-signal-modal-backdrop" onMouseDown={e => e.target === e.currentTarget && requestClose()}><section className="drct-signal-modal drct-rule-import-modal" role="dialog" aria-modal="true" aria-label="DrCT 검색조건 검토"><header className="drct-rule-review-header"><div><small>HTS 자동 변환</small><h3>DrCT 검색조건 검토</h3><p>{unchanged ? "현재 Version에 저장된 실행 조건입니다." : "확인이 필요한 조건만 검토해 주세요."}</p></div><div className="drct-rule-header-actions"><span>{unchanged ? `현재 v${current} · 저장 완료` : <>현재 v{current} <ChevronRight size={13} /> 저장 시 v{nextVersion}</>}</span><button className="btn btn-secondary" onClick={() => setSourceOpen(true)}><FileText size={14} /> HTS 원문 보기</button><button aria-label="닫기" onClick={requestClose}><X size={19} /></button></div></header><section className="drct-rule-review-summary"><div className="drct-rule-summary-counts"><span>전체 <b>{preview?.summary.total ?? "-"}</b></span><span>자동완료 <b>{preview?.summary.auto_converted ?? "-"}</b></span><span>확인필요 <b>{preview?.summary.needs_confirmation ?? "-"}</b></span><span>미지원 <b>{preview?.summary.unsupported ?? "-"}</b></span></div><div className="drct-rule-progress"><b>검토 진행 {reviewed}/{used || "-"}</b><progress max={used || 1} value={reviewed} /></div><div className="drct-rule-expression"><strong>조건 조합</strong><span>{preview?.expression_korean || detail.current_version.hts_condition_expression}</span></div></section><nav className="drct-rule-review-filters"><button className={filter === "review" ? "is-active" : ""} onClick={() => setFilter("review")}>확인 필요 {reviewCodes.length}</button><button className={filter === "all" ? "is-active" : ""} onClick={() => setFilter("all")}>전체 조건 {preview?.summary.total ?? 0}</button><button className={filter === "auto" ? "is-active" : ""} onClick={() => setFilter("auto")}>자동완료 {preview?.summary.auto_converted ?? 0}</button></nav><div className="drct-rule-import-body">{busy && !preview ? <p>참조식을 분석하고 있습니다.</p> : null}{remaining === 0 && reviewCodes.length > 0 && filter === "review" ? <div className="drct-rule-all-complete"><CheckCircle2 /><strong>모든 실행 조건을 확인했습니다.</strong></div> : null}<div className="drct-rule-review-list">{visible.map(card)}</div>{preview?.rule && <details className="drct-rule-tech"><summary>기술 상세 보기</summary><pre>{JSON.stringify(preview.rule, null, 2)}</pre></details>}</div><footer className="drct-rule-review-footer"><label>변경 메모<input value={note} onChange={e => { setNote(e.target.value); setDirty(true); }} /></label><div><button className="btn btn-secondary" onClick={requestClose}>취소</button><button className="btn btn-primary" disabled={busy || unchanged || preview?.status !== "READY" || !preview.rule} onClick={() => void save()}>{saveLabel}</button></div></footer>
+  {sourceOpen && <div className="drct-rule-source-panel-backdrop"><aside className="drct-rule-source-panel"><header><div><h4>HTS 원문</h4><p>전체 참조 조건과 최종 조건식을 확인합니다.</p></div><button aria-label="HTS 원문 닫기" onClick={() => setSourceOpen(false)}><X /></button></header><label>전체 HTS 참조 조건<textarea value={source} onChange={e => { setSource(e.target.value); setPreview(null); setDirty(true); }} /></label><div className="drct-rule-expression"><strong>최종 조건식</strong><span>{detail.current_version.hts_condition_expression}</span></div><footer><button className="btn btn-secondary" onClick={() => dirty ? setGuard("analyze") : void analyze(resolutions, true)}>참조식 다시 분석</button><button className="btn btn-primary" onClick={() => setSourceOpen(false)}>검토 화면으로</button></footer></aside></div>}{guard && <div className="drct-rule-guard-backdrop"><section className="drct-rule-guard" role="alertdialog"><AlertTriangle /><h4>{guard === "close" ? "검토 내용이 저장되지 않았습니다." : "참조식을 다시 분석할까요?"}</h4><p>{guard === "close" ? "검토 내용을 버리고 닫으시겠습니까?" : "현재 검토 중인 변경사항이 초기화됩니다."}</p><div><button className="btn btn-secondary" onClick={() => setGuard(null)}>계속 검토</button><button className="btn btn-danger" onClick={() => { if (guard === "close") close(); else { setResolutions({}); setDirty(false); setGuard(null); void analyze({}, true); } }}>{guard === "close" ? "변경사항 버리기" : "다시 분석"}</button></div></section></div>}</section></div>}</article>;
+}

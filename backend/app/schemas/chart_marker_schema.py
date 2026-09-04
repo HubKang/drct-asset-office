@@ -51,4 +51,4 @@ class MarkerEventWrite(BaseModel):
 class MarkerEventPatch(BaseModel):
     marker_id: int | None = None
     memo: str | None = Field(default=None, max_length=4000)
-    review_result: Literal["SUCCESS", "FAILURE"] | None = None
+    review_result: Literal["S", "F"] | None = None

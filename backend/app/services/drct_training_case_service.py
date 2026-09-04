@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from backend.app.services.drct_future_outcome_service import FutureOutcomeService
 from backend.app.services.drct_pattern_feature_service import FEATURE_SCHEMA_VERSION, PatternFeatureService
 from backend.app.services.drct_rule_engine import DrctRuleEvaluator, DrctRuleValidator
+from backend.app.services.marker_review_result import legacy_training_label
 
 
 @dataclass
@@ -80,7 +81,7 @@ class TrainingCaseService:
             grouped[(int(row["stock_id"]), str(row["marker_date"])[:10])].append(row)
         cases = []
         for (stock_id, marker_date), events in grouped.items():
-            labels = {str(row["review_result"]) for row in events if row["review_result"] in {"SUCCESS", "FAILURE"}}
+            labels = {label for row in events if (label := legacy_training_label(row["review_result"])) is not None}
             if labels == {"SUCCESS", "FAILURE"}: label = "CONFLICT"
             elif "SUCCESS" in labels: label = "SUCCESS"
             elif "FAILURE" in labels: label = "FAILURE"
@@ -221,7 +222,7 @@ class TrainingCaseService:
             case_rule_status = rule_status if rule_status != "VALID" else "RULE_NOT_EVALUATED"
             for case in cases:
                 case.update({"rule_status": case_rule_status, "rule_diagnostics": [], "core_status": "NOT_EVALUATED", "enriched_status": "NOT_EVALUATED", "core_features": None, "enriched_features": None, "core_missing": [], "enriched_missing": [], "outcomes": FutureOutcomeService.calculate(None, [])})
-        reviewed_event_count = sum(row["review_result"] in {"SUCCESS", "FAILURE"} for row in event_rows)
+        reviewed_event_count = sum(legacy_training_label(row["review_result"]) is not None for row in event_rows)
         summary = self._summary(len(event_rows), reviewed_event_count, cases, marker_link_count, rule_status)
         rule_schema_version = int(rule.get("schema_version", 1)) if rule is not None else None
         return TrainingDatasetBuild(search_id, int(version["id"]), int(version["version_no"]), rule_status, rule_schema_version, marker_link_count, cases, summary, int((time.perf_counter() - started) * 1000))

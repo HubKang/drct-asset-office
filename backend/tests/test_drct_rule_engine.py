@@ -151,6 +151,21 @@ def test_rule_change_creates_version_and_preserves_old() -> None:
     assert versions[1]["structured_rule"] is None
 
 
+def test_identical_rule_save_is_idempotent() -> None:
+    db = _db(); search_id = _seed_scan(db)
+    current = DrctStockSignalService(db).get_search(search_id)["current_version"]
+    payload = DrctRuleVersionCreate(
+        rule=DrctStructuredRule(**current["structured_rule"]["rule"]),
+        change_note="같은 조건 재검토",
+        hts_reference_conditions=current["hts_reference_conditions"],
+        hts_condition_expression=current["hts_condition_expression"],
+    )
+    saved = DrctRuleService(db).create_rule_version(search_id, payload)
+    assert saved["id"] == current["id"]
+    assert saved["version_no"] == current["version_no"]
+    assert len(DrctStockSignalService(db).list_versions(search_id)) == 2
+
+
 def test_market_cap_missing_becomes_data_incomplete_and_diagnose() -> None:
     db = _db(); search_id = _seed_scan(db)
     current = db.execute(text("SELECT id FROM drct_signal_search_versions WHERE search_id=:id AND is_current=1"), {"id":search_id}).scalar_one()

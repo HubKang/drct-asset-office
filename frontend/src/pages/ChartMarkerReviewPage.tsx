@@ -13,7 +13,7 @@ const REVIEW_WINDOWS = [
 ] as const;
 type ReviewWindowKey = typeof REVIEW_WINDOWS[number]["key"];
 
-function normalizeReviewChart(data: ChartMarkerReviewChart, before: number, after: number): ChartMarkerReviewChart {
+export function normalizeReviewChart(data: ChartMarkerReviewChart, before: number, after: number): ChartMarkerReviewChart {
   const markerIndex = data.marker_index != null && data.candles[data.marker_index]?.trade_date === data.marker_date
     ? data.marker_index
     : data.candles.findIndex((row) => row.trade_date === data.marker_date);
@@ -34,7 +34,7 @@ function normalizeReviewChart(data: ChartMarkerReviewChart, before: number, afte
   };
 }
 
-function ReviewChart({ data, reviewEvent, loading, markerEvents, showD0Marker, onContextMenu }: {
+export function ReviewChart({ data, reviewEvent, loading, markerEvents, showD0Marker, onContextMenu }: {
   data: ChartMarkerReviewChart | null;
   reviewEvent: ChartMarkerReviewEvent;
   loading: boolean;
@@ -241,7 +241,7 @@ function CatalogTab({ groups, reload }: { groups: ChartMarkerGroup[]; reload: ()
 
 export default function ChartMarkerReviewPage() {
   const [tab, setTab] = useState<"catalog" | "review">("catalog"), [groups, setGroups] = useState<ChartMarkerGroup[]>([]), [groupId, setGroupId] = useState<number | null>(null), [markerId, setMarkerId] = useState<number | null>(null), [events, setEvents] = useState<ChartMarkerReviewEvent[]>([]), [selected, setSelected] = useState<ChartMarkerReviewEvent | null>(null), [stockQuery, setStockQuery] = useState(""), [chart, setChart] = useState<ChartMarkerReviewChart | null>(null), [chartLoading, setChartLoading] = useState(false), [error, setError] = useState("");
-  const [resultFilter, setResultFilter] = useState<"ALL" | "SUCCESS" | "FAILURE">("ALL"), [savingReviewId, setSavingReviewId] = useState<number | null>(null);
+  const [resultFilter, setResultFilter] = useState<"ALL" | "S" | "F">("ALL"), [savingReviewId, setSavingReviewId] = useState<number | null>(null);
   const [windowKey, setWindowKey] = useState<ReviewWindowKey>("60.D0.20");
   const [showD0Marker, setShowD0Marker] = useState(true);
   const [rangeEvents, setRangeEvents] = useState<ChartMarkerEvent[]>([]);
@@ -386,14 +386,14 @@ export default function ChartMarkerReviewPage() {
       {!activeGroups.length ? <div className="chart-marker-empty">등록된 활성 차트마커 그룹이 없습니다.<br />마커그룹 탭에서 먼저 그룹을 활성화해 주세요.</div> : !markers.length ? <div className="chart-marker-empty">이 그룹에 등록된 활성 마커가 없습니다.<br />마커그룹 탭에서 사용할 마커를 활성화해 주세요.</div> : !events.length ? <div className="chart-marker-empty">이 마커로 기록된 차트 사례가 없습니다.<br />종목매매훈련 차트에서 캔들을 우클릭하여 마커를 기록해 주세요.</div> : <div className="chart-marker-review-grid">
         <aside className="panel chart-marker-case-panel" style={{ "--chart-marker-detail-height": detailHeight ? `${detailHeight}px` : undefined } as CSSProperties}>
           <header><h3>관련 종목 / 캔들일자</h3><span>{visibleEvents.length}건</span></header>
-          <div className="chart-marker-case-tools"><div className="chart-marker-case-search"><Search size={15} aria-hidden="true" /><input className="input-control" type="search" value={stockQuery} onChange={(event) => setStockQuery(event.target.value)} placeholder="종목명 검색" aria-label="종목명 검색" /></div><div className="chart-marker-result-filter" aria-label="판정 상태 필터">{(["ALL", "SUCCESS", "FAILURE"] as const).map((value) => <button type="button" key={value} className={`${resultFilter === value ? "active" : ""} ${value.toLowerCase()}`} onClick={() => setResultFilter(value)}>{value === "ALL" ? "전체" : value === "SUCCESS" ? "성공" : "실패"}</button>)}</div></div>
+          <div className="chart-marker-case-tools"><div className="chart-marker-case-search"><Search size={15} aria-hidden="true" /><input className="input-control" type="search" value={stockQuery} onChange={(event) => setStockQuery(event.target.value)} placeholder="종목명 검색" aria-label="종목명 검색" /></div><div className="chart-marker-result-filter" aria-label="판정 상태 필터">{(["ALL", "S", "F"] as const).map((value) => <button type="button" key={value} className={`${resultFilter === value ? "active" : ""} ${value.toLowerCase()}`} onClick={() => setResultFilter(value)}>{value === "ALL" ? "전체" : value === "S" ? "성공" : "실패"}</button>)}</div></div>
           <div className="chart-marker-case-scroll">{filteredGrouped.length ? filteredGrouped.map((rows) => <div className="chart-marker-stock" key={rows[0].stock_id}>
             <div><strong>{rows[0].stock_name}</strong><span>{rows.length}건</span></div>
             {rows.map((item) => <div className={`chart-marker-case-row ${selected?.id === item.id ? "active" : ""}`} key={`${item.stock_id}-${item.marker_date}-${item.marker_id}-${item.id}`} onClick={() => setSelected(item)}>
               <button className="chart-marker-case-date"><i />{item.marker_date}</button>
               <div className="chart-marker-case-results" onClick={(clickEvent) => clickEvent.stopPropagation()}>
-                <button type="button" className={item.review_result === "SUCCESS" ? "success active" : "success"} disabled={savingReviewId === item.id} title="선택된 판정을 다시 누르면 미평가로 돌아갑니다." onClick={() => void updateReviewResult(item, "SUCCESS")}>성공{item.review_result === "SUCCESS" ? " ✓" : ""}</button>
-                <button type="button" className={item.review_result === "FAILURE" ? "failure active" : "failure"} disabled={savingReviewId === item.id} title="선택된 판정을 다시 누르면 미평가로 돌아갑니다." onClick={() => void updateReviewResult(item, "FAILURE")}>실패{item.review_result === "FAILURE" ? " ✓" : ""}</button>
+                <button type="button" className={item.review_result === "S" ? "success active" : "success"} disabled={savingReviewId === item.id} title="선택된 판정을 다시 누르면 미평가로 돌아갑니다." onClick={() => void updateReviewResult(item, "S")}>성공{item.review_result === "S" ? " ✓" : ""}</button>
+                <button type="button" className={item.review_result === "F" ? "failure active" : "failure"} disabled={savingReviewId === item.id} title="선택된 판정을 다시 누르면 미평가로 돌아갑니다." onClick={() => void updateReviewResult(item, "F")}>실패{item.review_result === "F" ? " ✓" : ""}</button>
               </div>
               <button className="chart-marker-case-delete" title={`${item.marker_date} 마커 삭제`} onClick={(clickEvent) => { clickEvent.stopPropagation(); void deleteReviewEvent(item); }}>삭제</button>
             </div>)}

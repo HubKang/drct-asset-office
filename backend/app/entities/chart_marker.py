@@ -69,5 +69,25 @@ class ChartMarkerEvent(Base):
 
     __table_args__ = (
         UniqueConstraint("stock_id", "marker_id", "marker_date", name="uq_chart_marker_event"),
-        CheckConstraint("review_result IS NULL OR review_result IN ('SUCCESS', 'FAILURE')", name="ck_chart_marker_event_review_result"),
+        CheckConstraint("review_result IS NULL OR review_result IN ('S', 'F')", name="ck_chart_marker_event_review_result"),
+    )
+
+
+class ChartMarkerLearningDecision(Base):
+    """A curator's explicit inclusion decision; computed learning detail stays transient."""
+
+    __tablename__ = "chart_marker_learning_decisions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chart_marker_event_id: Mapped[int] = mapped_column(
+        ForeignKey("chart_marker_events.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    decision: Mapped[str] = mapped_column(String(10), nullable=False)
+    decision_reason: Mapped[str | None] = mapped_column(String(120))
+    pattern_algorithm_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
+
+    __table_args__ = (
+        CheckConstraint("decision IN ('INCLUDE', 'EXCLUDE')", name="ck_chart_marker_learning_decision"),
     )

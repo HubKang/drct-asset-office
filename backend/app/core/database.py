@@ -79,6 +79,53 @@ def _drop_column_if_exists(conn, table_name: str, column_name: str) -> None:  # 
         pass
 
 
+def _ensure_marker_review_result_codes(conn) -> None:  # type: ignore[no-untyped-def]
+    """One-way, non-destructive SUCCESS/FAILURE -> S/F normalization."""
+    row = conn.exec_driver_sql(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='chart_marker_events'"
+    ).first()
+    if not row:
+        return
+    invalid = conn.exec_driver_sql("""
+        SELECT review_result, COUNT(*)
+        FROM chart_marker_events
+        WHERE review_result IS NOT NULL
+          AND review_result NOT IN ('S', 'F', 'SUCCESS', 'FAILURE')
+        GROUP BY review_result
+    """).fetchall()
+    if invalid:
+        raise RuntimeError(f"지원하지 않는 chart_marker_events.review_result가 있습니다: {invalid}")
+    table_sql = str(row[0] or "").upper()
+    has_standard_check = "REVIEW_RESULT IN ('S', 'F')" in table_sql
+    if has_standard_check:
+        conn.exec_driver_sql("UPDATE chart_marker_events SET review_result='S' WHERE review_result='SUCCESS'")
+        conn.exec_driver_sql("UPDATE chart_marker_events SET review_result='F' WHERE review_result='FAILURE'")
+        return
+    conn.exec_driver_sql("DROP TABLE IF EXISTS chart_marker_events_phase6a")
+    conn.exec_driver_sql("""
+        CREATE TABLE chart_marker_events_phase6a (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, stock_id INTEGER NOT NULL, marker_id INTEGER NOT NULL,
+            marker_date TEXT NOT NULL, memo TEXT, review_result TEXT, reviewed_at TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(stock_id, marker_id, marker_date),
+            CHECK(review_result IS NULL OR review_result IN ('S', 'F')),
+            FOREIGN KEY(stock_id) REFERENCES stocks(id) ON DELETE CASCADE,
+            FOREIGN KEY(marker_id) REFERENCES chart_markers(id) ON DELETE RESTRICT
+        )
+    """)
+    conn.exec_driver_sql("""
+        INSERT INTO chart_marker_events_phase6a
+        (id, stock_id, marker_id, marker_date, memo, review_result, reviewed_at, created_at, updated_at)
+        SELECT id, stock_id, marker_id, marker_date, memo,
+               CASE review_result WHEN 'SUCCESS' THEN 'S' WHEN 'FAILURE' THEN 'F' ELSE review_result END,
+               reviewed_at, created_at, updated_at
+        FROM chart_marker_events
+    """)
+    conn.exec_driver_sql("DROP TABLE chart_marker_events")
+    conn.exec_driver_sql("ALTER TABLE chart_marker_events_phase6a RENAME TO chart_marker_events")
+
+
 def _telegram_canonical_url(value: str | None) -> str | None:
     raw = (value or "").strip().rstrip(".,;:!?)")
     if not raw:
@@ -496,15 +543,29 @@ def ensure_runtime_schema() -> None:
                 marker_date TEXT NOT NULL, memo TEXT, review_result TEXT, reviewed_at TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(stock_id, marker_id, marker_date),
-                CHECK(review_result IS NULL OR review_result IN ('SUCCESS', 'FAILURE')),
+                CHECK(review_result IS NULL OR review_result IN ('S', 'F')),
                 FOREIGN KEY(stock_id) REFERENCES stocks(id) ON DELETE CASCADE,
                 FOREIGN KEY(marker_id) REFERENCES chart_markers(id) ON DELETE RESTRICT
             )
         """)
         _ensure_column(conn, "chart_marker_events", "review_result", "TEXT")
         _ensure_column(conn, "chart_marker_events", "reviewed_at", "TEXT")
+        _ensure_marker_review_result_codes(conn)
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_chart_marker_events_stock_date ON chart_marker_events(stock_id, marker_date)")
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_chart_marker_events_marker_stock_date ON chart_marker_events(marker_id, stock_id, marker_date DESC)")
+        conn.exec_driver_sql("""
+            CREATE TABLE IF NOT EXISTS chart_marker_learning_decisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chart_marker_event_id INTEGER NOT NULL UNIQUE,
+                decision TEXT NOT NULL CHECK(decision IN ('INCLUDE', 'EXCLUDE')),
+                decision_reason TEXT,
+                pattern_algorithm_version INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(chart_marker_event_id) REFERENCES chart_marker_events(id) ON DELETE CASCADE
+            )
+        """)
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_marker_learning_decision ON chart_marker_learning_decisions(decision)")
         conn.exec_driver_sql(
             """
             CREATE TABLE IF NOT EXISTS app_images (

@@ -24,7 +24,7 @@ def _db() -> Session:
           UNIQUE(marker_group_id,name))""")
         conn.exec_driver_sql("""CREATE TABLE chart_marker_events(id INTEGER PRIMARY KEY AUTOINCREMENT,stock_id INTEGER NOT NULL,marker_id INTEGER NOT NULL,
           marker_date DATE NOT NULL,memo TEXT,review_result TEXT,reviewed_at DATETIME,created_at DATETIME,updated_at DATETIME,
-          CHECK(review_result IS NULL OR review_result IN ('SUCCESS','FAILURE')),UNIQUE(stock_id,marker_id,marker_date))""")
+          CHECK(review_result IS NULL OR review_result IN ('S','F')),UNIQUE(stock_id,marker_id,marker_date))""")
         conn.exec_driver_sql("""CREATE TABLE kms_setting_items(id INTEGER PRIMARY KEY,item_name TEXT,is_active INTEGER NOT NULL)""")
         conn.exec_driver_sql("""CREATE TABLE kms_knowledge_items(id INTEGER PRIMARY KEY,title TEXT NOT NULL,summary TEXT,
           para_type_id INTEGER,category_id INTEGER,is_active INTEGER NOT NULL)""")
@@ -145,10 +145,10 @@ def test_marker_event_review_result_updates_existing_event_and_can_be_cleared() 
     marker = service.create_marker(MarkerWrite(marker_group_id=group["id"], name="거래량 장대양봉"))
     created = service.upsert_event(MarkerEventWrite(stock_id=1, marker_id=marker["id"], marker_date=date(2026, 7, 15), memo=None))
 
-    success = service.update_event(created["id"], MarkerEventPatch(review_result="SUCCESS"))
-    assert success["review_result"] == "SUCCESS"
+    success = service.update_event(created["id"], MarkerEventPatch(review_result="S"))
+    assert success["review_result"] == "S"
     assert success["reviewed_at"] is not None
-    assert service.review_events(marker["id"])["items"][0]["review_result"] == "SUCCESS"
+    assert service.review_events(marker["id"])["items"][0]["review_result"] == "S"
     reviewed_marker = service.list_catalog()["items"][0]["markers"][0]
     assert reviewed_marker["success_count"] == 1 and reviewed_marker["failure_count"] == 0
 
@@ -165,13 +165,13 @@ def test_marker_event_type_can_change_without_resetting_review_result() -> None:
     marker_a = service.create_marker(MarkerWrite(marker_group_id=group["id"], name="A"))
     marker_b = service.create_marker(MarkerWrite(marker_group_id=group["id"], name="B"))
     created = service.upsert_event(MarkerEventWrite(stock_id=1, marker_id=marker_a["id"], marker_date=date(2026, 7, 15), memo="기존"))
-    reviewed = service.update_event(created["id"], MarkerEventPatch(review_result="SUCCESS"))
+    reviewed = service.update_event(created["id"], MarkerEventPatch(review_result="S"))
 
     changed = service.update_event(reviewed["id"], MarkerEventPatch(marker_id=marker_b["id"], memo="수정"))
 
     assert changed["marker_id"] == marker_b["id"]
     assert changed["memo"] == "수정"
-    assert changed["review_result"] == "SUCCESS"
+    assert changed["review_result"] == "S"
     assert changed["reviewed_at"] == reviewed["reviewed_at"]
     db.close()
 

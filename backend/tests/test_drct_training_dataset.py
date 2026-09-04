@@ -165,7 +165,7 @@ def _seed_dataset(db: Session) -> int:
     DrctRuleService(db).create_rule_version(search["id"], DrctRuleVersionCreate(rule=rule, change_note="rule"))
     DrctStockSignalService(db).replace_marker_links(search["id"], DrctSignalMarkerLinksPut(marker_definition_ids=[1, 2]))
     d0 = date(2026, 5, 1)
-    events = [(1,1,1,"SUCCESS"),(2,1,2,None),(3,2,1,"FAILURE"),(4,2,2,"FAILURE"),(5,3,1,"SUCCESS"),(6,3,2,"FAILURE")]
+    events = [(1,1,1,"S"),(2,1,2,None),(3,2,1,"F"),(4,2,2,"F"),(5,3,1,"S"),(6,3,2,"F")]
     for event_id, stock_id, marker_id, label in events:
         db.execute(text("INSERT INTO chart_marker_events(id,stock_id,marker_id,marker_date,review_result,created_at,updated_at) VALUES (:i,:s,:m,:d,:r,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)"), {"i":event_id,"s":stock_id,"m":marker_id,"d":d0.isoformat(),"r":label})
     for stock_id, d0_close in ((1,100),(2,80),(3,110)):

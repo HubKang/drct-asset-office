@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.entities.chart_marker import ChartMarker, ChartMarkerEvent, ChartMarkerGroup
 from backend.app.schemas.chart_marker_schema import MarkerEventPatch, MarkerEventWrite, MarkerGroupPatch, MarkerGroupWrite, MarkerPatch, MarkerWrite
+from backend.app.services.marker_review_result import normalize_marker_review_result
 
 
 class ChartMarkerService:
@@ -41,8 +42,8 @@ class ChartMarkerService:
         markers = self.db.scalars(select(ChartMarker).order_by(ChartMarker.sort_order, ChartMarker.name)).all()
         knowledge_by_group = self._knowledge_items_by_group([group.id for group in groups])
         count_rows = self.db.execute(text("""SELECT marker_id, COUNT(DISTINCT stock_id) stock_count, COUNT(*) marker_count,
-            SUM(CASE WHEN review_result='SUCCESS' THEN 1 ELSE 0 END) success_count,
-            SUM(CASE WHEN review_result='FAILURE' THEN 1 ELSE 0 END) failure_count
+            SUM(CASE WHEN review_result IN ('S','SUCCESS') THEN 1 ELSE 0 END) success_count,
+            SUM(CASE WHEN review_result IN ('F','FAILURE') THEN 1 ELSE 0 END) failure_count
             FROM chart_marker_events GROUP BY marker_id""")).all()
         counts = {row.marker_id: (row.stock_count, row.marker_count, row.success_count, row.failure_count) for row in count_rows}
         result = []
@@ -227,7 +228,9 @@ class ChartMarkerService:
             sql += " AND e.marker_date <= :end_date"
             params["end_date"] = end_date.isoformat()
         sql += " ORDER BY e.marker_date, g.sort_order, m.sort_order, e.id"
-        return {"items": [dict(row._mapping) for row in self.db.execute(text(sql), params)]}
+        items = [dict(row._mapping) for row in self.db.execute(text(sql), params)]
+        for item in items: item["review_result"] = normalize_marker_review_result(item["review_result"])
+        return {"items": items}
 
     def update_event(self, event_id: int, payload: MarkerEventPatch) -> dict[str, Any]:
         row = self.db.get(ChartMarkerEvent, event_id)
@@ -272,7 +275,9 @@ class ChartMarkerService:
             JOIN chart_marker_groups g ON g.id=m.marker_group_id WHERE e.marker_id=:marker_id
             ORDER BY s.stock_name COLLATE NOCASE ASC, e.marker_date DESC
         """), {"marker_id": marker_id}).all()
-        return {"items": [dict(row._mapping) for row in rows]}
+        items = [dict(row._mapping) for row in rows]
+        for item in items: item["review_result"] = normalize_marker_review_result(item["review_result"])
+        return {"items": items}
 
     def review_chart(self, stock_id: int, marker_date: date, before_candles: int = 60, after_candles: int = 20) -> dict[str, Any]:
         params = {
@@ -307,7 +312,7 @@ class ChartMarkerService:
     def _event_detail(self, row: ChartMarkerEvent) -> dict[str, Any]:
         marker = self.db.get(ChartMarker, row.marker_id); group = self.db.get(ChartMarkerGroup, marker.marker_group_id) if marker else None
         return {"id": row.id, "stock_id": row.stock_id, "marker_id": row.marker_id, "marker_date": row.marker_date,
-                "memo": row.memo, "review_result": row.review_result, "reviewed_at": row.reviewed_at,
+                "memo": row.memo, "review_result": normalize_marker_review_result(row.review_result), "reviewed_at": row.reviewed_at,
                 "marker_name": marker.name if marker else "", "symbol": marker.symbol if marker else "",
                 "marker_group_id": group.id if group else None, "group_name": group.name if group else "", "group_color": group.color if group else "#64748b",
                 "created_at": row.created_at, "updated_at": row.updated_at}

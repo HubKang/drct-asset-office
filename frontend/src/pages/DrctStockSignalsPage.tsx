@@ -2,14 +2,14 @@ import { useState } from "react";
 
 import PageHeader from "@/components/common/PageHeader";
 import SignalPerformanceTab from "@/components/drctStockSignals/SignalPerformanceTab";
-import SignalResearchTab from "@/components/drctStockSignals/SignalResearchTab";
+import SignalResearchHub from "@/components/drctStockSignals/SignalResearchHub";
 import StockSignalTab from "@/components/drctStockSignals/StockSignalTab";
 
 type SignalTab = "signals" | "research" | "performance";
 
 const TABS: Array<{ id: SignalTab; label: string }> = [
   { id: "signals", label: "종목 시그널" },
-  { id: "research", label: "검색식 관리 & 성공패턴 학습" },
+  { id: "research", label: "차트마커 학습 & 검색식 관리" },
   { id: "performance", label: "시그널 성과" },
 ];
 
@@ -47,7 +47,7 @@ function DrctStockSignalsPage() {
         role="tabpanel"
       >
         {activeTab === "signals" ? <StockSignalTab /> : null}
-        {activeTab === "research" ? <SignalResearchTab /> : null}
+        {activeTab === "research" ? <SignalResearchHub /> : null}
         {activeTab === "performance" ? <SignalPerformanceTab /> : null}
       </div>
     </div>

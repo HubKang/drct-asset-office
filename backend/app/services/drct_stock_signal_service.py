@@ -52,8 +52,8 @@ class DrctStockSignalService:
         row = self.db.execute(text("""
             SELECT COUNT(DISTINCT link.marker_definition_id) AS linked_marker_count,
                    COUNT(event.id) AS total_case_count,
-                   SUM(CASE WHEN event.review_result='SUCCESS' THEN 1 ELSE 0 END) AS success_count,
-                   SUM(CASE WHEN event.review_result='FAILURE' THEN 1 ELSE 0 END) AS failure_count,
+                   SUM(CASE WHEN event.review_result IN ('S','SUCCESS') THEN 1 ELSE 0 END) AS success_count,
+                   SUM(CASE WHEN event.review_result IN ('F','FAILURE') THEN 1 ELSE 0 END) AS failure_count,
                    SUM(CASE WHEN event.id IS NOT NULL AND event.review_result IS NULL THEN 1 ELSE 0 END) AS undecided_count,
                    MAX(event.marker_date) AS latest_case_date
             FROM drct_signal_search_marker_links link

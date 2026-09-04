@@ -36,6 +36,17 @@ class DrctRuleService:
             raise HTTPException(500, "현재 검색식 Version을 찾을 수 없습니다.")
         rule_payload = DrctRuleValidator.durable_rule(payload.rule.model_dump())
         validation = DrctRuleValidator.validate(rule_payload)
+        source_text = payload.hts_reference_conditions or current.hts_reference_conditions
+        expression_text = payload.hts_condition_expression or current.hts_condition_expression
+        current_rule = self.db.scalar(select(DrctSignalSearchRule).where(
+            DrctSignalSearchRule.search_version_id == current.id,
+        ))
+        if current_rule is not None:
+            saved_rule = DrctRuleValidator.durable_rule(json.loads(current_rule.rule_json))
+            same_source = source_text.strip().replace("\r\n", "\n") == current.hts_reference_conditions.strip().replace("\r\n", "\n")
+            same_expression = expression_text.strip() == current.hts_condition_expression.strip()
+            if saved_rule == rule_payload and same_source and same_expression:
+                return DrctStockSignalService(self.db)._version_dict(current)
         next_no = current.version_no + 1
         try:
             self.db.execute(text("""
@@ -45,8 +56,8 @@ class DrctRuleService:
             version = DrctSignalSearchVersion(
                 search_id=search_id,
                 version_no=next_no,
-                hts_reference_conditions=payload.hts_reference_conditions or current.hts_reference_conditions,
-                hts_condition_expression=payload.hts_condition_expression or current.hts_condition_expression,
+                hts_reference_conditions=source_text,
+                hts_condition_expression=expression_text,
                 drct_rule_text=f"Structured Rule v{rule_payload['schema_version']} · {len(rule_payload['conditions'])} conditions",
                 change_note=payload.change_note.strip(),
                 is_current=True,

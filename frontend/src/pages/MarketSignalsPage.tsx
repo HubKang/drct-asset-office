@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import { repositories } from "@/services";
@@ -36,6 +36,12 @@ type OperationStatus = "ALL" | "NOT_REGISTERED" | "DRAFT" | "ACTIVE" | "INACTIVE
 type ValidationFilter = "ALL" | "UNVALIDATED" | "NEEDS_REVISION" | "VALIDATED" | "ACTIVATION_READY";
 type HistoryFilter = "ALL" | "TRANSITION" | "TREND_WEAKENING" | "BREAK_CANDIDATE" | "BREAK_CONFIRMED" | "FALSE_BREAK" | "REVERSAL_CONFIRMED" | "ERROR";
 type SignalEvaluationFilter = "BREAK_CANDIDATE" | "BREAK_CONFIRMED" | "REVERSAL_CONFIRMED" | "FALSE_BREAK" | "DATA_INSUFFICIENT";
+type MarketChangeIndicatorPreview = {
+  condition: MarketSignalCondition;
+  observationDate: string;
+  preview: Record<string, unknown>;
+  series: { date: string; value: number }[];
+};
 
 const SIGNAL_EVALUATION_FILTERS: { value: SignalEvaluationFilter; label: string; summaryKey: string }[] = [
   { value: "BREAK_CANDIDATE", label: "추세 이탈 후보", summaryKey: "trend_break_candidate" },
@@ -354,6 +360,39 @@ function matchesSingleEvaluationFilter(existing: Record<string, unknown> | undef
   if (filter === "DATA_INSUFFICIENT") return status === "DATA_INSUFFICIENT" || status === "DATA_SHORTAGE";
   return status === filter;
 }
+
+function RelatedIndicatorChart({ rows, indicatorName, unit }: { rows: { date: string; value: number }[]; indicatorName: string; unit?: string | null }) {
+  const data = rows.filter((row) => Number.isFinite(row.value));
+  if (!data.length) return <div className="market-change-detail-chart-empty">표시할 지표 데이터가 없습니다.</div>;
+  const values = data.map((row) => row.value);
+  const rawMin = Math.min(...values);
+  const rawMax = Math.max(...values);
+  const padding = Math.max((rawMax - rawMin) * 0.1, Math.abs(rawMax || 1) * 0.02, 0.01);
+  const min = rawMin - padding;
+  const max = rawMax + padding;
+  const range = Math.max(max - min, 1e-9);
+  const x = (index: number) => data.length <= 1 ? 42 : 42 + (index / (data.length - 1)) * 568;
+  const y = (value: number) => 148 - ((value - min) / range) * 116;
+  const path = data.map((row, index) => `${index === 0 ? "M" : "L"} ${x(index).toFixed(2)} ${y(row.value).toFixed(2)}`).join(" ");
+  const latest = data[data.length - 1];
+  const middle = min + range / 2;
+  const formatValue = (value: number) => value.toLocaleString("ko-KR", { maximumFractionDigits: 4 });
+  return (
+    <div className="market-change-detail-chart">
+      <svg viewBox="0 0 640 180" role="img" aria-label={`${indicatorName} 지표 그래프`}>
+        {[max, middle, min].map((value) => {
+          const lineY = y(value);
+          return <g key={value}><line className="grid" x1="42" x2="610" y1={lineY} y2={lineY} /><text x="36" y={lineY + 4} textAnchor="end">{formatValue(value)}</text></g>;
+        })}
+        <path className="series" d={path} />
+        <circle className="latest" cx={x(data.length - 1)} cy={y(latest.value)} r="4"><title>{latest.date} · {formatValue(latest.value)}{unit ? ` ${unit}` : ""}</title></circle>
+        <text className="date" x="42" y="171">{data[0].date}</text>
+        <text className="date" x="610" y="171" textAnchor="end">{latest.date}</text>
+      </svg>
+      <div className="market-change-detail-chart-latest"><span>최신 {latest.date}</span><strong>{formatValue(latest.value)}{unit ? ` ${unit}` : ""}</strong></div>
+    </div>
+  );
+}
 function operationLabel(status: OperationStatus) {
   return {
     ALL: "전체",
@@ -652,6 +691,12 @@ function MarketSignalsPage() {
   const [phenomenonFlowItem, setPhenomenonFlowItem] = useState<Record<string, unknown> | null>(null);
   const [phenomenonFlowForm, setPhenomenonFlowForm] = useState({ candidate_title: "", category: "", importance: "NORMAL", user_note: "", auto_update: true });
   const [phenomenonGptPrompt, setPhenomenonGptPrompt] = useState("");
+  const [marketChangeDetailTarget, setMarketChangeDetailTarget] = useState<MarketSignalCurrentStateItem | null>(null);
+  const [marketChangeDetailDefinition, setMarketChangeDetailDefinition] = useState<MarketSignalDefinition | null>(null);
+  const [marketChangeIndicatorPreviews, setMarketChangeIndicatorPreviews] = useState<MarketChangeIndicatorPreview[]>([]);
+  const [marketChangeDetailLoading, setMarketChangeDetailLoading] = useState(false);
+  const [marketChangeDetailError, setMarketChangeDetailError] = useState("");
+  const marketChangeDetailRequestRef = useRef(0);
 
   const catalogByCode = useMemo(() => new Map(catalog.map((item) => [item.code, item])), [catalog]);
   const filteredSignals = useMemo(() => statusFilter === "ALL" ? signals : signals.filter((item) => item.status === statusFilter), [signals, statusFilter]);
@@ -660,6 +705,54 @@ function MarketSignalsPage() {
     const detail = await repositories.marketSignals.get(id);
     setSelectedId(id);
     setDraft(cloneSignal(detail));
+  };
+
+  const closeMarketChangeDetail = () => {
+    marketChangeDetailRequestRef.current += 1;
+    setMarketChangeDetailTarget(null);
+    setMarketChangeDetailDefinition(null);
+    setMarketChangeIndicatorPreviews([]);
+    setMarketChangeDetailError("");
+    setMarketChangeDetailLoading(false);
+  };
+
+  const openSignalWorkspace = (item: MarketSignalCurrentStateItem) => {
+    closeMarketChangeDetail();
+    setMainTab("signals");
+    setSignalTab(String(item.signal_type ?? "").includes("COMPOSITE") ? "composite" : "single");
+    void loadDetail(item.definition_id);
+  };
+
+  const openMarketChangeDetail = async (item: MarketSignalCurrentStateItem) => {
+    const requestId = marketChangeDetailRequestRef.current + 1;
+    marketChangeDetailRequestRef.current = requestId;
+    setMarketChangeDetailTarget(item);
+    setMarketChangeDetailDefinition(null);
+    setMarketChangeIndicatorPreviews([]);
+    setMarketChangeDetailError("");
+    setMarketChangeDetailLoading(true);
+    try {
+      const definition = await repositories.marketSignals.get(item.definition_id);
+      if (marketChangeDetailRequestRef.current !== requestId) return;
+      setMarketChangeDetailDefinition(definition);
+      const uniqueConditions = Array.from(new Map(definition.conditions.map((condition) => [`${condition.item_type}:${condition.item_code}`, condition])).values());
+      if (!uniqueConditions.length) throw new Error("연결된 지표 조건을 찾을 수 없습니다.");
+      const results = await Promise.allSettled(uniqueConditions.map(async (condition) => {
+        const result = await repositories.marketSignals.conditionPreview(condition, item.effective_date);
+        return { condition, observationDate: result.observation_date, preview: result.preview, series: result.series } satisfies MarketChangeIndicatorPreview;
+      }));
+      if (marketChangeDetailRequestRef.current !== requestId) return;
+      const previews = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+      setMarketChangeIndicatorPreviews(previews);
+      if (previews.length < uniqueConditions.length) {
+        setMarketChangeDetailError(previews.length ? "일부 지표 그래프를 불러오지 못했습니다." : "관련 지표 그래프를 불러오지 못했습니다.");
+      }
+    } catch (error) {
+      if (marketChangeDetailRequestRef.current !== requestId) return;
+      setMarketChangeDetailError(error instanceof Error ? error.message : "관련 지표 그래프를 불러오지 못했습니다.");
+    } finally {
+      if (marketChangeDetailRequestRef.current === requestId) setMarketChangeDetailLoading(false);
+    }
   };
 
   const loadTemplates = async () => {
@@ -1182,11 +1275,7 @@ function MarketSignalsPage() {
         <MarketChangeBriefing
           currentStates={currentStates}
           todayTransitions={todayTransitions}
-          onOpenSignal={(item) => {
-            setMainTab("signals");
-            setSignalTab(String(item.signal_type ?? "").includes("COMPOSITE") ? "composite" : "single");
-            void loadDetail(item.definition_id);
-          }}
+          onOpenSignal={(item) => void openMarketChangeDetail(item)}
         />
       ) : null}
       {mainTab === "signals" ? (
@@ -1615,6 +1704,64 @@ function MarketSignalsPage() {
           <SectionCard><h3>학습 요약</h3><dl className="market-signal-learning-grid"><dt>템플릿</dt><dd>{templates.length}개</dd><dt>템플릿 복제</dt><dd>{templates.reduce((sum, item) => sum + item.copied_count, 0)}회</dd><dt>오늘 이벤트</dt><dd>{overview?.today_events.length ?? 0}개</dd><dt>자동 ACTIVE</dt><dd>없음</dd></dl></SectionCard>
           <SectionCard><h3>역할 분리</h3><p>Codex는 엔진·API·화면·템플릿 seed를 구현합니다. GPT는 자연어 요구를 룰 JSON 후보와 경제적 근거로 바꾸며, DrCT 검증 후 DRAFT로만 저장됩니다.</p></SectionCard>
         </section>
+      ) : null}
+
+      {marketChangeDetailTarget ? (
+        <div className="market-signal-drawer-backdrop" role="presentation" onClick={closeMarketChangeDetail}>
+          <aside className="market-signal-analysis-drawer market-change-detail-drawer" role="dialog" aria-modal="true" aria-label="시장 변화 지표 상세" onClick={(event) => event.stopPropagation()}>
+            <header>
+              <div>
+                <span>시장 변화 · 관련 지표 상세</span>
+                <strong>{marketChangeDetailTarget.title ?? marketChangeDetailTarget.signal_code ?? "시장 신호"}</strong>
+                <small>{getMarketIndicatorGroupLabel(marketSignalArea(marketChangeDetailTarget))} · {marketSignalStateLabel(marketChangeDetailTarget.current_state)}</small>
+              </div>
+              <button className="btn btn-secondary" type="button" onClick={closeMarketChangeDetail}>닫기</button>
+            </header>
+            <div className="market-change-detail-body">
+              <section className="market-change-detail-summary">
+                <div><span>현재 판정</span><strong className={marketSignalTone(marketChangeDetailTarget.current_state)}>{marketSignalStateLabel(marketChangeDetailTarget.current_state)}</strong></div>
+                <div><span>판정 기준일</span><strong>{marketChangeDetailTarget.effective_date ?? "-"}</strong></div>
+                <div><span>최근 상태변경</span><strong>{formatMarketSignalDate(marketChangeDetailTarget.last_transition_at)}</strong></div>
+                <div><span>신호 점수</span><strong>{marketChangeDetailTarget.score == null ? "-" : `${num(marketChangeDetailTarget.score, 1)}점`}</strong></div>
+              </section>
+              <section className="market-change-detail-explanation">
+                <h3>현재 변화 해석</h3>
+                <p>{marketChangeDetailTarget.explanation ?? marketChangeDetailTarget.missing_reason ?? `${marketSignalStateLabel(marketChangeDetailTarget.current_state)} 상태입니다.`}</p>
+                {marketChangeDetailDefinition?.description ? <small>{marketChangeDetailDefinition.description}</small> : null}
+              </section>
+              <div className="market-change-detail-heading">
+                <div><h3>관련 지표 그래프</h3><p>이 시그널의 판정 조건에 연결된 지표를 기준일 이하 데이터로 표시합니다.</p></div>
+                {marketChangeDetailDefinition ? <span>{marketChangeIndicatorPreviews.length} / {new Set(marketChangeDetailDefinition.conditions.map((condition) => `${condition.item_type}:${condition.item_code}`)).size}개</span> : null}
+              </div>
+              {marketChangeDetailLoading ? <div className="market-change-detail-status">관련 지표 그래프를 불러오는 중입니다.</div> : null}
+              {marketChangeDetailError ? <div className="market-change-detail-status error"><span>{marketChangeDetailError}</span><button className="btn btn-secondary btn-table-sm" type="button" onClick={() => void openMarketChangeDetail(marketChangeDetailTarget)}>다시 시도</button></div> : null}
+              {marketChangeIndicatorPreviews.length ? (
+                <div className="market-change-detail-chart-list">
+                  {marketChangeIndicatorPreviews.map((item) => {
+                    const catalogItem = signalCatalog.items.find((catalogRow) => catalogRow.item_type === item.condition.item_type && catalogRow.item_code === item.condition.item_code);
+                    const legacyCatalogItem = catalogByCode.get(item.condition.item_code);
+                    const indicatorName = catalogItem?.item_name ?? legacyCatalogItem?.name ?? item.condition.item_code;
+                    const previewValue = item.preview.value;
+                    return (
+                      <article key={`${item.condition.item_type}:${item.condition.item_code}`} className="market-change-detail-chart-card">
+                        <header>
+                          <div><strong>{indicatorName}</strong><span>{item.condition.item_code} · {ROLE_LABELS[item.condition.condition_role] ?? item.condition.condition_role}</span></div>
+                          <div><small>기준일 {item.observationDate}</small>{typeof previewValue === "number" ? <b>{num(previewValue)}{catalogItem?.unit ? ` ${catalogItem.unit}` : ""}</b> : null}</div>
+                        </header>
+                        <RelatedIndicatorChart rows={item.series} indicatorName={String(indicatorName)} unit={catalogItem?.unit} />
+                        <footer><span>판정 조건</span><code>{item.condition.transform_type} · 최근 {item.condition.window_size}개 관측값 · {item.condition.comparison_operator} {item.condition.threshold_value ?? "동적 기준"}</code></footer>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : !marketChangeDetailLoading && !marketChangeDetailError ? <div className="market-change-detail-status">표시할 관련 지표가 없습니다.</div> : null}
+            </div>
+            <footer className="market-signal-drawer-footer">
+              <span>상세 설정과 평가 이력은 시그널 화면에서 계속 확인할 수 있습니다.</span>
+              <div><button className="btn btn-secondary" type="button" onClick={closeMarketChangeDetail}>닫기</button><button className="btn btn-primary" type="button" onClick={() => openSignalWorkspace(marketChangeDetailTarget)}>시그널 화면에서 보기</button></div>
+            </footer>
+          </aside>
+        </div>
       ) : null}
 
       {phenomenonDetail && !phenomenonHistoryOpen ? (

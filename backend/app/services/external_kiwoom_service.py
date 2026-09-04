@@ -2824,27 +2824,35 @@ class ExternalKiwoomService:
             {"theme_id": theme_id},
         ).mappings().first()
         if not latest:
-            stock_count = len(self._list_active_theme_return_stocks(theme_id))
+            linked_stocks = self._list_active_theme_return_stocks(theme_id)
             return MarketThemeLatestReturnResponse(
                 theme_id=theme_id,
                 theme_name=str(theme["theme_name"]),
                 theme_group_name=theme["theme_group_name"],
-                stock_count=stock_count,
-                stocks=[],
+                stock_count=len(linked_stocks),
+                stocks=[
+                    MarketThemeReturnStockItem(
+                        **stock,
+                        data_status="missing",
+                    )
+                    for stock in linked_stocks
+                ],
             )
 
         stock_rows = self.db.execute(
             text(
                 """
-                SELECT returns.stock_id, returns.stock_code, returns.stock_name, mts.stock_memo,
+                SELECT s.id AS stock_id, s.stock_code, s.stock_name, mts.stock_memo,
                        returns.trading_value_100m, returns.change_rate, returns.current_price,
-                       returns.data_status, returns.error_message
-                FROM market_theme_stock_daily_returns returns
-                LEFT JOIN market_theme_stocks mts
-                  ON mts.theme_id=:theme_id AND mts.stock_id=returns.stock_id
-                WHERE returns.theme_daily_return_id=:daily_return_id
-                  AND COALESCE(data_status, 'missing')<>'inactive'
-                ORDER BY data_status='success' DESC, COALESCE(trading_value, 0) DESC, stock_name ASC
+                       COALESCE(returns.data_status, 'missing') AS data_status, returns.error_message
+                FROM market_theme_stocks mts
+                JOIN stocks s ON s.id=mts.stock_id AND COALESCE(s.is_active, 1)=1
+                LEFT JOIN market_theme_stock_daily_returns returns
+                  ON returns.theme_daily_return_id=:daily_return_id
+                 AND returns.stock_id=mts.stock_id
+                 AND COALESCE(returns.data_status, 'missing')<>'inactive'
+                WHERE mts.theme_id=:theme_id AND COALESCE(mts.is_active, 1)=1
+                ORDER BY returns.data_status='success' DESC, COALESCE(returns.trading_value_100m, 0) DESC, s.stock_name ASC
                 """
             ),
             {"daily_return_id": int(latest["id"]), "theme_id": theme_id},
@@ -3516,7 +3524,7 @@ class ExternalKiwoomService:
         rows = self.db.execute(
             text(
                 """
-                SELECT s.id AS stock_id, s.stock_code, s.stock_name
+                SELECT s.id AS stock_id, s.stock_code, s.stock_name, mts.stock_memo
                 FROM market_theme_stocks mts
                 JOIN stocks s ON s.id=mts.stock_id
                 WHERE mts.theme_id=:theme_id
