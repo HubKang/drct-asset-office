@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+from datetime import date
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from backend.app.core.database import get_db
+from backend.app.schemas.drct_current_pattern_scan_schema import (
+    MarkerCurrentPatternDetailResponse,
+    MarkerCurrentPatternScanRequest,
+    MarkerCurrentPatternScanResponse,
+)
 from backend.app.schemas.drct_stock_signal_schema import (
     DrctSignalMarkerLinksPut,
     DrctSignalSearchCreate,
@@ -62,9 +69,25 @@ from backend.app.schemas.drct_marker_learning_schema import (
 from backend.app.services.marker_training_case_service import MarkerTrainingCaseService
 from backend.app.services.marker_pattern_signature_service import MarkerPatternSignatureService
 from backend.app.services.marker_auto_learning_service import MarkerAutoLearningService
+from backend.app.services.marker_current_pattern_scan_service import MarkerCurrentPatternScanService
 
 
 router = APIRouter(prefix="/drct-stock-signals", tags=["drct-stock-signals"])
+
+
+@router.post("/marker-signals/scan", response_model=MarkerCurrentPatternScanResponse)
+def marker_current_pattern_scan(
+    payload: MarkerCurrentPatternScanRequest, db: Session = Depends(get_db),
+):
+    return MarkerCurrentPatternScanService(db).scan(payload.analysis_date)
+
+
+@router.get("/marker-signals/{stock_id}/{marker_id}/detail", response_model=MarkerCurrentPatternDetailResponse)
+def marker_current_pattern_detail(
+    stock_id: int, marker_id: int, analysis_date: date | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    return MarkerCurrentPatternScanService(db).detail(stock_id, marker_id, analysis_date)
 
 
 @router.get("/marker-learning/markers", response_model=MarkerLearningCatalogResponse)

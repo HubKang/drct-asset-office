@@ -286,21 +286,20 @@ class ChartMarkerService:
             "before_limit": before_candles,
             "after_limit": after_candles,
         }
-        center = self.db.execute(text("SELECT * FROM stock_daily_prices WHERE stock_id=:stock_id AND trade_date=:marker_date"), params).first()
-        if not center:
+        rows_desc = self.db.execute(text("""
+            SELECT * FROM stock_daily_prices
+            WHERE stock_id=:stock_id AND trade_date <= :marker_date
+            ORDER BY trade_date DESC LIMIT :window_limit
+        """), {**params, "window_limit": before_candles + 1}).all()
+        if not rows_desc or str(rows_desc[0].trade_date)[:10] != marker_date.isoformat():
             return {"stock_id": stock_id, "marker_date": marker_date, "marker_index": None, "total_candles": 0,
                     "available_before": 0, "available_after": 0, "requested_before": before_candles,
                     "requested_after": after_candles, "candles": []}
 
-        before_available = self.db.execute(text("""SELECT * FROM stock_daily_prices WHERE stock_id=:stock_id AND trade_date < :marker_date
-            ORDER BY trade_date DESC LIMIT :before_limit"""), params).all()
-        after_available = self.db.execute(text("""SELECT * FROM stock_daily_prices WHERE stock_id=:stock_id AND trade_date > :marker_date
-            ORDER BY trade_date ASC LIMIT :after_limit"""), params).all()
-        before_count = min(before_candles, len(before_available))
-        after_count = min(after_candles, len(after_available))
-
-        before_rows = before_available[:before_count][::-1]
-        after_rows = after_available[:after_count]
+        center = rows_desc[0]
+        before_rows = rows_desc[1:][::-1]
+        after_rows = self.db.execute(text("""SELECT * FROM stock_daily_prices WHERE stock_id=:stock_id AND trade_date > :marker_date
+            ORDER BY trade_date ASC LIMIT :after_limit"""), params).all() if after_candles else []
         rows = [*before_rows, center, *after_rows]
         candles = [{"trade_date": r.trade_date, "open": r.open_price, "high": r.high_price, "low": r.low_price,
                     "close": r.close_price, "volume": r.volume, "moving_averages": {f"ma{n}": getattr(r, f"ma{n}") for n in (5,10,20,60,120)}} for r in rows]
