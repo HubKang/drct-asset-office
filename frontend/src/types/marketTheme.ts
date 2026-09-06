@@ -488,7 +488,7 @@ export type MarketThemeMonthlyReturnResponse = {
   active_only: boolean;
   display_start_date: string;
   display_end_date: string;
-  sort_by?: "CURRENT_STRENGTH" | "ROLLING_30D_RETURN" | null;
+  sort_by?: "CURRENT_STRENGTH" | "ROLLING_30D_RETURN" | "LATEST_RETURN" | null;
   themes: MarketThemeMonthlyReturnThemeItem[];
   summary: {
     top_rising_theme: MarketThemeMonthlyReturnSummaryTopItem | null;
@@ -705,7 +705,7 @@ export type MarketThemeRangeReturnParams = {
   theme_group_id?: number;
   keyword?: string;
   limit?: number;
-  sort_by?: "CURRENT_STRENGTH" | "ROLLING_30D_RETURN";
+  sort_by?: "CURRENT_STRENGTH" | "ROLLING_30D_RETURN" | "LATEST_RETURN";
 };
 export type MarketThemeType = "industry" | "theme" | "custom" | "telegram";
 export type MarketThemeLevel = "THEME_GROUP" | "THEME";

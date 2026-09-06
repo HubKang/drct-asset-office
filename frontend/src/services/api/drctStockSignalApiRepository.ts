@@ -3,6 +3,8 @@ import type { DrctBaselineEvaluation, DrctCurrentPatternDetail, DrctCurrentPatte
 
 export const drctStockSignalApiRepository = {
   scanCurrentMarkerPatterns: () => apiRequest<DrctCurrentPatternScan>("/drct-stock-signals/marker-signals/scan",{method:"POST",body:"{}"}),
+  currentMarkerPatternDiagnostics: (analysisDate:string|null) => apiRequest<import("@/types/drctStockSignal").DrctPatternDiagnostics>("/drct-stock-signals/marker-signals/diagnostics",{method:"POST",body:JSON.stringify({analysis_date:analysisDate})}),
+  markerPolicyValidation: (markerId:number,analysisDate:string|null) => apiRequest<import("@/types/drctStockSignal").DrctMarkerPolicyValidation>(`/drct-stock-signals/marker-signals/diagnostics/${markerId}/validation`,{method:"POST",body:JSON.stringify({analysis_date:analysisDate})}),
   currentMarkerPatternDetail: (stockId:number,markerId:number,analysisDate:string) => apiRequest<DrctCurrentPatternDetail>(`/drct-stock-signals/marker-signals/${stockId}/${markerId}/detail?analysis_date=${encodeURIComponent(analysisDate)}`),
   markerLearningMarkers: () => apiRequest<{items:DrctMarkerLearningMarker[]}>("/drct-stock-signals/marker-learning/markers"),
   markerAutoLearningSummary: (markerId:number) => apiRequest<DrctMarkerAutoLearningSummary>(`/drct-stock-signals/marker-learning/${markerId}/summary`),

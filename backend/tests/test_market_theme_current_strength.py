@@ -31,6 +31,31 @@ def test_market_theme_range_return_keeps_rolling_30d_sort() -> None:
     assert rolling == sorted(rolling, reverse=True)
 
 
+def test_market_theme_range_return_supports_latest_return_sort() -> None:
+    response = client.get(
+        "/external/kiwoom/market-themes/returns/range",
+        params={"end_date": "2026-07-22", "days": 30, "sort_by": "LATEST_RETURN"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["sort_by"] == "LATEST_RETURN"
+    latest_date = max(
+        daily["return_date"]
+        for theme in body["themes"]
+        for daily in theme["daily_returns"]
+    )
+    values = []
+    missing_started = False
+    for theme in body["themes"]:
+        latest = next((daily["avg_change_rate"] for daily in theme["daily_returns"] if daily["return_date"] == latest_date), None)
+        if latest is None:
+            missing_started = True
+        else:
+            assert not missing_started
+            values.append(latest)
+    assert values == sorted(values, reverse=True)
+
+
 def test_market_theme_range_return_rejects_unknown_sort() -> None:
     response = client.get(
         "/external/kiwoom/market-themes/returns/range",

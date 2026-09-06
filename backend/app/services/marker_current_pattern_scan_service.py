@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import logging
 import time
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from datetime import date
+from threading import RLock
 from typing import Any
 
+import numpy as np
 from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -16,6 +18,11 @@ from backend.app.services.marker_pattern_signature_service import (
     PATTERN_SIMILARITY_ALGORITHM_VERSION,
     MarkerPatternSignatureService,
 )
+from backend.app.services.marker_candidate_policy_research_service import (
+    BASELINE_POLICY_VERSION,
+    SHADOW_POLICY_VERSION,
+    MarkerCandidatePolicyResearchService,
+)
 
 
 CANDIDATE_POLICY_VERSION = 1
@@ -25,6 +32,10 @@ logger = logging.getLogger(__name__)
 
 class MarkerCurrentPatternScanService:
     """Read-only S-only current-pattern scan with a fixed number of bulk queries."""
+
+    _signature_cache: OrderedDict[tuple[Any, ...], dict[int, dict[str, Any]]] = OrderedDict()
+    _signature_cache_lock = RLock()
+    _signature_cache_limit = 16
 
     def __init__(self, db: Session):
         self.db = db
@@ -110,6 +121,61 @@ class MarkerCurrentPatternScanService:
             grouped[int(row["stock_id"])].append(dict(row))
         return grouped
 
+    def _bulk_recent_prices(self, stock_ids: list[int], analysis_date: str) -> dict[int, list[dict[str, Any]]]:
+        """Load only the 61 candles required by the CORE feature profile."""
+        if not stock_ids:
+            return {}
+        params: dict[str, Any] = {"analysis_date": analysis_date}
+        placeholders = []
+        for index, stock_id in enumerate(stock_ids):
+            key = f"recent_stock_{index}"
+            params[key] = stock_id
+            placeholders.append(f":{key}")
+        rows = self._execute(f"""
+            SELECT stock_id, trade_date, open_price, high_price, low_price, close_price,
+                   volume, trading_value, ma5, ma10, ma20, ma60, ma120, ma240
+            FROM (
+                SELECT stock_id, trade_date, open_price, high_price, low_price, close_price,
+                       volume, trading_value, ma5, ma10, ma20, ma60, ma120, ma240,
+                       ROW_NUMBER() OVER (PARTITION BY stock_id ORDER BY trade_date DESC) row_no
+                FROM stock_daily_prices
+                WHERE stock_id IN ({','.join(placeholders)}) AND trade_date<=:analysis_date
+            ) ranked
+            WHERE row_no<=61
+            ORDER BY stock_id, trade_date DESC
+        """, params).mappings().all()
+        grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            grouped[int(row["stock_id"])].append(dict(row))
+        return grouped
+
+    def _signature_cache_key(self, analysis_date: str, events: list[dict[str, Any]]) -> tuple[Any, ...]:
+        event_version = tuple((
+            int(row["chart_marker_event_id"]), int(row["marker_id"]), int(row["stock_id"]),
+            str(row["d0"])[:10], str(row["marker_name"]), str(row["marker_symbol"]),
+            int(row["marker_group_id"]), str(row["marker_group"]), str(row["marker_group_color"]),
+        ) for row in events)
+        return (
+            self.db.get_bind(), analysis_date, FEATURE_SCHEMA_VERSION,
+            MARKER_PATTERN_SIGNATURE_VERSION, PATTERN_SIMILARITY_ALGORITHM_VERSION, event_version,
+        )
+
+    @classmethod
+    def _get_cached_baselines(cls, key: tuple[Any, ...]) -> dict[int, dict[str, Any]] | None:
+        with cls._signature_cache_lock:
+            cached = cls._signature_cache.get(key)
+            if cached is not None:
+                cls._signature_cache.move_to_end(key)
+            return cached
+
+    @classmethod
+    def _put_cached_baselines(cls, key: tuple[Any, ...], value: dict[int, dict[str, Any]]) -> None:
+        with cls._signature_cache_lock:
+            cls._signature_cache[key] = value
+            cls._signature_cache.move_to_end(key)
+            while len(cls._signature_cache) > cls._signature_cache_limit:
+                cls._signature_cache.popitem(last=False)
+
     @staticmethod
     def _band(similarity: float, distribution: dict[str, float]) -> str | None:
         if similarity < distribution["p25"]:
@@ -119,6 +185,19 @@ class MarkerCurrentPatternScanService:
         if similarity >= distribution["median"]:
             return "HIGH_SIMILARITY"
         return "SIMILAR"
+
+    @staticmethod
+    def _distribution(values: list[float]) -> dict[str, float] | None:
+        if not values:
+            return None
+        data = np.asarray(values, dtype=float)
+        percentile = MarkerPatternSignatureService._percentile
+        return {
+            "min": float(np.min(data)), "p10": percentile(data, 10),
+            "p25": percentile(data, 25), "median": float(np.median(data)),
+            "p75": percentile(data, 75), "p90": percentile(data, 90),
+            "max": float(np.max(data)),
+        }
 
     @staticmethod
     def _core_at(rows_desc: list[dict[str, Any]], d0: str) -> dict[str, float] | None:
@@ -139,12 +218,19 @@ class MarkerCurrentPatternScanService:
                           "similarity_algorithm_version": PATTERN_SIMILARITY_ALGORITHM_VERSION,
                           "candidate_policy_version": CANDIDATE_POLICY_VERSION},
             "marker_summaries": [], "stocks": [],
+            "diagnostics": {"current_policy": "P25", "baseline_policy_version": BASELINE_POLICY_VERSION,
+                "shadow_policy": {"candidate_pair_count": 0, "candidate_stock_count": 0, "multiple_marker_stock_count": 0},
+                "shadow_policy_status": "VALIDATING", "shadow_policy_version": SHADOW_POLICY_VERSION,
+                "markers": [], "policies": {
+                key: {"candidate_pair_count": 0, "candidate_stock_count": 0, "multiple_marker_stock_count": 0}
+                for key in ("p25", "median", "p75", "p90")
+            }, "storage_policy": "RUNTIME_ONLY"},
             "timings": {"universe_ms": universe_ms, "signature_ms": 0, "feature_ms": 0,
                         "similarity_ms": 0, "total_ms": total_ms, "sql_query_count": query_count},
             "storage_policy": "RUNTIME_ONLY",
         }
 
-    def _run(self, requested_date: date | None) -> tuple[dict[str, Any], dict[tuple[int, int], dict[str, Any]]]:
+    def _run(self, requested_date: date | None, include_diagnostics: bool = True) -> tuple[dict[str, Any], dict[tuple[int, int], dict[str, Any]]]:
         total_started = time.perf_counter()
         universe_started = time.perf_counter()
         universe = self._universe()
@@ -156,33 +242,39 @@ class MarkerCurrentPatternScanService:
 
         signature_started = time.perf_counter()
         events = self._training_events(analysis_date)
-        all_stock_ids = sorted({row["stock_id"] for row in universe} | {int(row["stock_id"]) for row in events})
-        prices = self._bulk_prices(all_stock_ids, analysis_date)
-        events_by_marker: dict[int, list[dict[str, Any]]] = defaultdict(list)
-        marker_meta: dict[int, dict[str, Any]] = {}
-        for event in events:
-            marker_id = int(event["marker_id"])
-            marker_meta.setdefault(marker_id, {key: event[key] for key in (
-                "marker_id", "marker_name", "marker_symbol", "marker_group_id", "marker_group", "marker_group_color"
-            )})
-            features = self._core_at(prices.get(int(event["stock_id"]), []), str(event["d0"])[:10])
-            if features is not None:
-                events_by_marker[marker_id].append({
-                    "chart_marker_event_id": int(event["chart_marker_event_id"]),
-                    "stock_id": int(event["stock_id"]), "stock_code": "", "stock_name": "",
-                    "d0": str(event["d0"])[:10], "review_result": "S", "learning_decision": None,
-                    "core_status": "READY", "core_features": features,
-                })
-        baselines: dict[int, dict[str, Any]] = {}
-        for marker_id, cases in events_by_marker.items():
-            if len(cases) < 5:
-                continue
-            signature = MarkerPatternSignatureService.build_signature(cases, "CORE")
-            validation = MarkerPatternSignatureService.validate(cases, "CORE")
-            if signature["status"] != "TESTABLE" or validation["distribution"] is None:
-                continue
-            baselines[marker_id] = {"meta": marker_meta[marker_id], "cases": cases,
-                                    "signature": signature, "validation": validation}
+        cache_key = self._signature_cache_key(analysis_date, events)
+        baselines = self._get_cached_baselines(cache_key)
+        if baselines is None:
+            all_stock_ids = sorted({row["stock_id"] for row in universe} | {int(row["stock_id"]) for row in events})
+            prices = self._bulk_prices(all_stock_ids, analysis_date)
+            events_by_marker: dict[int, list[dict[str, Any]]] = defaultdict(list)
+            marker_meta: dict[int, dict[str, Any]] = {}
+            for event in events:
+                marker_id = int(event["marker_id"])
+                marker_meta.setdefault(marker_id, {key: event[key] for key in (
+                    "marker_id", "marker_name", "marker_symbol", "marker_group_id", "marker_group", "marker_group_color"
+                )})
+                features = self._core_at(prices.get(int(event["stock_id"]), []), str(event["d0"])[:10])
+                if features is not None:
+                    events_by_marker[marker_id].append({
+                        "chart_marker_event_id": int(event["chart_marker_event_id"]),
+                        "stock_id": int(event["stock_id"]), "stock_code": "", "stock_name": "",
+                        "d0": str(event["d0"])[:10], "review_result": "S", "learning_decision": None,
+                        "core_status": "READY", "core_features": features,
+                    })
+            baselines = {}
+            for marker_id, cases in events_by_marker.items():
+                if len(cases) < 5:
+                    continue
+                signature = MarkerPatternSignatureService.build_signature(cases, "CORE")
+                validation = MarkerPatternSignatureService.validate(cases, "CORE")
+                if signature["status"] != "TESTABLE" or validation["distribution"] is None:
+                    continue
+                baselines[marker_id] = {"meta": marker_meta[marker_id], "cases": cases,
+                                        "signature": signature, "validation": validation}
+            self._put_cached_baselines(cache_key, baselines)
+        else:
+            prices = self._bulk_recent_prices([row["stock_id"] for row in universe], analysis_date)
         signature_ms = int((time.perf_counter() - signature_started) * 1000)
 
         feature_started = time.perf_counter()
@@ -199,6 +291,7 @@ class MarkerCurrentPatternScanService:
         candidate_stocks: list[dict[str, Any]] = []
         details: dict[tuple[int, int], dict[str, Any]] = {}
         marker_counts = {marker_id: 0 for marker_id in baselines}
+        marker_similarity_rows: dict[int, list[dict[str, Any]]] = {marker_id: [] for marker_id in baselines}
         for stock in universe:
             features = current_features.get(stock["stock_id"])
             if features is None:
@@ -210,10 +303,14 @@ class MarkerCurrentPatternScanService:
                 if scored is None:
                     continue
                 similarity = float(scored["pattern_similarity"])
+                loo_values = [float(row["pattern_similarity"]) for row in baseline["validation"]["cases"]]
+                marker_similarity_rows[marker_id].append({
+                    **stock, "similarity": similarity,
+                    "empirical_percentile": sum(value <= similarity for value in loo_values) / len(loo_values) * 100,
+                })
                 band = self._band(similarity, distribution)
                 if band is None:
                     continue
-                loo_values = [float(row["pattern_similarity"]) for row in baseline["validation"]["cases"]]
                 percentile = sum(value <= similarity for value in loo_values) / len(loo_values) * 100
                 meta = baseline["meta"]
                 signal = {
@@ -247,6 +344,96 @@ class MarkerCurrentPatternScanService:
                 "loo_median": distribution["median"], "loo_p75": distribution["p75"],
                 "candidate_count": marker_counts[marker_id],
             })
+        if not include_diagnostics:
+            total_ms = int((time.perf_counter() - total_started) * 1000)
+            return {
+                "analysis_date": analysis_date, "universe_count": len(universe),
+                "evaluable_stock_count": len(current_features),
+                "incomplete_stock_count": len(universe) - len(current_features),
+                "eligible_marker_count": len(baselines),
+                "candidate_pair_count": sum(len(row["signals"]) for row in candidate_stocks),
+                "candidate_stock_count": len(candidate_stocks),
+                "algorithm": {"feature_schema_version": FEATURE_SCHEMA_VERSION,
+                              "pattern_signature_version": MARKER_PATTERN_SIGNATURE_VERSION,
+                              "similarity_algorithm_version": PATTERN_SIMILARITY_ALGORITHM_VERSION,
+                              "candidate_policy_version": CANDIDATE_POLICY_VERSION},
+                "marker_summaries": marker_summaries, "stocks": candidate_stocks,
+                "timings": {"universe_ms": universe_ms, "signature_ms": signature_ms,
+                            "feature_ms": feature_ms, "similarity_ms": similarity_ms,
+                            "total_ms": total_ms, "sql_query_count": self.query_count},
+                "storage_policy": "RUNTIME_ONLY",
+            }, details
+        threshold_keys = ("p25", "median", "p75", "p90")
+        policy_stock_hits: dict[str, dict[int, int]] = {key: defaultdict(int) for key in threshold_keys}
+        diagnostic_markers = []
+        shadow_stock_hits: dict[int, int] = defaultdict(int)
+        p25_pair_count = sum(marker_counts.values())
+        for marker_id, baseline in baselines.items():
+            loo_distribution = baseline["validation"]["distribution"]
+            current_rows = sorted(marker_similarity_rows[marker_id], key=lambda row: (-row["similarity"], row["stock_name"]))
+            current_distribution = self._distribution([row["similarity"] for row in current_rows])
+            if current_distribution is None:
+                continue
+            thresholds = {}
+            for key in threshold_keys:
+                threshold = float(loo_distribution[key])
+                passing = [row for row in current_rows if row["similarity"] >= threshold]
+                for row in passing:
+                    policy_stock_hits[key][row["stock_id"]] += 1
+                thresholds[key] = {
+                    "value": threshold, "candidate_count": len(passing),
+                    "candidate_ratio": len(passing) / len(current_rows) * 100 if current_rows else 0.0,
+                    "samples": [{
+                        "stock_id": row["stock_id"], "stock_code": row["stock_code"],
+                        "stock_name": row["stock_name"], "theme_names": row["theme_names"],
+                        "similarity": row["similarity"], "empirical_percentile": row["empirical_percentile"],
+                        "is_current_candidate": row["similarity"] >= float(loo_distribution["p25"]),
+                    } for row in passing[:10]],
+                }
+            bounds = {
+                "p90_or_above": lambda value: value >= float(loo_distribution["p90"]),
+                "p75_to_p90": lambda value: float(loo_distribution["p75"]) <= value < float(loo_distribution["p90"]),
+                "median_to_p75": lambda value: float(loo_distribution["median"]) <= value < float(loo_distribution["p75"]),
+                "p25_to_median": lambda value: float(loo_distribution["p25"]) <= value < float(loo_distribution["median"]),
+                "below_p25": lambda value: value < float(loo_distribution["p25"]),
+            }
+            segments = {}
+            for key, predicate in bounds.items():
+                rows = [row for row in current_rows if predicate(row["similarity"])]
+                segments[key] = {"count": len(rows), "samples": [{
+                    "stock_id": row["stock_id"], "stock_code": row["stock_code"],
+                    "stock_name": row["stock_name"], "theme_names": row["theme_names"],
+                    "similarity": row["similarity"], "empirical_percentile": row["empirical_percentile"],
+                    "is_current_candidate": row["similarity"] >= float(loo_distribution["p25"]),
+                } for row in rows[:3]]}
+            meta = baseline["meta"]
+            friendly, shadow_stock_ids = MarkerCandidatePolicyResearchService.evaluate(
+                loo_distribution=loo_distribution,
+                current_distribution=current_distribution,
+                current_rows=current_rows,
+                thresholds=thresholds,
+            )
+            for stock_id in shadow_stock_ids:
+                shadow_stock_hits[stock_id] += 1
+            diagnostic_markers.append({
+                **meta, "training_s_count": len(baseline["cases"]),
+                "loo_evaluated_count": int(baseline["validation"]["evaluated_count"]),
+                "loo_distribution": {key: float(loo_distribution[key]) for key in ("min", "p10", "p25", "median", "p75", "p90", "max")},
+                "current_evaluable_count": len(current_rows), "current_distribution": current_distribution,
+                "median_gap": float(loo_distribution["median"]) - current_distribution["median"],
+                "p75_gap": float(loo_distribution["p75"]) - current_distribution["p75"],
+                "thresholds": thresholds, "segments": segments,
+                "current_pair_contribution_ratio": marker_counts[marker_id] / p25_pair_count * 100 if p25_pair_count else 0.0,
+                "p90_sample_warning": "학습 사례가 적으면 P90 기준은 표본 변화에 크게 영향을 받을 수 있습니다.",
+                "friendly": friendly,
+            })
+        policies = {
+            key: {
+                "candidate_pair_count": sum(hits.values()),
+                "candidate_stock_count": len(hits),
+                "multiple_marker_stock_count": sum(count > 1 for count in hits.values()),
+            } for key, hits in policy_stock_hits.items()
+        }
         total_ms = int((time.perf_counter() - total_started) * 1000)
         response = {
             "analysis_date": analysis_date, "universe_count": len(universe),
@@ -260,6 +447,14 @@ class MarkerCurrentPatternScanService:
                           "similarity_algorithm_version": PATTERN_SIMILARITY_ALGORITHM_VERSION,
                           "candidate_policy_version": CANDIDATE_POLICY_VERSION},
             "marker_summaries": marker_summaries, "stocks": candidate_stocks,
+            "diagnostics": {"current_policy": "P25", "baseline_policy_version": BASELINE_POLICY_VERSION,
+                            "shadow_policy": {
+                                "candidate_pair_count": sum(shadow_stock_hits.values()),
+                                "candidate_stock_count": len(shadow_stock_hits),
+                                "multiple_marker_stock_count": sum(count > 1 for count in shadow_stock_hits.values()),
+                            },
+                            "shadow_policy_status": "VALIDATING", "shadow_policy_version": SHADOW_POLICY_VERSION,
+                            "markers": diagnostic_markers, "policies": policies, "storage_policy": "RUNTIME_ONLY"},
             "timings": {"universe_ms": universe_ms, "signature_ms": signature_ms,
                         "feature_ms": feature_ms, "similarity_ms": similarity_ms,
                         "total_ms": total_ms, "sql_query_count": self.query_count},
@@ -270,6 +465,15 @@ class MarkerCurrentPatternScanService:
     def scan(self, requested_date: date | None = None) -> dict[str, Any]:
         response, _details = self._run(requested_date)
         return response
+
+    def scan_summary(self, requested_date: date | None = None) -> dict[str, Any]:
+        response, _details = self._run(requested_date, include_diagnostics=False)
+        response.pop("diagnostics", None)
+        return response
+
+    def diagnostics(self, requested_date: date | None = None) -> dict[str, Any]:
+        response, _details = self._run(requested_date, include_diagnostics=True)
+        return response["diagnostics"]
 
     def detail(self, stock_id: int, marker_id: int, analysis_date: date | None = None) -> dict[str, Any]:
         """Build one stock/marker detail without rerunning the current-universe scan."""
@@ -358,8 +562,6 @@ class MarkerCurrentPatternScanService:
             raise HTTPException(404, "현재 기준일의 Pattern 후보를 찾을 수 없습니다.")
         similarity = float(scored["pattern_similarity"])
         band = self._band(similarity, distribution)
-        if band is None:
-            raise HTTPException(404, "현재 기준일의 Pattern 후보를 찾을 수 없습니다.")
         loo_values = [float(row["pattern_similarity"]) for row in validation["cases"]]
         meta = events[0]
         signal = {
@@ -367,7 +569,7 @@ class MarkerCurrentPatternScanService:
                 "marker_id", "marker_name", "marker_symbol", "marker_group_id", "marker_group", "marker_group_color"
             )},
             "current_pattern_similarity": similarity,
-            "candidate_band": band,
+            "candidate_band": band or "BELOW_CANDIDATE",
             "empirical_percentile": sum(value <= similarity for value in loo_values) / len(loo_values) * 100,
             "loo_p25": float(distribution["p25"]), "loo_median": float(distribution["median"]),
             "loo_p75": float(distribution["p75"]), "training_case_count": len(cases),

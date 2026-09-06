@@ -3023,8 +3023,8 @@ class ExternalKiwoomService:
         except Exception:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="end_date는 YYYY-MM-DD 형식이어야 합니다.")
         normalized_sort = str(sort_by or "CURRENT_STRENGTH").upper()
-        if normalized_sort not in {"CURRENT_STRENGTH", "ROLLING_30D_RETURN"}:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="sort_by는 CURRENT_STRENGTH 또는 ROLLING_30D_RETURN이어야 합니다.")
+        if normalized_sort not in {"CURRENT_STRENGTH", "ROLLING_30D_RETURN", "LATEST_RETURN"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="sort_by는 CURRENT_STRENGTH, ROLLING_30D_RETURN 또는 LATEST_RETURN이어야 합니다.")
         normalized_days = max(1, min(int(days or 30), 120))
         start = end - timedelta(days=normalized_days - 1)
         calc_start = start - timedelta(days=59)
@@ -3314,8 +3314,27 @@ class ExternalKiwoomService:
             persistence_top=to_top(persistence_top),
         )
 
+        latest_return_date = max(
+            (daily.return_date for theme in theme_items for daily in theme.daily_returns),
+            default=None,
+        )
+
+        def latest_return_value(theme: MarketThemeMonthlyReturnThemeItem) -> float | None:
+            if latest_return_date is None:
+                return None
+            latest = next((daily for daily in theme.daily_returns if daily.return_date == latest_return_date), None)
+            return latest.avg_change_rate if latest is not None else None
+
         if normalized_sort == "ROLLING_30D_RETURN":
             theme_items.sort(key=lambda theme: (theme.rolling_30d_change_rate is None, -(theme.rolling_30d_change_rate or 0), theme.theme_name))
+        elif normalized_sort == "LATEST_RETURN":
+            theme_items.sort(
+                key=lambda theme: (
+                    latest_return_value(theme) is None,
+                    -(latest_return_value(theme) or 0),
+                    theme.theme_name,
+                )
+            )
         else:
             theme_items.sort(key=lambda theme: (theme.theme_strength_score is None, -(theme.theme_strength_score or 0), theme.theme_name))
         if limit and limit > 0:

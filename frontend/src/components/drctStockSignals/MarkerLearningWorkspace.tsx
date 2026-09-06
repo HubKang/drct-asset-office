@@ -4,7 +4,7 @@ import { ArrowRight, CheckCircle2, ChevronDown, ChevronRight, CircleAlert, Datab
 import { ReviewChart, normalizeReviewChart } from "@/pages/ChartMarkerReviewPage";
 import { repositories } from "@/services";
 import type { ChartMarkerEvent, ChartMarkerReviewChart, ChartMarkerReviewEvent } from "@/types/chartMarker";
-import type { DrctMarkerAutoLearningSummary, DrctMarkerLearningCase, DrctMarkerLearningMarker, DrctMarkerLearningOutcomes, DrctMarkerLearningReviewCase, DrctMarkerLearningReviewDetail, DrctMarkerPatternSignature, DrctMarkerRelatedSearch, DrctMarkerSimilarityValidation } from "@/types/drctStockSignal";
+import type { DrctMarkerAutoLearningSummary, DrctMarkerLearningCase, DrctMarkerLearningMarker, DrctMarkerLearningOutcomes, DrctMarkerLearningReviewCase, DrctMarkerLearningReviewDetail, DrctMarkerPatternSignature, DrctMarkerPolicyValidation, DrctMarkerRelatedSearch, DrctMarkerSimilarityValidation } from "@/types/drctStockSignal";
 
 type MainTab = "status" | "review";
 type CaseFilter = "ALL" | "S" | "F" | "UNDECIDED";
@@ -18,6 +18,7 @@ export default function MarkerLearningWorkspace(){
   const [markerId,setMarkerId]=useState<number|null>(null);
   const [expandedGroupId,setExpandedGroupId]=useState<number|null>(null);
   const [summary,setSummary]=useState<DrctMarkerAutoLearningSummary|null>(null);
+  const [policyValidation,setPolicyValidation]=useState<DrctMarkerPolicyValidation|null>(null),[policyValidationBusy,setPolicyValidationBusy]=useState(false);
   const [tab,setTab]=useState<MainTab>("status");
   const [reviewCases,setReviewCases]=useState<DrctMarkerLearningReviewCase[]>([]);
   const [advancedOpen,setAdvancedOpen]=useState(false), [casesOpen,setCasesOpen]=useState(false);
@@ -29,6 +30,7 @@ export default function MarkerLearningWorkspace(){
   useEffect(()=>{loadCatalog().catch((reason)=>setError(errorText(reason)));},[loadCatalog]);
   const loadSummary=useCallback(async()=>{if(!markerId)return;const request=++summaryRequest.current;setBusy(true);setError(null);try{const next=await repositories.drctStockSignals.markerAutoLearningSummary(markerId);if(request===summaryRequest.current)setSummary(next);}catch(reason){if(request===summaryRequest.current)setError(errorText(reason));}finally{if(request===summaryRequest.current)setBusy(false);}},[markerId]);
   useEffect(()=>{setSummary(null);setReviewCases([]);setReviewDetail(null);void loadSummary();},[loadSummary]);
+  useEffect(()=>{if(!markerId)return;let active=true;setPolicyValidation(null);setPolicyValidationBusy(true);repositories.drctStockSignals.markerPolicyValidation(markerId,null).then(result=>{if(active)setPolicyValidation(result);}).catch(()=>undefined).finally(()=>{if(active)setPolicyValidationBusy(false);});return()=>{active=false;};},[markerId]);
   useEffect(()=>{if(tab!=="review"||!markerId)return;let active=true;setBusy(true);repositories.drctStockSignals.markerLearningReviewCases(markerId).then(result=>{if(active)setReviewCases(result.items);}).catch(reason=>{if(active)setError(errorText(reason));}).finally(()=>{if(active)setBusy(false);});return()=>{active=false;};},[tab,markerId]);
   const groups=useMemo(()=>Array.from(new Map(markers.map(item=>[item.marker_group_id,{id:item.marker_group_id,name:item.marker_group_name,color:item.marker_group_color}])).values()),[markers]);
   const refresh=async()=>{setBusy(true);try{await Promise.all([loadCatalog(),loadSummary()]);if(tab==="review"&&markerId){const result=await repositories.drctStockSignals.markerLearningReviewCases(markerId);setReviewCases(result.items);}}finally{setBusy(false);}};
@@ -50,7 +52,27 @@ export default function MarkerLearningWorkspace(){
             <div className="drct-learning-metrics">{[["성공 학습",`${summary.success_count}건`],["학습 사용",`${summary.learning_case_count}건`],["검토 필요",`${summary.review_recommended_count}건`],["추천 준비",recommendationLabel(summary.recommendation_readiness)]].map(([label,value])=><article key={String(label)}><span>{label}</span><strong>{value}</strong></article>)}</div>
           </section>
           <nav className="drct-marker-learning-tabs" aria-label="차트마커 자동학습 메뉴"><button type="button" className={tab==="status"?"is-active":""} onClick={()=>setTab("status")}>학습 현황</button><button type="button" className={tab==="review"?"is-active":""} onClick={()=>setTab("review")}>검토 필요 {summary.review_recommended_count?<em>{summary.review_recommended_count}</em>:null}</button></nav>
-          {tab==="status"?<LearningStatus summary={summary}/>:<ReviewList rows={reviewCases} busy={busy} onOpen={async row=>{if(!markerId)return;try{setReviewDetail(await repositories.drctStockSignals.markerLearningReviewDetail(markerId,row.chart_marker_event_id));}catch(reason){setError(errorText(reason));}}}/>}
+          {tab === "status" ? (
+            <LearningStatus summary={summary} validation={policyValidation} validationBusy={policyValidationBusy} />
+          ) : (
+            <ReviewList
+              rows={reviewCases}
+              busy={busy}
+              onOpen={async (row) => {
+                if (!markerId) return;
+                try {
+                  setReviewDetail(
+                    await repositories.drctStockSignals.markerLearningReviewDetail(
+                      markerId,
+                      row.chart_marker_event_id,
+                    ),
+                  );
+                } catch (reason) {
+                  setError(errorText(reason));
+                }
+              }}
+            />
+          )}
         </>:<div className="drct-learning-detail-empty"><div className="drct-neutral-empty"><Database size={22}/><strong>차트마커를 선택하면 자동학습 상태를 확인할 수 있습니다.</strong></div></div>}
       </main>
     </div>
@@ -60,9 +82,9 @@ export default function MarkerLearningWorkspace(){
   </section>;
 }
 
-function LearningStatus({summary}:{summary:DrctMarkerAutoLearningSummary}){
-  const canValidate=summary.learning_case_count>=5;
-  return <div className="drct-learning-status-panel"><section className="drct-auto-status-card"><div className="drct-pulse-icon"><Sparkles size={19}/></div><div><span>자동학습 중</span><h3>성공 사례 {summary.learning_case_count}건을 학습에 사용 중입니다.</h3><p>새로운 성공 사례가 추가되면 패턴 기준이 자동으로 갱신됩니다.</p></div><dl><div><dt>마지막 계산</dt><dd>{summary.calculated_at.replace("T"," ")}</dd></div></dl></section><div className="drct-learning-status-grid"><article><header><Sparkles/><span>성공 패턴 일관성</span></header><strong>{score(summary.consistency_median)}</strong><p>과거 성공 사례끼리의 중앙 유사도</p></article><article className={canValidate?"is-ready":"is-pending"} title="현재 학습 사례 수로 종목 시그널 검증을 시작할 수 있는지 보여줍니다."><header>{canValidate?<CheckCircle2/>:<CircleAlert/>}<span>추천 준비</span></header><strong>{recommendationLabel(summary.recommendation_readiness)}</strong><p>{canValidate?"현재 종목에서 같은 패턴을 찾는 시그널 검증을 시작할 수 있습니다.":"성공 학습 사례가 더 필요합니다."}</p></article></div>{summary.data_incomplete_count?<p className="drct-learning-notice"><CircleAlert size={15}/> 성공 사례 중 {summary.data_incomplete_count}건은 과거 가격 데이터가 부족해 아직 학습에 사용하지 않습니다.</p>:null}</div>;
+function LearningStatus({summary,validation,validationBusy}:{summary:DrctMarkerAutoLearningSummary;validation:DrctMarkerPolicyValidation|null;validationBusy:boolean}){
+  const statusLabel=validation?({NEED_MORE_DATA:"데이터 더 필요",VALIDATING:"자동 검증 중",IMPROVEMENT_READY:"개선안 검토 가능",KEEP_CURRENT:"현재 방식 유지"} as const)[validation.automatic_improvement_status]:"자동 검증 중";
+  return <div className="drct-learning-status-panel is-simple"><section className="drct-auto-status-card is-simple"><div className="drct-pulse-icon"><Sparkles size={19}/></div><div><span>자동학습</span><h3>정상</h3><p>새 성공 사례가 추가되면 학습 기준과 후보 종목이 자동으로 갱신됩니다.</p></div><dl><div><dt>성공 학습</dt><dd>{summary.learning_case_count}건</dd></div><div><dt>추천 알고리즘</dt><dd>{validationBusy?"검증 중":statusLabel}</dd></div></dl></section>{validation?<section className={`drct-learning-validation-note is-${validation.automatic_improvement_status.toLowerCase()}`}><CheckCircle2 size={17}/><div><strong>과거 성공 사례 재검증</strong><p>{validation.historical_valid_target_count?`현재 방식 ${validation.baseline_hit_count}/${validation.historical_valid_target_count} · 개선안 ${validation.improvement_hit_count}/${validation.historical_valid_target_count} 다시 탐지`:"검증할 수 있는 과거 성공 사례가 더 필요합니다."}</p></div></section>:null}{summary.data_incomplete_count?<p className="drct-learning-notice"><CircleAlert size={15}/> 성공 사례 중 {summary.data_incomplete_count}건은 과거 가격 데이터가 부족해 아직 학습에 사용하지 않습니다.</p>:null}</div>;
 }
 
 function ReviewList({rows,busy,onOpen}:{rows:DrctMarkerLearningReviewCase[];busy:boolean;onOpen:(row:DrctMarkerLearningReviewCase)=>void}){return <div className="drct-learning-review-panel"><header><div><h3>검토가 필요한 사례 {rows.length}건</h3><p>성공 사례 중 기존 패턴과 차이가 큰 사례입니다. 확인 전까지도 자동학습에는 포함됩니다.</p></div></header>{busy?<p>검토 사례를 계산하는 중입니다.</p>:rows.length?<div className="drct-review-list">{rows.map(row=><button type="button" key={row.chart_marker_event_id} onClick={()=>onOpen(row)}><span className="drct-review-stock"><strong>{row.stock_name}</strong><small>{row.stock_code}</small></span><span>{row.d0}</span><span>유사도 {row.pattern_similarity.toFixed(1)}</span><em>주요 차이 3개</em><ChevronRight size={16}/></button>)}</div>:<div className="drct-neutral-empty"><CheckCircle2 size={25}/><strong>현재 검토가 필요한 성공 사례가 없습니다.</strong><p>성공 사례가 5건 미만이면 이상 사례를 판정하지 않습니다.</p></div>}</div>;}

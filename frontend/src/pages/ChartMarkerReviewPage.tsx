@@ -55,6 +55,7 @@ export function ReviewChart({ data, reviewEvent, loading, markerEvents, showD0Ma
   const min = Math.min(...values), max = Math.max(...values), span = Math.max(1, max - min);
   const slotCount = Math.max(1, rows.length);
   const x = (index: number) => p.l + (index + .5) * (width - p.l - p.r) / slotCount;
+  const d0LabelX = Math.max(p.l + 58, Math.min(width - p.r - 58, x(d0)));
   const y = (value: number) => p.t + (max - value) / span * priceH;
   const slot = (width - p.l - p.r) / slotCount, body = Math.max(3, Math.min(11, slot * .55)), maxVol = Math.max(1, ...rows.map((row) => Number(row.volume || 0)));
   const maSeries = [{ key: "ma5", color: "#111827" }, { key: "ma10", color: "#ef4444" }, { key: "ma20", color: "#eab308" }, { key: "ma60", color: "#16a34a" }];
@@ -82,7 +83,7 @@ export function ReviewChart({ data, reviewEvent, loading, markerEvents, showD0Ma
         const markerY = p.t + 12 + markerIndex * 19;
         return <g key={`marker-${markerEvent.id}`} pointerEvents="none"><circle cx={x(index)} cy={markerY} r={isD0 ? 10 : 8} fill={markerEvent.group_color} stroke="#fff" strokeWidth={isD0 ? 3 : 2} /><text x={x(index)} y={markerY + 3.5} textAnchor="middle" fill="#fff" fontSize={isD0 ? 10 : 8} fontWeight="800">{markerEvent.symbol}</text></g>;
       }))}
-      {showD0Marker && d0 >= 0 ? <g pointerEvents="none"><line x1={x(d0)} x2={x(d0)} y1={p.t} y2={p.t + priceH + 24 + volH} stroke={reviewEvent.group_color} strokeWidth="2" strokeDasharray="5 4" /><rect x={x(d0) - 58} y={height - 28} width="116" height="22" rx="6" fill={reviewEvent.group_color} opacity=".12" /><text x={x(d0)} y={height - 13} textAnchor="middle" fill={reviewEvent.group_color} fontWeight="700" fontSize="12">D0 · {data.marker_date}</text></g> : null}
+      {showD0Marker && d0 >= 0 ? <g pointerEvents="none"><line x1={x(d0)} x2={x(d0)} y1={p.t} y2={p.t + priceH + 24 + volH} stroke={reviewEvent.group_color} strokeWidth="2" strokeDasharray="5 4" /><rect x={d0LabelX - 58} y="8" width="116" height="22" rx="6" fill={reviewEvent.group_color} opacity=".12" /><text x={d0LabelX} y="23" textAnchor="middle" fill={reviewEvent.group_color} fontWeight="700" fontSize="12">D0 · {data.marker_date}</text></g> : null}
       <text x={p.l} y={height - 12} fontSize="11" fill="#64748b">{rows[0].trade_date}</text><text x={width - p.r} y={height - 12} textAnchor="end" fontSize="11" fill="#64748b">{rows[rows.length - 1]?.trade_date}</text>
     </svg>
     {hover ? <div className="chart-marker-chart-tooltip"><strong>{hover.trade_date}</strong><span>시가 <b>{hover.open?.toLocaleString() ?? "-"}</b></span><span>고가 <b>{hover.high?.toLocaleString() ?? "-"}</b></span><span>저가 <b>{hover.low?.toLocaleString() ?? "-"}</b></span><span>종가 <b>{hover.close?.toLocaleString() ?? "-"}</b></span><span>거래량 <b>{hover.volume?.toLocaleString() ?? "-"}</b></span><span>등락률 <b className={closeChangeRate == null ? "" : closeChangeRate > 0 ? "up" : closeChangeRate < 0 ? "down" : "flat"}>{closeChangeRate == null ? "-" : `${closeChangeRate > 0 ? "+" : ""}${closeChangeRate.toFixed(2)}%`}</b></span></div> : null}

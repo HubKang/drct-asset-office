@@ -190,10 +190,17 @@ export default function UsMarketThemesPanel({ activeTab, onSummaryChange }: Prop
       .filter((theme) => groupFilter === "all" || String(theme.theme_group_id) === groupFilter)
       .filter((theme) => activeFilter === "all" || String(theme.active) === activeFilter)
       .filter((theme) => !keyword.trim() || `${theme.theme_group_name} ${theme.name} ${theme.keywords.join(" ")}`.toLowerCase().includes(keyword.trim().toLowerCase()))
-      .sort((a, b) => (groupOrder.get(a.theme_group_id) ?? Number.MAX_SAFE_INTEGER) - (groupOrder.get(b.theme_group_id) ?? Number.MAX_SAFE_INTEGER)
-        || a.sort_order - b.sort_order
-        || a.name.localeCompare(b.name, "ko-KR")
-        || a.id - b.id);
+      .sort((a, b) => {
+        const aReturn = a.latest_simple_return;
+        const bReturn = b.latest_simple_return;
+        if (aReturn == null && bReturn != null) return 1;
+        if (aReturn != null && bReturn == null) return -1;
+        if (aReturn != null && bReturn != null && aReturn !== bReturn) return bReturn - aReturn;
+        return (groupOrder.get(a.theme_group_id) ?? Number.MAX_SAFE_INTEGER) - (groupOrder.get(b.theme_group_id) ?? Number.MAX_SAFE_INTEGER)
+          || a.sort_order - b.sort_order
+          || a.name.localeCompare(b.name, "ko-KR")
+          || a.id - b.id;
+      });
   }, [activeFilter, groupFilter, groups, keyword, themes]);
   const connectedIds = useMemo(() => new Set(mappings.map((mapping) => mapping.us_stock_id)), [mappings]);
 

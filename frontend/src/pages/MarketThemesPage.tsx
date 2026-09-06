@@ -48,7 +48,7 @@ type ThemeReturnSort = "default" | "desc" | "asc";
 type ThemeStockSort = "default" | "name" | "memo";
 type MemoSaveStatus = "idle" | "saving" | "saved" | "error";
 type ThemeReturnTrendViewMode = "heatmap" | "line";
-type TrendSortMode = "CURRENT_STRENGTH" | "ROLLING_30D_RETURN";
+type TrendSortMode = "CURRENT_STRENGTH" | "ROLLING_30D_RETURN" | "LATEST_RETURN";
 const THEME_PAGE_SIZE = 50;
 const THEME_RETURN_LINE_COLORS = [
   "#2563eb",
@@ -1706,6 +1706,15 @@ function MarketThemesPage() {
                   onClick={() => setTrendSortMode("ROLLING_30D_RETURN")}
                 >
                   30일 누적
+                </button>
+                <button
+                  type="button"
+                  className={`theme-strength-sort-button ${trendSortMode === "LATEST_RETURN" ? "active" : ""}`}
+                  aria-pressed={trendSortMode === "LATEST_RETURN"}
+                  onClick={() => setTrendSortMode("LATEST_RETURN")}
+                  title="가장 최근 거래일의 테마 등락률이 높은 순서로 정렬"
+                >
+                  최근 등락률
                 </button>
               </div>
               </div>

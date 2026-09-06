@@ -9,7 +9,9 @@ from backend.app.core.database import get_db
 from backend.app.schemas.drct_current_pattern_scan_schema import (
     MarkerCurrentPatternDetailResponse,
     MarkerCurrentPatternScanRequest,
-    MarkerCurrentPatternScanResponse,
+    MarkerCurrentPatternSummaryResponse,
+    MarkerPolicyValidationResponse,
+    PatternDiscriminationDiagnostics,
 )
 from backend.app.schemas.drct_stock_signal_schema import (
     DrctSignalMarkerLinksPut,
@@ -70,16 +72,34 @@ from backend.app.services.marker_training_case_service import MarkerTrainingCase
 from backend.app.services.marker_pattern_signature_service import MarkerPatternSignatureService
 from backend.app.services.marker_auto_learning_service import MarkerAutoLearningService
 from backend.app.services.marker_current_pattern_scan_service import MarkerCurrentPatternScanService
+from backend.app.services.marker_candidate_policy_validation_service import MarkerCandidatePolicyValidationService
 
 
 router = APIRouter(prefix="/drct-stock-signals", tags=["drct-stock-signals"])
 
 
-@router.post("/marker-signals/scan", response_model=MarkerCurrentPatternScanResponse)
+@router.post("/marker-signals/scan", response_model=MarkerCurrentPatternSummaryResponse)
 def marker_current_pattern_scan(
     payload: MarkerCurrentPatternScanRequest, db: Session = Depends(get_db),
 ):
-    return MarkerCurrentPatternScanService(db).scan(payload.analysis_date)
+    return MarkerCurrentPatternScanService(db).scan_summary(payload.analysis_date)
+
+
+@router.post("/marker-signals/diagnostics", response_model=PatternDiscriminationDiagnostics)
+def marker_current_pattern_diagnostics(
+    payload: MarkerCurrentPatternScanRequest, db: Session = Depends(get_db),
+):
+    return MarkerCurrentPatternScanService(db).diagnostics(payload.analysis_date)
+
+
+@router.post(
+    "/marker-signals/diagnostics/{marker_id}/validation",
+    response_model=MarkerPolicyValidationResponse,
+)
+def marker_candidate_policy_validation(
+    marker_id: int, payload: MarkerCurrentPatternScanRequest, db: Session = Depends(get_db),
+):
+    return MarkerCandidatePolicyValidationService(db).validate(marker_id, payload.analysis_date)
 
 
 @router.get("/marker-signals/{stock_id}/{marker_id}/detail", response_model=MarkerCurrentPatternDetailResponse)
