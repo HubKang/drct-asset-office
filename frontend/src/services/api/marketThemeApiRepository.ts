@@ -51,11 +51,11 @@ export const marketThemeApiRepository = {
   getRealtimeThemeStocks: (themeId: number, signal?: AbortSignal) =>
     apiRequest<RealtimeThemeStocksResponse>(`/market-themes/realtime/${themeId}/stocks`, { signal }),
   getLatestObservationPriority: (signal?: AbortSignal) =>
-    apiRequest<MarketThemeObservationResponse>("/market-themes/observation-priorities/latest", { signal }),
+    apiRequest<MarketThemeObservationResponse>("/market-themes/observation-priorities/latest", { signal, cache: "no-store" }),
   getObservationDiagnostics: (signal?: AbortSignal) =>
-    apiRequest<MarketThemeObservationDiagnosticsResponse>("/market-themes/observation-priorities/diagnostics", { signal }),
+    apiRequest<MarketThemeObservationDiagnosticsResponse>("/market-themes/observation-priorities/diagnostics", { signal, cache: "no-store" }),
   getObservationPriority: (targetDate: string, signal?: AbortSignal) =>
-    apiRequest<MarketThemeObservationResponse>(`/market-themes/observation-priorities?target_date=${encodeURIComponent(targetDate)}`, { signal }),
+    apiRequest<MarketThemeObservationResponse>(`/market-themes/observation-priorities?target_date=${encodeURIComponent(targetDate)}`, { signal, cache: "no-store" }),
   calculateObservationPriority: (targetDate: string, refreshMarketIndicators = false, signal?: AbortSignal) =>
     apiRequest<MarketThemeObservationResponse>("/market-themes/observation-priorities/calculate", { method: "POST", body: JSON.stringify({ target_date: targetDate, refresh_market_indicators: refreshMarketIndicators }), signal, timeoutMs: 600_000 }),
   validateObservationPriority: (targetDate: string, signal?: AbortSignal) =>

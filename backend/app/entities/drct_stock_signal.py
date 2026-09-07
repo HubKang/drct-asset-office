@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.app.core.database import Base
@@ -83,4 +83,52 @@ class DrctSignalSearchRule(Base):
             name="ck_drct_signal_rule_validation_status",
         ),
         Index("idx_drct_signal_rules_version", "search_version_id"),
+    )
+
+
+class DrctStockSignalEvent(Base):
+    """A compact operational stock/marker signal episode and its observed outcome."""
+
+    __tablename__ = "drct_stock_signal_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    stock_id: Mapped[int] = mapped_column(ForeignKey("stocks.id", ondelete="RESTRICT"), nullable=False)
+    marker_id: Mapped[int] = mapped_column(ForeignKey("chart_markers.id", ondelete="RESTRICT"), nullable=False)
+    signal_date: Mapped[str] = mapped_column(Text, nullable=False)
+    last_seen_date: Mapped[str] = mapped_column(Text, nullable=False)
+    ended_date: Mapped[str | None] = mapped_column(Text)
+    d0_close: Mapped[float] = mapped_column(Float, nullable=False)
+    similarity_score: Mapped[float] = mapped_column(Float, nullable=False)
+    similarity_percentile: Mapped[float | None] = mapped_column(Float)
+    similarity_level: Mapped[str] = mapped_column(String(24), nullable=False)
+    candidate_policy_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    pattern_signature_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    feature_schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    improvement_candidate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    improvement_policy_version: Mapped[str | None] = mapped_column(String(64))
+    evaluation_status: Mapped[str] = mapped_column(String(16), nullable=False, default="PENDING")
+    d5_date: Mapped[str | None] = mapped_column(Text)
+    d5_return_pct: Mapped[float | None] = mapped_column(Float)
+    d10_date: Mapped[str | None] = mapped_column(Text)
+    d10_return_pct: Mapped[float | None] = mapped_column(Float)
+    d20_date: Mapped[str | None] = mapped_column(Text)
+    d20_return_pct: Mapped[float | None] = mapped_column(Float)
+    max_rise_20_pct: Mapped[float | None] = mapped_column(Float)
+    max_fall_20_pct: Mapped[float | None] = mapped_column(Float)
+    evaluated_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
+
+    __table_args__ = (
+        CheckConstraint(
+            "evaluation_status IN ('PENDING','D5_READY','D10_READY','COMPLETE')",
+            name="ck_drct_stock_signal_event_status",
+        ),
+        Index("idx_drct_stock_signal_events_date", "signal_date"),
+        Index("idx_drct_stock_signal_events_pair", "stock_id", "marker_id", "signal_date"),
+        Index("idx_drct_stock_signal_events_status", "evaluation_status"),
+        Index(
+            "uq_drct_stock_signal_events_active_pair", "stock_id", "marker_id", unique=True,
+            sqlite_where=text("ended_date IS NULL"),
+        ),
     )

@@ -57,9 +57,9 @@ def test_scan_uses_active_theme_universe_dedupes_and_keeps_theme_names() -> None
     assert result["storage_policy"]=="RUNTIME_ONLY"
 
 
-def test_scan_is_s_only_honors_exclude_and_does_not_persist() -> None:
+def test_scan_honors_exclude_and_keeps_failure_contrast_not_ready_for_small_sample() -> None:
     db=_db(); _seed_scan(db)
-    tables=("chart_marker_events","chart_marker_learning_decisions","drct_signal_searches")
+    tables=("chart_marker_events","chart_marker_learning_decisions","drct_signal_searches","drct_stock_signal_events")
     before={table:db.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar_one() for table in tables}
     first=MarkerCurrentPatternScanService(db).scan(date(2026,6,30))
     assert first["marker_summaries"][0]["training_case_count"]==5
@@ -67,6 +67,21 @@ def test_scan_is_s_only_honors_exclude_and_does_not_persist() -> None:
     second=MarkerCurrentPatternScanService(db).scan(date(2026,6,30))
     assert [(row["stock_id"],[(signal["marker_id"],signal["current_pattern_similarity"]) for signal in row["signals"]]) for row in first["stocks"]]==[(row["stock_id"],[(signal["marker_id"],signal["current_pattern_similarity"]) for signal in row["signals"]]) for row in second["stocks"]]
     assert before|{"chart_marker_events":before["chart_marker_events"]+1}=={table:db.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar_one() for table in tables}
+    assert second["marker_summaries"][0]["failure_training_case_count"]==1
+    assert all(signal["failure_similarity"] is None and signal["pattern_edge"] is None for row in second["stocks"] for signal in row["signals"])
+
+
+def test_scan_calculates_success_failure_similarity_and_pattern_edge() -> None:
+    db=_db(); _seed_scan(db)
+    for stock_id in range(1,6):
+        db.execute(text("INSERT INTO chart_marker_events(id,stock_id,marker_id,marker_date,review_result,created_at,updated_at) VALUES(:id,:stock,1,'2026-05-02','F',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)"),{"id":30+stock_id,"stock":stock_id})
+    db.commit()
+    result=MarkerCurrentPatternScanService(db).scan(date(2026,5,15))
+    assert result["marker_summaries"][0]["failure_training_case_count"]==5
+    signal=result["stocks"][0]["signals"][0]
+    assert signal["success_similarity"]==signal["current_pattern_similarity"]
+    assert signal["failure_similarity"] is not None
+    assert signal["pattern_edge"]==pytest.approx(signal["success_similarity"]-signal["failure_similarity"])
 
 
 def test_historical_scan_excludes_future_prices_and_training_events() -> None:
@@ -126,7 +141,7 @@ def test_detail_calculates_only_selected_stock_and_marker_without_full_scan(monk
     assert len(detail["top_feature_differences"])==5
 
 
-def test_detail_is_s_only_future_safe_and_runtime_only() -> None:
+def test_detail_is_future_safe_runtime_only_and_ignores_insufficient_failure_signature() -> None:
     db=_db(); _seed_scan(db)
     stock=MarkerCurrentPatternScanService(db).scan(date(2026,6,1))["stocks"][0]
     service=MarkerCurrentPatternScanService(db)
@@ -135,7 +150,8 @@ def test_detail_is_s_only_future_safe_and_runtime_only() -> None:
     db.execute(text("INSERT INTO chart_marker_events(id,stock_id,marker_id,marker_date,review_result,created_at,updated_at) VALUES(90,7,1,'2026-05-15','F',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)"))
     db.execute(text("UPDATE stock_daily_prices SET close_price=99999,high_price=100000,low_price=99998 WHERE trade_date>'2026-06-01'")); db.commit()
     after=MarkerCurrentPatternScanService(db).detail(stock["stock_id"],1,date(2026,6,1))
-    assert before==after
+    assert before["signal"]["success_similarity"]==after["signal"]["success_similarity"]
+    assert after["signal"]["failure_similarity"] is None and after["signal"]["pattern_edge"] is None
     assert after["storage_policy"]=="RUNTIME_ONLY"
     assert {table:db.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar_one() for table in counts}==counts|{"chart_marker_events":counts["chart_marker_events"]+1}
 

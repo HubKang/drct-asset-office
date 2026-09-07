@@ -6,6 +6,7 @@ import { classificationRuleApiRepository } from "@/services/api/classificationRu
 import { collectionRunApiRepository } from "@/services/api/collectionRunApiRepository";
 import { disclosureApiRepository } from "@/services/api/disclosureApiRepository";
 import { drctStockSignalApiRepository } from "@/services/api/drctStockSignalApiRepository";
+import { drctInsightApiRepository } from "@/services/api/drctInsightApiRepository";
 import { economicBriefingApiRepository } from "@/services/api/economicBriefingApiRepository";
 import { newsApiRepository } from "@/services/api/newsApiRepository";
 import { patternResearchApiRepository } from "@/services/api/patternResearchApiRepository";
@@ -55,6 +56,7 @@ import { appConfig } from "@/services/config/appConfig";
 const useMock = appConfig.dataSource !== "api";
 
 export const repositories = {
+  drctInsight: drctInsightApiRepository,
   drctStockSignals: drctStockSignalApiRepository,
   dashboard: dashboardApiRepository,
   analysisIndicators: analysisIndicatorApiRepository,

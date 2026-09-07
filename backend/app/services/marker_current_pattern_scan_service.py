@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 class MarkerCurrentPatternScanService:
-    """Read-only S-only current-pattern scan with a fixed number of bulk queries."""
+    """Read-only S/F contrast scan with a fixed number of bulk queries."""
 
     _signature_cache: OrderedDict[tuple[Any, ...], dict[int, dict[str, Any]]] = OrderedDict()
     _signature_cache_lock = RLock()
@@ -88,13 +88,14 @@ class MarkerCurrentPatternScanService:
             SELECT marker.id marker_id, marker.name marker_name, marker.symbol marker_symbol,
                    marker.marker_group_id, marker_group.name marker_group,
                    marker_group.color marker_group_color,
-                   event.id chart_marker_event_id, event.stock_id, event.marker_date d0
+                   event.id chart_marker_event_id, event.stock_id, event.marker_date d0,
+                   event.review_result
             FROM chart_markers marker
             JOIN chart_marker_groups marker_group ON marker_group.id=marker.marker_group_id
             JOIN chart_marker_events event ON event.marker_id=marker.id
             LEFT JOIN chart_marker_learning_decisions decision ON decision.chart_marker_event_id=event.id
             WHERE marker.is_active=1 AND marker_group.is_active=1
-              AND event.review_result IN ('S','SUCCESS')
+              AND event.review_result IN ('S','SUCCESS','F','FAILURE')
               AND event.marker_date<=:analysis_date
               AND COALESCE(decision.decision,'INCLUDE')<>'EXCLUDE'
             ORDER BY marker_group.sort_order, marker.sort_order, marker.id, event.marker_date, event.id
@@ -154,6 +155,7 @@ class MarkerCurrentPatternScanService:
             int(row["chart_marker_event_id"]), int(row["marker_id"]), int(row["stock_id"]),
             str(row["d0"])[:10], str(row["marker_name"]), str(row["marker_symbol"]),
             int(row["marker_group_id"]), str(row["marker_group"]), str(row["marker_group_color"]),
+            str(row["review_result"]),
         ) for row in events)
         return (
             self.db.get_bind(), analysis_date, FEATURE_SCHEMA_VERSION,
@@ -230,7 +232,10 @@ class MarkerCurrentPatternScanService:
             "storage_policy": "RUNTIME_ONLY",
         }
 
-    def _run(self, requested_date: date | None, include_diagnostics: bool = True) -> tuple[dict[str, Any], dict[tuple[int, int], dict[str, Any]]]:
+    def _run(
+        self, requested_date: date | None, include_diagnostics: bool = True,
+        include_recording_metadata: bool = False,
+    ) -> tuple[dict[str, Any], dict[tuple[int, int], dict[str, Any]]]:
         total_started = time.perf_counter()
         universe_started = time.perf_counter()
         universe = self._universe()
@@ -247,7 +252,9 @@ class MarkerCurrentPatternScanService:
         if baselines is None:
             all_stock_ids = sorted({row["stock_id"] for row in universe} | {int(row["stock_id"]) for row in events})
             prices = self._bulk_prices(all_stock_ids, analysis_date)
-            events_by_marker: dict[int, list[dict[str, Any]]] = defaultdict(list)
+            events_by_marker: dict[int, dict[str, list[dict[str, Any]]]] = defaultdict(
+                lambda: {"S": [], "F": []}
+            )
             marker_meta: dict[int, dict[str, Any]] = {}
             for event in events:
                 marker_id = int(event["marker_id"])
@@ -256,22 +263,37 @@ class MarkerCurrentPatternScanService:
                 )})
                 features = self._core_at(prices.get(int(event["stock_id"]), []), str(event["d0"])[:10])
                 if features is not None:
-                    events_by_marker[marker_id].append({
+                    label = "F" if str(event["review_result"]).upper() in {"F", "FAILURE"} else "S"
+                    events_by_marker[marker_id][label].append({
                         "chart_marker_event_id": int(event["chart_marker_event_id"]),
                         "stock_id": int(event["stock_id"]), "stock_code": "", "stock_name": "",
-                        "d0": str(event["d0"])[:10], "review_result": "S", "learning_decision": None,
+                        "d0": str(event["d0"])[:10], "review_result": label, "learning_decision": None,
                         "core_status": "READY", "core_features": features,
                     })
             baselines = {}
-            for marker_id, cases in events_by_marker.items():
-                if len(cases) < 5:
+            for marker_id, labeled_cases in events_by_marker.items():
+                success_cases = labeled_cases["S"]
+                failure_cases = labeled_cases["F"]
+                if len(success_cases) < 5:
                     continue
-                signature = MarkerPatternSignatureService.build_signature(cases, "CORE")
-                validation = MarkerPatternSignatureService.validate(cases, "CORE")
+                signature = MarkerPatternSignatureService.build_signature(success_cases, "CORE")
+                validation = MarkerPatternSignatureService.validate(success_cases, "CORE")
                 if signature["status"] != "TESTABLE" or validation["distribution"] is None:
                     continue
-                baselines[marker_id] = {"meta": marker_meta[marker_id], "cases": cases,
-                                        "signature": signature, "validation": validation}
+                failure_signature = None
+                if len(failure_cases) >= 5:
+                    # The shared signature primitive accepts one target cohort under its
+                    # historical S label. Relabel only the transient F cohort copy; the
+                    # source cases and learning policy remain unchanged.
+                    failure_cohort = [{**case, "review_result": "S"} for case in failure_cases]
+                    candidate = MarkerPatternSignatureService.build_signature(failure_cohort, "CORE")
+                    if candidate["status"] == "TESTABLE":
+                        failure_signature = candidate
+                baselines[marker_id] = {
+                    "meta": marker_meta[marker_id], "cases": success_cases,
+                    "signature": signature, "validation": validation,
+                    "failure_cases": failure_cases, "failure_signature": failure_signature,
+                }
             self._put_cached_baselines(cache_key, baselines)
         else:
             prices = self._bulk_recent_prices([row["stock_id"] for row in universe], analysis_date)
@@ -303,6 +325,14 @@ class MarkerCurrentPatternScanService:
                 if scored is None:
                     continue
                 similarity = float(scored["pattern_similarity"])
+                failure_scored = (
+                    MarkerPatternSignatureService.score(features, baseline["failure_signature"])
+                    if baseline.get("failure_signature") is not None else None
+                )
+                failure_similarity = (
+                    float(failure_scored["pattern_similarity"]) if failure_scored is not None else None
+                )
+                pattern_edge = similarity - failure_similarity if failure_similarity is not None else None
                 loo_values = [float(row["pattern_similarity"]) for row in baseline["validation"]["cases"]]
                 marker_similarity_rows[marker_id].append({
                     **stock, "similarity": similarity,
@@ -318,6 +348,10 @@ class MarkerCurrentPatternScanService:
                     "empirical_percentile": percentile, "loo_p25": float(distribution["p25"]),
                     "loo_median": float(distribution["median"]), "loo_p75": float(distribution["p75"]),
                     "training_case_count": len(baseline["cases"]),
+                    "success_similarity": similarity,
+                    "failure_similarity": failure_similarity,
+                    "pattern_edge": pattern_edge,
+                    "failure_training_case_count": len(baseline.get("failure_cases") or []),
                 }
                 signals.append(signal)
                 marker_counts[marker_id] += 1
@@ -342,8 +376,22 @@ class MarkerCurrentPatternScanService:
                 "marker_id": marker_id, "marker_name": baseline["meta"]["marker_name"],
                 "training_case_count": len(baseline["cases"]), "loo_p25": distribution["p25"],
                 "loo_median": distribution["median"], "loo_p75": distribution["p75"],
+                "failure_training_case_count": len(baseline.get("failure_cases") or []),
                 "candidate_count": marker_counts[marker_id],
             })
+        shadow_pairs: set[tuple[int, int]] = set()
+        if include_recording_metadata:
+            # Snapshot shadow membership without changing operating candidates.
+            for marker_id, rows in marker_similarity_rows.items():
+                if not rows:
+                    continue
+                current_p90 = MarkerPatternSignatureService._percentile(
+                    np.asarray([float(row["similarity"]) for row in rows], dtype=float), 90,
+                )
+                threshold = max(float(baselines[marker_id]["validation"]["distribution"]["p25"]), current_p90)
+                shadow_pairs.update(
+                    (int(row["stock_id"]), marker_id) for row in rows if float(row["similarity"]) >= threshold
+                )
         if not include_diagnostics:
             total_ms = int((time.perf_counter() - total_started) * 1000)
             return {
@@ -362,6 +410,10 @@ class MarkerCurrentPatternScanService:
                             "feature_ms": feature_ms, "similarity_ms": similarity_ms,
                             "total_ms": total_ms, "sql_query_count": self.query_count},
                 "storage_policy": "RUNTIME_ONLY",
+                **({"_recording_metadata": {
+                    "improvement_pairs": [list(pair) for pair in sorted(shadow_pairs)],
+                    "improvement_policy_version": SHADOW_POLICY_VERSION,
+                }} if include_recording_metadata else {}),
             }, details
         threshold_keys = ("p25", "median", "p75", "p90")
         policy_stock_hits: dict[str, dict[int, int]] = {key: defaultdict(int) for key in threshold_keys}
@@ -469,6 +521,14 @@ class MarkerCurrentPatternScanService:
     def scan_summary(self, requested_date: date | None = None) -> dict[str, Any]:
         response, _details = self._run(requested_date, include_diagnostics=False)
         response.pop("diagnostics", None)
+        response.pop("_recording_metadata", None)
+        return response
+
+    def scan_summary_for_recording(self, requested_date: date | None = None) -> dict[str, Any]:
+        response, _details = self._run(
+            requested_date, include_diagnostics=False, include_recording_metadata=True,
+        )
+        response.pop("diagnostics", None)
         return response
 
     def diagnostics(self, requested_date: date | None = None) -> dict[str, Any]:
@@ -513,13 +573,14 @@ class MarkerCurrentPatternScanService:
             SELECT marker.id marker_id, marker.name marker_name, marker.symbol marker_symbol,
                    marker.marker_group_id, marker_group.name marker_group,
                    marker_group.color marker_group_color,
-                   event.id chart_marker_event_id, event.stock_id, event.marker_date d0
+                   event.id chart_marker_event_id, event.stock_id, event.marker_date d0,
+                   event.review_result
             FROM chart_markers marker
             JOIN chart_marker_groups marker_group ON marker_group.id=marker.marker_group_id
             JOIN chart_marker_events event ON event.marker_id=marker.id
             LEFT JOIN chart_marker_learning_decisions decision ON decision.chart_marker_event_id=event.id
             WHERE marker.id=:marker_id AND marker.is_active=1 AND marker_group.is_active=1
-              AND event.review_result IN ('S','SUCCESS')
+              AND event.review_result IN ('S','SUCCESS','F','FAILURE')
               AND event.marker_date<=:analysis_date
               AND COALESCE(decision.decision,'INCLUDE')<>'EXCLUDE'
             ORDER BY event.marker_date, event.id
@@ -529,13 +590,16 @@ class MarkerCurrentPatternScanService:
         price_stock_ids = sorted({stock_id} | {int(event["stock_id"]) for event in events})
         prices = self._bulk_prices(price_stock_ids, analysis_date_text)
         cases = []
+        failure_cases = []
         for event in events:
             features = self._core_at(prices.get(int(event["stock_id"]), []), str(event["d0"])[:10])
             if features is not None:
-                cases.append({
+                label = "F" if str(event["review_result"]).upper() in {"F", "FAILURE"} else "S"
+                target = failure_cases if label == "F" else cases
+                target.append({
                     "chart_marker_event_id": int(event["chart_marker_event_id"]),
                     "stock_id": int(event["stock_id"]), "stock_code": "", "stock_name": "",
-                    "d0": str(event["d0"])[:10], "review_result": "S", "learning_decision": None,
+                    "d0": str(event["d0"])[:10], "review_result": label, "learning_decision": None,
                     "core_status": "READY", "core_features": features,
                 })
         if len(cases) < 5:
@@ -561,6 +625,17 @@ class MarkerCurrentPatternScanService:
         if scored is None:
             raise HTTPException(404, "현재 기준일의 Pattern 후보를 찾을 수 없습니다.")
         similarity = float(scored["pattern_similarity"])
+        failure_signature = None
+        if len(failure_cases) >= 5:
+            failure_cohort = [{**case, "review_result": "S"} for case in failure_cases]
+            candidate = MarkerPatternSignatureService.build_signature(failure_cohort, "CORE")
+            if candidate["status"] == "TESTABLE":
+                failure_signature = candidate
+        failure_scored = (
+            MarkerPatternSignatureService.score(current_features, failure_signature)
+            if failure_signature is not None else None
+        )
+        failure_similarity = float(failure_scored["pattern_similarity"]) if failure_scored is not None else None
         band = self._band(similarity, distribution)
         loo_values = [float(row["pattern_similarity"]) for row in validation["cases"]]
         meta = events[0]
@@ -569,10 +644,14 @@ class MarkerCurrentPatternScanService:
                 "marker_id", "marker_name", "marker_symbol", "marker_group_id", "marker_group", "marker_group_color"
             )},
             "current_pattern_similarity": similarity,
+            "success_similarity": similarity,
+            "failure_similarity": failure_similarity,
+            "pattern_edge": similarity - failure_similarity if failure_similarity is not None else None,
             "candidate_band": band or "BELOW_CANDIDATE",
             "empirical_percentile": sum(value <= similarity for value in loo_values) / len(loo_values) * 100,
             "loo_p25": float(distribution["p25"]), "loo_median": float(distribution["median"]),
             "loo_p75": float(distribution["p75"]), "training_case_count": len(cases),
+            "failure_training_case_count": len(failure_cases),
         }
         differences = [{
             "key": row["key"], "label": row["label"], "unit": row["unit"],

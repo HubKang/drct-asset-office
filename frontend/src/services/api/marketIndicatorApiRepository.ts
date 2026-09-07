@@ -28,24 +28,24 @@ export const marketIndicatorApiRepository = {
     if (params?.category) search.set("category", params.category);
     if (params?.active_only !== undefined) search.set("active_only", String(params.active_only));
     const query = search.toString();
-    return apiRequest<MarketIndicatorListResponse>(`/market-indicators-data${query ? `?${query}` : ""}`);
+    return apiRequest<MarketIndicatorListResponse>(`/market-indicators-data${query ? `?${query}` : ""}`, { cache: "no-store" });
   },
-  get: (indicatorCode: string) => apiRequest<MarketIndicator>(`/market-indicators-data/${encodeURIComponent(indicatorCode)}`),
+  get: (indicatorCode: string) => apiRequest<MarketIndicator>(`/market-indicators-data/${encodeURIComponent(indicatorCode)}`, { cache: "no-store" }),
   values: (indicatorCode: string, params?: { start_date?: string; end_date?: string }) => {
     const search = new URLSearchParams();
     if (params?.start_date) search.set("start_date", params.start_date);
     if (params?.end_date) search.set("end_date", params.end_date);
     const query = search.toString();
-    return apiRequest<MarketIndicatorValueResponse>(`/market-indicators-data/${encodeURIComponent(indicatorCode)}/values${query ? `?${query}` : ""}`);
+    return apiRequest<MarketIndicatorValueResponse>(`/market-indicators-data/${encodeURIComponent(indicatorCode)}/values${query ? `?${query}` : ""}`, { cache: "no-store" });
   },
   providerMappings: () => apiRequest<MarketIndicatorProviderMappingListResponse>("/market-indicators-data/provider-mappings"),
   readiness: (indicatorCodes?: string[]) => {
     const search = new URLSearchParams();
     indicatorCodes?.forEach((code) => search.append("indicator_codes", code));
     const query = search.toString();
-    return apiRequest<MarketIndicatorReadinessListResponse>(`/market-indicators-data/readiness${query ? `?${query}` : ""}`);
+    return apiRequest<MarketIndicatorReadinessListResponse>(`/market-indicators-data/readiness${query ? `?${query}` : ""}`, { cache: "no-store" });
   },
-  providerStatuses: () => apiRequest<ExternalProviderStatusListResponse>("/market-indicators-data/providers/status"),
+  providerStatuses: () => apiRequest<ExternalProviderStatusListResponse>("/market-indicators-data/providers/status", { cache: "no-store" }),
   ecosTableList: (params?: { parent_stat_code?: string; start_index?: number; end_index?: number }) => {
     const search = new URLSearchParams();
     if (params?.parent_stat_code) search.set("parent_stat_code", params.parent_stat_code);

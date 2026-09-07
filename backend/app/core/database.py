@@ -5037,6 +5037,28 @@ def ensure_drct_stock_signal_schema() -> None:
         conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS uq_drct_signal_search_current_version ON drct_signal_search_versions(search_id) WHERE is_current=1")
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_drct_signal_marker_links_marker ON drct_signal_search_marker_links(marker_definition_id, search_id)")
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_drct_signal_rules_version ON drct_signal_search_rules(search_version_id)")
+        conn.exec_driver_sql("""
+            CREATE TABLE IF NOT EXISTS drct_stock_signal_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, stock_id INTEGER NOT NULL, marker_id INTEGER NOT NULL,
+                signal_date TEXT NOT NULL, last_seen_date TEXT NOT NULL, ended_date TEXT,
+                d0_close REAL NOT NULL, similarity_score REAL NOT NULL, similarity_percentile REAL,
+                similarity_level TEXT NOT NULL, candidate_policy_version INTEGER NOT NULL,
+                pattern_signature_version INTEGER NOT NULL, feature_schema_version INTEGER NOT NULL,
+                improvement_candidate INTEGER NOT NULL DEFAULT 0, improvement_policy_version TEXT,
+                evaluation_status TEXT NOT NULL DEFAULT 'PENDING',
+                d5_date TEXT, d5_return_pct REAL, d10_date TEXT, d10_return_pct REAL,
+                d20_date TEXT, d20_return_pct REAL, max_rise_20_pct REAL, max_fall_20_pct REAL,
+                evaluated_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CHECK(evaluation_status IN ('PENDING','D5_READY','D10_READY','COMPLETE')),
+                FOREIGN KEY(stock_id) REFERENCES stocks(id) ON DELETE RESTRICT,
+                FOREIGN KEY(marker_id) REFERENCES chart_markers(id) ON DELETE RESTRICT
+            )
+        """)
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_drct_stock_signal_events_date ON drct_stock_signal_events(signal_date)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_drct_stock_signal_events_pair ON drct_stock_signal_events(stock_id, marker_id, signal_date)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_drct_stock_signal_events_status ON drct_stock_signal_events(evaluation_status)")
+        conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS uq_drct_stock_signal_events_active_pair ON drct_stock_signal_events(stock_id, marker_id) WHERE ended_date IS NULL")
 
         for default in INITIAL_DRCT_SIGNAL_SEARCHES:
             existing_id = conn.exec_driver_sql(
@@ -5057,3 +5079,34 @@ def ensure_drct_stock_signal_schema() -> None:
                  drct_rule_text, change_note, is_current)
                 VALUES (?, 1, ?, ?, NULL, 'DrCT 검색식.txt 원본 초기 등록', 1)
             """, (search_id, default["hts_reference_conditions"], default["hts_condition_expression"]))
+
+
+def ensure_drct_insight_candidate_schema() -> None:
+    """Persist only the compact candidate identity needed for later outcome review."""
+    if not DATABASE_URL.startswith("sqlite"):
+        return
+    with engine.begin() as conn:
+        conn.exec_driver_sql("""
+            CREATE TABLE IF NOT EXISTS drct_insight_candidate_evaluations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                analysis_date TEXT NOT NULL,
+                stock_id INTEGER NOT NULL,
+                theme_id INTEGER,
+                candidate_level TEXT NOT NULL,
+                observation_rank INTEGER,
+                success_similarity REAL,
+                failure_similarity REAL,
+                pattern_edge REAL,
+                user_status TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                evaluated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(analysis_date, stock_id),
+                CHECK(candidate_level IN ('FOCUS','FINAL')),
+                FOREIGN KEY(stock_id) REFERENCES stocks(id) ON DELETE RESTRICT,
+                FOREIGN KEY(theme_id) REFERENCES market_themes(id) ON DELETE SET NULL
+            )
+        """)
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_drct_insight_candidate_date_level "
+            "ON drct_insight_candidate_evaluations(analysis_date, candidate_level)"
+        )

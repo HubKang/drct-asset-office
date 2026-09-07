@@ -47,7 +47,7 @@ function loadChart(analysisDate:string,stockId:number){
 
 function loadScan(){
   if(scanRequest)return scanRequest;
-  scanRequest=repositories.drctStockSignals.scanCurrentMarkerPatterns().then(result=>{scanCache=result;return result;}).finally(()=>{scanRequest=null;});
+  scanRequest=repositories.drctStockSignals.scanAndRecordCurrentMarkerPatterns().then(result=>{scanCache=result;return result;}).finally(()=>{scanRequest=null;});
   return scanRequest;
 }
 

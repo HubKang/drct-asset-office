@@ -22,7 +22,7 @@ export const marketIndexApiRepository = {
     if (params?.active_only !== undefined) search.set("active_only", String(params.active_only));
     if (params?.category) search.set("category", params.category);
     const query = search.toString();
-    return apiRequest<MarketIndexListResponse>(`/market-indexes${query ? `?${query}` : ""}`);
+    return apiRequest<MarketIndexListResponse>(`/market-indexes${query ? `?${query}` : ""}`, { cache: "no-store" });
   },
   collect: (payload: MarketIndexCollectRequest) =>
     apiRequest<MarketIndexCollectResponse>("/market-indexes/collect", {
@@ -37,6 +37,7 @@ export const marketIndexApiRepository = {
     const query = search.toString();
     return apiRequest<MarketIndexDailyPriceListResponse>(
       `/market-indexes/${encodeURIComponent(indexCode)}/daily-prices${query ? `?${query}` : ""}`,
+      { cache: "no-store" },
     );
   },
   collectProviderCodes: (payload: ProviderCodeCollectRequest = {}) =>
@@ -76,6 +77,6 @@ export const marketIndexApiRepository = {
     if (params?.end_date) search.set("end_date", params.end_date);
     if (params?.normalize !== undefined) search.set("normalize", String(params.normalize));
     const query = search.toString();
-    return apiRequest<MarketIndexCompareResponse>(`/market-indexes/compare${query ? `?${query}` : ""}`);
+    return apiRequest<MarketIndexCompareResponse>(`/market-indexes/compare${query ? `?${query}` : ""}`, { cache: "no-store" });
   },
 };

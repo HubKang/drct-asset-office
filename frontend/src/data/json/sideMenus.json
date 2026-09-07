@@ -6,6 +6,11 @@
   },
   {
     "menuKey": "home",
+    "title": "오늘의 DrCT Insight",
+    "routeKey": "drct-insight"
+  },
+  {
+    "menuKey": "home",
     "title": "증시 캘린더",
     "routeKey": "market-calendar"
   },

@@ -28,12 +28,16 @@ class MarkerCurrentPatternSignal(BaseModel):
     marker_group: str
     marker_group_color: str
     current_pattern_similarity: float
+    success_similarity: float
+    failure_similarity: float | None = None
+    pattern_edge: float | None = None
     candidate_band: CandidateBand
     empirical_percentile: float
     loo_p25: float
     loo_median: float
     loo_p75: float
     training_case_count: int
+    failure_training_case_count: int = 0
 
 
 class MarkerCurrentPatternStock(BaseModel):
@@ -48,6 +52,7 @@ class MarkerCurrentPatternMarkerSummary(BaseModel):
     marker_id: int
     marker_name: str
     training_case_count: int
+    failure_training_case_count: int = 0
     loo_p25: float
     loo_median: float
     loo_p75: float

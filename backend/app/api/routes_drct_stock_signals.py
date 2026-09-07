@@ -73,6 +73,12 @@ from backend.app.services.marker_pattern_signature_service import MarkerPatternS
 from backend.app.services.marker_auto_learning_service import MarkerAutoLearningService
 from backend.app.services.marker_current_pattern_scan_service import MarkerCurrentPatternScanService
 from backend.app.services.marker_candidate_policy_validation_service import MarkerCandidatePolicyValidationService
+from backend.app.schemas.drct_signal_performance_schema import (
+    SignalPerformanceEventDetail,
+    SignalPerformanceEventsResponse,
+    SignalPerformanceSummaryResponse,
+)
+from backend.app.services.drct_signal_performance_service import DrctSignalPerformanceService
 
 
 router = APIRouter(prefix="/drct-stock-signals", tags=["drct-stock-signals"])
@@ -83,6 +89,46 @@ def marker_current_pattern_scan(
     payload: MarkerCurrentPatternScanRequest, db: Session = Depends(get_db),
 ):
     return MarkerCurrentPatternScanService(db).scan_summary(payload.analysis_date)
+
+
+@router.post("/marker-signals/scan-and-record", response_model=MarkerCurrentPatternSummaryResponse)
+def marker_current_pattern_scan_and_record(
+    payload: MarkerCurrentPatternScanRequest, db: Session = Depends(get_db),
+):
+    if payload.analysis_date is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="운영 시그널 기록은 현재 기준일 스캔만 지원합니다.",
+        )
+    result = MarkerCurrentPatternScanService(db).scan_summary_for_recording(payload.analysis_date)
+    DrctSignalPerformanceService(db).capture(result)
+    result.pop("_recording_metadata", None)
+    return result
+
+
+@router.post("/performance/refresh", response_model=SignalPerformanceSummaryResponse)
+def refresh_signal_performance(db: Session = Depends(get_db)):
+    return DrctSignalPerformanceService(db).refresh()
+
+
+@router.get("/performance/summary", response_model=SignalPerformanceSummaryResponse)
+def signal_performance_summary(db: Session = Depends(get_db)):
+    return DrctSignalPerformanceService(db).summary()
+
+
+@router.get("/performance/events", response_model=SignalPerformanceEventsResponse)
+def signal_performance_events(
+    period_days: int | None = Query(default=None, ge=1, le=3650),
+    marker_id: int | None = Query(default=None, ge=1),
+    query: str | None = Query(default=None, max_length=80),
+    db: Session = Depends(get_db),
+):
+    return DrctSignalPerformanceService(db).events(period_days, marker_id, query)
+
+
+@router.get("/performance/events/{event_id}", response_model=SignalPerformanceEventDetail)
+def signal_performance_event_detail(event_id: int, db: Session = Depends(get_db)):
+    return DrctSignalPerformanceService(db).detail(event_id)
 
 
 @router.post("/marker-signals/diagnostics", response_model=PatternDiscriminationDiagnostics)

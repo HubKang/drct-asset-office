@@ -20,7 +20,7 @@ function DrctStockSignalsPage() {
     <div className="drct-stock-signals-page">
       <PageHeader
         title="DrCT 종목 시그널"
-        description="국내 테마 연결 종목에서 검색식과 학습된 성공패턴을 이용해 관찰 가치가 높은 종목 시그널을 선별합니다."
+        description="국내 테마 연결 종목에서 과거 성공 패턴과 유사한 종목을 찾아 관찰 후보로 제시합니다."
       />
 
       <nav className="drct-signal-tabs" aria-label="DrCT 종목 시그널 화면" role="tablist">

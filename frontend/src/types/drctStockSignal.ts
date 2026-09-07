@@ -107,3 +107,9 @@ export type DrctCurrentPatternScan = { analysis_date:string|null; universe_count
 export type DrctCurrentPatternScanWithDiagnostics = DrctCurrentPatternScan & { diagnostics:DrctPatternDiagnostics };
 export type DrctCurrentPatternDifference = { key:string; label:string; unit:string; current_value:number; signature_median:number; robust_distance:number };
 export type DrctCurrentPatternDetail = { analysis_date:string; stock_id:number; stock_code:string; stock_name:string; theme_names:string[]; signal:DrctCurrentPatternSignal; top_feature_differences:DrctCurrentPatternDifference[]; storage_policy:"RUNTIME_ONLY" };
+
+export type DrctSignalEvaluationStatus = "PENDING"|"D5_READY"|"D10_READY"|"COMPLETE";
+export type DrctSignalPerformanceMarker = { marker_id:number;marker_name:string;signal_count:number;completed_count:number;d5_average_pct:number|null;d10_average_pct:number|null;d20_average_pct:number|null;max_rise_average_pct:number|null;max_fall_average_pct:number|null };
+export type DrctSignalPerformanceSummary = { total_count:number;completed_count:number;pending_count:number;d20_average_pct:number|null;markers:DrctSignalPerformanceMarker[];refreshed_at:string };
+export type DrctSignalPerformanceEvent = { id:number;stock_id:number;stock_code:string;stock_name:string;marker_id:number;marker_name:string;marker_symbol:string;marker_group_name:string;marker_group_color:string;signal_date:string;last_seen_date:string;ended_date:string|null;similarity_score:number;evaluation_status:DrctSignalEvaluationStatus;d5_date:string|null;d5_return_pct:number|null;d10_date:string|null;d10_return_pct:number|null;d20_date:string|null;d20_return_pct:number|null;max_rise_20_pct:number|null;max_fall_20_pct:number|null;evaluated_at:string|null };
+export type DrctSignalPerformanceEventDetail = DrctSignalPerformanceEvent & { d0_close:number };

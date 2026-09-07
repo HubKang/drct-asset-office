@@ -414,7 +414,7 @@ function MarketThemesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const marketScope = searchParams.get("market")?.toLowerCase() === "us" ? "US" : "KR";
   const analysisScope = searchParams.get("scope") === "compare" ? "COMPARE" : marketScope;
-  const compareSection = (["link", "analysis", "watch"].includes(searchParams.get("section") || "") ? searchParams.get("section") : "link") as "link" | "analysis" | "watch";
+  const compareSection = (["link", "analysis", "watch"].includes(searchParams.get("section") || "") ? searchParams.get("section") : "watch") as "link" | "analysis" | "watch";
   const refreshPollingTokenRef = useRef(0);
   const observationDeepLinkOpenedRef = useRef(false);
   const [activeTab, setActiveTab] = useState<ActiveTab>("themes");
@@ -1474,7 +1474,7 @@ function MarketThemesPage() {
     const next = new URLSearchParams(searchParams);
     if (scope === "COMPARE") {
       next.set("scope", "compare");
-      next.set("section", "link");
+      next.set("section", "watch");
       setSearchParams(next, { replace: true });
       return;
     }

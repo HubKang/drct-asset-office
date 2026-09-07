@@ -12,6 +12,6 @@ export const marketDataApiRepository = {
     const search = new URLSearchParams();
     if (params?.limit) search.set("limit", String(params.limit));
     const query = search.toString();
-    return apiRequest<MarketDataCollectionRunListResponse>(`/market-data/collection-runs${query ? `?${query}` : ""}`);
+    return apiRequest<MarketDataCollectionRunListResponse>(`/market-data/collection-runs${query ? `?${query}` : ""}`, { cache: "no-store" });
   },
 };

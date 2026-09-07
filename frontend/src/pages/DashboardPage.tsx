@@ -15,6 +15,7 @@ import type { CollectionRun } from "@/types/collectionRun";
 import type { MarketDataCollectionRun } from "@/types/marketData";
 import type { MarketCalendarEvent, MarketCalendarImportance } from "@/types/marketCalendar";
 import type { UsThemeDashboardSummary } from "@/types/usMarketTheme";
+import type { DrctInsightToday } from "@/types/drctInsight";
 import type {
   MarketTheme,
   MarketThemeObservationResponse,
@@ -345,6 +346,20 @@ type RealtimeThemeRankPanelProps = {
   onOpenTheme: (themeId: number) => void;
   onOpenAll: () => void;
 };
+
+function TodayInsightPanel({ onOpen }: { onOpen: () => void }) {
+  const [insight, setInsight] = useState<DrctInsightToday | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    const controller = new AbortController();
+    repositories.drctInsight.today(controller.signal).then((result) => { setInsight(result); setFailed(false); }).catch(() => { if (!controller.signal.aborted) setFailed(true); });
+    return () => controller.abort();
+  }, []);
+  const topThemes = insight?.themes.slice(0, 3).map((row) => row.theme_name).join(" · ") || "-";
+  const postMarket = insight?.market_mode === "POST_MARKET";
+  const outcome = insight?.outcome_summary;
+  return <SectionCard className={`dashboard-insight-panel${postMarket ? " is-post" : ""}`}><div className="dashboard-insight-head"><div><small>{postMarket ? "D0 CLOSE REVIEW" : "CONVERGENCE VIEW"}</small><h3>오늘의 DrCT Insight</h3></div><button type="button" className="dashboard-v2-text-button" onClick={onOpen}>{postMarket ? "오늘 복기 →" : "Insight 열기 →"}</button></div>{failed ? <p className="dashboard-insight-error">Insight 요약을 불러오지 못했습니다.</p> : postMarket ? <><dl><div><dt>Focus</dt><dd>{outcome?.focus_count ?? "-"}</dd></div><div><dt>상승</dt><dd>{outcome?.positive_count ?? "-"}</dd></div><div><dt>하락</dt><dd>{outcome?.negative_count ?? "-"}</dd></div><div><dt>복기 추천</dt><dd>{outcome?.review_count ?? "-"}</dd></div><div><dt>Marker 기록</dt><dd>{outcome?.marker_recorded_count ?? "-"}</dd></div></dl><p><span>평균 D0</span><b>{outcome?.average_d0_return == null ? "-" : `${outcome.average_d0_return > 0 ? "+" : ""}${outcome.average_d0_return.toFixed(2)}%`}</b><span>테마 우위</span><b>{outcome ? `${outcome.theme_outperform_count}/${outcome.available_count}` : "-"}</b><span>OUTCOME</span><b>{insight?.readiness.outcome.status ?? "-"}</b></p></> : <><dl><div><dt>관찰 테마</dt><dd>{insight?.summary.observed_theme_count ?? "-"}</dd></div><div><dt>Focus</dt><dd>{insight?.summary.focus_candidate_count ?? "-"}</dd></div><div><dt>Final</dt><dd>{insight?.summary.final_candidate_count ?? "-"}</dd></div><div><dt>MY WATCH</dt><dd>{insight?.summary.my_watch_count ?? "-"}</dd></div><div><dt>READY</dt><dd>{insight?.summary.ready_count ?? "-"}</dd></div></dl><p><span>Preliminary</span><b>{insight?.summary.preliminary_candidate_count ?? "-"}</b><span>US → KR</span><b>{insight ? `${insight.readiness.us_kr.available_count} Links` : "-"}</b><span>Top Theme</span><b>{topThemes}</b></p></>}</SectionCard>;
+}
 
 function RealtimeThemeRankPanel({
   rows,
@@ -790,7 +805,10 @@ function DashboardPage() {
       const result = await repositories.marketThemes.calculateObservationPriority(observationTargetDate, refreshMarketIndicators);
       setObservationCalculationFeedback(`${result.run?.target_date ?? observationTargetDate} 관찰순위 계산 완료`);
       setObservationCalculationOpen(false);
-      await loadObservationSummary();
+      await Promise.all([
+        loadObservationSummary(),
+        ...(refreshMarketIndicators ? [loadReadiness(true), loadMarketSignals()] : []),
+      ]);
     } catch (error) {
       setObservationCalculationError(errorMessage(error));
     } finally {
@@ -828,6 +846,8 @@ function DashboardPage() {
           </div>
         )}
       />
+
+      <TodayInsightPanel onOpen={() => navigate("/drct-insight")} />
 
       <SectionCard className="dashboard-v2-indicator-section">
         <div className="dashboard-v2-section-heading dashboard-v2-indicator-heading">

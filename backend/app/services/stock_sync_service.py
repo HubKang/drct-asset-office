@@ -45,12 +45,12 @@ class StockSyncService:
         include_security_types: list[str] | None = None,
         mode: str = "upsert",
     ) -> StockSyncResponse:
-        if not self.collector.service_key:
+        if not self.collector.is_configured:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
-                    "DATA_API_SERVICE_KEY is not configured. "
-                    "Add it to .env. For requests params, use the Decoding key."
+                    "KIWOOM_REST credentials are not configured. "
+                    "Configure an access token or app/secret keys for ka10099."
                 ),
             )
 
@@ -94,18 +94,14 @@ class StockSyncService:
             sync_time = now_kst()
             rebuild_strategy: str | None = None
             if normalized_mode == "rebuild":
-                counts.deleted_existing_count = self.stock_repo.count_all()
-            if normalized_mode == "rebuild" and not dry_run:
                 rebuild_strategy = "soft_rebuild"
-                all_stocks = self.stock_repo.list(
-                    keyword=None,
-                    is_active=None,
-                    market=None,
-                    security_type=None,
-                    limit=20000,
-                    offset=0,
-                )
-                for stock in all_stocks:
+                scoped_stocks: dict[int, Stock] = {}
+                for market in normalized_markets:
+                    for stock in self.stock_repo.list_active_by_market(market, security_types=included_types):
+                        scoped_stocks[stock.id] = stock
+                counts.deleted_existing_count = len(scoped_stocks)
+            if normalized_mode == "rebuild" and not dry_run:
+                for stock in scoped_stocks.values():
                     stock.is_active = 0
                     stock.last_synced_at = sync_time
                     stock.updated_at = sync_time
@@ -143,9 +139,9 @@ class StockSyncService:
                 fields = {
                     "stock_name": item.get("stock_name") or existing.stock_name,
                     "market": item.get("market") or existing.market,
-                    "isin_code": item.get("isin_code"),
+                    "isin_code": item.get("isin_code") or existing.isin_code,
                     "corp_name": item.get("corp_name") or existing.corp_name,
-                    "corp_reg_no": item.get("corp_reg_no"),
+                    "corp_reg_no": item.get("corp_reg_no") or existing.corp_reg_no,
                     "security_type": item.get("security_type") or existing.security_type,
                     "source": item.get("source") or existing.source or "KRX_LISTED_INFO",
                 }
