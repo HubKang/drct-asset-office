@@ -220,7 +220,7 @@ function AdminLayout() {
       </aside>
 
       <div className="app-main">
-        <main className="page-content">
+        <main className={clsx("page-content", location.pathname === "/drct-insight" && "page-content--drct-insight")}>
           <section className="space-y-4">
             <Outlet />
           </section>

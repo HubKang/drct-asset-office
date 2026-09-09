@@ -87,3 +87,41 @@ export type DrctInsightToday = {
   themes: DrctInsightTheme[]; stocks: DrctInsightStock[]; my_watch: DrctInsightWatchItem[];
   storage_policy: "RUNTIME_PLUS_COMPACT_CANDIDATE_HISTORY";
 };
+
+export type CandidateOutcomeStatus = "PENDING" | "PARTIAL" | "COMPLETE";
+export type DrctInsightPerformanceMetric = { n: number; positive_ratio: number | null; mean: number | null; median: number | null };
+export type DrctInsightPerformanceItem = {
+  id: number; analysis_date: string; stock_id: number; stock_code: string; stock_name: string;
+  theme_id: number | null; theme_name: string | null; candidate_level: "FOCUS" | "FINAL";
+  focus_rank: number | null; observation_rank: number | null; success_similarity: number | null;
+  failure_similarity: number | null; pattern_edge: number | null; user_status: string | null;
+  theme_gate: string | null; flow_gate: string | null; pattern_status: string | null;
+  us_lead_status: string | null; insight_rule_version: string | null;
+  d0_return: number | null; d1_return: number | null; d3_return: number | null; d5_return: number | null;
+  mfe_5d: number | null; mae_5d: number | null; outcome_status: CandidateOutcomeStatus;
+  outcome_evaluated_at: string | null; marker_status: MarkerReviewStatus; marker_event_id: number | null;
+};
+export type DrctInsightPerformanceGroup = {
+  key: string; label: string; n: number; sample_status: "ENOUGH" | "INSUFFICIENT" | "ACCUMULATING";
+  d5: DrctInsightPerformanceMetric; mfe_5d: DrctInsightPerformanceMetric; mae_5d: DrctInsightPerformanceMetric;
+};
+export type DrctInsightPerformance = {
+  page: number; page_size: number; total: number; total_pages: number; period: "20" | "60" | "120" | "ALL";
+  items: DrctInsightPerformanceItem[]; themes: Array<{ id: number; name: string }>;
+  summary: {
+    total_count: number; pending_count: number; partial_count: number; complete_count: number;
+    d0: DrctInsightPerformanceMetric; d1: DrctInsightPerformanceMetric; d3: DrctInsightPerformanceMetric;
+    d5: DrctInsightPerformanceMetric; mfe_5d: DrctInsightPerformanceMetric; mae_5d: DrctInsightPerformanceMetric;
+    marker_counts: Record<MarkerReviewStatus, number>;
+  };
+  groups: Record<string, DrctInsightPerformanceGroup[]>; latest_evaluated_at: string | null;
+};
+export type DrctInsightPerformanceFilters = {
+  period: "20" | "60" | "120" | "ALL"; candidate_level?: "FOCUS" | "FINAL";
+  theme_id?: number; pattern_status?: string; outcome_status?: CandidateOutcomeStatus;
+  page: number; page_size: 20 | 50 | 100;
+};
+export type DrctInsightPerformanceRefresh = {
+  target_count: number; updated_count: number; pending_count: number; partial_count: number;
+  complete_count: number; evaluated_at: string;
+};

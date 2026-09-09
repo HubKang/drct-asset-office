@@ -5106,7 +5106,28 @@ def ensure_drct_insight_candidate_schema() -> None:
                 FOREIGN KEY(theme_id) REFERENCES market_themes(id) ON DELETE SET NULL
             )
         """)
+        for column, definition in (
+            ("focus_rank", "INTEGER"),
+            ("theme_gate", "TEXT"),
+            ("flow_gate", "TEXT"),
+            ("pattern_status", "TEXT"),
+            ("us_lead_status", "TEXT"),
+            ("insight_rule_version", "TEXT"),
+            ("d0_return", "REAL"),
+            ("d1_return", "REAL"),
+            ("d3_return", "REAL"),
+            ("d5_return", "REAL"),
+            ("mfe_5d", "REAL"),
+            ("mae_5d", "REAL"),
+            ("outcome_status", "TEXT NOT NULL DEFAULT 'PENDING'"),
+            ("outcome_evaluated_at", "TEXT"),
+        ):
+            _ensure_column(conn, "drct_insight_candidate_evaluations", column, definition)
         conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_drct_insight_candidate_date_level "
             "ON drct_insight_candidate_evaluations(analysis_date, candidate_level)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_drct_insight_candidate_outcome "
+            "ON drct_insight_candidate_evaluations(outcome_status, analysis_date DESC)"
         )

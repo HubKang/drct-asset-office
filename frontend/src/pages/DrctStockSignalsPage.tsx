@@ -8,9 +8,9 @@ import StockSignalTab from "@/components/drctStockSignals/StockSignalTab";
 type SignalTab = "signals" | "research" | "performance";
 
 const TABS: Array<{ id: SignalTab; label: string }> = [
-  { id: "signals", label: "종목 시그널" },
+  { id: "signals", label: "종목별 마크 시그널" },
   { id: "research", label: "차트마커 학습 & 검색식 관리" },
-  { id: "performance", label: "시그널 성과" },
+  { id: "performance", label: "마크 시그널 성과" },
 ];
 
 function DrctStockSignalsPage() {
@@ -19,11 +19,11 @@ function DrctStockSignalsPage() {
   return (
     <div className="drct-stock-signals-page">
       <PageHeader
-        title="DrCT 종목 시그널"
-        description="국내 테마 연결 종목에서 과거 성공 패턴과 유사한 종목을 찾아 관찰 후보로 제시합니다."
+        title="DrCT 종목별 마크 시그널"
+        description="국내 테마 연결 종목을 차트 마크와 과거 성공 패턴으로 비교해, 오늘 확인할 종목별 관찰 시그널을 제시합니다."
       />
 
-      <nav className="drct-signal-tabs" aria-label="DrCT 종목 시그널 화면" role="tablist">
+      <nav className="drct-signal-tabs" aria-label="DrCT 종목별 마크 시그널 화면" role="tablist">
         {TABS.map((tab) => (
           <button
             key={tab.id}

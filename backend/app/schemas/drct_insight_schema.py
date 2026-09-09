@@ -16,6 +16,7 @@ MarketMode = Literal["PRE_MARKET", "INTRADAY", "POST_MARKET"]
 OutcomeDirection = Literal["UP", "DOWN", "FLAT", "NOT_READY"]
 MarkerReviewStatus = Literal["UNRECORDED", "UNDECIDED", "S", "F"]
 ReviewPriority = Literal["HIGH", "NORMAL"]
+CandidateOutcomeStatus = Literal["PENDING", "PARTIAL", "COMPLETE"]
 
 
 class DrctInsightGateSet(BaseModel):
@@ -214,3 +215,88 @@ class DrctInsightTodayResponse(BaseModel):
     outcome_summary: DrctInsightOutcomeSummary
     review_queue: list[DrctInsightReviewItem] = Field(default_factory=list)
     storage_policy: Literal["RUNTIME_PLUS_COMPACT_CANDIDATE_HISTORY"] = "RUNTIME_PLUS_COMPACT_CANDIDATE_HISTORY"
+
+
+class DrctInsightPerformanceMetric(BaseModel):
+    n: int = 0
+    positive_ratio: float | None = None
+    mean: float | None = None
+    median: float | None = None
+
+
+class DrctInsightPerformanceSummary(BaseModel):
+    total_count: int = 0
+    pending_count: int = 0
+    partial_count: int = 0
+    complete_count: int = 0
+    d0: DrctInsightPerformanceMetric
+    d1: DrctInsightPerformanceMetric
+    d3: DrctInsightPerformanceMetric
+    d5: DrctInsightPerformanceMetric
+    mfe_5d: DrctInsightPerformanceMetric
+    mae_5d: DrctInsightPerformanceMetric
+    marker_counts: dict[str, int]
+
+
+class DrctInsightPerformanceGroup(BaseModel):
+    key: str
+    label: str
+    n: int = 0
+    sample_status: Literal["ENOUGH", "INSUFFICIENT", "ACCUMULATING"] = "INSUFFICIENT"
+    d5: DrctInsightPerformanceMetric
+    mfe_5d: DrctInsightPerformanceMetric
+    mae_5d: DrctInsightPerformanceMetric
+
+
+class DrctInsightPerformanceItem(BaseModel):
+    id: int
+    analysis_date: str
+    stock_id: int
+    stock_code: str
+    stock_name: str
+    theme_id: int | None = None
+    theme_name: str | None = None
+    candidate_level: Literal["FOCUS", "FINAL"]
+    focus_rank: int | None = None
+    observation_rank: int | None = None
+    success_similarity: float | None = None
+    failure_similarity: float | None = None
+    pattern_edge: float | None = None
+    user_status: str | None = None
+    theme_gate: str | None = None
+    flow_gate: str | None = None
+    pattern_status: str | None = None
+    us_lead_status: str | None = None
+    insight_rule_version: str | None = None
+    d0_return: float | None = None
+    d1_return: float | None = None
+    d3_return: float | None = None
+    d5_return: float | None = None
+    mfe_5d: float | None = None
+    mae_5d: float | None = None
+    outcome_status: CandidateOutcomeStatus = "PENDING"
+    outcome_evaluated_at: str | None = None
+    marker_status: MarkerReviewStatus = "UNRECORDED"
+    marker_event_id: int | None = None
+
+
+class DrctInsightPerformanceResponse(BaseModel):
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+    period: Literal["20", "60", "120", "ALL"]
+    items: list[DrctInsightPerformanceItem] = Field(default_factory=list)
+    themes: list[dict[str, int | str]] = Field(default_factory=list)
+    summary: DrctInsightPerformanceSummary
+    groups: dict[str, list[DrctInsightPerformanceGroup]]
+    latest_evaluated_at: str | None = None
+
+
+class DrctInsightPerformanceRefreshResponse(BaseModel):
+    target_count: int = 0
+    updated_count: int = 0
+    pending_count: int = 0
+    partial_count: int = 0
+    complete_count: int = 0
+    evaluated_at: str

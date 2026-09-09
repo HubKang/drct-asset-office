@@ -18,6 +18,9 @@ def _session() -> Session:
             id INTEGER PRIMARY KEY AUTOINCREMENT, analysis_date TEXT, stock_id INTEGER, theme_id INTEGER,
             candidate_level TEXT, observation_rank INTEGER, success_similarity REAL, failure_similarity REAL,
             pattern_edge REAL, user_status TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, evaluated_at TEXT,
+            focus_rank INTEGER, theme_gate TEXT, flow_gate TEXT, pattern_status TEXT, us_lead_status TEXT,
+            insight_rule_version TEXT, d0_return REAL, d1_return REAL, d3_return REAL, d5_return REAL,
+            mfe_5d REAL, mae_5d REAL, outcome_status TEXT DEFAULT 'PENDING', outcome_evaluated_at TEXT,
             UNIQUE(analysis_date, stock_id))""",
     ):
         session.execute(text(statement))
@@ -104,10 +107,14 @@ def test_candidate_evaluation_upsert_is_duplicate_safe() -> None:
     row = SimpleNamespace(
         stock_id=1, theme_id=10, final_candidate=False, observation_rank=1,
         success_similarity=88.0, failure_similarity=None, pattern_edge=None,
-        gates=SimpleNamespace(execution="READY"),
+        gates=SimpleNamespace(execution="READY", theme="PASS", flow="WATCH"),
+        focus_rank=1, pattern_status="PROMISING",
+        us_lead=SimpleNamespace(linked=True, strength="STRONG"),
     )
 
     service._persist_candidate_rows("2026-09-07", [row])
     service._persist_candidate_rows("2026-09-07", [row])
 
     assert db.execute(text("SELECT COUNT(*) FROM drct_insight_candidate_evaluations")).scalar_one() == 1
+    saved = db.execute(text("SELECT focus_rank, theme_gate, flow_gate, pattern_status, us_lead_status, insight_rule_version FROM drct_insight_candidate_evaluations")).mappings().one()
+    assert dict(saved) == {"focus_rank": 1, "theme_gate": "PASS", "flow_gate": "WATCH", "pattern_status": "PROMISING", "us_lead_status": "STRONG", "insight_rule_version": "P3B_V1"}

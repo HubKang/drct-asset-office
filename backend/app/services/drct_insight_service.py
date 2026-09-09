@@ -3,6 +3,8 @@ from __future__ import annotations
 import math
 from datetime import date, datetime, time
 from statistics import mean, median
+from threading import Condition, RLock
+from time import monotonic
 from typing import Any
 
 from sqlalchemy import text
@@ -19,6 +21,7 @@ from backend.app.services.us_kr_theme_link_service import UsKrThemeLinkService
 PATTERN_REQUIRED_SAMPLE_COUNT = 5
 FOCUS_CANDIDATE_LIMIT = 8
 FOCUS_MAX_PER_THEME = 2
+INSIGHT_RULE_VERSION = "P3B_V1"
 
 
 def _percentile(values: list[float], percent: float) -> float | None:
@@ -43,8 +46,58 @@ def _percentile_rank(values: list[float], value: float | None) -> float | None:
 class DrctInsightService:
     """Runtime-only convergence view over existing DrCT sources."""
 
+    _today_cache_ttl_seconds = 15.0
+    _today_cache: dict[object, tuple[float, DrctInsightTodayResponse]] = {}
+    _today_inflight: set[object] = set()
+    _today_condition = Condition(RLock())
+
     def __init__(self, db: Session) -> None:
         self.db = db
+
+    @classmethod
+    def invalidate_today_cache(cls, bind: object | None = None) -> None:
+        """Drop transient Today data without persisting source or response detail."""
+        with cls._today_condition:
+            if bind is None:
+                cls._today_cache.clear()
+            else:
+                cls._today_cache.pop(bind, None)
+
+    def _publish_today_cache(self, result: DrctInsightTodayResponse) -> None:
+        bind = self.db.get_bind()
+        with self._today_condition:
+            self._today_cache[bind] = (monotonic() + self._today_cache_ttl_seconds, result)
+            while len(self._today_cache) > 8:
+                self._today_cache.pop(next(iter(self._today_cache)))
+            self._today_condition.notify_all()
+
+    def today(self, force_refresh: bool = False) -> DrctInsightTodayResponse:
+        """Return a short-lived runtime snapshot and coalesce concurrent rebuilds."""
+        bind = self.db.get_bind()
+        with self._today_condition:
+            cached = self._today_cache.get(bind)
+            if not force_refresh and cached and cached[0] > monotonic():
+                return cached[1]
+            while bind in self._today_inflight:
+                self._today_condition.wait()
+                cached = self._today_cache.get(bind)
+                if cached:
+                    return cached[1]
+            self._today_inflight.add(bind)
+        try:
+            result = self._build_today()
+        except Exception:
+            with self._today_condition:
+                self._today_inflight.discard(bind)
+                self._today_condition.notify_all()
+            raise
+        with self._today_condition:
+            self._today_cache[bind] = (monotonic() + self._today_cache_ttl_seconds, result)
+            while len(self._today_cache) > 8:
+                self._today_cache.pop(next(iter(self._today_cache)))
+            self._today_inflight.discard(bind)
+            self._today_condition.notify_all()
+        return result
 
     @staticmethod
     def _theme_gate(rank: int | None, pass_count: int) -> str:
@@ -320,7 +373,7 @@ class DrctInsightService:
         counts = {str(row["label"]): int(row["case_count"]) for row in rows}
         return counts.get("S", 0), counts.get("F", 0)
 
-    def today(self) -> DrctInsightTodayResponse:
+    def _build_today(self) -> DrctInsightTodayResponse:
         observation = MarketThemeObservationService(self.db).latest()
         realtime = RealtimeThemeService(self.db).get_treemap()
         pattern = MarkerCurrentPatternScanService(self.db).scan_summary()
@@ -617,23 +670,41 @@ class DrctInsightService:
         if result.market_mode != "POST_MARKET" or not result.analysis_date:
             return result
         rows = [row for row in result.stocks if row.focus_candidate or row.final_candidate]
+        if not rows:
+            return result
         self._persist_candidate_rows(result.analysis_date, rows)
-        return self.today()
+        captured = result.model_copy(update={"evaluation_captured": True})
+        self._publish_today_cache(captured)
+        return captured
 
     def _persist_candidate_rows(self, analysis_date: str, rows: list[Any]) -> None:
         for row in rows:
             self.db.execute(text("""
                 INSERT INTO drct_insight_candidate_evaluations
                 (analysis_date, stock_id, theme_id, candidate_level, observation_rank,
-                 success_similarity, failure_similarity, pattern_edge, user_status, evaluated_at)
+                 success_similarity, failure_similarity, pattern_edge, user_status, evaluated_at,
+                 focus_rank, theme_gate, flow_gate, pattern_status, us_lead_status, insight_rule_version)
                 VALUES (:analysis_date, :stock_id, :theme_id, :candidate_level, :observation_rank,
-                        :success_similarity, :failure_similarity, :pattern_edge, :user_status, :evaluated_at)
-                ON CONFLICT(analysis_date, stock_id) DO NOTHING
+                        :success_similarity, :failure_similarity, :pattern_edge, :user_status, :evaluated_at,
+                        :focus_rank, :theme_gate, :flow_gate, :pattern_status, :us_lead_status, :insight_rule_version)
+                ON CONFLICT(analysis_date, stock_id) DO UPDATE SET
+                    focus_rank=COALESCE(drct_insight_candidate_evaluations.focus_rank, excluded.focus_rank),
+                    theme_gate=COALESCE(drct_insight_candidate_evaluations.theme_gate, excluded.theme_gate),
+                    flow_gate=COALESCE(drct_insight_candidate_evaluations.flow_gate, excluded.flow_gate),
+                    pattern_status=COALESCE(drct_insight_candidate_evaluations.pattern_status, excluded.pattern_status),
+                    us_lead_status=COALESCE(drct_insight_candidate_evaluations.us_lead_status, excluded.us_lead_status),
+                    insight_rule_version=COALESCE(drct_insight_candidate_evaluations.insight_rule_version, excluded.insight_rule_version),
+                    user_status=excluded.user_status,
+                    evaluated_at=excluded.evaluated_at
             """), {
                 "analysis_date": analysis_date, "stock_id": row.stock_id, "theme_id": row.theme_id,
                 "candidate_level": "FINAL" if row.final_candidate else "FOCUS",
                 "observation_rank": row.observation_rank, "success_similarity": row.success_similarity,
                 "failure_similarity": row.failure_similarity, "pattern_edge": row.pattern_edge,
                 "user_status": row.gates.execution or "WAIT", "evaluated_at": now_kst(),
+                "focus_rank": row.focus_rank, "theme_gate": row.gates.theme, "flow_gate": row.gates.flow,
+                "pattern_status": row.pattern_status,
+                "us_lead_status": row.us_lead.strength if row.us_lead.linked else "NONE",
+                "insight_rule_version": INSIGHT_RULE_VERSION,
             })
         self.db.commit()

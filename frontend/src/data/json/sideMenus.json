@@ -6,23 +6,18 @@
   },
   {
     "menuKey": "home",
-    "title": "오늘의 DrCT Insight",
+    "title": "DrCT 오늘의 인사이트",
     "routeKey": "drct-insight"
+  },
+  {
+    "menuKey": "home",
+    "title": "DrCT 종목별 마크 시그널",
+    "routeKey": "drct-stock-signals"
   },
   {
     "menuKey": "home",
     "title": "증시 캘린더",
     "routeKey": "market-calendar"
-  },
-  {
-    "menuKey": "home",
-    "title": "실시간 테마 트리맵",
-    "routeKey": "realtime-theme-treemap"
-  },
-  {
-    "menuKey": "home",
-    "title": "DrCT 종목 시그널",
-    "routeKey": "drct-stock-signals"
   },
   {
     "menuKey": "stocks",
@@ -48,6 +43,11 @@
     "menuKey": "stocks",
     "title": "종목 트래킹",
     "routeKey": "stock-tracking"
+  },
+  {
+    "menuKey": "market",
+    "title": "실시간 테마 트리맵",
+    "routeKey": "realtime-theme-treemap"
   },
   {
     "menuKey": "market",

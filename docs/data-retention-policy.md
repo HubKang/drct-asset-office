@@ -45,6 +45,8 @@
 
 - `drct_insight_candidate_evaluations`는 해당 거래일에 실제로 확정된 Focus/Final 후보를 장후 복기와 후보 품질 비교에서 다시 읽기 위한 최소 정형 이력이다.
 - 저장 필드는 거래일, 종목·테마 식별자, 후보 등급, 관찰순위, S/F 유사도, Pattern Edge, 당시 사용자 상태로 제한한다.
-- D0 가격과 테마 수익률, 상대성과 및 Marker 상태는 기존 가격·Marker 테이블에서 재계산하며 중복 저장하지 않는다.
+- Phase 4-A부터 당시 판단을 왜곡 없이 비교하기 위해 Focus 순위, THEME/FLOW/Pattern/US Lead 상태와 짧은 Rule Version을 추가로 보존한다. 과거 행에서 저장되지 않았던 판단 상태는 현재 로직으로 역산하지 않는다.
+- 후보 사후 검증에는 D0/D+1/D+3/D+5 수익률, 5거래일 MFE/MAE, 평가 상태와 평가 시각만 정형 컬럼으로 보존한다.
+- 원천 가격, 테마 수익률 history, 가격 Window 배열 및 Marker 상태는 기존 가격·Marker 테이블에서 조회하며 중복 저장하지 않는다.
 - Feature, 원천 응답, 장중 Snapshot/history, Why/Warning/Review 문장, JSON은 저장하지 않는다.
 - 운영·감사 비교를 위해 3년간 보존하며, 이후 정리는 별도 승인된 유지보수 절차에서 수행한다.

@@ -241,7 +241,14 @@ function CatalogTab({ groups, reload }: { groups: ChartMarkerGroup[]; reload: ()
 }
 
 export default function ChartMarkerReviewPage() {
+  const deepLink = useMemo(() => {
+    const params = new URLSearchParams(window.location.hash.split("?")[1] || "");
+    const stockId = Number(params.get("stock_id")), markerDate = params.get("marker_date") || "";
+    if (!Number.isInteger(stockId) || stockId <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(markerDate)) return null;
+    return { stockId, markerDate, stockName: params.get("stock_name") || `종목 #${stockId}` };
+  }, []);
   const [tab, setTab] = useState<"catalog" | "review">("catalog"), [groups, setGroups] = useState<ChartMarkerGroup[]>([]), [groupId, setGroupId] = useState<number | null>(null), [markerId, setMarkerId] = useState<number | null>(null), [events, setEvents] = useState<ChartMarkerReviewEvent[]>([]), [selected, setSelected] = useState<ChartMarkerReviewEvent | null>(null), [stockQuery, setStockQuery] = useState(""), [chart, setChart] = useState<ChartMarkerReviewChart | null>(null), [chartLoading, setChartLoading] = useState(false), [error, setError] = useState("");
+  const [deepLinkEvent, setDeepLinkEvent] = useState<ChartMarkerReviewEvent | null>(null);
   const [resultFilter, setResultFilter] = useState<"ALL" | "S" | "F">("ALL"), [savingReviewId, setSavingReviewId] = useState<number | null>(null);
   const [windowKey, setWindowKey] = useState<ReviewWindowKey>("60.D0.20");
   const [showD0Marker, setShowD0Marker] = useState(true);
@@ -254,10 +261,31 @@ export default function ChartMarkerReviewPage() {
   const reload = async () => { try { setGroups((await repositories.chartMarkers.catalog()).items); } catch (nextError) { setError(nextError instanceof Error ? nextError.message : "마커를 불러오지 못했습니다."); } };
   useEffect(() => { void reload(); }, []);
   const activeGroups = groups.filter((item) => item.is_active).sort((a, b) => a.sort_order - b.sort_order || a.id - b.id), group = activeGroups.find((item) => item.id === groupId) ?? activeGroups[0], markers = group?.markers.filter((item) => item.is_active).sort((a, b) => a.sort_order - b.sort_order || a.id - b.id) ?? [];
+  useEffect(() => {
+    if (!deepLink || !activeGroups.length) return;
+    let active = true; setTab("review"); setStockQuery(deepLink.stockName);
+    repositories.chartMarkers.listStockEvents(deepLink.stockId).then((response) => {
+      if (!active) return;
+      const existing = response.items.find((item) => item.marker_date === deepLink.markerDate);
+      if (existing) {
+        setGroupId(existing.marker_group_id); setMarkerId(existing.marker_id);
+        setDeepLinkEvent({ ...existing, stock_code: "", stock_name: deepLink.stockName });
+        return;
+      }
+      const firstGroup = activeGroups[0], firstMarker = firstGroup.markers.find((item) => item.is_active);
+      if (!firstMarker) return;
+      setGroupId(firstGroup.id); setMarkerId(firstMarker.id);
+      setDeepLinkEvent({ id: -deepLink.stockId, stock_id: deepLink.stockId, marker_id: firstMarker.id,
+        marker_date: deepLink.markerDate, memo: null, review_result: null, reviewed_at: null,
+        marker_name: "미기록", symbol: "D0", marker_group_id: firstGroup.id, group_name: firstGroup.name,
+        group_color: firstGroup.color, stock_code: "", stock_name: deepLink.stockName });
+    }).catch(() => { if (active) setError("요청한 종목의 Marker Context를 불러오지 못했습니다."); });
+    return () => { active = false; };
+  }, [deepLink, groups]);
   useEffect(() => { if (group && group.id !== groupId) setGroupId(group.id); }, [group, groupId]);
   useEffect(() => { if (!markers.some((item) => item.id === markerId)) setMarkerId(markers[0]?.id ?? null); }, [groupId, groups]);
   useEffect(() => { setStockQuery(""); setResultFilter("ALL"); }, [groupId, markerId]);
-  useEffect(() => { if (tab !== "review" || !markerId) { setEvents([]); setSelected(null); return; } repositories.chartMarkers.reviewEvents(markerId).then((response) => { setEvents(response.items); setSelected(response.items[0] ?? null); }).catch((nextError) => setError(nextError.message)); }, [tab, markerId]);
+  useEffect(() => { if (tab !== "review" || !markerId) { setEvents([]); setSelected(null); return; } repositories.chartMarkers.reviewEvents(markerId).then((response) => { setEvents(response.items); setSelected(response.items.find((item) => item.stock_id === deepLink?.stockId && item.marker_date === deepLink.markerDate) ?? deepLinkEvent ?? response.items[0] ?? null); }).catch((nextError) => setError(nextError.message)); }, [tab, markerId, deepLink, deepLinkEvent]);
   const selectedEventKey = selected ? `${selected.stock_id}-${selected.marker_date}-${selected.marker_id}-${selected.id}` : "";
   const selectedWindow = REVIEW_WINDOWS.find((item) => item.key === windowKey) ?? REVIEW_WINDOWS[1];
   useEffect(() => {
@@ -298,9 +326,10 @@ export default function ChartMarkerReviewPage() {
   const filteredGrouped = useMemo(() => Array.from(visibleEvents.reduce((map, item) => { const rows = map.get(item.stock_id) ?? []; rows.push(item); map.set(item.stock_id, rows); return map; }, new Map<number, ChartMarkerReviewEvent[]>()).values()).map((rows) => [...rows].sort((a, b) => b.marker_date.localeCompare(a.marker_date))), [visibleEvents]);
   const visibleEventIds = visibleEvents.map((item) => item.id).join(",");
   useEffect(() => {
+    if (deepLinkEvent && selected?.id === deepLinkEvent.id) return;
     if (!visibleEvents.length) { setSelected(null); return; }
     if (!selected || !visibleEvents.some((item) => item.id === selected.id)) setSelected(visibleEvents[0]);
-  }, [visibleEventIds]);
+  }, [visibleEventIds, deepLinkEvent, selected?.id]);
   const selectedIndex = selected ? visibleEvents.findIndex((item) => item.id === selected.id) : -1;
   const moveSelection = (offset: number) => { const next = visibleEvents[selectedIndex + offset]; if (next) setSelected(next); };
   const editorGroup = activeGroups.find((item) => item.id === editorGroupId) ?? activeGroups[0];
@@ -384,7 +413,7 @@ export default function ChartMarkerReviewPage() {
         <div className="chart-marker-filter-marker"><span>차트마커</span><div className="chart-marker-choice-list" role="group" aria-label="차트마커 선택">{markers.length ? markers.map((item) => <button key={item.id} type="button" className={item.id === markerId ? "active" : ""} style={{ "--chart-marker-accent": group?.color ?? "#2563eb" } as CSSProperties} title={item.name} aria-pressed={item.id === markerId} onClick={() => setMarkerId(item.id)}><span className="chart-marker-choice-symbol" aria-hidden="true">{item.symbol}</span><strong>{item.name}</strong></button>) : <p>등록된 활성 마커가 없습니다.</p>}</div></div>
         <strong className="chart-marker-filter-count">사례 {events.length}건</strong>
       </div>
-      {!activeGroups.length ? <div className="chart-marker-empty">등록된 활성 차트마커 그룹이 없습니다.<br />마커그룹 탭에서 먼저 그룹을 활성화해 주세요.</div> : !markers.length ? <div className="chart-marker-empty">이 그룹에 등록된 활성 마커가 없습니다.<br />마커그룹 탭에서 사용할 마커를 활성화해 주세요.</div> : !events.length ? <div className="chart-marker-empty">이 마커로 기록된 차트 사례가 없습니다.<br />종목매매훈련 차트에서 캔들을 우클릭하여 마커를 기록해 주세요.</div> : <div className="chart-marker-review-grid">
+      {!activeGroups.length ? <div className="chart-marker-empty">등록된 활성 차트마커 그룹이 없습니다.<br />마커그룹 탭에서 먼저 그룹을 활성화해 주세요.</div> : !markers.length ? <div className="chart-marker-empty">이 그룹에 등록된 활성 마커가 없습니다.<br />마커그룹 탭에서 사용할 마커를 활성화해 주세요.</div> : !events.length && !deepLinkEvent ? <div className="chart-marker-empty">이 마커로 기록된 차트 사례가 없습니다.<br />종목매매훈련 차트에서 캔들을 우클릭하여 마커를 기록해 주세요.</div> : <div className="chart-marker-review-grid">
         <aside className="panel chart-marker-case-panel" style={{ "--chart-marker-detail-height": detailHeight ? `${detailHeight}px` : undefined } as CSSProperties}>
           <header><h3>관련 종목 / 캔들일자</h3><span>{visibleEvents.length}건</span></header>
           <div className="chart-marker-case-tools"><div className="chart-marker-case-search"><Search size={15} aria-hidden="true" /><input className="input-control" type="search" value={stockQuery} onChange={(event) => setStockQuery(event.target.value)} placeholder="종목명 검색" aria-label="종목명 검색" /></div><div className="chart-marker-result-filter" aria-label="판정 상태 필터">{(["ALL", "S", "F"] as const).map((value) => <button type="button" key={value} className={`${resultFilter === value ? "active" : ""} ${value.toLowerCase()}`} onClick={() => setResultFilter(value)}>{value === "ALL" ? "전체" : value === "S" ? "성공" : "실패"}</button>)}</div></div>
