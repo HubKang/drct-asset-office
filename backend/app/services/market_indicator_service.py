@@ -12,6 +12,15 @@ from sqlalchemy.orm import Session
 from backend.app.providers.economic_data.bok_ecos_provider import BokEcosProvider
 from backend.app.providers.economic_data.fred_provider import FredProvider
 from backend.app.providers.economic_data.kosis_provider import KosisProvider
+from backend.app.providers.market_data.yfinance_us_daily_price_provider import YFinanceUsDailyPriceProvider
+
+
+YAHOO_US_INDEX_SYMBOLS = {
+    "US_NASDAQ": "^IXIC",
+    "US_SP500": "^GSPC",
+    "US_DOW": "^DJI",
+    "US_SOX": "^SOX",
+}
 
 ECOS_DISCOVERY_TARGETS: dict[str, dict[str, Any]] = {
     "USD_KRW": {
@@ -111,6 +120,7 @@ class MarketIndicatorService:
         self.bok_ecos = BokEcosProvider()
         self.fred = FredProvider()
         self.kosis = KosisProvider()
+        self.yahoo_us = YFinanceUsDailyPriceProvider()
 
     @staticmethod
     def _as_bool(value: Any) -> bool:
@@ -534,24 +544,77 @@ class MarketIndicatorService:
                     results.append({"indicator_code": code, "status": "WAITING", "message": "enabled and verified provider mapping is required", "saved_count": 0})
                     continue
                 provider = str(mapping.get("provider") or "").upper()
-                if provider == "DERIVED":
-                    values = self._collect_derived_values(code, start_date=date_from, end_date=date_to)
-                else:
-                    values = self._provider_client(provider).collect_values(code, mapping, start_date=date_from, end_date=date_to)
+                primary_error: str | None = None
+                try:
+                    if provider == "DERIVED":
+                        values = self._collect_derived_values(code, start_date=date_from, end_date=date_to)
+                    else:
+                        values = self._provider_client(provider).collect_values(code, mapping, start_date=date_from, end_date=date_to)
+                except Exception as exc:
+                    if provider != "FRED" or code not in YAHOO_US_INDEX_SYMBOLS:
+                        raise
+                    # A transient FRED outage must not prevent the independent
+                    # close-price source from completing a US-index refresh.
+                    values = []
+                    primary_error = str(exc)[:200]
+                supplement_count = 0
+                supplement_error: str | None = None
+                if provider == "FRED" and code in YAHOO_US_INDEX_SYMBOLS:
+                    try:
+                        values, supplement_count = self._supplement_us_index_from_yahoo(
+                            code,
+                            values,
+                            start_date=date_from,
+                            end_date=date_to,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - keep usable FRED history if Yahoo is temporarily unavailable.
+                        supplement_error = str(exc)[:200]
+                if not values and (primary_error or supplement_error):
+                    failures = "; ".join(
+                        message
+                        for message in (
+                            f"FRED unavailable ({primary_error})" if primary_error else None,
+                            f"Yahoo unavailable ({supplement_error})" if supplement_error else None,
+                        )
+                        if message
+                    )
+                    raise RuntimeError(failures)
                 if not values:
                     waiting_count += 1
                     self._mark_indicator_status(code, "WAITING")
                     results.append({"indicator_code": code, "status": "WAITING", "message": f"{provider} returned no collectable rows", "saved_count": 0})
                     continue
                 counts = self._upsert_values(values)
+                values = sorted(values, key=lambda item: str(item.get("value_date") or ""))
                 latest = values[-1]
-                self._update_indicator_latest(code, latest)
+                self._update_indicator_latest(
+                    code,
+                    latest,
+                    collection_status="PARTIAL" if supplement_error else "LATEST",
+                )
                 success_count += 1
+                supplement_message = (
+                    f", Yahoo supplemented {supplement_count} newer rows"
+                    if supplement_count
+                    else f", Yahoo supplement unavailable ({supplement_error})"
+                    if supplement_error
+                    else ""
+                )
+                if primary_error:
+                    supplement_message += f", FRED unavailable ({primary_error})"
+                effective_provider = (
+                    "YFINANCE"
+                    if primary_error and supplement_count
+                    else f"{provider}+YFINANCE"
+                    if supplement_count
+                    else provider
+                )
                 results.append(
                     {
                         "indicator_code": code,
+                        "provider_code": effective_provider,
                         "status": "SUCCESS",
-                        "message": f"{mode}: received {len(values)} {provider} rows, inserted {counts['inserted_count']}, updated {counts['updated_count']}, unchanged {counts['unchanged_count']}",
+                        "message": f"{mode}: received {len(values)} {provider} rows{supplement_message}, inserted {counts['inserted_count']}, updated {counts['updated_count']}, unchanged {counts['unchanged_count']}",
                         "saved_count": counts["inserted_count"] + counts["updated_count"],
                         "received_count": len(values),
                         "inserted_count": counts["inserted_count"],
@@ -577,6 +640,48 @@ class MarketIndicatorService:
             "message": f"market indicator collection completed: success {success_count}, waiting {waiting_count}, failed {failed_count}.",
             "results": results,
         }
+
+    def _supplement_us_index_from_yahoo(
+        self,
+        indicator_code: str,
+        primary_values: list[dict[str, Any]],
+        *,
+        start_date: str,
+        end_date: str,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Append only Yahoo sessions newer than FRED's latest observation.
+
+        FRED remains the durable historical source. Yahoo is used only to close
+        its publication lag after a completed US regular session.
+        """
+        symbol = YAHOO_US_INDEX_SYMBOLS[indicator_code]
+        fetched = self.yahoo_us.fetch_recent_daily_prices(symbol=symbol, exchange="INDEX", trading_days=20)
+        candles = sorted(fetched.prices, key=lambda item: item.trade_date)
+        primary_latest = max((str(item.get("value_date") or "") for item in primary_values), default="")
+        yahoo_values: list[dict[str, Any]] = []
+        previous_close: float | None = None
+        for candle in candles:
+            close = float(candle.close_price)
+            change_value = None if previous_close is None else close - previous_close
+            change_pct = None if previous_close in (None, 0) else change_value / previous_close * 100
+            if start_date <= candle.trade_date <= end_date and candle.trade_date > primary_latest:
+                yahoo_values.append({
+                    "indicator_code": indicator_code,
+                    "value_date": candle.trade_date,
+                    "period_label": None,
+                    "value": close,
+                    "change_value": change_value,
+                    "change_pct": change_pct,
+                    "mom_pct": None,
+                    "yoy_pct": None,
+                    "source_provider": "YFINANCE",
+                    "source_unit": "INDEX",
+                    "is_preliminary": 0,
+                    "release_date": None,
+                    "raw_payload_json": None,
+                })
+            previous_close = close
+        return [*primary_values, *yahoo_values], len(yahoo_values)
 
     def _resolve_collect_window(
         self,
@@ -1090,12 +1195,18 @@ class MarketIndicatorService:
             {"code": indicator_code.strip().upper()},
         ).scalar()
 
-    def _update_indicator_latest(self, indicator_code: str, latest: dict[str, Any]) -> None:
+    def _update_indicator_latest(
+        self,
+        indicator_code: str,
+        latest: dict[str, Any],
+        *,
+        collection_status: str = "LATEST",
+    ) -> None:
         self.db.execute(
             text(
                 """
                 UPDATE market_indicators
-                SET collection_status = 'LATEST',
+                SET collection_status = :collection_status,
                     latest_value = :latest_value,
                     latest_value_date = :latest_value_date,
                     latest_change_value = :latest_change_value,
@@ -1108,6 +1219,7 @@ class MarketIndicatorService:
             ),
             {
                 "indicator_code": indicator_code,
+                "collection_status": collection_status,
                 "latest_value": latest.get("value"),
                 "latest_value_date": latest.get("value_date"),
                 "latest_change_value": latest.get("change_value"),

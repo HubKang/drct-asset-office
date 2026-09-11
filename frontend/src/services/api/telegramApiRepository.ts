@@ -1,7 +1,7 @@
 import { apiRequest } from "@/services/api/apiClient";
 import type {
   TelegramAuthStartResult, TelegramAuthStatus, TelegramAuthVerifyResult,
-  TelegramCollectAllResult, TelegramCollectResult, TelegramItemListResponse,
+  TelegramCollectAllResult, TelegramCollectResult, TelegramItem, TelegramItemListResponse,
   TelegramSource, TelegramSourceConnectionTest, TelegramSummarizeResult,
 } from "@/types/telegram";
 
@@ -33,5 +33,8 @@ export const telegramApiRepository = {
   }),
   summarizeItems: (itemIds: number[]) => apiRequest<TelegramSummarizeResult>("/telegram/items/summarize", {
     method: "POST", body: JSON.stringify({ item_ids: itemIds }),
+  }),
+  updateItemTheme: (itemId: number, themeId: number | null) => apiRequest<TelegramItem>(`/telegram/items/${itemId}/theme`, {
+    method: "PATCH", body: JSON.stringify({ theme_id: themeId }),
   }),
 };

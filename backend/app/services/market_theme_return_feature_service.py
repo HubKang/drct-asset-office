@@ -97,6 +97,14 @@ class MarketThemeReturnFeatureService:
             return None
         return float(numerator) / float(denominator)
 
+    @classmethod
+    def _flow_acceleration(cls, joint_series: list[float | None]) -> float | None:
+        if len(joint_series) < 6:
+            return None
+        recent = cls._mean(joint_series[-3:])
+        previous = cls._mean(joint_series[-6:-3])
+        return recent - previous if recent is not None and previous is not None else None
+
     def _load(self, through_date: str | None = None) -> tuple[list[str], dict[tuple[str, int], dict[str, Any]], dict[tuple[str, int], dict[str, Any]], dict[int, str]]:
         date_filter = "AND r.return_date<=:through_date" if through_date else ""
         params = {"through_date": through_date} if through_date else {}
@@ -162,10 +170,13 @@ class MarketThemeReturnFeatureService:
                 program_strength = self._ratio(snapshot.get("program_net") if snapshot else None, trading_value)
                 joint_strength = None if foreign_strength is None or institution_strength is None else foreign_strength + institution_strength
                 past_flows = flow_histories[theme_id]
-                joint_series = [row["joint"] for row in past_flows[-4:] if row["joint"] is not None] + ([joint_strength] if joint_strength is not None else [])
+                # Six observations are required to compare the latest three-day
+                # flow mean with the preceding three-day mean.  Keeping only four
+                # historical observations made flow_acceleration (and its
+                # interaction feature) permanently missing.
+                joint_series = [row["joint"] for row in past_flows[-5:] if row["joint"] is not None] + ([joint_strength] if joint_strength is not None else [])
                 mean3 = self._mean(joint_series[-3:])
-                previous3 = self._mean(joint_series[-6:-3]) if len(joint_series) >= 6 else None
-                flow_acceleration = mean3 - previous3 if mean3 is not None and previous3 is not None else None
+                flow_acceleration = self._flow_acceleration(joint_series)
                 streak = 0
                 for value in reversed(joint_series):
                     if value == 0 or (streak > 0 and value < 0) or (streak < 0 and value > 0):

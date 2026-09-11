@@ -273,6 +273,7 @@ class MarketIndicatorCollectRequest(BaseModel):
 
 class MarketIndicatorCollectResult(BaseModel):
     indicator_code: str
+    provider_code: str | None = None
     status: str
     message: str
     saved_count: int = 0

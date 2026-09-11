@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from sqlalchemy import Select, delete, func, or_, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from backend.app.core.config import now_kst
 from backend.app.entities.telegram_item import TelegramItem, TelegramMessageExclusion
 from backend.app.entities.telegram_source import TelegramSource
+from backend.app.entities.market_theme import MarketTheme
 
 
 class TelegramRepository:
@@ -60,6 +61,13 @@ class TelegramRepository:
         self.db.refresh(item)
         return item
 
+    def update_theme(self, item: TelegramItem, theme_id: int | None) -> TelegramItem:
+        item.theme_id = theme_id
+        self.db.add(item)
+        self.db.commit()
+        self.db.refresh(item)
+        return item
+
     def get_item_by_fingerprint(self, collection_date: str, fingerprint: str) -> TelegramItem | None:
         return self.db.scalar(select(TelegramItem).where(
             TelegramItem.collection_date == collection_date,
@@ -97,9 +105,15 @@ class TelegramRepository:
         return len(rows)
 
     def list_items(self, date_from: str | None = None, date_to: str | None = None,
-                   keyword: str | None = None, limit: int = 20, offset: int = 0
+                   keyword: str | None = None, theme_id: int | None = None,
+                   theme_unassigned: bool = False, limit: int = 20, offset: int = 0
                    ) -> tuple[list[TelegramItem], int, int, int]:
-        stmt = select(TelegramItem)
+        parent_theme = aliased(MarketTheme)
+        stmt = (
+            select(TelegramItem, MarketTheme.theme_name, parent_theme.theme_name)
+            .outerjoin(MarketTheme, MarketTheme.id == TelegramItem.theme_id)
+            .outerjoin(parent_theme, parent_theme.id == MarketTheme.parent_theme_id)
+        )
         count_stmt = select(func.count()).select_from(TelegramItem)
         conditions = []
         if date_from:
@@ -112,11 +126,21 @@ class TelegramRepository:
             conditions.append(or_(TelegramItem.title.like(value, escape="\\"),
                                   TelegramItem.summary.like(value, escape="\\"),
                                   TelegramItem.source_url.like(value, escape="\\")))
+        if theme_unassigned:
+            conditions.append(TelegramItem.theme_id.is_(None))
+        elif theme_id is not None:
+            conditions.append(TelegramItem.theme_id == theme_id)
         for condition in conditions:
             stmt = stmt.where(condition); count_stmt = count_stmt.where(condition)
         total = int(self.db.scalar(count_stmt) or 0)
         with_summary = int(self.db.scalar(count_stmt.where(TelegramItem.summary.is_not(None))) or 0)
-        items = list(self.db.scalars(stmt.order_by(
+        rows = self.db.execute(stmt.order_by(
             TelegramItem.message_at.desc(), TelegramItem.id.desc()
-        ).limit(limit).offset(offset)).all())
+        ).limit(limit).offset(offset)).all()
+        items: list[TelegramItem] = []
+        for item, theme_name, theme_group_name in rows:
+            # Response-only attributes populated by the single list JOIN.
+            item.theme_name = theme_name
+            item.theme_group_name = theme_group_name
+            items.append(item)
         return items, total, with_summary, total - with_summary

@@ -32,6 +32,7 @@ export default function ObservationRadarGrid(props: {
   items: MarketThemeObservationItem[];
   statusNames: Record<string, string>;
   onThemeClick: (themeId: number) => void;
+  hideHeader?: boolean;
 }) {
   const [infoOpen, setInfoOpen] = useState(false);
   const infoRef = useRef<HTMLDivElement | null>(null);
@@ -94,8 +95,8 @@ export default function ObservationRadarGrid(props: {
     };
   }, [infoOpen]);
 
-  return <section className="observation-radar-section" aria-labelledby="observation-radar-title">
-    <header>
+  return <section className={`observation-radar-section${props.hideHeader ? " is-headerless" : ""}`} aria-label={props.hideHeader ? "집중 관찰 테마 구조" : undefined} aria-labelledby={props.hideHeader ? undefined : "observation-radar-title"}>
+    {!props.hideHeader ? <header>
       <div>
         <div className="observation-radar-title-row" ref={infoRef}>
           <h3 id="observation-radar-title">테마 구조 비교</h3>
@@ -127,7 +128,7 @@ export default function ObservationRadarGrid(props: {
         <p>가격·수급·확산·기술·완전성의 모양으로 관찰점수의 구조를 비교합니다.</p>
       </div>
       <span>동일 축 · 최대 100</span>
-    </header>
+    </header> : null}
     <div className="observation-radar-grid">
       {props.items.map((item) => {
         const values = AXES.map((axis) => {
@@ -146,7 +147,7 @@ export default function ObservationRadarGrid(props: {
               {AXES.map((axis, index) => { const [x, y] = point(index, 1); const [labelX, labelY] = point(index, 1.2); return <g key={axis.key}><line x1={cx} y1={cy} x2={x} y2={y} className="observation-radar-axis" /><circle cx={labelX} cy={labelY} r="16" className="observation-radar-axis-hit"><title>{axis.label} {scoreText(values[index])}</title></circle><text x={labelX} y={labelY} className="observation-radar-label">{axis.label}</text></g>; })}
               {dataPoints ? <><polygon points={dataPoints} className="observation-radar-data" />{values.map((value, index) => { const [x, y] = point(index, (value ?? 0) / 100); return <circle key={AXES[index].key} cx={x} cy={y} r="3" className="observation-radar-point"><title>{AXES[index].label} {scoreText(value)}</title></circle>; })}</> : null}
             </svg>
-            <span className="observation-radar-center"><b>{item.theme_name}</b><strong>{scoreText(item.relative_strength_score)}</strong></span>
+            <span className="observation-radar-center"><b>{item.theme_name}</b><strong>{scoreText(item.relative_strength_score ?? item.relative_strength_probability)}</strong></span>
           </div>
           <footer className={item.relative_strength_gap == null ? "is-waiting" : item.relative_strength_gap > 0 ? "is-positive" : item.relative_strength_gap < 0 ? "is-negative" : "is-neutral"}>{complete ? actualText : `구조 데이터 부족 · ${actualText}`}</footer>
         </button>;

@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from backend.app.collectors.telegram.telegram_collector import TelegramCollector
 from backend.app.core.config import now_kst
 from backend.app.repositories.telegram_repository import TelegramRepository
+from backend.app.entities.market_theme import MarketTheme
 from backend.app.services.telegram_article_service import TelegramArticleService
 from backend.app.services.telegram_llm_service import TelegramLLMService
 from backend.app.services.telegram_service import TelegramService as LegacyTelegramAuthService
@@ -137,10 +138,35 @@ class TelegramService(LegacyTelegramAuthService):
             date_from=str(filters.get("date_from") or "") or None,
             date_to=str(filters.get("date_to") or "") or None,
             keyword=str(filters.get("keyword") or "").strip() or None,
+            theme_id=int(filters["theme_id"]) if filters.get("theme_id") is not None else None,
+            theme_unassigned=bool(filters.get("theme_unassigned")),
             limit=limit, offset=offset,
         )
         return {"items": items, "total_count": total, "with_summary_count": with_summary,
                 "title_only_count": title_only, "limit": limit, "offset": offset}
+
+    def update_item_theme(self, item_id: int, theme_id: int | None):
+        item = self.repo.get_item(item_id)
+        if not item:
+            raise HTTPException(status_code=404, detail="telegram item not found")
+        if theme_id is not None:
+            theme = self.db.get(MarketTheme, theme_id)
+            if not theme:
+                raise HTTPException(status_code=404, detail="market theme not found")
+            if theme.theme_level != "THEME":
+                raise HTTPException(status_code=400, detail="테마그룹은 브리핑 대표 테마로 지정할 수 없습니다.")
+            if theme.is_active != 1:
+                raise HTTPException(status_code=409, detail="비활성 테마는 새로 지정할 수 없습니다.")
+        updated = self.repo.update_theme(item, theme_id)
+        if theme_id is None:
+            updated.theme_name = None
+            updated.theme_group_name = None
+        else:
+            theme = self.db.get(MarketTheme, theme_id)
+            parent = self.db.get(MarketTheme, theme.parent_theme_id) if theme and theme.parent_theme_id else None
+            updated.theme_name = theme.theme_name if theme else None
+            updated.theme_group_name = parent.theme_name if parent else None
+        return updated
 
     def delete_item(self, item_id: int) -> dict[str, int]:
         if not self.repo.get_item(item_id):

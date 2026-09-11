@@ -139,6 +139,9 @@ class TelegramItemResponse(BaseModel):
     title: str
     summary: str | None
     source_url: str | None
+    theme_id: int | None = None
+    theme_name: str | None = None
+    theme_group_name: str | None = None
     created_at: str
     model_config = {"from_attributes": True}
 
@@ -150,6 +153,10 @@ class TelegramItemListResponse(BaseModel):
     title_only_count: int
     limit: int
     offset: int
+
+
+class TelegramItemThemeUpdate(BaseModel):
+    theme_id: int | None = None
 
 
 class TelegramItemsDeleteRequest(BaseModel):

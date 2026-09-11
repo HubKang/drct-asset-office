@@ -2844,8 +2844,15 @@ def ensure_runtime_schema() -> None:
             )
         """)
         conn.exec_driver_sql("DROP TABLE IF EXISTS telegram_daily_summaries")
+        _ensure_column(
+            conn,
+            "telegram_items",
+            "theme_id",
+            "INTEGER REFERENCES market_themes(id) ON DELETE SET NULL",
+        )
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_telegram_items_collection_date ON telegram_items(collection_date)")
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_telegram_items_message_at ON telegram_items(message_at)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_telegram_items_theme_id ON telegram_items(theme_id)")
         conn.exec_driver_sql(
             """
             CREATE TABLE IF NOT EXISTS trade_methods (

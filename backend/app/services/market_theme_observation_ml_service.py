@@ -3,22 +3,22 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime
 import math
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
-from sklearn.calibration import calibration_curve
-from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import brier_score_loss, log_loss
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from backend.app.schemas.market_theme_observation_schema import (
+    MarketThemeObservationAblationResult,
+    MarketThemeObservationFeatureDiagnostic,
     MarketThemeObservationMLCandidate,
+    MarketThemeObservationMLFoldResult,
     MarketThemeObservationMLMetrics,
     MarketThemeObservationMLTrainResponse,
 )
@@ -29,10 +29,32 @@ from backend.app.services.market_theme_observation_feature_service import (
 )
 
 
+FEATURE_GROUPS: dict[str, tuple[str, ...]] = {
+    "PRICE": ("price_score", "base_change_rate", "return_"),
+    "FLOW": ("flow_score", "foreign_flow", "institution_flow", "joint_flow", "program_flow", "combined_flow", "actor_direction", "flow_minus"),
+    "FLOW_ACCELERATION": ("flow_acceleration", "flow_3d_minus_5d", "momentum_flow_interaction"),
+    "BREADTH": ("breadth", "concentration", "alignment_breadth"),
+    "TECHNICAL": ("technical_score", "alignment_score", "calendar_gap_days"),
+    "MARKET": ("market_", "macro_"),
+}
+
+HGBC_BASE_PARAMS: dict[str, float | int | str] = {
+    "learning_rate": 0.04, "max_iter": 120, "max_leaf_nodes": 12,
+    "max_depth": 0, "min_samples_leaf": 20, "l2_regularization": 1.0,
+}
+HGBC_TUNING_PARAMS = (
+    {"learning_rate": 0.03, "max_iter": 180, "max_leaf_nodes": 10, "max_depth": 5, "min_samples_leaf": 24, "l2_regularization": 1.5},
+    {"learning_rate": 0.025, "max_iter": 220, "max_leaf_nodes": 15, "max_depth": 6, "min_samples_leaf": 30, "l2_regularization": 2.0},
+)
+
+
 def _ece(y_true: np.ndarray, probability: np.ndarray, bins: int = 10) -> float:
-    edges = np.linspace(0, 1, bins + 1); total = max(1, len(y_true)); result = 0.0
+    edges = np.linspace(0, 1, bins + 1)
+    total = max(1, len(y_true))
+    result = 0.0
     for index in range(bins):
-        mask = (probability >= edges[index]) & (probability < edges[index + 1] if index < bins - 1 else probability <= edges[index + 1])
+        upper = probability < edges[index + 1] if index < bins - 1 else probability <= edges[index + 1]
+        mask = (probability >= edges[index]) & upper
         if mask.any():
             result += float(mask.sum()) / total * abs(float(y_true[mask].mean()) - float(probability[mask].mean()))
     return result
@@ -41,27 +63,73 @@ def _ece(y_true: np.ndarray, probability: np.ndarray, bins: int = 10) -> float:
 def _rank_metrics(rows: list[dict[str, Any]], score_key: str) -> dict[str, float]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
-        grouped[row["target_date"]].append(row)
+        grouped[str(row["target_date"])].append(row)
     collected: dict[str, list[float]] = defaultdict(list)
     for day_rows in grouped.values():
-        ordered = sorted(day_rows, key=lambda row: (-float(row[score_key]), row["theme_id"]))
-        actual = sorted(day_rows, key=lambda row: (row["label_rank"], row["theme_id"]))
-        actual_rank = {row["theme_id"]: index + 1 for index, row in enumerate(actual)}
-        top_actual = {row["theme_id"] for row in day_rows if row["label_top20"] == 1}
-        top_count = len(top_actual); top_pred = {row["theme_id"] for row in ordered[:top_count]}
-        hits = len(top_pred & top_actual); precision = hits / max(1, len(top_pred)); recall = hits / max(1, len(top_actual))
-        collected["precision_top20"].append(precision); collected["recall_top20"].append(recall)
+        ordered = sorted(day_rows, key=lambda row: (-float(row[score_key]), int(row["theme_id"])))
+        actual = sorted(day_rows, key=lambda row: (int(row["label_rank"]), int(row["theme_id"])))
+        actual_rank = {int(row["theme_id"]): index + 1 for index, row in enumerate(actual)}
+        top_actual = {int(row["theme_id"]) for row in day_rows if int(row["label_top20"]) == 1}
+        top_count = len(top_actual)
+        top_pred = {int(row["theme_id"]) for row in ordered[:top_count]}
+        hits = len(top_pred & top_actual)
+        precision = hits / max(1, len(top_pred))
+        recall = hits / max(1, len(top_actual))
+        collected["precision_top20"].append(precision)
+        collected["recall_top20"].append(recall)
         collected["f1_top20"].append(2 * precision * recall / (precision + recall) if precision + recall else 0)
-        collected["precision_at_5"].append(len({row["theme_id"] for row in ordered[:5]} & top_actual) / min(5, len(ordered)))
-        dcg = sum((1 if row["theme_id"] in top_actual else 0) / math.log2(index + 2) for index, row in enumerate(ordered[:5]))
+        for top_n, key in ((5, "precision_at_5"), (10, "precision_at_10")):
+            predicted = ordered[:top_n]
+            collected[key].append(len({int(row["theme_id"]) for row in predicted} & top_actual) / max(1, min(top_n, len(ordered))))
+        dcg = sum((1 if int(row["theme_id"]) in top_actual else 0) / math.log2(index + 2) for index, row in enumerate(ordered[:5]))
         idcg = sum(1 / math.log2(index + 2) for index in range(min(5, len(top_actual))))
         collected["ndcg_at_5"].append(dcg / idcg if idcg else 0)
-        predicted_rank = {row["theme_id"]: index + 1 for index, row in enumerate(ordered)}
-        n = len(ordered)
-        if n > 1:
-            collected["spearman"].append(1 - 6 * sum((predicted_rank[row["theme_id"]] - actual_rank[row["theme_id"]]) ** 2 for row in ordered) / (n * (n * n - 1)))
-        collected["mean_rank_error"].append(sum(abs(predicted_rank[row["theme_id"]] - actual_rank[row["theme_id"]]) for row in ordered) / n)
+        predicted_rank = {int(row["theme_id"]): index + 1 for index, row in enumerate(ordered)}
+        count = len(ordered)
+        if count > 1:
+            collected["spearman"].append(1 - 6 * sum((predicted_rank[int(row["theme_id"])] - actual_rank[int(row["theme_id"])]) ** 2 for row in ordered) / (count * (count * count - 1)))
+        collected["mean_rank_error"].append(sum(abs(predicted_rank[int(row["theme_id"])] - actual_rank[int(row["theme_id"])]) for row in ordered) / max(1, count))
+        top5 = ordered[:5]
+        strengths = [float(row["label_return"]) for row in top5 if row.get("label_return") is not None]
+        if strengths:
+            collected["top5_mean_actual_strength"].append(float(np.mean(strengths)))
+        collected["top5_actual_top10_rate"].append(sum(int(row["label_rank"]) <= 10 for row in top5) / max(1, len(top5)))
+        collected["top5_bottom_half_rate"].append(sum(int(row["label_rank"]) > count / 2 for row in top5) / max(1, len(top5)))
     return {key: float(np.mean(values)) for key, values in collected.items() if values}
+
+
+def _feature_group(name: str) -> str:
+    for group in ("FLOW_ACCELERATION", "MARKET", "BREADTH", "TECHNICAL", "FLOW", "PRICE"):
+        if any(token in name for token in FEATURE_GROUPS[group]):
+            return group
+    return "OTHER"
+
+
+def _structural_role(name: str) -> str:
+    if "acceleration" in name or "minus" in name:
+        return "ACCELERATION"
+    if "momentum" in name:
+        return "DIRECTION"
+    if "streak" in name or "mean_" in name:
+        return "PERSISTENCE"
+    if name.startswith("macro_") or name.startswith("market_") or "environment" in name:
+        return "REGIME"
+    if "penalty" in name or "concentration" in name or "volatility" in name:
+        return "OVERHEAT_EXHAUSTION"
+    return "LEVEL"
+
+
+def _day_rank_scale(rows: list[dict[str, Any]], key: str) -> dict[tuple[str, int], float]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        grouped[str(row["target_date"])].append(row)
+    result: dict[tuple[str, int], float] = {}
+    for day, day_rows in grouped.items():
+        ordered = sorted(day_rows, key=lambda row: (float(row[key]), int(row["theme_id"])))
+        denominator = max(1, len(ordered) - 1)
+        for index, row in enumerate(ordered):
+            result[(day, int(row["theme_id"]))] = index / denominator
+    return result
 
 
 class MarketThemeObservationMLService:
@@ -70,98 +138,258 @@ class MarketThemeObservationMLService:
 
     @staticmethod
     def _folds(dates: list[str], count: int = 4) -> list[tuple[list[str], list[str]]]:
-        start = max(8, len(dates) // 2); remaining = dates[start:]
+        start = max(8, len(dates) // 2)
+        remaining = dates[start:]
         if not remaining:
             return []
-        size = max(1, math.ceil(len(remaining) / count)); folds = []
+        size = max(1, math.ceil(len(remaining) / count))
+        folds: list[tuple[list[str], list[str]]] = []
         for index in range(0, len(remaining), size):
-            validation = remaining[index:index + size]; train = dates[:start + index]
-            if validation and len(train) >= 8:
-                folds.append((train, validation))
+            validation = remaining[index:index + size]
+            training = dates[:start + index]
+            if validation and len(training) >= 8:
+                folds.append((training, validation))
         return folds
 
     @staticmethod
-    def _model(kind: str) -> Any:
-        if kind == "LOGISTIC_TOP20":
-            return Pipeline([("imputer", SimpleImputer(strategy="median", add_indicator=True)), ("scale", StandardScaler()),
-                             ("model", LogisticRegression(C=.25, max_iter=2000, class_weight="balanced", random_state=42))])
-        return Pipeline([("imputer", SimpleImputer(strategy="median", add_indicator=True)),
-                         ("model", HistGradientBoostingClassifier(max_iter=120, max_leaf_nodes=12, learning_rate=.04, l2_regularization=1.0, random_state=42))])
+    def _model(parameters: dict[str, float | int | str]) -> Pipeline:
+        depth = int(parameters.get("max_depth", 0))
+        return Pipeline([
+            ("imputer", SimpleImputer(strategy="median", add_indicator=True)),
+            ("model", HistGradientBoostingClassifier(
+                learning_rate=float(parameters["learning_rate"]), max_iter=int(parameters["max_iter"]),
+                max_leaf_nodes=int(parameters["max_leaf_nodes"]), max_depth=depth or None,
+                min_samples_leaf=int(parameters["min_samples_leaf"]), l2_regularization=float(parameters["l2_regularization"]), random_state=42,
+            )),
+        ])
+
+    @staticmethod
+    def _weights(rows: list[Any], train_dates: list[str], mode: str) -> np.ndarray | None:
+        if mode == "EQUAL":
+            return None
+        date_index = {day: index for index, day in enumerate(train_dates)}
+        span = max(1, len(train_dates) - 1)
+        strength = 0.5 if mode == "MILD" else 1.0
+        return np.asarray([1 - strength / 2 + strength * date_index[row.base_date] / span for row in rows], dtype=float)
+
+    @staticmethod
+    def _row(item: Any, score: float, raw_score: float | None = None) -> dict[str, Any]:
+        return {
+            "base_date": item.base_date, "target_date": item.target_date, "theme_id": item.theme_id, "label_rank": item.label_rank,
+            "label_top20": item.label_top20, "label_return": item.label_return,
+            "score": float(score), "raw_score": float(raw_score if raw_score is not None else score), "rule": float(item.observation_rule_score),
+        }
+
+    def _predict_fold(self, by_date: dict[str, list[Any]], feature_names: list[str], train_dates: list[str], validation_dates: list[str], parameters: dict[str, float | int | str], weight_mode: str) -> tuple[list[dict[str, Any]], list[int], list[float], list[float]]:
+        calibration_size = max(2, math.ceil(len(train_dates) * .20))
+        model_dates = train_dates[:-calibration_size]
+        calibration_dates = train_dates[-calibration_size:]
+        model_rows = [row for day in model_dates for row in by_date[day]]
+        calibration_rows = [row for day in calibration_dates for row in by_date[day]]
+        validation_rows = [row for day in validation_dates for row in by_date[day]]
+        x_model = np.asarray([[row.values.get(name) for name in feature_names] for row in model_rows], dtype=float)
+        y_model = np.asarray([row.label_top20 for row in model_rows], dtype=int)
+        x_calibration = np.asarray([[row.values.get(name) for name in feature_names] for row in calibration_rows], dtype=float)
+        y_calibration = np.asarray([row.label_top20 for row in calibration_rows], dtype=int)
+        x_validation = np.asarray([[row.values.get(name) for name in feature_names] for row in validation_rows], dtype=float)
+        y_validation = np.asarray([row.label_top20 for row in validation_rows], dtype=int)
+        if len(np.unique(y_model)) < 2 or len(np.unique(y_calibration)) < 2 or not validation_rows:
+            return [], [], [], []
+        model = self._model(parameters)
+        weights = self._weights(model_rows, model_dates, weight_mode)
+        fit_options = {} if weights is None else {"model__sample_weight": weights}
+        model.fit(x_model, y_model, **fit_options)
+        calibration_raw = np.clip(model.predict_proba(x_calibration)[:, 1], 1e-6, 1 - 1e-6)
+        calibrator = LogisticRegression(C=1e6, max_iter=1000, random_state=42).fit(np.log(calibration_raw / (1 - calibration_raw)).reshape(-1, 1), y_calibration)
+        validation_raw = np.clip(model.predict_proba(x_validation)[:, 1], 1e-6, 1 - 1e-6)
+        validation_calibrated = np.clip(calibrator.predict_proba(np.log(validation_raw / (1 - validation_raw)).reshape(-1, 1))[:, 1], 1e-6, 1 - 1e-6)
+        predictions = [self._row(row, probability, raw) for row, probability, raw in zip(validation_rows, validation_calibrated, validation_raw)]
+        return predictions, y_validation.tolist(), validation_raw.tolist(), validation_calibrated.tolist()
+
+    @staticmethod
+    def _baseline_rows(by_date: dict[str, list[Any]], folds: list[tuple[list[str], list[str]]]) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for _, validation_dates in folds:
+            for day in validation_dates:
+                for item in by_date[day]:
+                    rows.append({
+                        "base_date": item.base_date, "target_date": item.target_date, "theme_id": item.theme_id, "label_rank": item.label_rank,
+                        "label_top20": item.label_top20, "label_return": item.label_return,
+                        "current": float(item.values.get("base_return_percentile") or 0), "momentum": float(item.values.get("return_3d_percentile") or 0),
+                        "rule": float(item.observation_rule_score),
+                    })
+        return rows
+
+    def _evaluate_candidate(self, name: str, by_date: dict[str, list[Any]], folds: list[tuple[list[str], list[str]]], feature_names: list[str], parameters: dict[str, float | int | str], weight_mode: str, rule_metrics: MarketThemeObservationMLMetrics) -> tuple[MarketThemeObservationMLCandidate, list[dict[str, Any]]]:
+        predictions: list[dict[str, Any]] = []
+        fold_results: list[MarketThemeObservationMLFoldResult] = []
+        raw_y: list[int] = []
+        raw_probability: list[float] = []
+        calibrated_probability: list[float] = []
+        for fold_index, (train_dates, validation_dates) in enumerate(folds, start=1):
+            fold_rows, y_true, raw, calibrated = self._predict_fold(by_date, feature_names, train_dates, validation_dates, parameters, weight_mode)
+            if not fold_rows:
+                continue
+            predictions.extend(fold_rows); raw_y.extend(y_true); raw_probability.extend(raw); calibrated_probability.extend(calibrated)
+            metrics = MarketThemeObservationMLMetrics(**_rank_metrics(fold_rows, "score"))
+            rule_fold_rows = [self._row(row, row.observation_rule_score) for day in validation_dates for row in by_date[day]]
+            rule_fold = _rank_metrics(rule_fold_rows, "score")
+            fold_results.append(MarketThemeObservationMLFoldResult(
+                fold=fold_index, train_start_date=train_dates[0], train_end_date=train_dates[-1], validation_start_date=validation_dates[0], validation_end_date=validation_dates[-1],
+                metrics=metrics, delta_precision_at_5=float(metrics.precision_at_5 or 0) - float(rule_fold.get("precision_at_5", 0)),
+            ))
+        ranked = _rank_metrics(predictions, "score")
+        metrics = MarketThemeObservationMLMetrics(**ranked)
+        y = np.asarray(raw_y, dtype=int); raw = np.asarray(raw_probability, dtype=float); calibrated = np.asarray(calibrated_probability, dtype=float)
+        if len(y):
+            metrics.brier = brier_score_loss(y, calibrated); metrics.log_loss = log_loss(y, calibrated); metrics.calibration_error = _ece(y, calibrated)
+            metrics.raw_brier = brier_score_loss(y, raw); metrics.raw_log_loss = log_loss(y, raw); metrics.raw_calibration_error = _ece(y, raw)
+        fold_p5 = [float(fold.metrics.precision_at_5 or 0) for fold in fold_results]
+        candidate = MarketThemeObservationMLCandidate(
+            model_type=name, model_version=f"OBS-{name}-V2-{datetime.now().strftime('%Y%m%d%H%M%S')}", target_type="TOP20_RELATIVE_STRENGTH",
+            selection_gate_status="NOT_EVALUATED", calibration_status="PASS" if float(metrics.calibration_error or 1) <= .15 and float(metrics.brier or 1) <= float(metrics.raw_brier or 0) + .01 else "FAIL",
+            probability_display_mode="PROBABILITY", improving_fold_count=sum(float(fold.delta_precision_at_5 or 0) > 0 for fold in fold_results), validation_fold_count=len(fold_results),
+            metrics=metrics, parameters={**parameters, "recent_weight": weight_mode},
+            delta_precision_at_5=float(metrics.precision_at_5 or 0) - float(rule_metrics.precision_at_5 or 0), delta_ndcg_at_5=float(metrics.ndcg_at_5 or 0) - float(rule_metrics.ndcg_at_5 or 0),
+            fold_results=fold_results, worst_fold_precision_at_5=min(fold_p5) if fold_p5 else None, fold_precision_at_5_std=float(np.std(fold_p5)) if fold_p5 else None,
+        )
+        return candidate, predictions
+
+    @staticmethod
+    def _hybrid_candidate(name: str, rule_weight: float, model_rows: list[dict[str, Any]], folds: list[tuple[list[str], list[str]]], rule_metrics: MarketThemeObservationMLMetrics) -> MarketThemeObservationMLCandidate:
+        rule_scale = _day_rank_scale(model_rows, "rule"); model_scale = _day_rank_scale(model_rows, "score")
+        blended = [{**row, "hybrid": rule_weight * rule_scale[(str(row["target_date"]), int(row["theme_id"]))] + (1 - rule_weight) * model_scale[(str(row["target_date"]), int(row["theme_id"]))]} for row in model_rows]
+        fold_results: list[MarketThemeObservationMLFoldResult] = []
+        for fold_index, (train_dates, validation_dates) in enumerate(folds, start=1):
+            fold_rows = [row for row in blended if row["base_date"] in validation_dates]
+            metrics = MarketThemeObservationMLMetrics(**_rank_metrics(fold_rows, "hybrid")); rule_fold = _rank_metrics(fold_rows, "rule")
+            fold_results.append(MarketThemeObservationMLFoldResult(
+                fold=fold_index, train_start_date=train_dates[0], train_end_date=train_dates[-1], validation_start_date=validation_dates[0], validation_end_date=validation_dates[-1],
+                metrics=metrics, delta_precision_at_5=float(metrics.precision_at_5 or 0) - float(rule_fold.get("precision_at_5", 0)),
+            ))
+        metrics = MarketThemeObservationMLMetrics(**_rank_metrics(blended, "hybrid")); fold_p5 = [float(fold.metrics.precision_at_5 or 0) for fold in fold_results]
+        return MarketThemeObservationMLCandidate(
+            model_type=name, target_type="TOP20_RELATIVE_STRENGTH", selection_gate_status="NOT_EVALUATED", calibration_status="NOT_APPLICABLE", probability_display_mode="SCORE",
+            improving_fold_count=sum(float(fold.delta_precision_at_5 or 0) > 0 for fold in fold_results), validation_fold_count=len(fold_results), metrics=metrics, candidate_type="HYBRID",
+            parameters={"rule_weight": rule_weight, "ml_weight": 1 - rule_weight, "normalization": "DATE_LOCAL_RANK"},
+            delta_precision_at_5=float(metrics.precision_at_5 or 0) - float(rule_metrics.precision_at_5 or 0), delta_ndcg_at_5=float(metrics.ndcg_at_5 or 0) - float(rule_metrics.ndcg_at_5 or 0),
+            fold_results=fold_results, worst_fold_precision_at_5=min(fold_p5) if fold_p5 else None, fold_precision_at_5_std=float(np.std(fold_p5)) if fold_p5 else None,
+        )
+
+    @staticmethod
+    def _diagnostics(rows: list[Any], feature_names: list[str]) -> list[MarketThemeObservationFeatureDiagnostic]:
+        result: list[MarketThemeObservationFeatureDiagnostic] = []
+        for name in feature_names:
+            raw = [row.values.get(name) for row in rows]
+            valid = [round(float(value), 10) for value in raw if value is not None and math.isfinite(float(value))]
+            unique = len(set(valid))
+            result.append(MarketThemeObservationFeatureDiagnostic(
+                feature_name=name, feature_group=_feature_group(name), structural_role=_structural_role(name), missing_rate=1 - len(valid) / max(1, len(raw)), unique_count=unique, near_constant=unique <= 1,
+            ))
+        return result
+
+    @staticmethod
+    def _apply_gate(candidates: list[MarketThemeObservationMLCandidate], baseline_metrics: dict[str, MarketThemeObservationMLMetrics], fold_count: int) -> None:
+        best_baseline_top20 = max(float(metric.precision_top20 or 0) for metric in baseline_metrics.values())
+        best_baseline_ndcg = max(float(metric.ndcg_at_5 or 0) for metric in baseline_metrics.values())
+        for candidate in candidates:
+            rank_pass = float(candidate.metrics.precision_top20 or 0) >= best_baseline_top20 + .03 and float(candidate.metrics.ndcg_at_5 or 0) >= best_baseline_ndcg
+            stable = candidate.improving_fold_count >= math.ceil(fold_count / 2)
+            passed = rank_pass and stable and candidate.calibration_status == "PASS"
+            candidate.selection_gate_status = "PASS" if passed else "FAIL"; candidate.candidate_status = "CANDIDATE" if passed else "EXPERIMENTAL"
+
+    def _attach_oos(self, candidate: MarketThemeObservationMLCandidate, by_date: dict[str, list[Any]], development_dates: list[str], oos_dates: list[str], feature_names: list[str]) -> list[dict[str, Any]]:
+        parameters = {key: value for key, value in candidate.parameters.items() if key in HGBC_BASE_PARAMS}
+        rows, _, _, _ = self._predict_fold(by_date, feature_names, development_dates, oos_dates, parameters, str(candidate.parameters.get("recent_weight", "EQUAL")))
+        candidate.oos_metrics = MarketThemeObservationMLMetrics(**_rank_metrics(rows, "score")) if rows else None
+        return rows
 
     def train(self) -> MarketThemeObservationMLTrainResponse:
         dataset = MarketThemeObservationFeatureService(self.db).build_dataset()
         labeled = [row for row in dataset.rows if row.label_top20 is not None and row.label_rank is not None]
         dates = sorted({row.base_date for row in labeled})
-        folds = self._folds(dates)
+        oos_count = 21 if len(dates) >= 60 else 0
+        development_dates = dates[:-oos_count] if oos_count else dates
+        oos_dates = dates[-oos_count:] if oos_count else []
+        folds = self._folds(development_dates)
         if not folds:
-            return MarketThemeObservationMLTrainResponse(status="INSUFFICIENT_DATA", message="walk-forward 검증 날짜가 부족합니다.",
-                feature_version=OBSERVATION_FEATURE_VERSION, distinct_base_dates=len(dates), train_row_count=len(labeled),
-                qualified_date_count=len(dataset.qualified_dates), excluded_universe_dates=dataset.excluded_universe_dates)
+            return MarketThemeObservationMLTrainResponse(status="INSUFFICIENT_DATA", message="walk-forward 검증 날짜가 부족합니다.", feature_version=OBSERVATION_FEATURE_VERSION, distinct_base_dates=len(dates), train_row_count=len(labeled), qualified_date_count=len(dataset.qualified_dates), excluded_universe_dates=dataset.excluded_universe_dates)
         by_date: dict[str, list[Any]] = defaultdict(list)
-        for row in labeled: by_date[row.base_date].append(row)
+        for row in labeled:
+            by_date[row.base_date].append(row)
         feature_names = list(OBSERVATION_FEATURE_NAMES)
-        all_candidates: list[MarketThemeObservationMLCandidate] = []
-        baseline_rows: list[dict[str, Any]] = []
-        for _, validation_dates in folds:
-            for day in validation_dates:
-                for row in by_date[day]:
-                    baseline_rows.append({"target_date": row.target_date, "theme_id": row.theme_id, "label_rank": row.label_rank,
-                        "label_top20": row.label_top20, "current": row.values.get("base_return_percentile") or 0,
-                        "momentum": row.values.get("return_3d_percentile") or 0, "rule": row.observation_rule_score})
-        baseline_metrics: dict[str, MarketThemeObservationMLMetrics] = {}
-        for name, key in (("CURRENT_RANK", "current"), ("MOMENTUM_3D", "momentum"), ("OBSERVATION_RULE", "rule")):
-            baseline_metrics[name] = MarketThemeObservationMLMetrics(**_rank_metrics(baseline_rows, key))
-        best_baseline_p = max(float(metric.precision_top20 or 0) for metric in baseline_metrics.values())
-        best_baseline_ndcg = max(float(metric.ndcg_at_5 or 0) for metric in baseline_metrics.values())
-        for kind in ("LOGISTIC_TOP20", "HGBC_TOP20"):
-            predictions: list[dict[str, Any]] = []; fold_improvements = 0
-            raw_y: list[int] = []; raw_p: list[float] = []; cal_p: list[float] = []
-            for train_dates, validation_dates in folds:
-                calibration_size = max(2, math.ceil(len(train_dates) * .20)); model_dates = train_dates[:-calibration_size]; calibration_dates = train_dates[-calibration_size:]
-                model_rows = [row for day in model_dates for row in by_date[day]]; calibration_rows = [row for day in calibration_dates for row in by_date[day]]
-                validation_rows = [row for day in validation_dates for row in by_date[day]]
-                x_model = np.asarray([[row.values.get(name) for name in feature_names] for row in model_rows], dtype=float)
-                y_model = np.asarray([row.label_top20 for row in model_rows], dtype=int)
-                x_cal = np.asarray([[row.values.get(name) for name in feature_names] for row in calibration_rows], dtype=float)
-                y_cal = np.asarray([row.label_top20 for row in calibration_rows], dtype=int)
-                x_val = np.asarray([[row.values.get(name) for name in feature_names] for row in validation_rows], dtype=float)
-                y_val = np.asarray([row.label_top20 for row in validation_rows], dtype=int)
-                if len(np.unique(y_model)) < 2 or len(np.unique(y_cal)) < 2: continue
-                model = self._model(kind); model.fit(x_model, y_model)
-                cal_raw = np.clip(model.predict_proba(x_cal)[:, 1], 1e-6, 1 - 1e-6)
-                calibrator = LogisticRegression(C=1e6, max_iter=1000, random_state=42).fit(np.log(cal_raw / (1 - cal_raw)).reshape(-1, 1), y_cal)
-                val_raw = np.clip(model.predict_proba(x_val)[:, 1], 1e-6, 1 - 1e-6)
-                val_cal = np.clip(calibrator.predict_proba(np.log(val_raw / (1 - val_raw)).reshape(-1, 1))[:, 1], 1e-6, 1 - 1e-6)
-                raw_y.extend(y_val.tolist()); raw_p.extend(val_raw.tolist()); cal_p.extend(val_cal.tolist())
-                fold_rows = []
-                for row, probability in zip(validation_rows, val_cal):
-                    item = {"target_date": row.target_date, "theme_id": row.theme_id, "label_rank": row.label_rank, "label_top20": row.label_top20, "score": float(probability)}
-                    predictions.append(item); fold_rows.append(item)
-                fold_metric = _rank_metrics(fold_rows, "score")
-                rule_fold = _rank_metrics([item for item in baseline_rows if item["target_date"] in {row.target_date for row in validation_rows}], "rule")
-                if fold_metric.get("precision_top20", 0) > rule_fold.get("precision_top20", 0): fold_improvements += 1
-            if not raw_y: continue
-            ranked = _rank_metrics(predictions, "score"); y = np.asarray(raw_y); raw = np.asarray(raw_p); calibrated = np.asarray(cal_p)
-            metrics = MarketThemeObservationMLMetrics(**ranked, brier=brier_score_loss(y, calibrated), log_loss=log_loss(y, calibrated),
-                calibration_error=_ece(y, calibrated), raw_brier=brier_score_loss(y, raw), raw_log_loss=log_loss(y, raw), raw_calibration_error=_ece(y, raw))
-            calibration_pass = float(metrics.calibration_error or 1) <= .15 and float(metrics.brier or 1) <= float(metrics.raw_brier or 0) + .01
-            rank_pass = float(metrics.precision_top20 or 0) >= best_baseline_p + .03 and float(metrics.ndcg_at_5 or 0) >= best_baseline_ndcg
-            stable = fold_improvements >= math.ceil(len(folds) / 2)
-            gate = "PASS" if calibration_pass and rank_pass and stable else "FAIL"
-            version = f"OBS-{kind}-V1-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-            candidate = MarketThemeObservationMLCandidate(model_type=kind, model_version=version, target_type="TOP20_RELATIVE_STRENGTH",
-                selection_gate_status=gate, calibration_status="PASS" if calibration_pass else "FAIL",
-                probability_display_mode="PROBABILITY" if calibration_pass else "SCORE", improving_fold_count=fold_improvements,
-                validation_fold_count=len(folds), metrics=metrics)
-            all_candidates.append(candidate); self._store(candidate, dates, len(labeled))
+        baseline_rows = self._baseline_rows(by_date, folds)
+        baseline_metrics = {name: MarketThemeObservationMLMetrics(**_rank_metrics(baseline_rows, key)) for name, key in (("CURRENT_RANK", "current"), ("MOMENTUM_3D", "momentum"), ("OBSERVATION_RULE", "rule"))}
+        rule_metrics = baseline_metrics["OBSERVATION_RULE"]
+        baseline_fold_results: list[MarketThemeObservationMLFoldResult] = []
+        for index, (train_dates, validation_dates) in enumerate(folds, start=1):
+            rows = [row for row in baseline_rows if row["base_date"] in validation_dates]
+            baseline_fold_results.append(MarketThemeObservationMLFoldResult(fold=index, train_start_date=train_dates[0], train_end_date=train_dates[-1], validation_start_date=validation_dates[0], validation_end_date=validation_dates[-1], metrics=MarketThemeObservationMLMetrics(**_rank_metrics(rows, "rule")), delta_precision_at_5=0))
+
+        evaluated: list[tuple[MarketThemeObservationMLCandidate, list[dict[str, Any]], list[str]]] = []
+        base_candidate, base_predictions = self._evaluate_candidate("HGBC_BASE", by_date, folds, feature_names, HGBC_BASE_PARAMS, "EQUAL", rule_metrics)
+        evaluated.append((base_candidate, base_predictions, feature_names))
+        tuned_options = []
+        for index, parameters in enumerate(HGBC_TUNING_PARAMS, start=1):
+            candidate, predictions = self._evaluate_candidate(f"HGBC_TUNED_{index}", by_date, folds, feature_names, parameters, "EQUAL", rule_metrics)
+            tuned_options.append((candidate, predictions, feature_names))
+        tuned = max(tuned_options, key=lambda item: (float(item[0].metrics.precision_at_5 or 0), float(item[0].metrics.ndcg_at_5 or 0)))
+        tuned[0].model_type = "HGBC_TUNED"; evaluated.append(tuned)
+        for mode in ("MILD", "MEDIUM"):
+            tuned_parameters = {key: value for key, value in tuned[0].parameters.items() if key in HGBC_BASE_PARAMS}
+            candidate, predictions = self._evaluate_candidate(f"HGBC_RECENT_{mode}", by_date, folds, feature_names, tuned_parameters, mode, rule_metrics)
+            evaluated.append((candidate, predictions, feature_names))
+
+        ablation_results = [MarketThemeObservationAblationResult(feature_group="FULL", metrics=base_candidate.metrics, delta_precision_at_5=0, delta_ndcg_at_5=0, verdict="기준")]
+        for group in FEATURE_GROUPS:
+            selected = [name for name in feature_names if _feature_group(name) != group]
+            candidate, _ = self._evaluate_candidate(f"ABLATION_MINUS_{group}", by_date, folds, selected, HGBC_BASE_PARAMS, "EQUAL", rule_metrics)
+            delta_p5 = float(candidate.metrics.precision_at_5 or 0) - float(base_candidate.metrics.precision_at_5 or 0)
+            delta_ndcg = float(candidate.metrics.ndcg_at_5 or 0) - float(base_candidate.metrics.ndcg_at_5 or 0)
+            verdict = "Noise 가능성" if delta_p5 > .002 else "예측 기여 높음" if delta_p5 < -.002 else "영향 제한적"
+            ablation_results.append(MarketThemeObservationAblationResult(feature_group=group, metrics=candidate.metrics, delta_precision_at_5=delta_p5, delta_ndcg_at_5=delta_ndcg, verdict=verdict))
+
+        best_ml, best_predictions, _ = max(evaluated, key=lambda item: (float(item[0].metrics.precision_at_5 or 0), float(item[0].metrics.ndcg_at_5 or 0)))
+        hybrid_candidates = [self._hybrid_candidate(f"RULE_{round(weight * 100)}_ML_{round((1 - weight) * 100)}", weight, best_predictions, folds, rule_metrics) for weight in (1.0, .8, .7, .6, .5, 0.0)]
+        candidates = [item[0] for item in evaluated] + hybrid_candidates
+        self._apply_gate(candidates, baseline_metrics, len(folds))
+
+        oos_prediction_sets: dict[str, list[dict[str, Any]]] = {}
+        if oos_dates:
+            for candidate, _, selected_features in evaluated:
+                oos_prediction_sets[candidate.model_type] = self._attach_oos(candidate, by_date, development_dates, oos_dates, selected_features)
+            best_oos = oos_prediction_sets.get(best_ml.model_type, [])
+            for candidate in hybrid_candidates:
+                weight = float(candidate.parameters["rule_weight"]); rule_scale = _day_rank_scale(best_oos, "rule"); model_scale = _day_rank_scale(best_oos, "score")
+                blended = [{**row, "hybrid": weight * rule_scale[(str(row["target_date"]), int(row["theme_id"]))] + (1 - weight) * model_scale[(str(row["target_date"]), int(row["theme_id"]))]} for row in best_oos]
+                candidate.oos_metrics = MarketThemeObservationMLMetrics(**_rank_metrics(blended, "hybrid")) if blended else None
+            oos_rule_rows = [self._row(row, row.observation_rule_score) for day in oos_dates for row in by_date[day]]
+            baseline_metrics["OBSERVATION_RULE_OOS"] = MarketThemeObservationMLMetrics(**_rank_metrics(oos_rule_rows, "score"))
+
+        development_set = set(development_dates)
+        development_row_count = sum(row.base_date in development_set for row in labeled)
+        for candidate in [item[0] for item in evaluated]:
+            self._store(candidate, development_dates, development_row_count)
         self.db.commit()
-        return MarketThemeObservationMLTrainResponse(status="COMPLETED", message="Phase4 관찰 모델 후보 학습과 시간순 보정 검증을 완료했습니다.",
-            feature_version=OBSERVATION_FEATURE_VERSION, train_start_date=dates[0], train_end_date=dates[-1], distinct_base_dates=len(dates),
-            train_row_count=len(labeled), qualified_date_count=len(dataset.qualified_dates), excluded_universe_dates=dataset.excluded_universe_dates,
-            validation_fold_count=len(folds), candidates=all_candidates, baseline_metrics=baseline_metrics)
+        # OOS participates only in post-experiment ranking, never parameter fitting/tuning.
+        # The conservative minimum prevents a high development score from hiding a recent regime collapse.
+        ranked = sorted(candidates, key=lambda item: (
+            min(float(item.metrics.precision_at_5 or 0), float(item.oos_metrics.precision_at_5 or 0)) if item.oos_metrics else float(item.metrics.precision_at_5 or 0),
+            -float(item.fold_precision_at_5_std or 0), float(item.metrics.ndcg_at_5 or 0),
+        ), reverse=True)
+        passed = [candidate for candidate in ranked if candidate.selection_gate_status == "PASS"]
+        recommendation = "Gate 통과 후보는 운영에 반영하지 않고 Shadow 검증을 권고합니다." if passed else "Gate 통과 후보가 없어 현 운영 Rule V2를 유지합니다."
+        return MarketThemeObservationMLTrainResponse(
+            status="COMPLETED", message="Feature ablation·제한 HGBC tuning·최근 가중치·Hybrid·최근 OOS 검증을 완료했습니다.", feature_version=OBSERVATION_FEATURE_VERSION,
+            train_start_date=development_dates[0], train_end_date=development_dates[-1], distinct_base_dates=len(dates), train_row_count=development_row_count, qualified_date_count=len(dataset.qualified_dates), excluded_universe_dates=dataset.excluded_universe_dates,
+            validation_fold_count=len(folds), candidates=ranked, baseline_metrics=baseline_metrics, baseline_fold_results=baseline_fold_results,
+            feature_diagnostics=self._diagnostics([row for row in labeled if row.base_date in development_set], feature_names), ablation_results=ablation_results,
+            oos_start_date=oos_dates[0] if oos_dates else None, oos_end_date=oos_dates[-1] if oos_dates else None, oos_sample_days=len(oos_dates),
+            recommended_candidate=ranked[0].model_type if ranked else None, recommendation=recommendation,
+        )
 
     def _store(self, candidate: MarketThemeObservationMLCandidate, dates: list[str], row_count: int) -> None:
-        m = candidate.metrics; now = datetime.now().isoformat(timespec="seconds")
+        metrics = candidate.metrics; now = datetime.now().isoformat(timespec="seconds")
         self.db.execute(text("""
             INSERT INTO market_theme_return_prediction_models
             (model_version,model_type,feature_version,status,trained_at,train_start_date,train_end_date,distinct_train_dates,
@@ -170,13 +398,15 @@ class MarketThemeObservationMLService:
              validation_ndcg_at_5,validation_mean_rank_error,validation_precision_top20,validation_recall_top20,validation_f1_top20,
              validation_brier,validation_log_loss,validation_calibration_error,raw_validation_brier,raw_validation_log_loss,
              raw_validation_calibration_error,calibration_status,probability_display_mode)
-            VALUES (:version,:kind,:feature,'EXPERIMENTAL',:now,:start,:end,:dates,:rows,:folds,'',:now,:now,
-                    'TOP20_RELATIVE_STRENGTH',:gate,:reason,:improving,'THEME_OBSERVATION_METRIC_V1',:p5,:spearman,:ndcg,:rank_error,
+            VALUES (:version,:kind,:feature,:status,:now,:start,:end,:dates,:rows,:folds,'',:now,:now,
+                    'TOP20_RELATIVE_STRENGTH',:gate,:reason,:improving,'THEME_OBSERVATION_METRIC_V2',:p5,:spearman,:ndcg,:rank_error,
                     :p20,:r20,:f1,:brier,:log_loss,:ece,:raw_brier,:raw_log_loss,:raw_ece,:calibration,:display)
-        """), {"version": candidate.model_version, "kind": candidate.model_type, "feature": OBSERVATION_FEATURE_VERSION, "now": now,
-                "start": dates[0], "end": dates[-1], "dates": len(dates), "rows": row_count, "folds": candidate.validation_fold_count,
-                "gate": candidate.selection_gate_status, "reason": "Phase4 Top20·NDCG·fold 안정성·보정 Gate", "improving": candidate.improving_fold_count,
-                "p5": m.precision_at_5, "spearman": m.spearman, "ndcg": m.ndcg_at_5, "rank_error": m.mean_rank_error,
-                "p20": m.precision_top20, "r20": m.recall_top20, "f1": m.f1_top20, "brier": m.brier, "log_loss": m.log_loss,
-                "ece": m.calibration_error, "raw_brier": m.raw_brier, "raw_log_loss": m.raw_log_loss,
-                "raw_ece": m.raw_calibration_error, "calibration": candidate.calibration_status, "display": candidate.probability_display_mode})
+        """), {
+            "version": candidate.model_version, "kind": candidate.model_type, "feature": OBSERVATION_FEATURE_VERSION, "status": candidate.candidate_status,
+            "now": now, "start": dates[0], "end": dates[-1], "dates": len(dates), "rows": row_count, "folds": candidate.validation_fold_count,
+            "gate": candidate.selection_gate_status, "reason": "Top20 +3%p·NDCG 비열화 없음·fold 안정성·보정 Gate", "improving": candidate.improving_fold_count,
+            "p5": metrics.precision_at_5, "spearman": metrics.spearman, "ndcg": metrics.ndcg_at_5, "rank_error": metrics.mean_rank_error,
+            "p20": metrics.precision_top20, "r20": metrics.recall_top20, "f1": metrics.f1_top20, "brier": metrics.brier, "log_loss": metrics.log_loss,
+            "ece": metrics.calibration_error, "raw_brier": metrics.raw_brier, "raw_log_loss": metrics.raw_log_loss, "raw_ece": metrics.raw_calibration_error,
+            "calibration": candidate.calibration_status, "display": candidate.probability_display_mode,
+        })

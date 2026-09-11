@@ -8,6 +8,7 @@ export type TelegramSource = {
 export type TelegramItem = {
   id: number; collection_date: string; message_at: string; title: string;
   summary: string | null; source_url: string | null; created_at: string;
+  theme_id: number | null; theme_name: string | null; theme_group_name: string | null;
 };
 
 export type TelegramItemListResponse = {

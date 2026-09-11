@@ -68,7 +68,7 @@ export const marketThemeMockRepository = {
   async calculateObservationPriority(_targetDate: string, _refreshMarketIndicators = false): Promise<MarketThemeObservationResponse> { return this.getLatestObservationPriority(); },
   async validateObservationPriority(_targetDate: string): Promise<MarketThemeObservationResponse> { return this.getLatestObservationPriority(); },
   async trainObservationML(): Promise<MarketThemeObservationMLTrainResponse> {
-    return { status: "INSUFFICIENT_DATA", message: "Mock 데이터가 없습니다.", feature_version: "THEME_OBSERVATION_FEATURE_V1", train_start_date: null, train_end_date: null, distinct_base_dates: 0, train_row_count: 0, qualified_date_count: 0, excluded_universe_dates: 0, validation_fold_count: 0, candidates: [] };
+    return { status: "INSUFFICIENT_DATA", message: "Mock 데이터가 없습니다.", feature_version: "THEME_OBSERVATION_FEATURE_V2", train_start_date: null, train_end_date: null, distinct_base_dates: 0, train_row_count: 0, qualified_date_count: 0, excluded_universe_dates: 0, validation_fold_count: 0, candidates: [], baseline_metrics: {}, baseline_fold_results: [], feature_diagnostics: [], ablation_results: [], oos_start_date: null, oos_end_date: null, oos_sample_days: 0, gate_metric: "precision_top20", gate_required_improvement: .03, recommended_candidate: null, recommendation: "현 운영 Rule V2 유지" };
   },
   async getLatestReturnPrediction(): Promise<MarketThemeReturnPredictionResponse> {
     return { status: "DRAFT", message: "저장된 예측이 없습니다.", data_cutoff_date: null, default_target_date: null, run: null, items: [], shadow_items: [], metrics: null, recommendations: [], method_metrics: [] };

@@ -1813,6 +1813,7 @@ function MarketThemesPage() {
             <MarketThemeReturnPredictionPanel
               themeGroups={themeGroups}
               initialTargetDate={searchParams.get("target_date")}
+              onNavigateToThemeView={(view) => setThemeViewMode(view)}
               onThemeClick={(themeId) => {
                 const theme = manageableThemes.find((row) => row.id === themeId);
                 if (theme) void openThemeReturnDetail(theme);

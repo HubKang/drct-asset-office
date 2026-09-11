@@ -200,7 +200,7 @@ class MarketDataCollectionService:
         return {
             "item_type": "INDICATOR",
             "item_code": code,
-            "provider_code": self._provider_for_indicator(code),
+            "provider_code": item.get("provider_code") or self._provider_for_indicator(code),
             "status": str(item.get("status") or "ERROR").upper(),
             "requested_from": item.get("requested_from"),
             "requested_to": item.get("requested_to"),

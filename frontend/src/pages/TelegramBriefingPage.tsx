@@ -2,8 +2,10 @@ import { FormEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRe
 import { ChevronLeft, ChevronRight, ExternalLink, LoaderCircle, Search, Sparkles, Trash2, X } from "lucide-react";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
+import ThemeSearchCombobox, { type ThemeComboboxValue } from "@/components/common/ThemeSearchCombobox";
 import { repositories } from "@/services";
 import type { TelegramItem, TelegramSource } from "@/types/telegram";
+import type { MarketTheme } from "@/types/marketTheme";
 
 const PAGE_SIZE = 20;
 
@@ -20,6 +22,8 @@ function TelegramBriefingPage() {
   const [tab, setTab] = useState<"inbox" | "sources">("inbox");
   const [sources, setSources] = useState<TelegramSource[]>([]);
   const [items, setItems] = useState<TelegramItem[]>([]);
+  const [themes, setThemes] = useState<MarketTheme[]>([]);
+  const [themeFilter, setThemeFilter] = useState<ThemeComboboxValue>("ALL");
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<number[]>([]);
@@ -51,16 +55,22 @@ function TelegramBriefingPage() {
 
   async function loadSources() { setSources(await repositories.telegram.listSources(false)); }
 
-  async function loadItems(nextPage = page) {
+  async function loadItems(nextPage = page, nextThemeFilter = themeFilter) {
     const result = await repositories.telegram.listItems({
       date_from: dateFrom, date_to: dateTo, keyword: keyword || undefined,
+      theme_id: typeof nextThemeFilter === "number" ? nextThemeFilter : undefined,
+      theme_unassigned: nextThemeFilter === "UNASSIGNED" ? "true" : undefined,
       limit: PAGE_SIZE, offset: (nextPage - 1) * PAGE_SIZE,
     });
     setItems(result.items); setTotal(result.total_count); setSelected([]);
     setDetail((current) => current ? result.items.find((item) => item.id === current.id) ?? current : null);
   }
 
-  useEffect(() => { void Promise.all([loadSources(), loadItems(1)]); }, []);
+  async function loadThemes() {
+    setThemes(await repositories.marketThemes.list({ theme_level: "THEME", limit: 500 }));
+  }
+
+  useEffect(() => { void Promise.all([loadSources(), loadThemes(), loadItems(1)]); }, []);
 
   useEffect(() => {
     const finishSelectionDrag = () => {
@@ -86,7 +96,7 @@ function TelegramBriefingPage() {
         ? await repositories.telegram.collectAllByDate(options)
         : await repositories.telegram.collectByDate({ ...options, source_id: Number(sourceId) });
       setNotice(`수집 완료 · 신규 ${result.inserted} · 중복 ${result.duplicate_skipped} · 삭제 제외 ${result.excluded_skipped} · 처리 실패 ${result.processing_failed}`);
-      setDateFrom(targetDate); setDateTo(targetDate); setPage(1);
+      setDateFrom(targetDate); setDateTo(targetDate); setThemeFilter("ALL"); setPage(1);
       const next = await repositories.telegram.listItems({ date_from: targetDate, date_to: targetDate, limit: PAGE_SIZE, offset: 0 });
       setItems(next.items); setTotal(next.total_count); setSelected([]); await loadSources();
     } catch (error) { setNotice(error instanceof Error ? error.message : "수집에 실패했습니다."); }
@@ -129,6 +139,32 @@ function TelegramBriefingPage() {
   async function changePage(next: number) {
     setPage(next); setBusy(true);
     try { await loadItems(next); } finally { setBusy(false); }
+  }
+
+  async function changeThemeFilter(value: ThemeComboboxValue) {
+    const next = value ?? "ALL";
+    setThemeFilter(next); setPage(1); setBusy(true);
+    try { await loadItems(1, next); } finally { setBusy(false); }
+  }
+
+  async function updateItemTheme(item: TelegramItem, value: ThemeComboboxValue) {
+    const themeId = typeof value === "number" ? value : null;
+    const theme = themes.find((row) => row.id === themeId);
+    const optimistic: TelegramItem = {
+      ...item, theme_id: themeId, theme_name: theme?.theme_name ?? null,
+      theme_group_name: theme?.parent_theme_name ?? null,
+    };
+    setItems((current) => current.map((row) => row.id === item.id ? optimistic : row));
+    setDetail((current) => current?.id === item.id ? optimistic : current);
+    try {
+      const saved = await repositories.telegram.updateItemTheme(item.id, themeId);
+      setItems((current) => current.map((row) => row.id === item.id ? saved : row));
+      setDetail((current) => current?.id === item.id ? saved : current);
+    } catch (error) {
+      setItems((current) => current.map((row) => row.id === item.id ? item : row));
+      setDetail((current) => current?.id === item.id ? item : current);
+      setNotice(error instanceof Error ? error.message : "테마 저장에 실패했습니다.");
+    }
   }
 
   function setItemChecked(itemId: number, checked: boolean) {
@@ -188,9 +224,9 @@ function TelegramBriefingPage() {
 
       <section className="telegram-list-surface">
         <div className="telegram-list-section">
-          <div className="telegram-list-heading"><div><h3>브리핑 목록</h3><p>총 {total}건 · {page}/{totalPages} 페이지 · 선택 {selected.length}건</p></div><div className="telegram-list-actions"><button className="telegram-summary-action" disabled={!selected.length || summarizing} onClick={() => void summarizeItems(selected)}>{summarizing ? <LoaderCircle size={16} className="animate-spin" /> : <Sparkles size={16} />}선택 요약{selected.length ? ` ${selected.length}` : ""}</button><button className="telegram-delete-action" disabled={!selected.length || busy} onClick={() => void removeItems(selected)}><Trash2 size={16} />선택 삭제{selected.length ? ` ${selected.length}` : ""}</button></div></div>
+          <div className="telegram-list-heading"><div><h3>브리핑 목록</h3><p>총 {total}건 · {page}/{totalPages} 페이지 · 선택 {selected.length}건</p></div><div className="telegram-list-actions"><ThemeSearchCombobox themes={themes} value={themeFilter} mode="filter" ariaLabel="브리핑 테마 필터" onChange={(value) => void changeThemeFilter(value)} /><button className="telegram-summary-action" disabled={!selected.length || summarizing} onClick={() => void summarizeItems(selected)}>{summarizing ? <LoaderCircle size={16} className="animate-spin" /> : <Sparkles size={16} />}선택 요약{selected.length ? ` ${selected.length}` : ""}</button><button className="telegram-delete-action" disabled={!selected.length || busy} onClick={() => void removeItems(selected)}><Trash2 size={16} />선택 삭제{selected.length ? ` ${selected.length}` : ""}</button></div></div>
           <div className={`telegram-inbox-list ${selectionDragging ? "is-drag-selecting" : ""}`}>
-            <div className="telegram-list-columns"><input type="checkbox" checked={allSelected} onChange={(e) => setSelected(e.target.checked ? items.map((item) => item.id) : [])} aria-label="현재 페이지 전체 선택" /><span>일시</span><span>브리핑</span><span>기사</span><span>작업</span></div>
+            <div className="telegram-list-columns"><input type="checkbox" checked={allSelected} onChange={(e) => setSelected(e.target.checked ? items.map((item) => item.id) : [])} aria-label="현재 페이지 전체 선택" /><span>일시</span><span>브리핑</span><span>테마</span><span>기사</span><span>작업</span></div>
             {items.map((item) => {
               const date = item.message_at.replace("T", " ");
               const isSelected = selected.includes(item.id);
@@ -213,6 +249,7 @@ function TelegramBriefingPage() {
                 />
                 <time dateTime={item.message_at}><b>{date.slice(5, 10).replace("-", ".")}</b><span>{date.slice(11, 16)}</span></time>
                 <button className="telegram-briefing-content" onClick={() => setDetail(item)}><strong>{item.title}</strong>{item.summary ? <span>{item.summary}</span> : null}</button>
+                <div className="telegram-theme-cell"><ThemeSearchCombobox themes={themes} value={item.theme_id} ariaLabel={`${item.title} 대표 테마`} onChange={(value) => void updateItemTheme(item, value)} /></div>
                 <div className="telegram-article-cell">{item.source_url ? <a href={item.source_url} target="_blank" rel="noreferrer">기사 열기 <ExternalLink size={14} /></a> : <span>URL 없음</span>}</div>
                 <button className="telegram-row-delete" aria-label={`${item.title} 삭제`} onClick={() => void removeItems([item.id])}><Trash2 size={16} /></button>
               </article>;
@@ -227,7 +264,7 @@ function TelegramBriefingPage() {
       <div className="telegram-source-list">{sources.map((source) => <div key={source.id}><div><strong>{source.source_name}</strong><p>{source.channel_username} · 최근 수집 {source.last_collected_at || "-"}</p></div><div><button className="btn btn-secondary" onClick={async () => { await repositories.telegram.updateSource(source.id, { is_active: source.is_active !== 1 }); await loadSources(); }}>{source.is_active === 1 ? "일시정지" : "활성화"}</button><button className="btn btn-danger" onClick={async () => { if (window.confirm("채널 설정을 삭제할까요?")) { await repositories.telegram.deleteSource(source.id); await loadSources(); } }}>삭제</button></div></div>)}</div>
     </SectionCard>}
 
-    {detail ? <div className="telegram-drawer-backdrop" onClick={() => setDetail(null)}><aside className="telegram-detail-drawer" role="dialog" aria-modal="true" aria-labelledby="telegram-detail-title" onClick={(event) => event.stopPropagation()}><header><h3 id="telegram-detail-title">브리핑 상세</h3><button aria-label="상세 닫기" onClick={() => setDetail(null)}><X size={20} /></button></header><div className="telegram-drawer-body"><time>{detail.message_at.replace("T", " ")}</time><h4>{detail.title}</h4>{detail.summary ? <section><h5>요약</h5><p>{detail.summary}</p></section> : <section className="telegram-unsummarized"><p>{detail.source_url ? "아직 요약하지 않은 기사입니다." : "기사 URL이 없어 요약할 수 없습니다."}</p><button disabled={!detail.source_url || summarizing} onClick={() => void summarizeItems([detail.id])}>{summarizing ? <LoaderCircle size={16} className="animate-spin" /> : <Sparkles size={16} />}이 기사 요약</button></section>}{detail.source_url ? <section className="telegram-original-article"><h5>원문 기사</h5><a href={detail.source_url} target="_blank" rel="noreferrer">원문 기사 열기 <ExternalLink size={15} /></a></section> : null}</div><footer><button onClick={() => void removeItems([detail.id], true)}><Trash2 size={16} />삭제</button></footer></aside></div> : null}
+    {detail ? <div className="telegram-drawer-backdrop" onClick={() => setDetail(null)}><aside className="telegram-detail-drawer" role="dialog" aria-modal="true" aria-labelledby="telegram-detail-title" onClick={(event) => event.stopPropagation()}><header><h3 id="telegram-detail-title">브리핑 상세</h3><button aria-label="상세 닫기" onClick={() => setDetail(null)}><X size={20} /></button></header><div className="telegram-drawer-body"><time>{detail.message_at.replace("T", " ")}</time><div className="telegram-drawer-theme"><span>대표 테마</span><ThemeSearchCombobox themes={themes} value={detail.theme_id} ariaLabel="상세 브리핑 대표 테마" onChange={(value) => void updateItemTheme(detail, value)} /></div><h4>{detail.title}</h4>{detail.summary ? <section><h5>요약</h5><p>{detail.summary}</p></section> : <section className="telegram-unsummarized"><p>{detail.source_url ? "아직 요약하지 않은 기사입니다." : "기사 URL이 없어 요약할 수 없습니다."}</p><button disabled={!detail.source_url || summarizing} onClick={() => void summarizeItems([detail.id])}>{summarizing ? <LoaderCircle size={16} className="animate-spin" /> : <Sparkles size={16} />}이 기사 요약</button></section>}{detail.source_url ? <section className="telegram-original-article"><h5>원문 기사</h5><a href={detail.source_url} target="_blank" rel="noreferrer">원문 기사 열기 <ExternalLink size={15} /></a></section> : null}</div><footer><button onClick={() => void removeItems([detail.id], true)}><Trash2 size={16} />삭제</button></footer></aside></div> : null}
   </div>;
 }
 

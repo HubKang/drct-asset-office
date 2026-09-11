@@ -103,6 +103,7 @@ class MarketThemeObservationMLMetrics(BaseModel):
     recall_top20: float | None = None
     f1_top20: float | None = None
     precision_at_5: float | None = None
+    precision_at_10: float | None = None
     ndcg_at_5: float | None = None
     spearman: float | None = None
     mean_rank_error: float | None = None
@@ -112,6 +113,36 @@ class MarketThemeObservationMLMetrics(BaseModel):
     raw_brier: float | None = None
     raw_log_loss: float | None = None
     raw_calibration_error: float | None = None
+    top5_mean_actual_strength: float | None = None
+    top5_actual_top10_rate: float | None = None
+    top5_bottom_half_rate: float | None = None
+
+
+class MarketThemeObservationMLFoldResult(BaseModel):
+    fold: int
+    train_start_date: str
+    train_end_date: str
+    validation_start_date: str
+    validation_end_date: str
+    metrics: MarketThemeObservationMLMetrics
+    delta_precision_at_5: float | None = None
+
+
+class MarketThemeObservationFeatureDiagnostic(BaseModel):
+    feature_name: str
+    feature_group: str
+    structural_role: str
+    missing_rate: float
+    unique_count: int
+    near_constant: bool = False
+
+
+class MarketThemeObservationAblationResult(BaseModel):
+    feature_group: str
+    metrics: MarketThemeObservationMLMetrics
+    delta_precision_at_5: float
+    delta_ndcg_at_5: float
+    verdict: str
 
 
 class MarketThemeObservationMLCandidate(BaseModel):
@@ -124,6 +155,16 @@ class MarketThemeObservationMLCandidate(BaseModel):
     improving_fold_count: int = 0
     validation_fold_count: int = 0
     metrics: MarketThemeObservationMLMetrics
+    candidate_type: str = "ML"
+    feature_version: str = "THEME_OBSERVATION_FEATURE_V2"
+    parameters: dict[str, float | int | str] = Field(default_factory=dict)
+    delta_precision_at_5: float | None = None
+    delta_ndcg_at_5: float | None = None
+    fold_results: list[MarketThemeObservationMLFoldResult] = Field(default_factory=list)
+    worst_fold_precision_at_5: float | None = None
+    fold_precision_at_5_std: float | None = None
+    oos_metrics: MarketThemeObservationMLMetrics | None = None
+    candidate_status: str = "EXPERIMENTAL"
 
 
 class MarketThemeObservationMLTrainResponse(BaseModel):
@@ -139,6 +180,16 @@ class MarketThemeObservationMLTrainResponse(BaseModel):
     validation_fold_count: int = 0
     candidates: list[MarketThemeObservationMLCandidate] = Field(default_factory=list)
     baseline_metrics: dict[str, MarketThemeObservationMLMetrics] = Field(default_factory=dict)
+    baseline_fold_results: list[MarketThemeObservationMLFoldResult] = Field(default_factory=list)
+    feature_diagnostics: list[MarketThemeObservationFeatureDiagnostic] = Field(default_factory=list)
+    ablation_results: list[MarketThemeObservationAblationResult] = Field(default_factory=list)
+    oos_start_date: str | None = None
+    oos_end_date: str | None = None
+    oos_sample_days: int = 0
+    gate_metric: str = "precision_top20"
+    gate_required_improvement: float = 0.03
+    recommended_candidate: str | None = None
+    recommendation: str = "현 운영 Rule V2 유지"
 
 
 class MarketThemeObservationDiagnosticMetricSummary(BaseModel):

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 
 from backend.app.core.database import Base
 from backend.app.entities.telegram_source import TelegramSource
+from backend.app.entities.market_theme import MarketTheme
 from backend.app.repositories.telegram_repository import TelegramRepository
 from backend.app.services.telegram_article_service import ArticleExtractionResult, TelegramArticleService
 from backend.app.services.telegram_llm_service import TelegramLLMService
@@ -29,6 +30,18 @@ def add_source(db: Session, source_id: int = 1) -> TelegramSource:
     return source
 
 
+def add_theme(db: Session, theme_id: int, name: str, *, parent_id: int | None = None,
+              level: str = "THEME", active: int = 1, sort_order: int = 100) -> MarketTheme:
+    theme = MarketTheme(
+        id=theme_id, theme_name=name, theme_code=f"theme-{theme_id}", theme_type="theme",
+        theme_level=level, description=None, keywords="[]", parent_theme_id=parent_id,
+        is_supply_theme=0, is_active=active, sort_order=sort_order,
+        created_at="2026-09-10 09:00:00", updated_at="2026-09-10 09:00:00",
+    )
+    db.add(theme); db.commit()
+    return theme
+
+
 def test_url_fingerprint_removes_tracking_and_deduplicates_channels() -> None:
     first = TelegramService.build_fingerprint("채널 A", "https://news.example.com/a?utm_source=tg&id=7")
     second = TelegramService.build_fingerprint("채널 B", "https://NEWS.example.com/a?id=7&utm_medium=x")
@@ -43,11 +56,13 @@ def test_text_fingerprint_is_whitespace_insensitive() -> None:
 
 def test_delete_creates_same_day_exclusion_and_next_date_cleanup() -> None:
     db = make_session()
+    theme = add_theme(db, 90, "삭제 회귀 테마")
     repo = TelegramRepository(db)
     row = repo.create_item({
         "collection_date": "2026-08-27", "message_at": "2026-08-27 09:00:00",
         "title": "테스트 기사", "summary": None, "source_url": None,
         "message_fingerprint": "f" * 64, "created_at": "2026-08-27 09:01:00",
+        "theme_id": theme.id,
     })
     assert repo.delete_items_with_exclusion([row.id]) == 1
     assert repo.is_excluded("2026-08-27", "f" * 64)
@@ -69,6 +84,91 @@ def test_search_uses_only_durable_fields_and_paginates() -> None:
     assert len(items) == total == with_summary == 1
     assert title_only == 0
     assert set(vars(items[0])) >= {"title", "summary", "source_url", "message_fingerprint"}
+    db.close()
+
+
+def test_telegram_theme_assign_change_clear_and_joined_response() -> None:
+    db = make_session()
+    group = add_theme(db, 100, "전력·인프라", level="THEME_GROUP", sort_order=1)
+    first = add_theme(db, 101, "전력기기 / 변압기", parent_id=group.id, sort_order=1)
+    second = add_theme(db, 102, "수소", parent_id=group.id, sort_order=2)
+    repo = TelegramRepository(db)
+    item = repo.create_item({
+        "collection_date": "2026-09-10", "message_at": "2026-09-10 09:00:00",
+        "title": "데이터센터 전력 계약", "summary": None, "source_url": None,
+        "message_fingerprint": "t" * 64, "created_at": "2026-09-10 09:01:00",
+    })
+    service = TelegramService(db)
+
+    assert item.theme_id is None
+    assert service.update_item_theme(item.id, first.id).theme_id == first.id
+    assert service.update_item_theme(item.id, second.id).theme_id == second.id
+    listed = service.list_items(theme_id=second.id, limit=20, offset=0)
+    assert listed["total_count"] == 1
+    assert listed["items"][0].theme_name == "수소"
+    assert listed["items"][0].theme_group_name == "전력·인프라"
+    assert service.update_item_theme(item.id, None).theme_id is None
+    assert service.list_items(theme_unassigned=True, limit=20, offset=0)["total_count"] == 1
+    db.close()
+
+
+def test_telegram_theme_rejects_group_and_inactive_theme() -> None:
+    db = make_session()
+    group = add_theme(db, 110, "반도체", level="THEME_GROUP")
+    inactive = add_theme(db, 111, "비활성 테마", parent_id=group.id, active=0)
+    item = TelegramRepository(db).create_item({
+        "collection_date": "2026-09-10", "message_at": "2026-09-10 09:00:00",
+        "title": "테마 검증", "summary": None, "source_url": None,
+        "message_fingerprint": "v" * 64, "created_at": "2026-09-10 09:01:00",
+    })
+    service = TelegramService(db)
+    for invalid_id, status_code in ((group.id, 400), (inactive.id, 409)):
+        try:
+            service.update_item_theme(item.id, invalid_id)
+            assert False, "invalid theme must be rejected"
+        except Exception as exc:
+            assert getattr(exc, "status_code", None) == status_code
+    db.close()
+
+
+def test_telegram_theme_filter_combines_with_date_keyword_without_n_plus_one() -> None:
+    db = make_session()
+    group = add_theme(db, 120, "전력인프라", level="THEME_GROUP")
+    theme = add_theme(db, 121, "전력기기 / 변압기", parent_id=group.id)
+    repo = TelegramRepository(db)
+    for index in range(20):
+        item = repo.create_item({
+            "collection_date": "2026-09-10" if index < 19 else "2026-09-09",
+            "message_at": f"2026-09-10 09:{index:02d}:00",
+            "title": f"데이터센터 전력 계약 {index}" if index != 18 else "수소 설비 확대",
+            "summary": None, "source_url": None,
+            "message_fingerprint": f"theme-filter-{index}",
+            "created_at": "2026-09-10 10:00:00",
+            "theme_id": theme.id if index != 17 else None,
+        })
+        assert item.id is not None
+
+    theme_id = theme.id
+    theme_name = theme.theme_name
+    statements: list[str] = []
+    bind = db.get_bind()
+
+    def capture_statement(_conn, _cursor, statement, _parameters, _context, _executemany):
+        statements.append(statement)
+
+    event.listen(bind, "before_cursor_execute", capture_statement)
+    try:
+        result = TelegramService(db).list_items(
+            date_from="2026-09-10", date_to="2026-09-10", keyword="데이터센터",
+            theme_id=theme_id, limit=20, offset=0,
+        )
+    finally:
+        event.remove(bind, "before_cursor_execute", capture_statement)
+
+    assert result["total_count"] == 17
+    assert len(result["items"]) == 17
+    assert all(row.theme_name == theme_name for row in result["items"])
+    assert sum("market_themes" in statement.lower() for statement in statements) == 1
     db.close()
 
 
@@ -140,11 +240,13 @@ def test_on_demand_summary_skips_existing_and_missing_url() -> None:
 
 def test_on_demand_summary_updates_only_summary() -> None:
     db = make_session()
+    theme = add_theme(db, 130, "요약 회귀 테마")
     repo = TelegramRepository(db)
     item = repo.create_item({
         "collection_date": "2026-08-27", "message_at": "2026-08-27 07:00:00",
         "title": "원래 제목", "summary": None, "source_url": "https://example.com/article",
         "message_fingerprint": "d" * 64, "created_at": "2026-08-27 09:01:00",
+        "theme_id": theme.id,
     })
     service = TelegramService(db)
 
@@ -163,6 +265,7 @@ def test_on_demand_summary_updates_only_summary() -> None:
     refreshed = repo.get_item(item.id)
     assert result["summarized"] == 1
     assert refreshed and refreshed.title == "원래 제목" and refreshed.summary
+    assert refreshed.theme_id == theme.id
     db.close()
 
 

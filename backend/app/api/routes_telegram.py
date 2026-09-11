@@ -15,6 +15,8 @@ from backend.app.schemas.telegram_schema import (
     TelegramCollectAllResult,
     TelegramCollectResult,
     TelegramItemListResponse,
+    TelegramItemResponse,
+    TelegramItemThemeUpdate,
     TelegramItemsDeleteRequest,
     TelegramItemsDeleteResponse,
     TelegramItemsSummarizeRequest,
@@ -96,6 +98,8 @@ def list_items(
     date_from: str | None = None,
     date_to: str | None = None,
     keyword: str | None = None,
+    theme_id: int | None = Query(default=None, ge=1),
+    theme_unassigned: bool = Query(default=False),
     limit: int = Query(default=20, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
@@ -104,9 +108,16 @@ def list_items(
         date_from=date_from,
         date_to=date_to,
         keyword=keyword,
+        theme_id=theme_id,
+        theme_unassigned=theme_unassigned,
         limit=limit,
         offset=offset,
     )
+
+
+@router.patch("/items/{item_id}/theme", response_model=TelegramItemResponse)
+def update_item_theme(item_id: int, payload: TelegramItemThemeUpdate, db: Session = Depends(get_db)):
+    return TelegramService(db).update_item_theme(item_id, payload.theme_id)
 
 
 @router.delete("/items/{item_id}", response_model=TelegramItemsDeleteResponse)

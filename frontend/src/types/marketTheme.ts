@@ -620,15 +620,37 @@ export type MarketThemeObservationDiagnosticsResponse = {
   ml_quality_days_since_training: number;
 };
 
+export type MarketThemeObservationMLMetrics = {
+  precision_top20: number | null; recall_top20: number | null; f1_top20: number | null;
+  precision_at_5: number | null; precision_at_10: number | null; ndcg_at_5: number | null;
+  spearman: number | null; mean_rank_error: number | null;
+  brier: number | null; log_loss: number | null; calibration_error: number | null;
+  raw_brier: number | null; raw_log_loss: number | null; raw_calibration_error: number | null;
+  top5_mean_actual_strength: number | null; top5_actual_top10_rate: number | null; top5_bottom_half_rate: number | null;
+};
+
+export type MarketThemeObservationMLFoldResult = {
+  fold: number; train_start_date: string; train_end_date: string; validation_start_date: string; validation_end_date: string;
+  metrics: MarketThemeObservationMLMetrics; delta_precision_at_5: number | null;
+};
+
+export type MarketThemeObservationMLCandidate = {
+  model_type: string; model_version: string | null; target_type: string; candidate_type: string; feature_version: string;
+  selection_gate_status: string; calibration_status: string; probability_display_mode: string; candidate_status: string;
+  improving_fold_count: number; validation_fold_count: number; parameters: Record<string, string | number>;
+  delta_precision_at_5: number | null; delta_ndcg_at_5: number | null; worst_fold_precision_at_5: number | null; fold_precision_at_5_std: number | null;
+  metrics: MarketThemeObservationMLMetrics; oos_metrics: MarketThemeObservationMLMetrics | null; fold_results: MarketThemeObservationMLFoldResult[];
+};
+
 export type MarketThemeObservationMLTrainResponse = {
   status: string; message: string; feature_version: string; train_start_date: string | null; train_end_date: string | null;
   distinct_base_dates: number; train_row_count: number; qualified_date_count: number; excluded_universe_dates: number;
-  validation_fold_count: number; candidates: Array<{ model_type: string; model_version: string | null; target_type: string;
-    selection_gate_status: string; calibration_status: string; probability_display_mode: string; improving_fold_count: number;
-    validation_fold_count: number; metrics: { precision_top20: number | null; recall_top20: number | null; f1_top20: number | null;
-      precision_at_5: number | null; ndcg_at_5: number | null; spearman: number | null; mean_rank_error: number | null;
-      brier: number | null; log_loss: number | null; calibration_error: number | null; raw_brier: number | null;
-      raw_log_loss: number | null; raw_calibration_error: number | null; }; }>;
+  validation_fold_count: number; candidates: MarketThemeObservationMLCandidate[];
+  baseline_metrics: Record<string, MarketThemeObservationMLMetrics>; baseline_fold_results: MarketThemeObservationMLFoldResult[];
+  feature_diagnostics: Array<{ feature_name: string; feature_group: string; structural_role: string; missing_rate: number; unique_count: number; near_constant: boolean; }>;
+  ablation_results: Array<{ feature_group: string; metrics: MarketThemeObservationMLMetrics; delta_precision_at_5: number; delta_ndcg_at_5: number; verdict: string; }>;
+  oos_start_date: string | null; oos_end_date: string | null; oos_sample_days: number;
+  gate_metric: string; gate_required_improvement: number; recommended_candidate: string | null; recommendation: string;
 };
 
 export type MarketThemeReturnMethodMetrics = {

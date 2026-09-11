@@ -1,6 +1,6 @@
 ﻿from __future__ import annotations
 
-from sqlalchemy import Integer, Text
+from sqlalchemy import ForeignKey, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.app.core.database import Base
@@ -15,6 +15,9 @@ class TelegramItem(Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    theme_id: Mapped[int | None] = mapped_column(
+        ForeignKey("market_themes.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     message_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
 

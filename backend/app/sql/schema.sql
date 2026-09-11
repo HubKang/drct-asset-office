@@ -775,6 +775,7 @@ CREATE TABLE IF NOT EXISTS telegram_items (
     title TEXT NOT NULL,
     summary TEXT,
     source_url TEXT,
+    theme_id INTEGER REFERENCES market_themes(id) ON DELETE SET NULL,
     message_fingerprint TEXT NOT NULL,
     created_at TEXT NOT NULL,
     UNIQUE(collection_date, message_fingerprint)
@@ -811,6 +812,7 @@ CREATE INDEX IF NOT EXISTS idx_briefing_summary_jobs_status ON briefing_summary_
 CREATE UNIQUE INDEX IF NOT EXISTS ux_telegram_sources_channel_username ON telegram_sources(channel_username);
 CREATE INDEX IF NOT EXISTS ix_telegram_items_collection_date ON telegram_items(collection_date);
 CREATE INDEX IF NOT EXISTS ix_telegram_items_message_at ON telegram_items(message_at);
+CREATE INDEX IF NOT EXISTS ix_telegram_items_theme_id ON telegram_items(theme_id);
 CREATE INDEX IF NOT EXISTS idx_stock_daily_prices_stock_trade_date ON stock_daily_prices(stock_id, trade_date);
 CREATE INDEX IF NOT EXISTS idx_stock_daily_prices_trade_date ON stock_daily_prices(trade_date);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_stock_daily_market_metrics_stock_date_source ON stock_daily_market_metrics(stock_id, trade_date, source);
