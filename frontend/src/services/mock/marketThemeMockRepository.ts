@@ -27,6 +27,7 @@ import type {
   MarketThemeObservationResponse,
   MarketThemeObservationMLTrainResponse,
   MarketThemeObservationDiagnosticsResponse,
+  MarketThemePriceFlowResearchResponse,
   MarketThemeStock,
   RealtimeThemeRefreshResponse,
   RealtimeThemeStocksResponse,
@@ -58,11 +59,14 @@ export const marketThemeMockRepository = {
     return { quality_evaluated_days: 0, recent_5: { quality_days: 0, current: empty, refreshed: empty },
       recent_20: { quality_days: 0, current: empty, refreshed: empty }, all: { quality_days: 0, current: empty, refreshed: empty },
       paired_correction: { paired_days: 0, mean_rank_error_current: null, mean_rank_error_refreshed: null, mean_refresh_effect: null, improved_theme_count: 0, worsened_theme_count: 0, unchanged_theme_count: 0 },
-      status_performance: [], score_bucket_performance: [], diagnostic_status: "INSUFFICIENT_DATA",
+      status_performance: [], stage_performance: [], score_bucket_performance: [], diagnostic_status: "INSUFFICIENT_DATA",
       messages: [{ code: "INSUFFICIENT_DATA", severity: "INFO", title: "데이터 축적 중", message: "아직 로직 변경을 판단하기에는 데이터가 부족합니다." }], ml_quality_days_since_training: 0 };
   },
+  async getPriceFlowResearch(): Promise<MarketThemePriceFlowResearchResponse> {
+    return { status: "INSUFFICIENT_DATA", message: "Mock 데이터가 없습니다.", stage_version: "PRICE_FLOW_STAGE_V1", feature_version: "PRICE_FLOW_FEATURE_V3", data_start_date: null, data_end_date: null, signal_start_date: null, signal_end_date: null, sample_count: 0, evaluated_dates: 0, stage_metrics: [], first_half_stage_metrics: [], second_half_stage_metrics: [], success_radar: { price_strength: null, flow_strength: null, flow_acceleration: null, breadth: null, sustainability: null }, failure_radar: { price_strength: null, flow_strength: null, flow_acceleration: null, breadth: null, sustainability: null }, radar_axis_results: [], rule_top5_bottom_half_rate: null, severe_failure_count: 0 };
+  },
   async getLatestObservationPriority(): Promise<MarketThemeObservationResponse> {
-    return { status: "DRAFT", message: "저장된 관찰 우선순위가 없습니다.", data_cutoff_date: null, calculation_data_cutoff_date: null, default_target_date: null, run: null, items: [], metrics: null, actual_universe_count: null, market_indicator_latest_refreshed_at: null };
+    return { status: "DRAFT", message: "저장된 가격·수급 신호가 없습니다.", data_cutoff_date: null, calculation_data_cutoff_date: null, default_target_date: null, run: null, items: [], metrics: null, actual_universe_count: null, market_indicator_latest_refreshed_at: null };
   },
   async getObservationPriority(_targetDate: string): Promise<MarketThemeObservationResponse> { return this.getLatestObservationPriority(); },
   async calculateObservationPriority(_targetDate: string, _refreshMarketIndicators = false): Promise<MarketThemeObservationResponse> { return this.getLatestObservationPriority(); },

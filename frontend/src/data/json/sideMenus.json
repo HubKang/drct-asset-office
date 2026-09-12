@@ -6,7 +6,7 @@
   },
   {
     "menuKey": "home",
-    "title": "DrCT 오늘의 인사이트",
+    "title": "DrCT 실시간 인사이트",
     "routeKey": "drct-insight"
   },
   {

@@ -33,6 +33,7 @@ from backend.app.schemas.market_theme_observation_schema import (
     MarketThemeObservationResponse,
     MarketThemeObservationMLTrainResponse,
     MarketThemeObservationDiagnosticsResponse,
+    MarketThemePriceFlowResearchResponse,
 )
 from backend.app.schemas.realtime_theme_schema import (
     RealtimeThemeRefreshResponse,
@@ -46,6 +47,7 @@ from backend.app.services.market_theme_return_rank_ml_service import MarketTheme
 from backend.app.services.market_theme_observation_service import MarketThemeObservationService
 from backend.app.services.market_theme_observation_ml_service import MarketThemeObservationMLService
 from backend.app.services.market_theme_observation_validation_service import MarketThemeObservationValidationService
+from backend.app.services.market_theme_price_flow_research_service import MarketThemePriceFlowResearchService
 from backend.app.services.market_theme_stock_service import MarketThemeStockService
 from backend.app.services.market_theme_flow_trend_service import invalidate_market_theme_flow_trend_cache
 from backend.app.services.realtime_theme_service import RealtimeThemeService
@@ -108,6 +110,11 @@ def train_market_theme_observation_ml(db: Session = Depends(get_db)) -> MarketTh
 @router.get("/market-themes/observation-priorities/diagnostics", response_model=MarketThemeObservationDiagnosticsResponse)
 def get_market_theme_observation_diagnostics(db: Session = Depends(get_db)) -> MarketThemeObservationDiagnosticsResponse:
     return MarketThemeObservationValidationService(db).diagnostics()
+
+
+@router.get("/market-themes/observation-priorities/price-flow-research", response_model=MarketThemePriceFlowResearchResponse)
+def get_market_theme_price_flow_research(db: Session = Depends(get_db)) -> MarketThemePriceFlowResearchResponse:
+    return MarketThemePriceFlowResearchService(db).analyze()
 
 
 @router.get("/market-themes/return-predictions/ml/status", response_model=MarketThemeReturnMLStatusResponse)

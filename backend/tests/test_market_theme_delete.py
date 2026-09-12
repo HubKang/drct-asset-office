@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
+from backend.app.core.database import _seed_default_market_themes_once
 from backend.app.entities.market_theme import MarketTheme
 from backend.app.services.market_theme_service import MarketThemeService
 
@@ -96,3 +97,40 @@ def test_delete_group_rejects_active_child() -> None:
     assert exc_info.value.status_code == 409
     assert db.get(MarketTheme, group.id) is not None
     assert db.get(MarketTheme, child.id) is not None
+
+
+def test_deleted_default_theme_is_not_seeded_again_on_restart() -> None:
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    MarketTheme.__table__.create(engine)
+
+    with engine.begin() as connection:
+        _seed_default_market_themes_once(connection, seed_if_empty=True)
+        seeded_count = connection.execute(text("SELECT COUNT(*) FROM market_themes")).scalar_one()
+        assert seeded_count > 0
+
+        connection.execute(text("DELETE FROM market_themes WHERE theme_code='auto_parts'"))
+        assert connection.execute(text("SELECT COUNT(*) FROM market_themes WHERE theme_code='auto_parts'")).scalar_one() == 0
+
+        # Simulate the next server startup. The deleted default must stay deleted.
+        _seed_default_market_themes_once(connection, seed_if_empty=True)
+        assert connection.execute(text("SELECT COUNT(*) FROM market_themes WHERE theme_code='auto_parts'")).scalar_one() == 0
+
+
+def test_existing_database_does_not_restore_missing_defaults_when_seed_history_is_added() -> None:
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    MarketTheme.__table__.create(engine)
+    with engine.begin() as connection:
+        connection.execute(text(
+            """
+            INSERT INTO market_themes
+            (theme_name, theme_code, theme_type, theme_level, description, keywords,
+             parent_theme_id, is_supply_theme, is_active, sort_order, created_at, updated_at)
+            VALUES ('사용자 테마', 'custom-theme', 'theme', 'THEME', NULL, '[]',
+                    NULL, 0, 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """
+        ))
+
+        _seed_default_market_themes_once(connection, seed_if_empty=False)
+
+        assert connection.execute(text("SELECT COUNT(*) FROM market_themes")).scalar_one() == 1
+        assert connection.execute(text("SELECT COUNT(*) FROM runtime_seed_history")).scalar_one() == 1

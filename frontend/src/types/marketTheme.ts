@@ -558,6 +558,7 @@ export type MarketThemeReturnPredictionResponse = {
 export type MarketThemeObservationRun = {
   id: number; target_date: string; data_cutoff_date: string; status: string; method: string;
   model_version: string | null; feature_version: string; display_mode: "PROBABILITY" | "SCORE";
+  stage_version?: string | null;
   calculated_at: string; evaluated_at: string | null;
   calculation_mode: "CURRENT_MARKET_DATA" | "REFRESHED_MARKET_DATA";
   market_refresh_requested: boolean; market_refresh_status: "NOT_REQUESTED" | "SUCCESS" | "PARTIAL" | "FAILED";
@@ -573,6 +574,10 @@ export type MarketThemeObservationItem = {
   confidence_level: "HIGH" | "MEDIUM" | "LOW"; data_coverage_rate: number; base_change_rate: number | null;
   price_score: number | null; flow_score: number | null; breadth_score: number | null; liquidity_score: number | null;
   technical_score: number | null; market_environment_score: number | null; penalty_score: number;
+  stage_code?: "EARLY" | "CONFIRMED" | "MATURE" | "EXHAUSTED" | null;
+  stage_label?: string | null; stage_summary?: string | null;
+  flow_acceleration_score?: number | null; sustainability_score?: number | null; price_flow_gap?: number | null;
+  prediction_percentile?: number | null;
   actual_change_rate: number | null; actual_rank: number | null; actual_top20: boolean | null;
   actual_relative_strength: number | null; relative_strength_gap: number | null;
   current_score: number | null; refreshed_score: number | null;
@@ -614,6 +619,7 @@ export type MarketThemeObservationDiagnosticsResponse = {
     mean_refresh_effect: number | null; improved_theme_count: number; worsened_theme_count: number; unchanged_theme_count: number;
   };
   status_performance: Array<{ status_code: string | null; sample_count: number; top20_hit_rate: number | null; mean_actual_rank: number | null; mean_rank_error: number | null; }>;
+  stage_performance: Array<{ stage_code: string; sample_count: number; top20_hit_rate: number | null; mean_actual_relative_strength: number | null; }>;
   score_bucket_performance: Array<{ score_bucket: string; sample_count: number; top20_entry_rate: number | null; mean_actual_rank_percentile: number | null; }>;
   diagnostic_status: string;
   messages: Array<{ code: string; severity: string; title: string; message: string; }>;
@@ -648,9 +654,37 @@ export type MarketThemeObservationMLTrainResponse = {
   validation_fold_count: number; candidates: MarketThemeObservationMLCandidate[];
   baseline_metrics: Record<string, MarketThemeObservationMLMetrics>; baseline_fold_results: MarketThemeObservationMLFoldResult[];
   feature_diagnostics: Array<{ feature_name: string; feature_group: string; structural_role: string; missing_rate: number; unique_count: number; near_constant: boolean; }>;
-  ablation_results: Array<{ feature_group: string; metrics: MarketThemeObservationMLMetrics; delta_precision_at_5: number; delta_ndcg_at_5: number; verdict: string; }>;
+  ablation_results: Array<{ feature_group: string; metrics: MarketThemeObservationMLMetrics; delta_precision_at_5: number; delta_ndcg_at_5: number; delta_precision_top20: number; delta_top5_bottom_half_rate: number; verdict: string; }>;
   oos_start_date: string | null; oos_end_date: string | null; oos_sample_days: number;
   gate_metric: string; gate_required_improvement: number; recommended_candidate: string | null; recommendation: string;
+};
+
+export type MarketThemePriceFlowStageMetric = {
+  stage_code: "EARLY" | "CONFIRMED" | "MATURE" | "EXHAUSTED";
+  stage_label: string; sample_count: number; sample_ratio: number;
+  top10_rate: number; top20_rate: number; mean_actual_percentile: number;
+  median_actual_percentile: number; mean_actual_rank: number; median_actual_rank: number;
+  bottom_half_rate: number; top5_rate: number; fold_win_count: number;
+  worst_fold_top20_rate: number | null; fold_top20_std: number | null;
+};
+
+export type MarketThemePriceFlowRadarProfile = {
+  price_strength: number | null; flow_strength: number | null;
+  flow_acceleration: number | null; breadth: number | null; sustainability: number | null;
+};
+
+export type MarketThemePriceFlowResearchResponse = {
+  status: string; message: string; stage_version: string; feature_version: string;
+  data_start_date: string | null; data_end_date: string | null;
+  signal_start_date: string | null; signal_end_date: string | null;
+  sample_count: number; evaluated_dates: number;
+  stage_metrics: MarketThemePriceFlowStageMetric[];
+  first_half_stage_metrics: MarketThemePriceFlowStageMetric[];
+  second_half_stage_metrics: MarketThemePriceFlowStageMetric[];
+  success_radar: MarketThemePriceFlowRadarProfile;
+  failure_radar: MarketThemePriceFlowRadarProfile;
+  radar_axis_results: Array<{ axis: string; success_mean: number | null; failure_mean: number | null; difference: number | null }>;
+  rule_top5_bottom_half_rate: number | null; severe_failure_count: number;
 };
 
 export type MarketThemeReturnMethodMetrics = {

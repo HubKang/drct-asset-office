@@ -54,4 +54,4 @@ def test_missing_historical_run_keeps_requested_date_out_of_defaulting() -> None
     assert result.data_cutoff_date is None
     assert result.calculation_data_cutoff_date == "2026-08-10"
     assert result.default_target_date is None
-    assert result.message == "2026-08-07에 저장된 관찰결과가 없습니다."
+    assert result.message == "2026-08-07에 저장된 가격·수급 신호가 없습니다."

@@ -30,6 +30,7 @@ export type DrctInsightTheme = {
   change_rate: number | null; theme_strength: number | null; flow_score: number | null; breadth: string | null;
   valid_stock_count: number; linked_stock_count: number;
   theme_score: number | null; theme_percentile: number | null; flow_percentile: number | null;
+  signal_stage_code?: string | null; signal_stage_label?: string | null; d1_candidate_score?: number | null; signal_key_reason?: string | null;
   us_catalyst: "STRONG" | "MODERATE" | "WEAK" | "NONE"; us_lead: DrctInsightUsLead;
   linked_candidate_count: number; preliminary_candidate_count: number; focus_candidate_count: number; final_candidate_count: number; gates: InsightGates;
   why_items: string[]; warning_items: string[];

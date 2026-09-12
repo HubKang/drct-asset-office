@@ -138,6 +138,10 @@ class DrctInsightTheme(BaseModel):
     theme_score: float | None = None
     theme_percentile: float | None = None
     flow_percentile: float | None = None
+    signal_stage_code: str | None = None
+    signal_stage_label: str | None = None
+    d1_candidate_score: float | None = None
+    signal_key_reason: str | None = None
     us_catalyst: Literal["STRONG", "MODERATE", "WEAK", "NONE"] = "NONE"
     us_lead: DrctInsightUsLead
     breadth: str | None = None

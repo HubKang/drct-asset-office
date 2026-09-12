@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from backend.app.schemas.market_theme_observation_schema import MarketThemeObservationResponse
 from backend.app.services.market_theme_observation_feature_service import (
     OBSERVATION_FEATURE_VERSION,
+    PRICE_FLOW_STAGE_VERSION,
     MarketThemeObservationFeatureService,
 )
 from backend.app.services.market_data_collection_service import MarketDataCollectionService
@@ -19,6 +20,8 @@ from backend.app.services.market_theme_observation_validation_service import (
     MarketThemeObservationValidationService,
     OBSERVATION_RULE_VERSION,
 )
+
+STAGE_LABELS = {"EARLY": "수급 선행", "CONFIRMED": "상승 확인", "MATURE": "상승 진행", "EXHAUSTED": "소진 주의"}
 
 
 class MarketThemeObservationService:
@@ -39,7 +42,7 @@ class MarketThemeObservationService:
     def _cutoff(self) -> str:
         value = self._latest_cutoff()
         if not value:
-            raise HTTPException(status_code=409, detail="테마 등락 데이터가 없어 관찰 순위를 계산할 수 없습니다.")
+            raise HTTPException(status_code=409, detail="테마 등락 데이터가 없어 D+1 가격·수급 신호를 계산할 수 없습니다.")
         return value
 
     @staticmethod
@@ -47,15 +50,15 @@ class MarketThemeObservationService:
         try:
             return date.fromisoformat(target_date)
         except (TypeError, ValueError) as exc:
-            raise HTTPException(status_code=422, detail="관찰 대상일은 YYYY-MM-DD 형식이어야 합니다.") from exc
+            raise HTTPException(status_code=422, detail="신호 대상일은 YYYY-MM-DD 형식이어야 합니다.") from exc
 
     @classmethod
     def validate_observation_calculate_date(cls, target_date: str, cutoff: str) -> date:
         parsed = cls.validate_observation_query_date(target_date)
         if parsed <= date.fromisoformat(cutoff):
-            raise HTTPException(status_code=422, detail="과거 대상일은 신규 관찰순위를 계산할 수 없습니다.")
+            raise HTTPException(status_code=422, detail="과거 대상일은 신규 D+1 신호를 계산할 수 없습니다.")
         if parsed.weekday() >= 5:
-            raise HTTPException(status_code=422, detail="관찰 대상일은 평일이어야 합니다.")
+            raise HTTPException(status_code=422, detail="신호 대상일은 평일이어야 합니다.")
         return parsed
 
     def _run(self, target_date: str) -> dict[str, Any] | None:
@@ -93,6 +96,43 @@ class MarketThemeObservationService:
             return None
         return round(actual_strength - predicted_score, 4)
 
+    @staticmethod
+    def _score_percentiles(items: list[dict[str, Any]]) -> dict[int, float | None]:
+        valid = sorted(
+            (float(item["relative_strength_score"]), int(item["theme_id"]))
+            for item in items if item.get("relative_strength_score") is not None
+        )
+        result: dict[int, float | None] = {int(item["theme_id"]): None for item in items}
+        if len(valid) == 1:
+            result[valid[0][1]] = 50.0
+            return result
+        index = 0
+        while index < len(valid):
+            end = index
+            while end + 1 < len(valid) and valid[end + 1][0] == valid[index][0]:
+                end += 1
+            percentile = ((index + end) / 2) / (len(valid) - 1) * 100 if len(valid) > 1 else 50.0
+            for _, theme_id in valid[index:end + 1]:
+                result[theme_id] = round(percentile, 4)
+            index = end + 1
+        return result
+
+    @staticmethod
+    def _stage_summary(stage: str, values: dict[str, Any]) -> str:
+        acceleration = values.get("flow_acceleration_score")
+        breadth = values.get("breadth_score")
+        if stage == "EARLY":
+            return "가격보다 수급이 먼저 강해지고 있습니다."
+        if stage == "CONFIRMED":
+            return "수급 유입이 실제 가격 상승으로 확인되고 있습니다."
+        if stage == "MATURE":
+            return "강세가 이어지고 있지만 이미 상승이 진행된 상태입니다."
+        if acceleration is not None and float(acceleration) <= 30:
+            return "수급 가속이 둔화되어 추가 탄력을 확인해야 합니다."
+        if breadth is not None and float(breadth) <= 40:
+            return "연결종목 확산이 둔화되어 추가 탄력을 확인해야 합니다."
+        return "가격 또는 수급의 상승 탄력이 둔화되고 있습니다."
+
     def get(self, target_date: str) -> MarketThemeObservationResponse:
         self.validate_observation_query_date(target_date)
         run = self._run(target_date)
@@ -100,7 +140,7 @@ class MarketThemeObservationService:
         if not run:
             return MarketThemeObservationResponse(
                 status="DRAFT", data_cutoff_date=None, calculation_data_cutoff_date=calculation_cutoff,
-                default_target_date=None, message=f"{target_date}에 저장된 관찰결과가 없습니다.",
+                default_target_date=None, message=f"{target_date}에 저장된 가격·수급 신호가 없습니다.",
                 market_indicator_latest_refreshed_at=self._latest_market_refresh_at(),
             )
         items = [dict(row) for row in self.db.execute(text("""
@@ -122,14 +162,24 @@ class MarketThemeObservationService:
              WHERE return_date=:target_date AND avg_change_rate IS NOT NULL
         """), {"target_date": target_date}).scalar() or 0)
         official_mode = str(run.get("calculation_mode") or "CURRENT_MARKET_DATA")
+        prediction_percentiles = self._score_percentiles(items)
         for item in items:
+            persisted_stage = item.get("stage_code")
+            stage = str(persisted_stage or MarketThemeObservationFeatureService.signal_stage(item))
+            item["stage_code"] = stage
+            item["stage_label"] = STAGE_LABELS.get(stage, stage)
+            item["stage_summary"] = (
+                self._stage_summary(stage, item) if persisted_stage
+                else "기존 저장 결과의 가격·수급·확산 지표를 기준으로 호환 표시했습니다."
+            )
             samples = validation_by_theme.get(int(item["theme_id"]), {})
             official_sample = samples.get(official_mode)
             actual_rank = item.get("actual_rank")
             if actual_rank is None and official_sample is not None:
                 actual_rank = official_sample.get("actual_rank")
             actual_strength = self.actual_relative_strength(int(actual_rank) if actual_rank is not None else None, actual_universe_count)
-            predicted_score = item.get("relative_strength_score")
+            predicted_score = prediction_percentiles.get(int(item["theme_id"]))
+            item["prediction_percentile"] = predicted_score
             item["actual_rank"] = actual_rank
             item["actual_relative_strength"] = actual_strength
             item["relative_strength_gap"] = self.relative_strength_gap(float(predicted_score) if predicted_score is not None else None, actual_strength)
@@ -170,7 +220,7 @@ class MarketThemeObservationService:
         self.db.expire_all()
         rows = MarketThemeObservationFeatureService(self.db).build_for_date(cutoff, target_date, operational_asof_at=calculated_at)
         if not rows:
-            raise HTTPException(status_code=409, detail="관찰 유니버스 품질 Gate를 통과한 테마가 없습니다.")
+            raise HTTPException(status_code=409, detail="신호 유니버스 품질 Gate를 통과한 테마가 없습니다.")
         now = calculated_at
         market_data_asof_at = self._market_data_asof_at()
         existing = self._run(target_date)
@@ -178,13 +228,13 @@ class MarketThemeObservationService:
             run_id = int(existing["id"])
             self.db.execute(text("""
                 UPDATE market_theme_observation_runs SET data_cutoff_date=:cutoff,status='PREDICTED',method='OBSERVATION_RULE',
-                       model_version=NULL,feature_version=:feature,display_mode='SCORE',calculated_at=:now,evaluated_at=NULL,
+                       model_version=NULL,feature_version=:feature,stage_version=:stage_version,display_mode='SCORE',calculated_at=:now,evaluated_at=NULL,
                        calculation_mode=:mode,market_refresh_requested=:requested,market_refresh_status=:refresh_status,
                        market_indicator_refreshed_at=:refreshed_at,market_indicator_data_asof_at=:data_asof,
                        market_indicator_updated_count=:updated_count,market_indicator_failed_count=:failed_count,
                        market_collection_run_id=:collection_run_id,revision_count=revision_count+1,updated_at=:now
                  WHERE id=:id
-            """), {"cutoff": cutoff, "feature": OBSERVATION_FEATURE_VERSION, "now": now, "id": run_id,
+            """), {"cutoff": cutoff, "feature": OBSERVATION_FEATURE_VERSION, "stage_version": PRICE_FLOW_STAGE_VERSION, "now": now, "id": run_id,
                     "mode": calculation_mode, "requested": int(market_refresh_requested), "refresh_status": market_refresh_status,
                     "refreshed_at": market_indicator_refreshed_at, "data_asof": market_data_asof_at,
                     "updated_count": market_indicator_updated_count, "failed_count": market_indicator_failed_count,
@@ -194,13 +244,13 @@ class MarketThemeObservationService:
         else:
             result = self.db.execute(text("""
                 INSERT INTO market_theme_observation_runs
-                (target_date,data_cutoff_date,status,method,model_version,feature_version,display_mode,calculated_at,evaluated_at,
+                (target_date,data_cutoff_date,status,method,model_version,feature_version,stage_version,display_mode,calculated_at,evaluated_at,
                  calculation_mode,market_refresh_requested,market_refresh_status,market_indicator_refreshed_at,
                  market_indicator_data_asof_at,market_indicator_updated_count,market_indicator_failed_count,market_collection_run_id,
                  revision_count,created_at,updated_at)
-                VALUES (:target,:cutoff,'PREDICTED','OBSERVATION_RULE',NULL,:feature,'SCORE',:now,NULL,:mode,:requested,
+                VALUES (:target,:cutoff,'PREDICTED','OBSERVATION_RULE',NULL,:feature,:stage_version,'SCORE',:now,NULL,:mode,:requested,
                         :refresh_status,:refreshed_at,:data_asof,:updated_count,:failed_count,:collection_run_id,0,:now,:now)
-            """), {"target": target_date, "cutoff": cutoff, "feature": OBSERVATION_FEATURE_VERSION, "now": now,
+            """), {"target": target_date, "cutoff": cutoff, "feature": OBSERVATION_FEATURE_VERSION, "stage_version": PRICE_FLOW_STAGE_VERSION, "now": now,
                     "mode": calculation_mode, "requested": int(market_refresh_requested), "refresh_status": market_refresh_status,
                     "refreshed_at": market_indicator_refreshed_at, "data_asof": market_data_asof_at,
                     "updated_count": market_indicator_updated_count, "failed_count": market_indicator_failed_count,
@@ -216,15 +266,19 @@ class MarketThemeObservationService:
                 "base": value.get("base_change_rate"), "price": value.get("price_score"), "flow": value.get("flow_score"),
                 "breadth": value.get("breadth_score"), "liquidity": value.get("liquidity_score"),
                 "technical": value.get("technical_score"), "market": value.get("market_environment_score"),
+                "stage": MarketThemeObservationFeatureService.signal_stage(value),
+                "acceleration": value.get("flow_acceleration_percentile"),
+                "sustainability": value.get("sustainability_score"), "price_flow_gap": value.get("price_flow_gap"),
                 "penalty": value.get("penalty_score") or 0, "now": now,
             })
         self.db.execute(text("""
             INSERT INTO market_theme_observation_items
             (run_id,theme_id,observation_rank,relative_strength_probability,relative_strength_score,top20_probability,
              status_code,confidence_level,data_coverage_rate,base_change_rate,price_score,flow_score,breadth_score,
-             liquidity_score,technical_score,market_environment_score,penalty_score,evaluation_status,created_at,updated_at)
+             liquidity_score,technical_score,market_environment_score,stage_code,flow_acceleration_score,
+             sustainability_score,price_flow_gap,penalty_score,evaluation_status,created_at,updated_at)
             VALUES (:run_id,:theme_id,:rank,NULL,:score,NULL,:status,:confidence,:coverage,:base,:price,:flow,:breadth,
-                    :liquidity,:technical,:market,:penalty,'PENDING',:now,:now)
+                    :liquidity,:technical,:market,:stage,:acceleration,:sustainability,:price_flow_gap,:penalty,'PENDING',:now,:now)
         """), payloads)
         MarketThemeObservationValidationService(self.db).snapshot(
             target_date,
@@ -244,7 +298,7 @@ class MarketThemeObservationService:
             self.db.rollback()
             pre_validation = {
                 "status": "AUTO_VALIDATION_FAILED", "target_date": None, "modes": [], "quality_status": None,
-                "message": "최근 관찰결과 자동검증에 실패했습니다. D+1 관찰순위는 계속 계산하지만 검증 상태를 확인해 주세요.",
+                "message": "최근 D+1 신호 자동검증에 실패했습니다. 신호 계산은 계속하지만 검증 상태를 확인해 주세요.",
                 "diagnostic_status": None,
             }
         if not refresh_market_indicators:
@@ -258,7 +312,7 @@ class MarketThemeObservationService:
         if refresh_status == "FAILED":
             raise HTTPException(status_code=502, detail={
                 "code": "MARKET_REFRESH_FAILED",
-                "message": "시장지표 갱신에 실패하여 보정관찰 계산을 중단했습니다.",
+                "message": "시장지표 갱신에 실패하여 보정 신호 계산을 중단했습니다.",
                 "collection_run_id": refresh_result.get("run_id"),
             })
         normalized_status = "SUCCESS" if refresh_status == "SUCCESS" else "PARTIAL"
@@ -278,13 +332,13 @@ class MarketThemeObservationService:
                 reason = str(exc)
             raise HTTPException(status_code=500, detail={
                 "code": "OBSERVATION_FAILED_AFTER_MARKET_REFRESH",
-                "message": "시장지표 갱신은 완료됐지만 관찰순위 계산에 실패했습니다.",
+                "message": "시장지표 갱신은 완료됐지만 D+1 가격·수급 신호 계산에 실패했습니다.",
                 "collection_run_id": refresh_result.get("run_id"), "reason": reason,
             }) from exc
         if normalized_status == "PARTIAL":
-            response.message = "시장지표 일부 갱신 실패 · 기존값을 포함해 관찰순위를 계산했습니다."
+            response.message = "시장지표 일부 갱신 실패 · 기존값을 포함해 D+1 가격·수급 신호를 계산했습니다."
         else:
-            response.message = "시장지표 보정관찰 계산을 완료했습니다."
+            response.message = "시장지표 보정 신호 계산을 완료했습니다."
         return self._attach_pre_validation(response, pre_validation)
 
     @staticmethod
@@ -317,14 +371,14 @@ class MarketThemeObservationService:
     def validate(self, target_date: str) -> MarketThemeObservationResponse:
         run = self._run(target_date)
         if not run:
-            raise HTTPException(status_code=404, detail="검증할 관찰 우선순위가 없습니다.")
+            raise HTTPException(status_code=404, detail="검증할 D+1 가격·수급 신호가 없습니다.")
         validation_status = MarketThemeObservationValidationService(self.db).evaluate(target_date)
         if validation_status == "WAITING_ACTUAL":
             response = self.get(target_date)
             response.message = "대상일의 실제 테마등락률이 아직 없어 검증을 대기합니다. 가짜 검증 결과는 생성하지 않았습니다."
             return response
         if validation_status == "NO_SNAPSHOT":
-            raise HTTPException(status_code=409, detail="Phase5.5 적용 이후 생성된 검증용 관찰 스냅샷이 없습니다.")
+            raise HTTPException(status_code=409, detail="Phase5.5 적용 이후 생성된 검증용 D+1 신호 스냅샷이 없습니다.")
         actual = [dict(row) for row in self.db.execute(text("""
             SELECT theme_id,avg_change_rate FROM market_theme_daily_returns
              WHERE return_date=:target AND avg_change_rate IS NOT NULL ORDER BY avg_change_rate DESC,theme_id ASC

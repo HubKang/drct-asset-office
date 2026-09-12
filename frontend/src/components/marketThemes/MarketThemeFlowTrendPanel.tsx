@@ -59,12 +59,12 @@ const streak = (value: number) => value > 0 ? `${value}일 연속 순매수` : v
 
 function strengthColor(value: number | null) {
   if (value == null) return EMPTY_CELL_COLOR;
-  if (value <= -20) return FLOW_COLORS[0]; if (value <= -15) return FLOW_COLORS[1];
-  if (value <= -10) return FLOW_COLORS[2]; if (value <= -5) return FLOW_COLORS[3];
+  if (value <= -40) return FLOW_COLORS[0]; if (value <= -30) return FLOW_COLORS[1];
+  if (value <= -20) return FLOW_COLORS[2]; if (value <= -10) return FLOW_COLORS[3];
   if (value < 0) return FLOW_NEAR_ZERO_NEGATIVE_COLOR;
-  if (value === 0) return FLOW_COLORS[4]; if (value < 5) return FLOW_NEAR_ZERO_POSITIVE_COLOR;
-  if (value < 10) return FLOW_COLORS[5]; if (value < 15) return FLOW_COLORS[6];
-  if (value < 20) return FLOW_COLORS[7]; return FLOW_COLORS[8];
+  if (value === 0) return FLOW_COLORS[4]; if (value < 10) return FLOW_NEAR_ZERO_POSITIVE_COLOR;
+  if (value < 20) return FLOW_COLORS[5]; if (value < 30) return FLOW_COLORS[6];
+  if (value < 40) return FLOW_COLORS[7]; return FLOW_COLORS[8];
 }
 function breadthColor(value: number | null) {
   if (value == null) return EMPTY_CELL_COLOR;
@@ -360,7 +360,7 @@ export default function MarketThemeFlowTrendPanel(props: Props) {
     <p className="theme-flow-basis">집계 기준: 현재 활성 연결 종목 · {attribution === "FRACTIONAL" ? "중복테마별 1/n" : "중복테마별 1"} <span>과거 수급은 현재 활성 연결 종목 기준으로 계산됩니다.</span></p>
     {error ? <div className="theme-flow-state is-error"><strong>테마 수급 데이터를 불러오지 못했습니다.</strong><span>{error}</span><button type="button" onClick={() => setRefreshKey((value) => value + 1)}><RefreshCw size={13} /> 다시 시도</button></div> : null}
     {!error && topCards.length ? <div className="theme-flow-top-grid">{topCards.map((card) => <button type="button" key={card.label} disabled={!card.item} onClick={() => card.item && scrollToTheme(card.item.theme_id)}><span>{card.label}</span><strong>{card.item?.theme_name ?? "-"}</strong><em>{card.value}</em></button>)}</div> : null}
-    {!error && viewMode === "heatmap" && metric === "FLOW_STRENGTH" ? <div className="theme-return-legend">{["-20% 이하", "-15%", "-10%", "-5%", "0%", "+5%", "+10%", "+15%", "+20% 이상"].map((label, index) => <span key={label} className="theme-return-legend__item"><i className="theme-return-legend__chip" style={{ background: FLOW_COLORS[index] }} />{label}</span>)}</div> : null}
+    {!error && viewMode === "heatmap" && metric === "FLOW_STRENGTH" ? <div className="theme-return-legend">{["-40% 이하", "-30%", "-20%", "-10%", "0%", "+10%", "+20%", "+30%", "+40% 이상"].map((label, index) => <span key={label} className="theme-return-legend__item"><i className="theme-return-legend__chip" style={{ background: FLOW_COLORS[index] }} />{label}</span>)}</div> : null}
     {!error && viewMode === "heatmap" && metric === "BREADTH" ? <div className="theme-return-legend">{BREADTH_BUCKETS.map((bucket) => <span key={bucket.label} className="theme-return-legend__item"><i className="theme-return-legend__chip" style={{ background: bucket.color }} />{bucket.label}</span>)}</div> : null}
     {!error && viewMode === "heatmap" && metric === "NET_AMOUNT" ? <p className="theme-flow-amount-legend">순매수 금액 색상은 현재 응답의 절대값 95 percentile을 상한으로 사용하며 실제 표시 금액은 변경하지 않습니다.</p> : null}
     {!error && viewMode === "line" && !loading && data?.themes.length ? <ThemeFlowTrendLineChart themes={data.themes} dates={data.dates} actor={actor} metric={metric} attribution={attribution} amountScaleMode={amountScaleMode} /> : null}

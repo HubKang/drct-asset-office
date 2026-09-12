@@ -369,6 +369,51 @@ def _seed_kms_settings(conn) -> None:  # type: ignore[no-untyped-def]
             )
 
 
+def _seed_default_market_themes_once(conn, *, seed_if_empty: bool) -> None:  # type: ignore[no-untyped-def]
+    """Bootstrap defaults once without resurrecting themes deleted by the user."""
+    seed_key = "market_themes_defaults_v1"
+    conn.exec_driver_sql(
+        """
+        CREATE TABLE IF NOT EXISTS runtime_seed_history (
+            seed_key TEXT PRIMARY KEY,
+            applied_at TEXT NOT NULL
+        )
+        """
+    )
+    already_applied = conn.exec_driver_sql(
+        "SELECT 1 FROM runtime_seed_history WHERE seed_key = ?",
+        (seed_key,),
+    ).first()
+    if already_applied:
+        return
+
+    theme_count = int(conn.exec_driver_sql("SELECT COUNT(*) FROM market_themes").scalar() or 0)
+    if seed_if_empty and theme_count == 0:
+        for row in DEFAULT_MARKET_THEMES:
+            conn.exec_driver_sql(
+                """
+                INSERT OR IGNORE INTO market_themes
+                (theme_name, theme_code, theme_type, theme_level, description, keywords, parent_theme_id, is_supply_theme, is_active, sort_order, created_at, updated_at)
+                VALUES (?, ?, ?, 'THEME', ?, ?, NULL, 0, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                (
+                    str(row["theme_name"]),
+                    str(row["theme_code"]),
+                    str(row["theme_type"]),
+                    str(row["description"]),
+                    keywords_json(list(row["keywords"])),
+                    int(row["sort_order"]),
+                ),
+            )
+
+    # Existing installations are marked as initialized without filling any missing
+    # defaults. A missing default may have been deliberately deleted by the user.
+    conn.exec_driver_sql(
+        "INSERT OR IGNORE INTO runtime_seed_history (seed_key, applied_at) VALUES (?, CURRENT_TIMESTAMP)",
+        (seed_key,),
+    )
+
+
 def ensure_runtime_schema() -> None:
     if not DATABASE_URL.startswith("sqlite"):
         return
@@ -1615,6 +1660,9 @@ def ensure_runtime_schema() -> None:
                     int(row["sort_order"]),
                 ),
             )
+        market_themes_preexisting = conn.exec_driver_sql(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_themes'"
+        ).first() is not None
         conn.exec_driver_sql(
             """
             CREATE TABLE IF NOT EXISTS market_themes (
@@ -2026,6 +2074,10 @@ def ensure_runtime_schema() -> None:
         )
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_theme_observation_runs_cutoff ON market_theme_observation_runs(data_cutoff_date,status)")
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_theme_observation_items_rank ON market_theme_observation_items(run_id,observation_rank)")
+        _ensure_column(conn, "market_theme_observation_items", "stage_code", "TEXT")
+        _ensure_column(conn, "market_theme_observation_items", "flow_acceleration_score", "REAL")
+        _ensure_column(conn, "market_theme_observation_items", "sustainability_score", "REAL")
+        _ensure_column(conn, "market_theme_observation_items", "price_flow_gap", "REAL")
         _ensure_column(conn, "market_theme_observation_runs", "calculation_mode", "TEXT NOT NULL DEFAULT 'CURRENT_MARKET_DATA'")
         _ensure_column(conn, "market_theme_observation_runs", "market_refresh_requested", "INTEGER NOT NULL DEFAULT 0")
         _ensure_column(conn, "market_theme_observation_runs", "market_refresh_status", "TEXT NOT NULL DEFAULT 'NOT_REQUESTED'")
@@ -2035,6 +2087,7 @@ def ensure_runtime_schema() -> None:
         _ensure_column(conn, "market_theme_observation_runs", "market_indicator_failed_count", "INTEGER")
         _ensure_column(conn, "market_theme_observation_runs", "market_collection_run_id", "INTEGER")
         _ensure_column(conn, "market_theme_observation_runs", "revision_count", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(conn, "market_theme_observation_runs", "stage_version", "TEXT")
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_theme_observation_runs_mode ON market_theme_observation_runs(calculation_mode,status)")
         conn.exec_driver_sql(
             """
@@ -2053,6 +2106,7 @@ def ensure_runtime_schema() -> None:
             )
             """
         )
+        _ensure_column(conn, "market_theme_observation_validation_samples", "stage_code", "TEXT")
         conn.exec_driver_sql(
             """
             CREATE TABLE IF NOT EXISTS market_theme_observation_validation_metrics (
@@ -2299,22 +2353,7 @@ def ensure_runtime_schema() -> None:
         conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_market_theme_stock_candidates_theme_stock ON market_theme_stock_candidates(theme_id, stock_id)"
         )
-        for row in DEFAULT_MARKET_THEMES:
-            conn.exec_driver_sql(
-                """
-                INSERT OR IGNORE INTO market_themes
-                (theme_name, theme_code, theme_type, theme_level, description, keywords, parent_theme_id, is_supply_theme, is_active, sort_order, created_at, updated_at)
-                VALUES (?, ?, ?, 'THEME', ?, ?, NULL, 0, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                """,
-                (
-                    str(row["theme_name"]),
-                    str(row["theme_code"]),
-                    str(row["theme_type"]),
-                    str(row["description"]),
-                    keywords_json(list(row["keywords"])),
-                    int(row["sort_order"]),
-                ),
-            )
+        _seed_default_market_themes_once(conn, seed_if_empty=not market_themes_preexisting)
 
         conn.exec_driver_sql(
             """

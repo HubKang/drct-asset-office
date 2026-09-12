@@ -700,7 +700,7 @@ function MarketThemesPage() {
     }, null);
   }, [manageableThemes]);
   const themeGroupCount = useMemo(() => themes.filter((x) => x.theme_level === "THEME_GROUP").length, [themes]);
-  const themeManagementTitle = themeViewMode === "group" ? "테마그룹 관리" : themeViewMode === "trend" ? "테마등락추이" : themeViewMode === "flowTrend" ? "테마수급추이" : themeViewMode === "prediction" ? "테마관찰우선순위" : "테마별 관리";
+  const themeManagementTitle = themeViewMode === "group" ? "테마그룹 관리" : themeViewMode === "trend" ? "테마등락추이" : themeViewMode === "flowTrend" ? "테마수급추이" : themeViewMode === "prediction" ? "D+1 테마 후보(가격·수급)" : "테마별 관리";
 
   const resetForm = () => {
     setFormThemeId(null);
@@ -1623,7 +1623,7 @@ function MarketThemesPage() {
               테마수급추이
             </button>
             <button type="button" className={`theme-view-mode-tab ${themeViewMode === "prediction" ? "active" : ""}`} onClick={() => setThemeViewMode("prediction")}>
-              테마관찰우선순위
+              D+1 테마 후보(가격·수급)
             </button>
           </div>
           {themeViewMode === "trend" ? (
@@ -1733,7 +1733,7 @@ function MarketThemesPage() {
                   <button
                     type="button"
                     className="theme-return-heatmap__date-cell theme-return-heatmap__prediction-header"
-                    title={trendData?.prediction?.run ? `${trendData.prediction.mode === "PROBABILITY" ? "D+1 실제 Top20 상대강도 확률" : "D+1 관찰 상대강도 점수(확률 아님)"}\n${trendData.prediction.run.calculation_mode === "REFRESHED_MARKET_DATA" ? "시장지표 보정관찰" : "기존 시장지표 기준"}\n대상일 ${trendData.prediction.run.target_date}\n테마·종목 기준일 ${trendData.prediction.run.data_cutoff_date}\n시장지표 갱신 ${trendData.prediction.run.market_indicator_refreshed_at ?? "-"}\n방법 ${trendData.prediction.method}\n계산 ${trendData.prediction.calculated_at}` : "저장된 D+1 관찰 우선순위가 없습니다."}
+                    title={trendData?.prediction?.run ? `${trendData.prediction.mode === "PROBABILITY" ? "D+1 실제 Top20 상대강도 확률" : "D+1 후보 상대강도 점수(확률 아님)"}\n${trendData.prediction.run.calculation_mode === "REFRESHED_MARKET_DATA" ? "시장지표 보정 신호" : "기존 시장지표 기준"}\n대상일 ${trendData.prediction.run.target_date}\n테마·종목 기준일 ${trendData.prediction.run.data_cutoff_date}\n시장지표 갱신 ${trendData.prediction.run.market_indicator_refreshed_at ?? "-"}\n방법 ${trendData.prediction.method}\n계산 ${trendData.prediction.calculated_at}` : "저장된 D+1 가격·수급 신호가 없습니다."}
                     onClick={() => setPredictionSort((current) => current === "default" ? "desc" : current === "desc" ? "asc" : "default")}
                   >D+1<small>{trendData?.prediction?.run?.target_date?.slice(5).replace("-", "/") ?? ""}</small></button>
                   {trendLoading ? <div className="theme-return-heatmap__empty-row">테마등락추이를 조회 중입니다.</div> : null}
@@ -1783,7 +1783,7 @@ function MarketThemesPage() {
                             type="button"
                             className={`theme-return-heatmap__value-cell theme-return-heatmap__prediction-cell ${predicted == null ? "theme-return-heatmap__value-cell--empty" : ""}`}
                             style={{ background: predicted == null ? undefined : getRelativeStrengthColor(predicted), borderStyle: predicted != null && predicted < 40 ? "dashed" : undefined }}
-                            title={`${theme.theme_name} / D+1 ${trendData?.prediction?.run?.target_date ?? "-"} / ${trendData?.prediction?.mode === "PROBABILITY" ? `실제 Top20 상대강도 확률 ${predicted == null ? "-" : `${predicted.toFixed(1)}%`}` : `관찰 상대강도 점수 ${predicted == null ? "-" : predicted.toFixed(1)} (확률 아님)`} / 관찰 순위 ${trendData?.prediction?.ranks?.[theme.theme_id] ?? "-"}\n${trendData?.prediction?.run?.calculation_mode === "REFRESHED_MARKET_DATA" ? "시장지표 보정관찰" : "기존 시장지표 기준"} / 테마·종목 기준일 ${trendData?.prediction?.run?.data_cutoff_date ?? "-"} / 시장지표 ${trendData?.prediction?.run?.market_indicator_refreshed_at ?? "-"} / 방법 ${trendData?.prediction?.method ?? "-"} / 계산 ${trendData?.prediction?.calculated_at ?? "-"}`}
+                            title={`${theme.theme_name} / D+1 ${trendData?.prediction?.run?.target_date ?? "-"} / ${trendData?.prediction?.mode === "PROBABILITY" ? `실제 Top20 상대강도 확률 ${predicted == null ? "-" : `${predicted.toFixed(1)}%`}` : `D+1 후보 상대강도 점수 ${predicted == null ? "-" : predicted.toFixed(1)} (확률 아님)`} / 후보 순위 ${trendData?.prediction?.ranks?.[theme.theme_id] ?? "-"}\n${trendData?.prediction?.run?.calculation_mode === "REFRESHED_MARKET_DATA" ? "시장지표 보정 신호" : "기존 시장지표 기준"} / 테마·종목 기준일 ${trendData?.prediction?.run?.data_cutoff_date ?? "-"} / 시장지표 ${trendData?.prediction?.run?.market_indicator_refreshed_at ?? "-"} / 방법 ${trendData?.prediction?.method ?? "-"} / 계산 ${trendData?.prediction?.calculated_at ?? "-"}`}
                             onClick={() => predicted != null ? void openThemeReturnDetail(theme, trendData?.prediction?.run?.data_cutoff_date) : undefined}
                           ><span className={relativeStrengthTextClass(predicted)}>{predicted == null ? "-" : trendData?.prediction?.mode === "PROBABILITY" ? `${Math.round(predicted)}%` : Math.round(predicted)}</span></button>;
                         })()}

@@ -157,7 +157,7 @@ class MarketThemeReturnFeatureService:
         excluded_low_coverage = 0
         for date_index, base_date in enumerate(actual_dates):
             is_inference_row = date_index + 1 == len(actual_dates) and inference_target_date is not None
-            target_date = actual_dates[date_index + 1] if date_index + 1 < len(actual_dates) else inference_target_date
+            target_date = self._next_observed_trading_date(actual_dates, date_index, inference_target_date)
             day_rows = {theme_id: row for (day, theme_id), row in returns.items() if day == base_date}
             raw: dict[int, dict[str, Any]] = {}
             for theme_id, current in day_rows.items():
@@ -211,7 +211,26 @@ class MarketThemeReturnFeatureService:
             institution_pct = self._percentiles({key: value["institution"] for key, value in raw.items()})
             combined_pct = self._percentiles({key: value["joint"] for key, value in raw.items()})
             program_pct = self._percentiles({key: value["program"] for key, value in raw.items()})
+            flow_acceleration_pct = self._percentiles({key: value["flow_acceleration"] for key, value in raw.items()})
+            flow_persistence_pct = self._percentiles({key: value["streak"] for key, value in raw.items()})
             concentration_inverse_pct = self._percentiles({key: None if value["top1"] is None else -value["top1"] for key, value in raw.items()})
+            price_runway_pct = self._percentiles({
+                key: None if value["mean5"] is None else -(max(float(value["mean5"]), 0.0) + max(float(value["base"]), 0.0) * .5)
+                for key, value in raw.items()
+            })
+            sustainability_raw: dict[int, float | None] = {}
+            for theme_id in raw:
+                parts = [
+                    (flow_acceleration_pct[theme_id], .30), (flow_persistence_pct[theme_id], .25),
+                    (breadth_pct[theme_id], .25), (concentration_inverse_pct[theme_id], .10),
+                    (price_runway_pct[theme_id], .10),
+                ]
+                available_parts = [(float(score), weight) for score, weight in parts if score is not None]
+                sustainability_raw[theme_id] = (
+                    sum(score * weight for score, weight in available_parts) / sum(weight for _, weight in available_parts)
+                    if available_parts else None
+                )
+            sustainability_pct = self._percentiles(sustainability_raw)
             return_cross_mean = self._mean([value["base"] for value in raw.values()])
             flow_cross_mean = self._mean([value["joint"] for value in raw.values()])
             liquidity_cross_mean = self._mean([value["liquidity"] for value in raw.values()])
@@ -227,6 +246,17 @@ class MarketThemeReturnFeatureService:
             for theme_id, value in raw.items():
                 price_score, flow_score = price_pct[theme_id], flow_pct[theme_id]
                 alignment_score = None if price_score is None or flow_score is None else max(0.0, min(100.0, 100 - abs(price_score - flow_score) + (price_score + flow_score - 100) * 0.25))
+                price_flow_gap = None if price_score is None or flow_score is None else float(flow_score) - float(price_score)
+                flow_lead_parts = [
+                    (flow_score, .45),
+                    (flow_acceleration_pct[theme_id], .35),
+                    (None if price_flow_gap is None else max(0.0, min(100.0, 50.0 + price_flow_gap / 2)), .20),
+                ]
+                flow_lead_available = [(float(score), weight) for score, weight in flow_lead_parts if score is not None]
+                flow_lead_score = (
+                    sum(score * weight for score, weight in flow_lead_available) / sum(weight for _, weight in flow_lead_available)
+                    if flow_lead_available else None
+                )
                 penalty = 0.0
                 if value["base"] > 5:
                     penalty -= min(15.0, (value["base"] - 5) * 1.5)
@@ -260,6 +290,12 @@ class MarketThemeReturnFeatureService:
                     "return_10d_percentile": return10_pct[theme_id], "foreign_flow_percentile": foreign_pct[theme_id],
                     "institution_flow_percentile": institution_pct[theme_id], "combined_flow_percentile": combined_pct[theme_id],
                     "program_flow_percentile": program_pct[theme_id], "breadth_percentile": breadth_pct[theme_id],
+                    "flow_acceleration_percentile": flow_acceleration_pct[theme_id],
+                    "flow_persistence_percentile": flow_persistence_pct[theme_id],
+                    "sustainability_score": sustainability_pct[theme_id],
+                    "price_headroom_percentile": price_runway_pct[theme_id],
+                    "price_flow_gap": price_flow_gap,
+                    "flow_lead_score": flow_lead_score,
                     "liquidity_percentile": liquidity_pct[theme_id], "concentration_inverse_percentile": concentration_inverse_pct[theme_id],
                     "return_3d_minus_10d": None if value["mean3"] is None or value["mean10"] is None else value["mean3"] - value["mean10"],
                     "return_1d_minus_5d": None if value["mean5"] is None else value["base"] - value["mean5"],
@@ -297,3 +333,8 @@ class MarketThemeReturnFeatureService:
             inference_target_date=target_date,
         )
         return [row for row in dataset.rows if row.base_date == as_of_date and row.target_date == target_date]
+
+    @staticmethod
+    def _next_observed_trading_date(actual_dates: list[str], date_index: int, inference_target_date: str | None = None) -> str | None:
+        """Use the next observed KRX session; weekends and exchange holidays never become labels."""
+        return actual_dates[date_index + 1] if date_index + 1 < len(actual_dates) else inference_target_date

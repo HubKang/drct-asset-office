@@ -31,6 +31,7 @@ import type {
   MarketThemeObservationResponse,
   MarketThemeObservationMLTrainResponse,
   MarketThemeObservationDiagnosticsResponse,
+  MarketThemePriceFlowResearchResponse,
   MarketThemeStock,
   MarketThemeStockCreateInput,
   MarketThemeStockMemoUpdateInput,
@@ -54,6 +55,8 @@ export const marketThemeApiRepository = {
     apiRequest<MarketThemeObservationResponse>("/market-themes/observation-priorities/latest", { signal, cache: "no-store" }),
   getObservationDiagnostics: (signal?: AbortSignal) =>
     apiRequest<MarketThemeObservationDiagnosticsResponse>("/market-themes/observation-priorities/diagnostics", { signal, cache: "no-store" }),
+  getPriceFlowResearch: (signal?: AbortSignal) =>
+    apiRequest<MarketThemePriceFlowResearchResponse>("/market-themes/observation-priorities/price-flow-research", { signal, cache: "no-store", timeoutMs: 120_000 }),
   getObservationPriority: (targetDate: string, signal?: AbortSignal) =>
     apiRequest<MarketThemeObservationResponse>(`/market-themes/observation-priorities?target_date=${encodeURIComponent(targetDate)}`, { signal, cache: "no-store" }),
   calculateObservationPriority: (targetDate: string, refreshMarketIndicators = false, signal?: AbortSignal) =>

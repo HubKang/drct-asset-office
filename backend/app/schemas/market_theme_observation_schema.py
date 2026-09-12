@@ -50,6 +50,13 @@ class MarketThemeObservationItem(BaseModel):
     technical_score: float | None = None
     market_environment_score: float | None = None
     penalty_score: float = 0
+    stage_code: str | None = None
+    stage_label: str | None = None
+    stage_summary: str | None = None
+    flow_acceleration_score: float | None = None
+    sustainability_score: float | None = None
+    price_flow_gap: float | None = None
+    prediction_percentile: float | None = None
     actual_change_rate: float | None = None
     actual_rank: int | None = None
     actual_relative_strength: float | None = None
@@ -142,6 +149,8 @@ class MarketThemeObservationAblationResult(BaseModel):
     metrics: MarketThemeObservationMLMetrics
     delta_precision_at_5: float
     delta_ndcg_at_5: float
+    delta_precision_top20: float = 0
+    delta_top5_bottom_half_rate: float = 0
     verdict: str
 
 
@@ -192,6 +201,60 @@ class MarketThemeObservationMLTrainResponse(BaseModel):
     recommendation: str = "현 운영 Rule V2 유지"
 
 
+class MarketThemePriceFlowStageMetric(BaseModel):
+    stage_code: str
+    stage_label: str
+    sample_count: int
+    sample_ratio: float
+    top10_rate: float
+    top20_rate: float
+    mean_actual_percentile: float
+    median_actual_percentile: float
+    mean_actual_rank: float
+    median_actual_rank: float
+    bottom_half_rate: float
+    top5_rate: float
+    fold_win_count: int = 0
+    worst_fold_top20_rate: float | None = None
+    fold_top20_std: float | None = None
+
+
+class MarketThemePriceFlowRadarProfile(BaseModel):
+    price_strength: float | None = None
+    flow_strength: float | None = None
+    flow_acceleration: float | None = None
+    breadth: float | None = None
+    sustainability: float | None = None
+
+
+class MarketThemePriceFlowRadarAxisResult(BaseModel):
+    axis: str
+    success_mean: float | None = None
+    failure_mean: float | None = None
+    difference: float | None = None
+
+
+class MarketThemePriceFlowResearchResponse(BaseModel):
+    status: str
+    message: str
+    stage_version: str
+    feature_version: str
+    data_start_date: str | None = None
+    data_end_date: str | None = None
+    signal_start_date: str | None = None
+    signal_end_date: str | None = None
+    sample_count: int = 0
+    evaluated_dates: int = 0
+    stage_metrics: list[MarketThemePriceFlowStageMetric] = Field(default_factory=list)
+    first_half_stage_metrics: list[MarketThemePriceFlowStageMetric] = Field(default_factory=list)
+    second_half_stage_metrics: list[MarketThemePriceFlowStageMetric] = Field(default_factory=list)
+    success_radar: MarketThemePriceFlowRadarProfile = Field(default_factory=MarketThemePriceFlowRadarProfile)
+    failure_radar: MarketThemePriceFlowRadarProfile = Field(default_factory=MarketThemePriceFlowRadarProfile)
+    radar_axis_results: list[MarketThemePriceFlowRadarAxisResult] = Field(default_factory=list)
+    rule_top5_bottom_half_rate: float | None = None
+    severe_failure_count: int = 0
+
+
 class MarketThemeObservationDiagnosticMetricSummary(BaseModel):
     evaluated_days: int = 0
     precision_top20: float | None = None
@@ -225,6 +288,13 @@ class MarketThemeObservationDiagnosticStatusPerformance(BaseModel):
     mean_rank_error: float | None = None
 
 
+class MarketThemeObservationDiagnosticStagePerformance(BaseModel):
+    stage_code: str
+    sample_count: int
+    top20_hit_rate: float | None = None
+    mean_actual_relative_strength: float | None = None
+
+
 class MarketThemeObservationDiagnosticScoreBucket(BaseModel):
     score_bucket: str
     sample_count: int
@@ -246,6 +316,7 @@ class MarketThemeObservationDiagnosticsResponse(BaseModel):
     all: MarketThemeObservationDiagnosticPeriod
     paired_correction: MarketThemeObservationDiagnosticPairedSummary
     status_performance: list[MarketThemeObservationDiagnosticStatusPerformance] = Field(default_factory=list)
+    stage_performance: list[MarketThemeObservationDiagnosticStagePerformance] = Field(default_factory=list)
     score_bucket_performance: list[MarketThemeObservationDiagnosticScoreBucket] = Field(default_factory=list)
     diagnostic_status: str
     messages: list[MarketThemeObservationDiagnosticMessage] = Field(default_factory=list)

@@ -16,6 +16,7 @@ from backend.app.schemas.market_theme_observation_schema import (
     MarketThemeObservationDiagnosticPairedSummary,
     MarketThemeObservationDiagnosticPeriod,
     MarketThemeObservationDiagnosticScoreBucket,
+    MarketThemeObservationDiagnosticStagePerformance,
     MarketThemeObservationDiagnosticStatusPerformance,
 )
 
@@ -53,17 +54,18 @@ class MarketThemeObservationValidationService:
             "score": row.get("score"),
             "rank": int(row["rank"]),
             "status": row.get("status"),
+            "stage": row.get("stage"),
             "coverage": row.get("coverage"),
             "now": now,
         } for row in rows]
         self.db.execute(text("""
             INSERT INTO market_theme_observation_validation_samples
             (target_date,theme_id,calculation_mode,observation_rule_version,model_version,metric_version,
-             observation_score,observation_rank,status_code,data_coverage_rate,evaluation_status,created_at,updated_at)
-            VALUES (:target,:theme_id,:mode,:rule,:model,:metric,:score,:rank,:status,:coverage,'PENDING',:now,:now)
+             observation_score,observation_rank,status_code,stage_code,data_coverage_rate,evaluation_status,created_at,updated_at)
+            VALUES (:target,:theme_id,:mode,:rule,:model,:metric,:score,:rank,:status,:stage,:coverage,'PENDING',:now,:now)
             ON CONFLICT(target_date,theme_id,calculation_mode,observation_rule_version,model_version) DO UPDATE SET
               metric_version=excluded.metric_version,observation_score=excluded.observation_score,
-              observation_rank=excluded.observation_rank,status_code=excluded.status_code,
+              observation_rank=excluded.observation_rank,status_code=excluded.status_code,stage_code=excluded.stage_code,
               data_coverage_rate=excluded.data_coverage_rate,actual_rank=NULL,actual_top20=NULL,
               rank_error=NULL,rank_gap=NULL,top20_hit=NULL,refresh_score_delta=NULL,
               refresh_rank_improvement=NULL,refresh_effect=NULL,evaluation_status='PENDING',
@@ -352,6 +354,18 @@ class MarketThemeObservationValidationService:
              GROUP BY score_bucket
              ORDER BY MIN(s.observation_score) DESC
         """)).mappings().all()]
+        stage_rows = [dict(row) for row in self.db.execute(text("""
+            SELECT s.stage_code,COUNT(*) sample_count,AVG(s.actual_top20) top20_hit_rate,
+                   AVG(CASE WHEN m.evaluable_theme_count>1
+                       THEN 100.0*(m.evaluable_theme_count-s.actual_rank)/(m.evaluable_theme_count-1)
+                       ELSE 100.0 END) mean_actual_relative_strength
+              FROM market_theme_observation_validation_samples s
+              JOIN market_theme_observation_validation_metrics m
+                ON m.target_date=s.target_date AND m.calculation_mode=s.calculation_mode
+               AND m.observation_rule_version=s.observation_rule_version AND m.model_version=s.model_version
+             WHERE s.evaluation_status='EVALUATED' AND m.evaluation_status='QUALIFIED' AND s.stage_code IS NOT NULL
+             GROUP BY s.stage_code ORDER BY s.stage_code
+        """)).mappings().all()]
 
         messages: list[MarketThemeObservationDiagnosticMessage] = []
         diagnostic_status = "HEALTHY"
@@ -397,6 +411,7 @@ class MarketThemeObservationValidationService:
             quality_evaluated_days=len(quality_dates), recent_5=period(5), recent_20=period(20), all=period(None),
             paired_correction=paired,
             status_performance=[MarketThemeObservationDiagnosticStatusPerformance(**row) for row in status_rows],
+            stage_performance=[MarketThemeObservationDiagnosticStagePerformance(**row) for row in stage_rows],
             score_bucket_performance=[MarketThemeObservationDiagnosticScoreBucket(**row) for row in bucket_rows],
             diagnostic_status=diagnostic_status, messages=messages, ml_quality_days_since_training=days_after_training,
         )

@@ -450,7 +450,7 @@ function TodayInsightPanel({ stage, insight, themeSummary, realtimeRows, snapsho
 
   return <SectionCard className={`dashboard-insight-panel dashboard-routine-insight dashboard-stage-insight is-${stage}`}>
     <div className="dashboard-insight-head">
-      <div><small>{stage === "plan" ? "PLAN · PREVIOUS CLOSE" : "VERIFY · LIVE SNAPSHOT"}</small><h3>{stage === "plan" ? "DrCT 오늘의 인사이트" : "DrCT 실시간 인사이트"}</h3></div>
+      <div><small>{stage === "plan" ? "PLAN · PREVIOUS CLOSE" : "VERIFY · LIVE SNAPSHOT"}</small><h3>DrCT 실시간 인사이트</h3></div>
       <div className="dashboard-insight-head-tools"><span>{sourceLabel}</span><button type="button" className="dashboard-v2-text-button" onClick={onOpen}>인사이트 열기 →</button></div>
     </div>
     {failed ? <p className="dashboard-insight-error">인사이트 요약을 불러오지 못했습니다.</p> : <>
@@ -1020,11 +1020,11 @@ function DashboardPage() {
   };
 
   const observationTargetDateError = () => {
-    if (!observationTargetDate) return "관찰 대상일을 선택해 주세요.";
+    if (!observationTargetDate) return "신호 대상일을 선택해 주세요.";
     const day = new Date(`${observationTargetDate}T00:00:00`).getDay();
-    if (day === 0 || day === 6) return "관찰 대상일은 평일이어야 합니다.";
+    if (day === 0 || day === 6) return "신호 대상일은 평일이어야 합니다.";
     if (themeReadiness?.dataDate && observationTargetDate <= themeReadiness.dataDate) {
-      return "관찰 대상일은 데이터 기준일 이후의 평일이어야 합니다.";
+      return "신호 대상일은 데이터 기준일 이후의 평일이어야 합니다.";
     }
     return "";
   };
@@ -1047,7 +1047,7 @@ function DashboardPage() {
     setIsObservationCalculating(true);
     try {
       const result = await repositories.marketThemes.calculateObservationPriority(observationTargetDate, refreshMarketIndicators);
-      setObservationCalculationFeedback(`${result.run?.target_date ?? observationTargetDate} 관찰순위 계산 완료`);
+      setObservationCalculationFeedback(`${result.run?.target_date ?? observationTargetDate} 가격·수급 신호 계산 완료`);
       setObservationCalculationOpen(false);
       await Promise.all([
         loadObservationSummary(),
@@ -1252,12 +1252,12 @@ function DashboardPage() {
 
           <article className="dashboard-v2-operation-card dashboard-v2-status-fresh dashboard-v2-observation-action-card">
             <div className="dashboard-v2-operation-head">
-              <div><span className="dashboard-v2-operation-eyebrow">테마 관찰</span><h4>테마 관찰순위</h4></div>
+              <div><span className="dashboard-v2-operation-eyebrow">PRICE × FLOW</span><h4>D+1 테마 후보(가격·수급)</h4></div>
               <StatusBadge label="D+1" tone="blue" />
             </div>
             <div className="dashboard-v2-observation-action-row">
               <label className="dashboard-v2-observation-date">
-                <span>관찰 대상일</span>
+                <span>신호 대상일</span>
                 <input
                   type="date"
                   className="input-control"
@@ -1271,7 +1271,7 @@ function DashboardPage() {
               </label>
               <button type="button" className="btn btn-primary dashboard-v2-action-button dashboard-v2-observation-calculate" onClick={prepareObservationCalculation} disabled={isObservationCalculating || !observationTargetDate}>
                 {isObservationCalculating ? <span className="dashboard-v2-spinner" aria-hidden="true" /> : null}
-                {isObservationCalculating ? "관찰순위 계산 중..." : "관찰순위 계산"}
+                {isObservationCalculating ? "신호 계산 중..." : "D+1 신호 계산"}
               </button>
             </div>
             {observationCalculationFeedback ? <p className="dashboard-v2-feedback success dashboard-v2-observation-feedback">{observationCalculationFeedback}</p> : null}
@@ -1448,20 +1448,20 @@ function DashboardPage() {
       {activeStage === "plan" ? <SectionCard className="dashboard-v4-observation-section dashboard-routine-observation">
         <div className="dashboard-v2-section-heading dashboard-v4-section-heading">
           <div>
-            <h3 className="section-title">테마/종목 : 오늘의 국내 테마 관찰 순위</h3>
-            <p>오늘 우선 관찰할 국내 테마와 구조적 강도를 확인합니다.</p>
+            <h3 className="section-title">테마/종목 : 오늘의 국내 테마 신호</h3>
+            <p>가격·수급 단계와 D+1 상대강세 후보를 확인합니다.</p>
           </div>
         </div>
         <div className="dashboard-v4-grid">
           <article className="dashboard-v4-panel">
             <header>
-              <div><h4>테마 관찰우선순위</h4><p>저장된 최신 관찰 결과 Top4</p></div>
+              <div><h4>D+1 테마 후보(가격·수급)</h4><p>저장된 최신 D+1 후보 Top4</p></div>
               {observationSummary?.run ? <span>{observationDateLabel(observationSummary.run.target_date)}</span> : null}
             </header>
             {isObservationLoading ? (
-              <div className="dashboard-v4-radar-skeleton" aria-label="관찰우선순위 불러오는 중">{[0, 1, 2, 3].map((index) => <i key={index} />)}</div>
+              <div className="dashboard-v4-radar-skeleton" aria-label="D+1 테마 후보(가격·수급) 불러오는 중">{[0, 1, 2, 3].map((index) => <i key={index} />)}</div>
             ) : observationError ? (
-              <div className="dashboard-v4-state error"><p>관찰우선순위를 불러오지 못했습니다.</p><button type="button" className="btn btn-secondary" onClick={() => void loadObservationSummary()}>다시 시도</button></div>
+              <div className="dashboard-v4-state error"><p>D+1 테마 후보(가격·수급)를 불러오지 못했습니다.</p><button type="button" className="btn btn-secondary" onClick={() => void loadObservationSummary()}>다시 시도</button></div>
             ) : observationSummary?.run && observationSummary.items.length ? (
               <div className="dashboard-v4-radar-wrap">
                 <ObservationRadarGrid
@@ -1469,10 +1469,10 @@ function DashboardPage() {
                   statusNames={OBSERVATION_STATE_LABELS}
                   onThemeClick={(themeId) => navigate(`/market-themes?view=prediction&target_date=${observationSummary.run!.target_date}&theme_id=${themeId}`)}
                 />
-                <button type="button" className="dashboard-v4-footer-button" onClick={() => navigate("/market-themes?view=prediction")}>전체 관찰순위 보기</button>
+                <button type="button" className="dashboard-v4-footer-button" onClick={() => navigate("/market-themes?view=prediction")}>전체 테마 신호 보기</button>
               </div>
             ) : (
-              <div className="dashboard-v4-state"><p>저장된 관찰우선순위 결과가 없습니다.</p><button type="button" className="btn btn-secondary" onClick={() => navigate("/market-themes?view=prediction")}>관찰순위 화면으로 이동</button></div>
+              <div className="dashboard-v4-state"><p>저장된 D+1 테마 신호가 없습니다.</p><button type="button" className="btn btn-secondary" onClick={() => navigate("/market-themes?view=prediction")}>테마 신호 화면으로 이동</button></div>
             )}
           </article>
         </div>
@@ -1544,19 +1544,19 @@ function DashboardPage() {
         <div className="theme-observation-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target && !isObservationCalculating) setObservationCalculationOpen(false); }}>
           <section className="theme-observation-modal" role="dialog" aria-modal="true" aria-labelledby="dashboard-market-refresh-choice-title">
             <header>
-              <div><small>관찰순위 계산</small><h3 id="dashboard-market-refresh-choice-title">시장지표를 갱신하고 계산할까요?</h3></div>
+              <div><small>D+1 신호 계산</small><h3 id="dashboard-market-refresh-choice-title">시장지표를 갱신하고 계산할까요?</h3></div>
               <button type="button" aria-label="닫기" disabled={isObservationCalculating} onClick={() => setObservationCalculationOpen(false)}>×</button>
             </header>
-            <p>직전 관찰결과를 최신 실측으로 먼저 검증한 뒤 D+1 관찰순위를 계산합니다. 최신 시장환경 반영 여부를 선택해 주세요.</p>
+            <p>직전 신호를 최신 실측으로 먼저 검증한 뒤 D+1 가격·수급 신호를 계산합니다. 최신 시장환경 반영 여부를 선택해 주세요.</p>
             <dl>
               <dt>현재 시장지표 최근 갱신</dt><dd>{formatDateTime(observationSummary?.market_indicator_latest_refreshed_at ?? null)}</dd>
               <dt>테마·종목 기준일</dt><dd>{themeReadiness?.dataDate ?? "-"}</dd>
-              <dt>관찰 대상일</dt><dd>{observationTargetDate}</dd>
+              <dt>신호 대상일</dt><dd>{observationTargetDate}</dd>
             </dl>
-            {isObservationCalculating ? <div className="theme-observation-modal-progress" role="status">최근 관찰결과 검증과 D+1 관찰순위 계산을 진행하고 있습니다...</div> : null}
+            {isObservationCalculating ? <div className="theme-observation-modal-progress" role="status">최근 신호 검증과 D+1 가격·수급 신호 계산을 진행하고 있습니다...</div> : null}
             <div className="theme-observation-modal-actions">
               <button className="btn btn-secondary" type="button" disabled={isObservationCalculating} onClick={() => void handleObservationCalculation(false)}>현재 지표로 계산</button>
-              <button className="btn btn-primary" type="button" disabled={isObservationCalculating} onClick={() => void handleObservationCalculation(true)}>전체지표 갱신 후 계산<small>시장지표 전체갱신 후 관찰순위를 계산합니다.</small></button>
+              <button className="btn btn-primary" type="button" disabled={isObservationCalculating} onClick={() => void handleObservationCalculation(true)}>전체지표 갱신 후 계산<small>시장지표 전체갱신 후 D+1 신호를 계산합니다.</small></button>
             </div>
           </section>
         </div>

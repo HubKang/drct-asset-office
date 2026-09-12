@@ -2,29 +2,36 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Info } from "lucide-react";
 import type { MarketThemeObservationItem } from "@/types/marketTheme";
 
-const AXES = [
+const SIGNAL_AXES = [
+  { key: "price_score", label: "가격강도" },
+  { key: "flow_score", label: "수급강도" },
+  { key: "flow_acceleration_score", label: "수급가속" },
+  { key: "breadth_score", label: "확산" },
+  { key: "sustainability_score", label: "지속성" },
+] as const;
+const LEGACY_AXES = [
   { key: "price_score", label: "가격" },
   { key: "flow_score", label: "수급" },
   { key: "breadth_score", label: "확산" },
   { key: "technical_score", label: "기술" },
   { key: "data_coverage_rate", label: "완전성", ratio: true },
 ] as const;
-type AxisKey = (typeof AXES)[number]["key"];
+type AxisKey = (typeof SIGNAL_AXES)[number]["key"];
 const AXIS_DESCRIPTIONS: Record<AxisKey, string> = {
-  price_score: "당일 및 최근 3·5·10일 등락 흐름과 단기 모멘텀을 활성 테마 간 상대점수로 나타냅니다.",
-  flow_score: "외국인·기관 합산 순매수 강도의 현재값, 최근 3·5일 흐름과 가속도를 활성 테마 간 비교합니다.",
+  price_score: "오늘과 최근 가격 방향·상대강도를 활성 테마 전체의 0~100 상대 위치로 나타냅니다.",
+  flow_score: "테마수급추이와 같은 외국인·기관 합산 수급을 활성 테마 전체에서 비교합니다.",
+  flow_acceleration_score: "최근 3일 수급과 직전 3일 수급의 변화 속도를 활성 테마 전체에서 비교합니다.",
   breadth_score: "상승 종목 비율과 외국인·기관 합산 순매수가 양수인 종목 비율로 테마 내부 참여 폭을 나타냅니다.",
-  technical_score: "최근 3일·10일 수익률의 상대 위치와 특정 종목 쏠림이 낮은 정도를 평균해 나타냅니다.",
-  data_coverage_rate: "연결 종목 중 가격 등락률 수집에 성공해 계산에 포함된 종목 비율입니다. 강세·매수매력 점수가 아닙니다.",
+  sustainability_score: "연속 순매수·수급가속·확산 유지·가격 과열·종목 쏠림을 같은 방향으로 종합한 상대점수입니다.",
 };
 const cx = 120;
 const cy = 96;
 const radius = 72;
 const point = (index: number, ratio: number) => {
-  const angle = -Math.PI / 2 + index * Math.PI * 2 / AXES.length;
+  const angle = -Math.PI / 2 + index * Math.PI * 2 / 5;
   return [cx + Math.cos(angle) * radius * ratio, cy + Math.sin(angle) * radius * ratio] as const;
 };
-const polygon = (ratio: number) => AXES.map((_, index) => point(index, ratio).join(",")).join(" ");
+const polygon = (ratio: number) => SIGNAL_AXES.map((_, index) => point(index, ratio).join(",")).join(" ");
 const scoreText = (value: number | null | undefined) => value == null ? "-" : value.toFixed(1);
 const gapText = (value: number | null | undefined) => value == null ? "-" : `${value > 0 ? "+" : ""}${value.toFixed(1)}`;
 
@@ -95,7 +102,7 @@ export default function ObservationRadarGrid(props: {
     };
   }, [infoOpen]);
 
-  return <section className={`observation-radar-section${props.hideHeader ? " is-headerless" : ""}`} aria-label={props.hideHeader ? "집중 관찰 테마 구조" : undefined} aria-labelledby={props.hideHeader ? undefined : "observation-radar-title"}>
+  return <section className={`observation-radar-section${props.hideHeader ? " is-headerless" : ""}`} aria-label={props.hideHeader ? "D+1 가격·수급 신호 구조" : undefined} aria-labelledby={props.hideHeader ? undefined : "observation-radar-title"}>
     {!props.hideHeader ? <header>
       <div>
         <div className="observation-radar-title-row" ref={infoRef}>
@@ -112,44 +119,47 @@ export default function ObservationRadarGrid(props: {
           </button>
           {infoOpen ? <div ref={popoverRef} id={infoId} className="observation-radar-info-popover" role="dialog" aria-label="테마 구조 비교 기준 설명">
             <strong>테마 구조 비교 기준</strong>
-            <p>가격·수급·확산·기술은 활성 테마 간 상대점수이며, 완전성은 데이터 수집 성공 비율입니다.</p>
+            <p>다섯 축은 동일 기준일의 활성 테마 전체에서 계산한 0~100 상대점수입니다.</p>
             <dl>
-              {AXES.map((axis) => <div key={axis.key}>
+              {SIGNAL_AXES.map((axis) => <div key={axis.key}>
                 <dt>{axis.label}</dt>
                 <dd>{AXIS_DESCRIPTIONS[axis.key]}</dd>
               </div>)}
             </dl>
             <div className="observation-radar-info-note">
-              <p>각 축은 0~100 기준입니다. 완전성은 강세 정도가 아니라 데이터 충족 수준을 의미합니다.</p>
-              <p>레이더 차트는 관찰점수의 구성 상태를 이해하기 위한 보조지표이며, 관찰점수 자체와 동일한 계산식은 아닙니다.</p>
+              <p>데이터 완전성은 예측 축과 분리해 화면 상단 운영 상태에서 확인합니다.</p>
+              <p>개편 전에 저장된 결과는 당시 계산된 가격·수급·확산·기술·완전성 5축으로 즉시 표시합니다.</p>
+              <p>레이더는 가격×수급 단계를 설명하며, D+1 후보점수의 순위를 직접 결정하지 않습니다.</p>
             </div>
           </div> : null}
         </div>
-        <p>가격·수급·확산·기술·완전성의 모양으로 관찰점수의 구조를 비교합니다.</p>
+        <p>가격강도·수급강도·수급가속·확산·지속가능성으로 현재 단계를 비교합니다.</p>
       </div>
       <span>동일 축 · 최대 100</span>
     </header> : null}
     <div className="observation-radar-grid">
       {props.items.map((item) => {
-        const values = AXES.map((axis) => {
+        const signalRadarAvailable = item.flow_acceleration_score != null && item.sustainability_score != null;
+        const axes = signalRadarAvailable ? SIGNAL_AXES : LEGACY_AXES;
+        const values = axes.map((axis) => {
           const raw = item[axis.key];
           return raw == null ? null : Math.max(0, Math.min(100, "ratio" in axis && axis.ratio ? raw * 100 : raw));
         });
         const complete = values.every((value) => value != null);
         const dataPoints = complete ? values.map((value, index) => point(index, (value ?? 0) / 100).join(",")).join(" ") : null;
-        const detail = AXES.map((axis, index) => `${axis.label} ${scoreText(values[index])}`).join(", ");
+        const detail = axes.map((axis, index) => `${axis.label} ${scoreText(values[index])}`).join(", ");
         const actualText = item.actual_relative_strength == null ? "실측 대기" : `실측 ${scoreText(item.actual_relative_strength)} · Gap ${gapText(item.relative_strength_gap)}`;
-        return <button type="button" key={item.theme_id} className="observation-radar-card" onClick={() => props.onThemeClick(item.theme_id)} aria-label={`${item.observation_rank ?? "-"}위 ${item.theme_name}, ${detail}, ${actualText}`} title={detail}>
-          <header><b>#{item.observation_rank ?? "-"}</b><span className={`theme-observation-state state-${item.status_code.toLowerCase()}`}>{props.statusNames[item.status_code] ?? item.status_code}</span></header>
+        return <button type="button" key={item.theme_id} className="observation-radar-card" onClick={() => props.onThemeClick(item.theme_id)} aria-label={`${item.observation_rank ?? "-"}위 ${item.theme_name}, ${item.stage_label ?? "단계 대기"}, D+1 후보 ${scoreText(item.relative_strength_score)}, ${detail}, ${actualText}`} title={detail}>
+          <header><b>#{item.observation_rank ?? "-"}</b><span className={`theme-observation-state stage-${item.stage_code?.toLowerCase() ?? "pending"}`}>{item.stage_label ?? props.statusNames[item.status_code] ?? "분석 대기"}</span></header>
           <div className="observation-radar-visual">
             <svg viewBox="0 0 240 192" role="img" aria-label={`${item.theme_name} 5축 구조`}>
               {[.25, .5, .75, 1].map((ratio) => <polygon key={ratio} points={polygon(ratio)} className="observation-radar-grid-line" />)}
-              {AXES.map((axis, index) => { const [x, y] = point(index, 1); const [labelX, labelY] = point(index, 1.2); return <g key={axis.key}><line x1={cx} y1={cy} x2={x} y2={y} className="observation-radar-axis" /><circle cx={labelX} cy={labelY} r="16" className="observation-radar-axis-hit"><title>{axis.label} {scoreText(values[index])}</title></circle><text x={labelX} y={labelY} className="observation-radar-label">{axis.label}</text></g>; })}
-              {dataPoints ? <><polygon points={dataPoints} className="observation-radar-data" />{values.map((value, index) => { const [x, y] = point(index, (value ?? 0) / 100); return <circle key={AXES[index].key} cx={x} cy={y} r="3" className="observation-radar-point"><title>{AXES[index].label} {scoreText(value)}</title></circle>; })}</> : null}
+              {axes.map((axis, index) => { const [x, y] = point(index, 1); const [labelX, labelY] = point(index, 1.2); return <g key={axis.key}><line x1={cx} y1={cy} x2={x} y2={y} className="observation-radar-axis" /><circle cx={labelX} cy={labelY} r="16" className="observation-radar-axis-hit"><title>{axis.label} {scoreText(values[index])}</title></circle><text x={labelX} y={labelY} className="observation-radar-label">{axis.label}</text></g>; })}
+              {dataPoints ? <><polygon points={dataPoints} className="observation-radar-data" />{values.map((value, index) => { const [x, y] = point(index, (value ?? 0) / 100); return <circle key={axes[index].key} cx={x} cy={y} r="3" className="observation-radar-point"><title>{axes[index].label} {scoreText(value)}</title></circle>; })}</> : null}
             </svg>
-            <span className="observation-radar-center"><b>{item.theme_name}</b><strong>{scoreText(item.relative_strength_score ?? item.relative_strength_probability)}</strong></span>
+            <span className="observation-radar-center"><b>{item.theme_name}</b><small>D+1 후보</small><strong>{scoreText(item.relative_strength_score ?? item.relative_strength_probability)}</strong></span>
           </div>
-          <footer className={item.relative_strength_gap == null ? "is-waiting" : item.relative_strength_gap > 0 ? "is-positive" : item.relative_strength_gap < 0 ? "is-negative" : "is-neutral"}>{complete ? actualText : `구조 데이터 부족 · ${actualText}`}</footer>
+          <footer>{signalRadarAvailable ? (complete ? item.stage_summary ?? actualText : `구조 데이터 부족 · ${item.stage_summary ?? actualText}`) : `기존 저장 5축 · ${actualText}`}</footer>
         </button>;
       })}
     </div>

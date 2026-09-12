@@ -15,12 +15,18 @@ from backend.app.services.market_theme_return_feature_service import (
 
 
 OBSERVATION_FEATURE_VERSION = "THEME_OBSERVATION_FEATURE_V2"
+PRICE_FLOW_STAGE_VERSION = "PRICE_FLOW_STAGE_V1"
+PRICE_FLOW_FEATURE_VERSION = "PRICE_FLOW_FEATURE_V3"
 MIN_UNIVERSE_THEMES = 10
 MIN_ACTIVE_THEME_COVERAGE = 0.50
 MACRO_CODES = ("US_NASDAQ", "US_SP500", "US_SOX", "US_DOW", "US_10Y", "US_2Y", "USD_KRW", "US_BROAD_DOLLAR", "WTI")
 OBSERVATION_FEATURE_NAMES = FEATURE_NAMES_V2 + tuple(
     f"macro_{code.lower()}_{window}" for code in MACRO_CODES for window in ("1d", "5d")
 ) + ("market_kospi_1d", "market_kosdaq_1d", "market_gold_1d", "technical_score", "observation_rule_score")
+PRICE_FLOW_FEATURE_NAMES = OBSERVATION_FEATURE_NAMES + (
+    "flow_acceleration_percentile", "flow_persistence_percentile", "sustainability_score",
+    "price_headroom_percentile", "price_flow_gap", "flow_lead_score",
+)
 
 
 @dataclass(frozen=True)
@@ -163,6 +169,37 @@ class MarketThemeObservationFeatureService:
         confidence = "HIGH" if coverage >= .85 and len(available) >= 6 else "MEDIUM" if coverage >= .65 and len(available) >= 4 else "LOW"
         return score, state, confidence
 
+    @staticmethod
+    def signal_stage(values: dict[str, float | None]) -> str:
+        """Explain the price-flow phase without changing the D+1 ranking score."""
+        price = values.get("price_score")
+        flow = values.get("flow_score")
+        acceleration = values.get("flow_acceleration_percentile")
+        breadth = values.get("breadth_score")
+        sustainability = values.get("sustainability_score")
+        penalty = float(values.get("penalty_score") or 0)
+        price_value = float(price) if price is not None else 50.0
+        flow_value = float(flow) if flow is not None else 50.0
+        acceleration_value = float(acceleration) if acceleration is not None else 50.0
+        breadth_value = float(breadth) if breadth is not None else 50.0
+        sustainability_value = float(sustainability) if sustainability is not None else 50.0
+
+        if penalty <= -12 or sustainability_value <= 25 or (price_value >= 70 and acceleration_value <= 30):
+            return "EXHAUSTED"
+        if price_value >= 75 and flow_value >= 60 and (sustainability_value < 60 or acceleration_value < 55):
+            return "MATURE"
+        if flow_value >= 65 and acceleration_value >= 60 and (price_value < 65 or flow_value - price_value >= 15):
+            return "EARLY"
+        if price_value >= 55 and flow_value >= 55 and breadth_value >= 50:
+            return "CONFIRMED"
+        if sustainability_value <= 40:
+            return "EXHAUSTED"
+        if price_value >= 70:
+            return "MATURE"
+        if flow_value - price_value >= 10:
+            return "EARLY"
+        return "CONFIRMED"
+
     def build_dataset(self, *, through_date: str | None = None, inference_target_date: str | None = None, operational_asof_at: str | None = None) -> ObservationFeatureDataset:
         source = MarketThemeReturnFeatureService(self.db).build_dataset(
             min_coverage=MIN_ACTIVE_THEME_COVERAGE, through_date=through_date, inference_target_date=inference_target_date
@@ -200,6 +237,10 @@ class MarketThemeObservationFeatureService:
                 values["technical_score"] = sum(tech_valid) / len(tech_valid) if tech_valid else None
                 score, state, confidence = self._score(values)
                 values["observation_rule_score"] = score
+                values["price_flow_gap"] = (
+                    None if values.get("price_score") is None or values.get("flow_score") is None
+                    else float(values["flow_score"]) - float(values["price_score"])
+                )
                 rank = ranks.get(row.theme_id)
                 result.append(ObservationFeatureRow(
                     row.base_date, target_date, row.theme_id, row.theme_name, values, score, state, confidence,

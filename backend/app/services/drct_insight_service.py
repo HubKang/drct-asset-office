@@ -406,7 +406,9 @@ class DrctInsightService:
             why: list[str] = []
             warnings: list[str] = []
             if item.observation_rank is not None:
-                why.append(f"관찰순위 #{item.observation_rank}")
+                why.append(f"D+1 테마신호 #{item.observation_rank}")
+            if item.stage_label:
+                why.append(item.stage_label)
             if us_lead.get("relation_status") == "AVAILABLE":
                 why.insert(0, f"미국 {us_lead['us_theme_name']} {us_lead['value']:+.1f}%")
             if flow_gate == "PASS":
@@ -428,6 +430,10 @@ class DrctInsightService:
                 "theme_score": item.relative_strength_score,
                 "theme_percentile": _percentile_rank(theme_values, item.relative_strength_score),
                 "flow_percentile": _percentile_rank(flow_values, item.flow_score),
+                "signal_stage_code": item.stage_code,
+                "signal_stage_label": item.stage_label,
+                "d1_candidate_score": item.relative_strength_score,
+                "signal_key_reason": item.stage_summary,
                 "us_catalyst": us_catalyst, "us_lead": us_lead,
                 "breadth": f"{live.valid_stock_count}/{live.linked_stock_count}" if live else None,
                 "linked_candidate_count": 0, "preliminary_candidate_count": 0,

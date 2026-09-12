@@ -25,6 +25,8 @@ from backend.app.schemas.market_theme_observation_schema import (
 from backend.app.services.market_theme_observation_feature_service import (
     OBSERVATION_FEATURE_NAMES,
     OBSERVATION_FEATURE_VERSION,
+    PRICE_FLOW_FEATURE_NAMES,
+    PRICE_FLOW_FEATURE_VERSION,
     MarketThemeObservationFeatureService,
 )
 
@@ -220,7 +222,7 @@ class MarketThemeObservationMLService:
                     })
         return rows
 
-    def _evaluate_candidate(self, name: str, by_date: dict[str, list[Any]], folds: list[tuple[list[str], list[str]]], feature_names: list[str], parameters: dict[str, float | int | str], weight_mode: str, rule_metrics: MarketThemeObservationMLMetrics) -> tuple[MarketThemeObservationMLCandidate, list[dict[str, Any]]]:
+    def _evaluate_candidate(self, name: str, by_date: dict[str, list[Any]], folds: list[tuple[list[str], list[str]]], feature_names: list[str], parameters: dict[str, float | int | str], weight_mode: str, rule_metrics: MarketThemeObservationMLMetrics, *, feature_version: str = OBSERVATION_FEATURE_VERSION) -> tuple[MarketThemeObservationMLCandidate, list[dict[str, Any]]]:
         predictions: list[dict[str, Any]] = []
         fold_results: list[MarketThemeObservationMLFoldResult] = []
         raw_y: list[int] = []
@@ -245,11 +247,15 @@ class MarketThemeObservationMLService:
             metrics.brier = brier_score_loss(y, calibrated); metrics.log_loss = log_loss(y, calibrated); metrics.calibration_error = _ece(y, calibrated)
             metrics.raw_brier = brier_score_loss(y, raw); metrics.raw_log_loss = log_loss(y, raw); metrics.raw_calibration_error = _ece(y, raw)
         fold_p5 = [float(fold.metrics.precision_at_5 or 0) for fold in fold_results]
+        version_tag = "V3" if feature_version == PRICE_FLOW_FEATURE_VERSION else "V2"
+        calibration_error = metrics.calibration_error if metrics.calibration_error is not None else 1.0
+        calibrated_brier = metrics.brier if metrics.brier is not None else 1.0
+        raw_brier = metrics.raw_brier if metrics.raw_brier is not None else 0.0
         candidate = MarketThemeObservationMLCandidate(
-            model_type=name, model_version=f"OBS-{name}-V2-{datetime.now().strftime('%Y%m%d%H%M%S')}", target_type="TOP20_RELATIVE_STRENGTH",
-            selection_gate_status="NOT_EVALUATED", calibration_status="PASS" if float(metrics.calibration_error or 1) <= .15 and float(metrics.brier or 1) <= float(metrics.raw_brier or 0) + .01 else "FAIL",
+            model_type=name, model_version=f"OBS-{name}-{version_tag}-{datetime.now().strftime('%Y%m%d%H%M%S')}", target_type="TOP20_RELATIVE_STRENGTH",
+            selection_gate_status="NOT_EVALUATED", calibration_status="PASS" if float(calibration_error) <= .15 and float(calibrated_brier) <= float(raw_brier) + .01 else "FAIL",
             probability_display_mode="PROBABILITY", improving_fold_count=sum(float(fold.delta_precision_at_5 or 0) > 0 for fold in fold_results), validation_fold_count=len(fold_results),
-            metrics=metrics, parameters={**parameters, "recent_weight": weight_mode},
+            metrics=metrics, parameters={**parameters, "recent_weight": weight_mode}, feature_version=feature_version,
             delta_precision_at_5=float(metrics.precision_at_5 or 0) - float(rule_metrics.precision_at_5 or 0), delta_ndcg_at_5=float(metrics.ndcg_at_5 or 0) - float(rule_metrics.ndcg_at_5 or 0),
             fold_results=fold_results, worst_fold_precision_at_5=min(fold_p5) if fold_p5 else None, fold_precision_at_5_std=float(np.std(fold_p5)) if fold_p5 else None,
         )
@@ -326,43 +332,59 @@ class MarketThemeObservationMLService:
             rows = [row for row in baseline_rows if row["base_date"] in validation_dates]
             baseline_fold_results.append(MarketThemeObservationMLFoldResult(fold=index, train_start_date=train_dates[0], train_end_date=train_dates[-1], validation_start_date=validation_dates[0], validation_end_date=validation_dates[-1], metrics=MarketThemeObservationMLMetrics(**_rank_metrics(rows, "rule")), delta_precision_at_5=0))
 
+        v3_feature_names = list(PRICE_FLOW_FEATURE_NAMES)
         evaluated: list[tuple[MarketThemeObservationMLCandidate, list[dict[str, Any]], list[str]]] = []
-        base_candidate, base_predictions = self._evaluate_candidate("HGBC_BASE", by_date, folds, feature_names, HGBC_BASE_PARAMS, "EQUAL", rule_metrics)
-        evaluated.append((base_candidate, base_predictions, feature_names))
-        tuned_options = []
-        for index, parameters in enumerate(HGBC_TUNING_PARAMS, start=1):
-            candidate, predictions = self._evaluate_candidate(f"HGBC_TUNED_{index}", by_date, folds, feature_names, parameters, "EQUAL", rule_metrics)
-            tuned_options.append((candidate, predictions, feature_names))
-        tuned = max(tuned_options, key=lambda item: (float(item[0].metrics.precision_at_5 or 0), float(item[0].metrics.ndcg_at_5 or 0)))
-        tuned[0].model_type = "HGBC_TUNED"; evaluated.append(tuned)
-        for mode in ("MILD", "MEDIUM"):
-            tuned_parameters = {key: value for key, value in tuned[0].parameters.items() if key in HGBC_BASE_PARAMS}
-            candidate, predictions = self._evaluate_candidate(f"HGBC_RECENT_{mode}", by_date, folds, feature_names, tuned_parameters, mode, rule_metrics)
-            evaluated.append((candidate, predictions, feature_names))
+        for name, selected_features, weight_mode, version in (
+            ("HGBC_BASE_V2", feature_names, "EQUAL", OBSERVATION_FEATURE_VERSION),
+            ("HGBC_RECENT_MILD_V2", feature_names, "MILD", OBSERVATION_FEATURE_VERSION),
+            ("PRICE_FLOW_V3_BASE", v3_feature_names, "EQUAL", PRICE_FLOW_FEATURE_VERSION),
+            ("PRICE_FLOW_V3_RECENT_MILD", v3_feature_names, "MILD", PRICE_FLOW_FEATURE_VERSION),
+        ):
+            candidate, predictions = self._evaluate_candidate(
+                name, by_date, folds, selected_features, HGBC_BASE_PARAMS, weight_mode, rule_metrics,
+                feature_version=version,
+            )
+            evaluated.append((candidate, predictions, selected_features))
 
-        ablation_results = [MarketThemeObservationAblationResult(feature_group="FULL", metrics=base_candidate.metrics, delta_precision_at_5=0, delta_ndcg_at_5=0, verdict="기준")]
-        for group in FEATURE_GROUPS:
-            selected = [name for name in feature_names if _feature_group(name) != group]
-            candidate, _ = self._evaluate_candidate(f"ABLATION_MINUS_{group}", by_date, folds, selected, HGBC_BASE_PARAMS, "EQUAL", rule_metrics)
-            delta_p5 = float(candidate.metrics.precision_at_5 or 0) - float(base_candidate.metrics.precision_at_5 or 0)
-            delta_ndcg = float(candidate.metrics.ndcg_at_5 or 0) - float(base_candidate.metrics.ndcg_at_5 or 0)
-            verdict = "Noise 가능성" if delta_p5 > .002 else "예측 기여 높음" if delta_p5 < -.002 else "영향 제한적"
-            ablation_results.append(MarketThemeObservationAblationResult(feature_group=group, metrics=candidate.metrics, delta_precision_at_5=delta_p5, delta_ndcg_at_5=delta_ndcg, verdict=verdict))
+        v3_base = next(item[0] for item in evaluated if item[0].model_type == "PRICE_FLOW_V3_BASE")
+        ablation_groups = {
+            "FULL_V3": set(),
+            "-price_flow_gap": {"price_flow_gap"},
+            "-flow_acceleration": {"flow_acceleration", "flow_acceleration_percentile", "flow_3d_minus_5d", "momentum_flow_interaction"},
+            "-flow_continuity": {"joint_positive_streak", "flow_persistence_percentile"},
+            "-breadth": {"breadth_score", "breadth_percentile", "price_breadth", "joint_flow_breadth", "breadth_short_change", "breadth_flow_interaction", "alignment_breadth_interaction"},
+            "-price_headroom": {"price_headroom_percentile"},
+            "-concentration": {"top1_concentration", "top3_concentration", "concentration_inverse_percentile"},
+            "-sustainability_composite": {"sustainability_score"},
+        }
+        ablation_results: list[MarketThemeObservationAblationResult] = []
+        for group, removed in ablation_groups.items():
+            if not removed:
+                candidate = v3_base
+            else:
+                selected = [name for name in v3_feature_names if name not in removed]
+                candidate, _ = self._evaluate_candidate(
+                    f"PRICE_FLOW_V3{group}", by_date, folds, selected, HGBC_BASE_PARAMS, "EQUAL", rule_metrics,
+                    feature_version=PRICE_FLOW_FEATURE_VERSION,
+                )
+            delta_p5 = float(candidate.metrics.precision_at_5 or 0) - float(v3_base.metrics.precision_at_5 or 0)
+            delta_ndcg = float(candidate.metrics.ndcg_at_5 or 0) - float(v3_base.metrics.ndcg_at_5 or 0)
+            delta_top20 = float(candidate.metrics.precision_top20 or 0) - float(v3_base.metrics.precision_top20 or 0)
+            delta_failure = float(candidate.metrics.top5_bottom_half_rate or 0) - float(v3_base.metrics.top5_bottom_half_rate or 0)
+            verdict = "예측 기여 높음" if delta_p5 < -.002 or delta_failure > .002 else "Noise 가능성" if delta_p5 > .002 and delta_failure <= 0 else "영향 제한적"
+            ablation_results.append(MarketThemeObservationAblationResult(
+                feature_group=group, metrics=candidate.metrics, delta_precision_at_5=delta_p5,
+                delta_ndcg_at_5=delta_ndcg, delta_precision_top20=delta_top20,
+                delta_top5_bottom_half_rate=delta_failure, verdict="기준" if group == "FULL_V3" else verdict,
+            ))
 
-        best_ml, best_predictions, _ = max(evaluated, key=lambda item: (float(item[0].metrics.precision_at_5 or 0), float(item[0].metrics.ndcg_at_5 or 0)))
-        hybrid_candidates = [self._hybrid_candidate(f"RULE_{round(weight * 100)}_ML_{round((1 - weight) * 100)}", weight, best_predictions, folds, rule_metrics) for weight in (1.0, .8, .7, .6, .5, 0.0)]
-        candidates = [item[0] for item in evaluated] + hybrid_candidates
+        candidates = [item[0] for item in evaluated]
         self._apply_gate(candidates, baseline_metrics, len(folds))
 
         oos_prediction_sets: dict[str, list[dict[str, Any]]] = {}
         if oos_dates:
             for candidate, _, selected_features in evaluated:
                 oos_prediction_sets[candidate.model_type] = self._attach_oos(candidate, by_date, development_dates, oos_dates, selected_features)
-            best_oos = oos_prediction_sets.get(best_ml.model_type, [])
-            for candidate in hybrid_candidates:
-                weight = float(candidate.parameters["rule_weight"]); rule_scale = _day_rank_scale(best_oos, "rule"); model_scale = _day_rank_scale(best_oos, "score")
-                blended = [{**row, "hybrid": weight * rule_scale[(str(row["target_date"]), int(row["theme_id"]))] + (1 - weight) * model_scale[(str(row["target_date"]), int(row["theme_id"]))]} for row in best_oos]
-                candidate.oos_metrics = MarketThemeObservationMLMetrics(**_rank_metrics(blended, "hybrid")) if blended else None
             oos_rule_rows = [self._row(row, row.observation_rule_score) for day in oos_dates for row in by_date[day]]
             baseline_metrics["OBSERVATION_RULE_OOS"] = MarketThemeObservationMLMetrics(**_rank_metrics(oos_rule_rows, "score"))
 
@@ -380,10 +402,10 @@ class MarketThemeObservationMLService:
         passed = [candidate for candidate in ranked if candidate.selection_gate_status == "PASS"]
         recommendation = "Gate 통과 후보는 운영에 반영하지 않고 Shadow 검증을 권고합니다." if passed else "Gate 통과 후보가 없어 현 운영 Rule V2를 유지합니다."
         return MarketThemeObservationMLTrainResponse(
-            status="COMPLETED", message="Feature ablation·제한 HGBC tuning·최근 가중치·Hybrid·최근 OOS 검증을 완료했습니다.", feature_version=OBSERVATION_FEATURE_VERSION,
+            status="COMPLETED", message="Feature V2와 PRICE_FLOW_V3의 Walk-forward·Ablation·최근 OOS 검증을 완료했습니다.", feature_version=PRICE_FLOW_FEATURE_VERSION,
             train_start_date=development_dates[0], train_end_date=development_dates[-1], distinct_base_dates=len(dates), train_row_count=development_row_count, qualified_date_count=len(dataset.qualified_dates), excluded_universe_dates=dataset.excluded_universe_dates,
             validation_fold_count=len(folds), candidates=ranked, baseline_metrics=baseline_metrics, baseline_fold_results=baseline_fold_results,
-            feature_diagnostics=self._diagnostics([row for row in labeled if row.base_date in development_set], feature_names), ablation_results=ablation_results,
+            feature_diagnostics=self._diagnostics([row for row in labeled if row.base_date in development_set], v3_feature_names), ablation_results=ablation_results,
             oos_start_date=oos_dates[0] if oos_dates else None, oos_end_date=oos_dates[-1] if oos_dates else None, oos_sample_days=len(oos_dates),
             recommended_candidate=ranked[0].model_type if ranked else None, recommendation=recommendation,
         )
@@ -402,7 +424,7 @@ class MarketThemeObservationMLService:
                     'TOP20_RELATIVE_STRENGTH',:gate,:reason,:improving,'THEME_OBSERVATION_METRIC_V2',:p5,:spearman,:ndcg,:rank_error,
                     :p20,:r20,:f1,:brier,:log_loss,:ece,:raw_brier,:raw_log_loss,:raw_ece,:calibration,:display)
         """), {
-            "version": candidate.model_version, "kind": candidate.model_type, "feature": OBSERVATION_FEATURE_VERSION, "status": candidate.candidate_status,
+            "version": candidate.model_version, "kind": candidate.model_type, "feature": candidate.feature_version, "status": candidate.candidate_status,
             "now": now, "start": dates[0], "end": dates[-1], "dates": len(dates), "rows": row_count, "folds": candidate.validation_fold_count,
             "gate": candidate.selection_gate_status, "reason": "Top20 +3%p·NDCG 비열화 없음·fold 안정성·보정 Gate", "improving": candidate.improving_fold_count,
             "p5": metrics.precision_at_5, "spearman": metrics.spearman, "ndcg": metrics.ndcg_at_5, "rank_error": metrics.mean_rank_error,

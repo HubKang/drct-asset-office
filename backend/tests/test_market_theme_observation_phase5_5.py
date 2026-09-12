@@ -34,6 +34,7 @@ def _session() -> Session:
     """)
     migration = Path("backend/app/sql/migrations/033_market_theme_observation_validation_feedback.sql").read_text(encoding="utf-8")
     raw.executescript(migration)
+    raw.execute("ALTER TABLE market_theme_observation_validation_samples ADD COLUMN stage_code TEXT")
     raw.commit()
     raw.close()
     session = Session(engine)
@@ -47,7 +48,8 @@ def _rows(reverse: bool = False) -> list[dict[str, object]]:
     if reverse:
         theme_ids.reverse()
     return [{"theme_id": theme_id, "rank": index + 1, "score": 100 - index * 5,
-             "status": "FLOW_LEADING" if index < 2 else "NEUTRAL", "coverage": 1.0}
+             "status": "FLOW_LEADING" if index < 2 else "NEUTRAL",
+             "stage": "EARLY" if index < 2 else "CONFIRMED", "coverage": 1.0}
             for index, theme_id in enumerate(theme_ids)]
 
 
@@ -130,6 +132,7 @@ def test_quality_gate_and_diagnostics_use_persisted_scalar_metrics() -> None:
     assert diagnostics.diagnostic_status == "INSUFFICIENT_DATA"
     assert diagnostics.messages[0].code == "INSUFFICIENT_DATA"
     assert diagnostics.status_performance
+    assert {row.stage_code for row in diagnostics.stage_performance} == {"EARLY", "CONFIRMED"}
     assert diagnostics.score_bucket_performance
     db.close()
 

@@ -56,7 +56,7 @@ export type RouteItem = {
 
 export const routeRegistry: RouteItem[] = [
   { routeKey: "dashboard", path: "/dashboard", title: "대시보드", description: "투자 리서치 현황 요약", component: <DashboardPage /> },
-  { routeKey: "drct-insight", path: "/drct-insight", title: "DrCT 오늘의 인사이트", description: "테마·수급·패턴을 종합한 오늘의 관찰 후보", component: <DrctInsightPage /> },
+  { routeKey: "drct-insight", path: "/drct-insight", title: "DrCT 실시간 인사이트", description: "D+1 테마 후보와 장전·장중 DrCT 정보를 종합한 실시간 인사이트", component: <DrctInsightPage /> },
   { routeKey: "market-calendar", path: "/market-calendar", title: "증시 캘린더", description: "테마별 뉴스와 일정을 월간 캘린더로 관리", component: <MarketCalendarPage /> },
   { routeKey: "realtime-theme-treemap", path: "/realtime-theme-treemap", title: "실시간 테마 트리맵", description: "활성 테마와 연결 종목의 장중 등락률 Snapshot", component: <RealtimeThemeTreemapPage /> },
   { routeKey: "drct-stock-signals", path: "/drct-stock-signals", title: "DrCT 종목별 마크 시그널", description: "차트 마크와 성공 패턴을 이용한 종목별 관찰 시그널", component: <DrctStockSignalsPage /> },
