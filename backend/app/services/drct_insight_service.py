@@ -116,6 +116,29 @@ class DrctInsightService:
         return "WEAK"
 
     @staticmethod
+    def _live_insight(theme_gate: str, flow_gate: str, live: object | None) -> tuple[str, str]:
+        """Interpret the shared realtime snapshot without inventing a second score."""
+        if live is None or not getattr(live, "valid_stock_count", 0):
+            return "WAITING", "장중 데이터 대기 · 선행 판단을 유지합니다."
+        avg = getattr(live, "avg_change_rate", None)
+        strength = getattr(live, "theme_strength", None)
+        breadth = getattr(live, "breadth_ratio", None)
+        leading = theme_gate == "PASS"
+        positive = avg is not None and strength is not None and avg > 0 and strength > 0
+        broad = breadth is not None and breadth >= .5
+        if not leading and positive and broad:
+            return "NEW", "장중 등락과 상대강도, 상승 확산이 함께 나타나 새롭게 탐지됐습니다."
+        if leading and avg is not None and strength is not None and avg < 0 and strength < 0:
+            return "MISMATCH", "선행 가설과 달리 장중 등락과 상대강도가 모두 약세입니다."
+        if positive and flow_gate == "WEAK":
+            return "MISMATCH", "장중 가격 반응은 강하지만 선행 수급 신호와 방향이 엇갈립니다."
+        if leading and positive and broad:
+            return "STRENGTHENING", "선행 가설을 장중 등락·상대강도·상승 확산이 함께 확인합니다."
+        if leading and (not positive or not broad):
+            return "WEAKENING", "선행 가설을 지지하는 장중 강도 또는 상승 확산이 충분하지 않습니다."
+        return "STABLE", "현재 반응은 확인됐지만 판단을 바꿀 만큼 강한 합의는 아직 없습니다."
+
+    @staticmethod
     def _pattern_gate(edge: float | None, band: str, p25: float | None, median: float | None) -> str:
         if edge is None or p25 is None or median is None:
             return "NOT_READY"
@@ -403,6 +426,12 @@ class DrctInsightService:
             us_item = us_by_kr_theme.get(item.theme_id)
             us_lead = self._us_lead(us_item)
             us_catalyst = us_lead.get("strength") or "NONE"
+            insight_status, insight_interpretation = self._live_insight(theme_gate, flow_gate, live)
+            signal_reason = " · ".join(filter(None, [
+                f"D+1 관찰 #{item.observation_rank}" if item.observation_rank is not None else "D+1 관찰 후보",
+                item.stage_label or "가격·수급 신호",
+                "수급 양호" if flow_gate == "PASS" else "수급 관찰" if flow_gate == "WATCH" else "수급 약함" if flow_gate == "WEAK" else "수급 대기",
+            ]))
             why: list[str] = []
             warnings: list[str] = []
             if item.observation_rank is not None:
@@ -416,16 +445,25 @@ class DrctInsightService:
             if live and live.avg_change_rate is not None:
                 why.append(f"장중 {live.avg_change_rate:+.1f}%")
             if live and live.valid_stock_count:
-                why.append(f"확산 {live.valid_stock_count}/{live.linked_stock_count}")
+                why.append(f"상승 확산 {getattr(live, 'up_count', 0)}/{live.valid_stock_count}")
             if not live:
                 warnings.append("실시간 Snapshot 없음")
             row = {
                 "theme_id": item.theme_id, "theme_name": item.theme_name,
                 "observation_rank": item.observation_rank,
                 "change_rate": live.avg_change_rate if live else item.base_change_rate,
+                "realtime_avg_change_rate": live.avg_change_rate if live else None,
                 "theme_strength": live.theme_strength if live else None,
                 "valid_stock_count": live.valid_stock_count if live else 0,
                 "linked_stock_count": live.linked_stock_count if live else 0,
+                "realtime_rank": live.rank if live else None,
+                "up_count": getattr(live, "up_count", 0) if live else 0,
+                "down_count": getattr(live, "down_count", 0) if live else 0,
+                "flat_count": getattr(live, "flat_count", 0) if live else 0,
+                "breadth_ratio": getattr(live, "breadth_ratio", None) if live else None,
+                "realtime_snapshot_at": realtime.snapshot_at if live else None,
+                "insight_status": insight_status,
+                "insight_interpretation": insight_interpretation,
                 "flow_score": item.flow_score,
                 "theme_score": item.relative_strength_score,
                 "theme_percentile": _percentile_rank(theme_values, item.relative_strength_score),
@@ -433,9 +471,9 @@ class DrctInsightService:
                 "signal_stage_code": item.stage_code,
                 "signal_stage_label": item.stage_label,
                 "d1_candidate_score": item.relative_strength_score,
-                "signal_key_reason": item.stage_summary,
+                "signal_key_reason": signal_reason,
                 "us_catalyst": us_catalyst, "us_lead": us_lead,
-                "breadth": f"{live.valid_stock_count}/{live.linked_stock_count}" if live else None,
+                "breadth": f"{getattr(live, 'up_count', 0)}/{live.valid_stock_count}" if live else None,
                 "linked_candidate_count": 0, "preliminary_candidate_count": 0,
                 "focus_candidate_count": 0, "final_candidate_count": 0,
                 "gates": {"theme": theme_gate, "flow": flow_gate},
@@ -556,8 +594,8 @@ class DrctInsightService:
             -row["convergence_level"], -row["success_similarity"],
             row["pattern_edge"] is None, -(row["pattern_edge"] or -999), row["stock_name"],
         ))
-        themes = [row for row in theme_rows if row["linked_candidate_count"] or row["gates"]["theme"] == "PASS"]
-        themes.sort(key=lambda row: (row.get("observation_rank") or 99999, -row["final_candidate_count"]))
+        themes = [row for row in theme_rows if row["linked_candidate_count"] or row["gates"]["theme"] == "PASS" or row["insight_status"] == "NEW"]
+        themes.sort(key=lambda row: (row["insight_status"] != "NEW", row.get("observation_rank") or 99999, -row["final_candidate_count"]))
 
         stock_by_id = {row["stock_id"]: row for row in stock_rows}
         my_watch = []

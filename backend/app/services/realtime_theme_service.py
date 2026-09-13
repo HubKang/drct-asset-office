@@ -224,6 +224,9 @@ class RealtimeThemeService:
             theme_id = int(theme["theme_id"])
             theme_links = by_theme.get(theme_id, [])
             values = [rate_by_link[(theme_id, int(link["stock_id"]))] for link in theme_links if (theme_id, int(link["stock_id"])) in rate_by_link]
+            up_count = sum(value > 0 for value in values)
+            down_count = sum(value < 0 for value in values)
+            flat_count = len(values) - up_count - down_count
             items.append({
                 "theme_id": theme_id,
                 "theme_name": str(theme["theme_name"]),
@@ -232,6 +235,10 @@ class RealtimeThemeService:
                 "theme_strength": round(calculate_theme_strength(values, market_median), 4) if values else None,
                 "linked_stock_count": len(theme_links),
                 "valid_stock_count": len(values),
+                "up_count": up_count,
+                "down_count": down_count,
+                "flat_count": flat_count,
+                "breadth_ratio": round(up_count / len(values), 4) if values else None,
             })
         items.sort(key=lambda item: (item["avg_change_rate"] is None, -(float(item["avg_change_rate"]) if item["avg_change_rate"] is not None else 0), str(item["theme_name"])))
         for index, item in enumerate(items, start=1):

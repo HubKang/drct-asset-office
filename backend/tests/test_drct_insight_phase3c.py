@@ -35,6 +35,29 @@ def test_market_mode_uses_existing_kr_market_hours() -> None:
     assert DrctInsightService._market_mode(datetime(2026, 9, 6, 12, 0)) == "POST_MARKET"
 
 
+def test_live_insight_waits_without_snapshot_instead_of_treating_it_as_weak() -> None:
+    status, interpretation = DrctInsightService._live_insight("PASS", "PASS", None)
+
+    assert status == "WAITING"
+    assert "대기" in interpretation
+
+
+def test_live_insight_confirms_or_rejects_leading_hypothesis_from_shared_snapshot() -> None:
+    confirmed = SimpleNamespace(valid_stock_count=8, avg_change_rate=2.84, theme_strength=2.31, breadth_ratio=.75)
+    rejected = SimpleNamespace(valid_stock_count=8, avg_change_rate=-.4, theme_strength=-.15, breadth_ratio=.25)
+
+    assert DrctInsightService._live_insight("PASS", "PASS", confirmed)[0] == "STRENGTHENING"
+    assert DrctInsightService._live_insight("PASS", "PASS", rejected)[0] == "MISMATCH"
+
+
+def test_live_insight_detects_new_theme_and_partial_live_coverage() -> None:
+    new_theme = SimpleNamespace(valid_stock_count=6, avg_change_rate=1.2, theme_strength=.9, breadth_ratio=2 / 3)
+    partial = SimpleNamespace(valid_stock_count=1, avg_change_rate=.5, theme_strength=.2, breadth_ratio=1.0)
+
+    assert DrctInsightService._live_insight("WATCH", "WATCH", new_theme)[0] == "NEW"
+    assert DrctInsightService._live_insight("PASS", "PASS", partial)[0] == "STRENGTHENING"
+
+
 def test_batch_outcome_uses_daily_sources_and_marker_runtime_status() -> None:
     db = _session()
     db.execute(text("INSERT INTO stock_daily_prices VALUES (1,'2026-09-07',12000,4.5)"))

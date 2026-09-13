@@ -241,3 +241,68 @@
 
 /* Insight UX 2.1: post-market return cards */
 .insight-ux-post>div>button.is-positive{border-color:#f3caca;background:#fff0f0}.insight-ux-post>div>button.is-positive:hover{border-color:#e59b9b;background:#ffe7e7}.insight-ux-post>div>button.is-positive em{color:#c53030;font-weight:750}.insight-ux-post>div>button.is-negative{border-color:#c9dcf5;background:#eef5ff}.insight-ux-post>div>button.is-negative:hover{border-color:#98bce9;background:#e2efff}.insight-ux-post>div>button.is-negative em{color:#2463ad;font-weight:750}.insight-ux-post>div>button.is-flat{background:#f7f9fc}.insight-ux-post>div>button:focus-visible{outline:2px solid #315f9f;outline-offset:2px}
+
+/* Insight UX 3.0: connected market interpretation */
+.insight-v2-header{padding-bottom:12px}.insight-v2-meta{display:flex;align-items:center;justify-content:space-between;gap:16px;border-top:1px solid #e7ebf1;padding:10px 18px 0}.insight-v2-meta>span{overflow:hidden;color:#34445d;font-size:14px;font-weight:700;text-overflow:ellipsis;white-space:nowrap}.insight-v2-meta>div{display:flex;align-items:center;gap:12px;white-space:nowrap}.insight-v2-meta small{color:#7c8798;font-size:11px}.insight-v2-meta button{border:0;background:transparent;color:#2463ad;font-size:12px;font-weight:750;cursor:pointer}
+.insight-v2-key,.insight-v2-changes,.insight-v2-column{min-width:0;border:1px solid #e0e6ee;border-radius:12px;background:#fff}.insight-v2-key>header,.insight-v2-column>header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 15px}.insight-v2-key h2,.insight-v2-changes h2,.insight-v2-column h2{margin:0;color:#22314b;font-size:18px}.insight-v2-key header p,.insight-v2-column header p{margin:2px 0 0;color:#7a8596;font-size:12px}.insight-v2-key nav{display:flex;gap:5px;flex-wrap:wrap}.insight-v2-key nav button{border:1px solid #dfe5ed;border-radius:999px;padding:6px 10px;background:#fff;color:#647186;font-size:12px;cursor:pointer}.insight-v2-key nav button.is-active{border-color:#9ab6dc;background:#edf4ff;color:#255f9f;font-weight:750}
+.insight-v2-key-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;border-top:1px solid #e8ecf2;padding:10px}.insight-v2-key-grid>button{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px 9px;min-width:0;border:1px solid #e0e6ed;border-top:3px solid #6e91c3;border-radius:9px;padding:11px 12px;background:#fff;text-align:left;cursor:pointer}.insight-v2-key-grid>button:hover{border-color:#9bb5d7;box-shadow:0 3px 12px rgba(31,64,108,.09)}.insight-v2-key-grid>button.is-mismatch{border-top-color:#d28a30}.insight-v2-key-grid>button.is-weakening{border-top-color:#7493bd}.insight-v2-key-grid>button.is-new{border-top-color:#7f63b8}.insight-v2-key-grid>button>div{display:flex;align-items:center;justify-content:space-between;gap:7px;grid-column:1/-1}.insight-v2-key-grid strong{overflow:hidden;font-size:15px;text-overflow:ellipsis;white-space:nowrap}.insight-v2-key-grid em,.insight-v2-flow em{border-radius:999px;padding:3px 7px;background:#eef3f8;color:#52657f;font-size:11px;font-style:normal;white-space:nowrap}.insight-v2-key-grid .is-mismatch em,.insight-v2-flow .is-mismatch em{background:#fff3df;color:#9b600f}.insight-v2-key-grid .is-new em,.insight-v2-flow .is-new em{background:#f1edfb;color:#6746a1}.insight-v2-key-grid p{grid-column:1/-1;overflow:hidden;margin:1px 0;color:#47566d;font-size:13px;text-overflow:ellipsis;white-space:nowrap}.insight-v2-key-grid>button>b{color:#254e87;font-size:23px}.insight-v2-key-grid>button>b small{font-size:12px}.insight-v2-key-grid ul{grid-column:1/-1;margin:1px 0 0;padding:0;list-style:none}.insight-v2-key-grid li{overflow:hidden;margin-top:3px;color:#718096;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.insight-v2-key-grid li::before{content:"·";margin-right:5px;color:#4f79b2}
+.insight-v2-changes>header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px}.insight-v2-changes>header h2{font-size:16px}.insight-v2-changes>header span{color:#8791a1;font-size:11px}.insight-v2-changes>div{border-top:1px solid #e8ecf2}.insight-v2-changes>div>button{display:grid;grid-template-columns:46px minmax(110px,.45fr) minmax(0,1fr) auto;align-items:center;gap:9px;width:100%;border:0;border-top:1px solid #eef1f5;padding:8px 13px;background:#fff;text-align:left;cursor:pointer}.insight-v2-changes>div>button:first-child{border-top:0}.insight-v2-changes time{color:#8a94a4;font-size:11px}.insight-v2-changes strong{font-size:13px}.insight-v2-changes span{overflow:hidden;color:#58677b;font-size:12px;text-overflow:ellipsis;white-space:nowrap}.insight-v2-changes em{color:#315f9f;font-size:12px;font-style:normal;font-weight:750}.insight-v2-changes>div>p{margin:0;padding:12px 14px;color:#748096;font-size:12px}
+.insight-v2-workspace{display:grid;grid-template-columns:minmax(250px,30fr) minmax(390px,45fr) minmax(230px,25fr);gap:10px;min-width:0}.insight-v2-column{overflow:hidden}.insight-v2-column>header{border-bottom:1px solid #e8ecf2}.insight-v2-column>header h2{font-size:16px}.insight-v2-column>div{max-height:660px;overflow:auto}.insight-v2-flow>div>button{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 8px;width:100%;border:0;border-left:3px solid transparent;border-bottom:1px solid #edf0f4;padding:10px 11px;background:#fff;text-align:left;cursor:pointer}.insight-v2-flow>div>button.is-selected{border-left-color:#356cad;background:#f4f8fd}.insight-v2-flow button>span{display:flex;align-items:center;justify-content:space-between;gap:6px}.insight-v2-flow button>span strong{overflow:hidden;font-size:13px;text-overflow:ellipsis;white-space:nowrap}.insight-v2-flow button>b{color:#274d82;font-size:18px}.insight-v2-flow button>b small{font-size:11px}.insight-v2-flow button>p{grid-column:1/-1;overflow:hidden;margin:0;color:#778397;font-size:11px;text-overflow:ellipsis;white-space:nowrap}
+.insight-v2-evidence-body{padding:12px}.insight-v2-decision{border-left:3px solid #4778b7;border-radius:7px;padding:10px 12px;background:#f5f8fc}.insight-v2-decision>span{float:right;border-radius:999px;padding:3px 7px;background:#e8f0fb;color:#315f9f;font-size:11px}.insight-v2-decision h3{margin:0;font-size:18px}.insight-v2-decision p{margin:5px 0;color:#4e5e74;font-size:13px}.insight-v2-decision strong{color:#254e87;font-size:14px}.insight-v2-reasons{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:9px}.insight-v2-reasons article{border:1px solid #e4e9ef;border-radius:7px;padding:8px 9px}.insight-v2-reasons article:last-child{grid-column:1/-1}.insight-v2-reasons strong{color:#315f9f;font-size:11px}.insight-v2-reasons p{margin:4px 0 0;color:#48576b;font-size:12px;line-height:1.4}.insight-v2-chain{margin-top:9px;border:1px solid #dfe6ef;border-radius:8px;padding:9px}.insight-v2-chain h3{margin:0 0 7px;font-size:13px}.insight-v2-chain>div{display:flex;align-items:center;gap:6px;overflow:hidden}.insight-v2-chain span{display:flex;align-items:center;gap:6px;color:#40536e;font-size:11px;white-space:nowrap}.insight-v2-chain i{color:#8fa2ba;font-style:normal}
+.insight-v2-stocks>div>article{border-bottom:1px solid #edf0f4;padding:10px 11px;cursor:pointer}.insight-v2-stocks article>div:first-child{display:flex;align-items:center;justify-content:space-between}.insight-v2-stocks article>div:first-child em{color:#315f9f;font-size:11px;font-style:normal;font-weight:750}.insight-v2-stocks article>div:first-child button{border:0;background:transparent;color:#7b8da6;cursor:pointer}.insight-v2-stocks h3{margin:3px 0 0;font-size:14px}.insight-v2-stocks article>p{margin:2px 0 7px;color:#7b8697;font-size:11px}.insight-v2-stocks dl{margin:0}.insight-v2-stocks dl>div{display:grid;grid-template-columns:42px minmax(0,1fr);gap:6px;margin-top:3px}.insight-v2-stocks dt{color:#8a94a4;font-size:11px}.insight-v2-stocks dd{overflow:hidden;margin:0;color:#4a596d;font-size:11px;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:1280px){.insight-v2-key-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.insight-v2-workspace{grid-template-columns:minmax(220px,30fr) minmax(360px,45fr) minmax(210px,25fr)}}
+@media(max-width:980px){.insight-v2-meta{align-items:flex-start;flex-direction:column}.insight-v2-meta>span{white-space:normal}.insight-v2-workspace{grid-template-columns:1fr}.insight-v2-column>div{max-height:none}.insight-v2-chain>div{flex-wrap:wrap}.insight-v2-key>header{align-items:flex-start;flex-direction:column}.insight-v2-changes>div>button{grid-template-columns:42px minmax(90px,.4fr) minmax(0,1fr)}}
+@media(max-width:620px){.insight-v2-key-grid{grid-template-columns:1fr}.insight-v2-changes>div>button{grid-template-columns:42px 1fr auto}.insight-v2-changes>div>button span{grid-column:2/-1}.insight-v2-reasons{grid-template-columns:1fr}.insight-v2-reasons article:last-child{grid-column:auto}}
+
+/* Insight UX 3.1: page-level scrolling and stock-signal visual rhythm */
+.page-content--drct-insight{overflow:visible}
+.page-content--drct-insight>.drct-insight-page{max-width:1600px;margin:0 auto}
+.drct-insight-page.insight-ux-page{gap:16px}
+.insight-v2-header{min-height:120px;border-color:#dfe5ee;border-radius:14px}
+.insight-v2-header .insight-ux-title{padding:17px 20px 13px}
+.insight-v2-meta{padding:11px 20px 0}
+.insight-v2-key,.insight-v2-changes,.insight-v2-column{border-color:#dfe5ee;border-radius:14px}
+.insight-v2-key>header,.insight-v2-column>header{min-height:72px;padding:15px 18px}
+.insight-v2-column>header{display:block}
+.insight-v2-key-grid{gap:10px;padding:10px}
+.insight-v2-key-grid>button{border-color:#dfe5ee;border-radius:9px;padding:12px 13px}
+.insight-v2-changes>header{min-height:52px;padding:12px 18px}
+.insight-v2-changes>div>button{padding:10px 18px}
+.insight-v2-workspace{align-items:start;gap:16px}
+.insight-v2-column{align-self:start;overflow:hidden}
+.insight-v2-column>div{max-height:none;overflow:visible}
+.insight-v2-flow>div>button{min-height:62px;padding:11px 13px}
+.insight-v2-evidence-body{padding:14px}
+.insight-v2-stocks>div>article{padding:12px 13px}
+@media(max-width:980px){.insight-v2-workspace{gap:16px}}
+
+/* Insight UX 3.2: equal-height workspace panels and compact stock metrics */
+@media(min-width:981px){
+  .insight-v2-workspace{align-items:stretch}
+  .insight-v2-column{display:flex;align-self:stretch;flex-direction:column;height:620px}
+  .insight-v2-column>header{flex:0 0 72px;box-sizing:border-box}
+  .insight-v2-column>div{min-height:0;max-height:none;flex:1;overflow-x:hidden;overflow-y:auto;scrollbar-gutter:stable}
+}
+.insight-v2-stocks dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin:0}
+.insight-v2-stocks dl>div{display:block;min-width:0;margin:0;border:1px solid #e7ebf1;border-radius:7px;padding:7px 8px;background:#f8fafc}
+.insight-v2-stocks dt{margin-bottom:3px;color:#7b8798;font-size:10px;font-weight:650}
+.insight-v2-stocks dd{display:-webkit-box;overflow:hidden;min-height:28px;margin:0;color:#435269;font-size:11px;line-height:1.35;white-space:normal;-webkit-box-orient:vertical;-webkit-line-clamp:2}
+@media(max-width:980px){
+  .insight-v2-column{height:auto}
+  .insight-v2-column>div{max-height:560px;overflow-x:hidden;overflow-y:auto}
+}
+@media(max-width:620px){.insight-v2-stocks dl{grid-template-columns:1fr}}
+
+/* Keep the three workspace cards identical even when a header description wraps. */
+.insight-v2-column{display:flex;align-self:stretch;flex-direction:column;box-sizing:border-box;height:620px}
+.insight-v2-column>header{overflow:hidden;min-height:72px;flex:0 0 72px;box-sizing:border-box}
+.insight-v2-column>div{min-height:0;max-height:none;flex:1;overflow-x:hidden;overflow-y:auto;scrollbar-gutter:stable}
+.insight-v2-stocks dl{grid-template-columns:repeat(2,minmax(0,1fr))}
+@media(max-width:980px){.insight-v2-column{height:560px}}
+
+/* Insight UX 3.3: stronger stock identity and inline theme/evaluation trail */
+.insight-v2-stock-identity{display:flex;align-items:center;gap:6px;min-width:0;margin:4px 0 8px}
+.insight-v2-stock-identity h3{flex:0 0 auto;margin:0;border:1px solid #c9dcf4;border-radius:6px;padding:5px 8px;background:#eaf3ff;color:#174f91;font-size:13px;font-weight:800;line-height:1.1}
+.insight-v2-stock-identity span{overflow:hidden;min-width:0;color:#526177;font-size:11px;font-weight:650;text-overflow:ellipsis;white-space:nowrap}
+.insight-v2-stock-identity i{flex:0 0 auto;color:#88a0bc;font-size:8px;font-style:normal}
+.insight-v2-stock-identity b{flex:0 0 auto;border:1px solid #e0e6ed;border-radius:999px;padding:3px 6px;background:#f4f6f9;color:#667389;font-size:10px;font-weight:700;white-space:nowrap}

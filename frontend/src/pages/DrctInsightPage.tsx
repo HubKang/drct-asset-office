@@ -5,16 +5,15 @@ import PageHeader from "@/components/common/PageHeader";
 import InsightPerformanceView from "@/components/drctInsight/InsightPerformanceView";
 import MarketThemePriceFlowPanel from "@/components/marketThemes/MarketThemePriceFlowPanel";
 import { repositories } from "@/services";
-import type { DrctInsightReviewItem, DrctInsightStock, DrctInsightTheme, DrctInsightToday, DrctInsightWatchItem, IntradayState, ReadinessStatus } from "@/types/drctInsight";
+import type { DrctInsightReviewItem, DrctInsightStock, DrctInsightTheme, DrctInsightToday, DrctInsightWatchItem, InsightStatus, IntradayState, ReadinessStatus } from "@/types/drctInsight";
 import { buildNaverStockCandleChartUrl, getNaverChartSessionSidcode, type NaverStockCandlePeriod } from "@/utils/naverChart";
-import { candidateLabel, executionLabel, intradayLabel, nextCheck, patternInterpretation, patternLabel, readinessText, statusSymbol, todayJudgment } from "@/utils/drctInsightUx";
+import { candidateLabel, intradayLabel, nextCheck, patternInterpretation, patternLabel, readinessText, statusSymbol, todayJudgment } from "@/utils/drctInsightUx";
 import "@/styles/drctInsightUx.css";
 
-type ThemeFilter = "FOCUS" | "TOP" | "ALL";
-type StockFilter = "FOCUS" | "ALL";
 type ReviewFilter = "ALL" | "STRONG" | "WEAK" | "MISMATCH";
+type InsightStatusFilter = "ALL" | Exclude<InsightStatus, "STABLE" | "WAITING">;
 export type DrawerTab = "summary" | "pattern" | "flow";
-type ThemeSnapshot = { changeRate: number | null; strength: number | null; valid: number; linked: number };
+type ThemeSnapshot = { changeRate: number | null; strength: number | null; up: number; valid: number; linked: number; rank: number | null; status: InsightStatus };
 type InsightSnapshot = { themes: Record<number, ThemeSnapshot> };
 export type IntradayView = { state: IntradayState; reasons: string[]; themeDelta: number | null; themeChangeDelta: number | null; initialThemeDelta: number | null; breadthDelta: number | null; executionAssist: "CONSIDER_READY" | "KEEP_WATCH" | "CAUTION" };
 
@@ -30,7 +29,7 @@ function point(value: number | null, digits = 1) { return value == null ? "-" : 
 function delta(current: number | null, previous: number | null) { return current == null || previous == null ? null : current - previous; }
 function movement(value: number | null, suffix = "") { return value == null ? "" : `${value > 0 ? "▲" : value < 0 ? "▼" : "→"} ${point(value)}${suffix}`; }
 function compactMovement(value: number | null, suffix = "", flat = .05) { if (value == null) return ""; const direction = Math.abs(value) < flat ? "→" : value > 0 ? "▲" : "▼"; return `${direction} ${point(value)}${suffix}`; }
-function snapshotOf(data: DrctInsightToday): InsightSnapshot { return { themes: Object.fromEntries(data.themes.map((row) => [row.theme_id, { changeRate: row.change_rate, strength: row.theme_strength, valid: row.valid_stock_count, linked: row.linked_stock_count }])) }; }
+function snapshotOf(data: DrctInsightToday): InsightSnapshot { return { themes: Object.fromEntries(data.themes.map((row) => [row.theme_id, { changeRate: row.realtime_avg_change_rate, strength: row.theme_strength, up: row.up_count, valid: row.valid_stock_count, linked: row.linked_stock_count, rank: row.realtime_rank, status: row.insight_status }])) }; }
 
 function intradayView(stock: DrctInsightStock, previous: InsightSnapshot | null, initial: InsightSnapshot | null, priorState: IntradayState = "STABLE"): IntradayView {
   const currentThemeValue = stock.theme_strength ?? stock.theme_change_rate;
@@ -63,29 +62,10 @@ function themeCompactLead(theme: DrctInsightTheme) {
   return `${us} · ${flow}`;
 }
 
-function themeSignalSummary(theme: DrctInsightTheme, realtimeReady: boolean) {
-  const signal = theme.signal_stage_label ? `${theme.signal_stage_label} · D+1 후보 ${number(theme.d1_candidate_score ?? null)}` : themeCompactLead(theme);
-  if (!realtimeReady || theme.theme_strength == null || !theme.linked_stock_count) return `${signal} · 장중 데이터 대기`;
-  return `${signal} · 장중 ${point(theme.theme_strength, 2)} · 확산 ${theme.valid_stock_count}/${theme.linked_stock_count}`;
-}
-
-function ThemeBars({ theme, previous, maxStrength, realtimeReady, compact = false }: { theme: DrctInsightTheme; previous?: ThemeSnapshot | null; maxStrength: number; realtimeReady: boolean; compact?: boolean }) {
-  const strengthReady = realtimeReady && theme.theme_strength != null;
-  const breadthReady = realtimeReady && theme.linked_stock_count > 0;
-  const strengthDelta = strengthReady && previous ? delta(theme.theme_strength, previous.strength ?? previous.changeRate) : null;
-  const breadthDelta = breadthReady && previous ? theme.valid_stock_count - previous.valid : null;
-  const breadthPercent = breadthReady ? Math.min(100, Math.max(0, theme.valid_stock_count / theme.linked_stock_count * 100)) : 0;
-  const strengthPercent = strengthReady ? Math.min(50, Math.abs(theme.theme_strength!) / Math.max(maxStrength, .01) * 50) : 0;
-  return <div className={`insight-theme-bars${compact ? " is-compact" : ""}`}>
-    <div className="insight-theme-metric"><span>장중 강도</span>{strengthReady ? <><strong className={theme.theme_strength! >= 0 ? "is-up" : "is-down"}>{point(theme.theme_strength, 2)}{strengthDelta != null ? <small className={strengthDelta > 0 ? "is-up" : strengthDelta < 0 ? "is-down" : ""}>{compactMovement(strengthDelta, "", .05)}</small> : null}</strong><div className="insight-diverging-bar" aria-label={`장중 강도 ${point(theme.theme_strength, 2)}`}><i className={theme.theme_strength! >= 0 ? "is-positive" : "is-negative"} style={{ width: `${strengthPercent}%` }}/></div></> : <em>데이터 대기</em>}</div>
-    <div className="insight-theme-metric"><span>상승 확산</span>{breadthReady ? <><strong>{theme.valid_stock_count}/{theme.linked_stock_count} · {Math.round(breadthPercent)}%{breadthDelta ? <small className={breadthDelta > 0 ? "is-up" : "is-down"}>{breadthDelta > 0 ? "▲" : "▼"} {breadthDelta > 0 ? "+" : ""}{breadthDelta}</small> : null}</strong><div className="insight-progress-bar" aria-label={`상승 확산 ${Math.round(breadthPercent)}%`}><i style={{ width: `${breadthPercent}%` }}/></div></> : <em>데이터 대기</em>}</div>
-  </div>;
-}
-
 function stockWhy(stock: DrctInsightStock) {
   const theme = stock.theme_name ? `${stock.theme_name} 관찰 #${stock.observation_rank ?? "-"}` : "독립 모멘텀 관찰";
   const lead = stock.us_lead.linked && stock.us_lead.relation_status === "AVAILABLE" && stock.us_lead.strength === "STRONG" ? `미국 ${stock.us_lead.us_theme_name || "연결 테마"} 강세` : theme;
-  return `${lead} · 성공 사례 유사도 ${number(stock.success_similarity)}`;
+  return `${lead} · 패턴 유사도 ${number(stock.success_similarity)}`;
 }
 
 function judgmentText(stock: DrctInsightStock, view: IntradayView) {
@@ -99,6 +79,47 @@ function signalStateLabel(state: IntradayState) {
   if (state === "WEAKENING") return "▼ 약화";
   if (state === "WARNING") return "! 주의";
   return "→ 유지";
+}
+
+function themeSignalReason(theme: DrctInsightTheme) {
+  if (theme.signal_key_reason && !/호환 표시|기존 저장 결과/.test(theme.signal_key_reason)) return theme.signal_key_reason;
+  const flow = theme.gates.flow === "PASS" ? "수급 양호" : theme.gates.flow === "WEAK" ? "수급 약함" : theme.gates.flow === "NO_DATA" ? "수급 대기" : "수급 관찰";
+  return `D+1 관찰 #${theme.observation_rank ?? "-"} · ${theme.signal_stage_label || "가격·수급 신호"} · ${flow}`;
+}
+
+const insightStatusLabel: Record<InsightStatus, string> = { NEW: "신규", STRENGTHENING: "강화", STABLE: "유지", WEAKENING: "약화", MISMATCH: "판단 불일치", WAITING: "대기" };
+
+function themeInsightStatus(theme: DrctInsightTheme, previous: ThemeSnapshot | null | undefined, realtimeReady: boolean): InsightStatus {
+  if (!realtimeReady || theme.insight_status === "WAITING") return "WAITING";
+  const strengthDelta = delta(theme.theme_strength, previous?.strength ?? null);
+  const breadthDelta = previous ? theme.up_count - previous.up : null;
+  const rankGain = previous?.rank != null && theme.realtime_rank != null ? previous.rank - theme.realtime_rank : null;
+  if ((strengthDelta ?? 0) <= -.3 || (breadthDelta ?? 0) <= -1) return (theme.realtime_avg_change_rate ?? 0) > 0 && (breadthDelta ?? 0) < 0 ? "MISMATCH" : "WEAKENING";
+  if (!theme.focus_candidate_count && ((strengthDelta ?? 0) >= .3 || (rankGain ?? 0) >= 3)) return "NEW";
+  if ((strengthDelta ?? 0) >= .3 && (breadthDelta == null || breadthDelta >= 0)) return "STRENGTHENING";
+  return theme.insight_status;
+}
+
+function themeJudgmentScore(theme: DrctInsightTheme) {
+  const value = theme.d1_candidate_score ?? theme.theme_score ?? theme.theme_percentile ?? theme.flow_score;
+  return value == null ? null : Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function themeInsightLine(theme: DrctInsightTheme, status: InsightStatus, realtimeReady: boolean) {
+  if (!realtimeReady || status === "WAITING") return "전일까지의 선행 신호를 유지하며 오늘 장중 테마 반응을 기다립니다.";
+  if (status === theme.insight_status && theme.insight_interpretation) return theme.insight_interpretation;
+  if (status === "MISMATCH") return "가격 흐름과 수급·확산 방향이 엇갈립니다.";
+  if (status === "NEW") return "장중 강도 상승으로 새롭게 탐지됐습니다.";
+  if (status === "STRENGTHENING") return "가격과 수급 신호가 함께 강화되고 있습니다.";
+  if (status === "WEAKENING") return "기존 판단을 지지하던 장중 근거가 줄고 있습니다.";
+  return "현재 반응을 유지하며 다음 Snapshot의 변화를 확인합니다.";
+}
+
+function patternQuality(stock: DrctInsightStock) {
+  if (!stock.success_sample_count) return "유사 사례 부족";
+  if (stock.pattern_status === "VERIFIED" || stock.success_similarity >= 70) return "패턴 양호";
+  if (stock.pattern_status === "WEAK" || (stock.pattern_edge ?? 1) <= 0) return "패턴 확인 필요";
+  return "패턴 보통";
 }
 
 function reviewCategories(item: DrctInsightReviewItem, view: IntradayView | undefined) {
@@ -125,7 +146,7 @@ export function InsightDrawer({ stock, view, postMarket, analysisDate, realtimeS
   const [zoomedChart, setZoomedChart] = useState<{ url: string; alt: string } | null>(null);
   useEffect(() => { const handler = (event: KeyboardEvent) => { if (event.key !== "Escape") return; if (zoomedChart) setZoomedChart(null); else onClose(); }; window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler); }, [onClose, zoomedChart]);
   const decision = judgmentText(stock, view); const next = nextCheck(stock, view.state, realtimeStatus);
-  const why = [stock.focus_candidate ? `오늘 집중 후보 #${stock.focus_rank}` : candidateLabel(stock), stock.observation_rank ? `${stock.theme_name || "연결 테마"} D+1 후보 #${stock.observation_rank}` : null, `성공 사례 유사도 ${number(stock.success_similarity)}`, stock.gates.flow === "PASS" ? "테마 수급 양호" : null].filter(Boolean) as string[];
+  const why = [stock.focus_candidate ? `오늘 집중 후보 #${stock.focus_rank}` : candidateLabel(stock), stock.observation_rank ? `${stock.theme_name || "연결 테마"} D+1 후보 #${stock.observation_rank}` : null, `패턴 유사도 ${number(stock.success_similarity)} · ${patternQuality(stock)}`, stock.gates.flow === "PASS" ? "테마 수급 양호" : null].filter(Boolean) as string[];
   const warnings = stock.warning_items.filter((item) => !/실패.*표본|Marker.*표본|Pattern Edge|구분력/.test(item));
   if (stock.failure_sample_count < stock.required_failure_sample_count) warnings.unshift("실패 사례 표본 부족");
   if (stock.pattern_edge == null) warnings.push("Pattern Edge 미확정 · 성공/실패 구분력 데이터 축적 중");
@@ -145,7 +166,7 @@ export function InsightDrawer({ stock, view, postMarket, analysisDate, realtimeS
 function DrctInsightPage() {
   const [searchParams] = useSearchParams();
   const [data, setData] = useState<DrctInsightToday | null>(() => repositories.drctInsight.peekToday()); const [error, setError] = useState(""); const [loading, setLoading] = useState(false);
-  const [workspace, setWorkspace] = useState<"today" | "performance">(() => searchParams.get("view") === "performance" ? "performance" : "today"); const [themeFilter, setThemeFilter] = useState<ThemeFilter>("FOCUS"); const [stockFilter, setStockFilter] = useState<StockFilter>("FOCUS"); const [themeId, setThemeId] = useState<number | null>(null); const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("ALL"); const [selected, setSelected] = useState<DrctInsightStock | null>(null); const [watchOpen, setWatchOpen] = useState(false); const [drawerTab, setDrawerTab] = useState<DrawerTab>("summary"); const [views, setViews] = useState<Record<number, IntradayView>>({});
+  const [workspace, setWorkspace] = useState<"today" | "performance">(() => searchParams.get("view") === "performance" ? "performance" : "today"); const [statusFilter, setStatusFilter] = useState<InsightStatusFilter>("ALL"); const [themeId, setThemeId] = useState<number | null>(() => Number(searchParams.get("theme")) || null); const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("ALL"); const [selected, setSelected] = useState<DrctInsightStock | null>(null); const [watchOpen, setWatchOpen] = useState(false); const [drawerTab, setDrawerTab] = useState<DrawerTab>("summary"); const [views, setViews] = useState<Record<number, IntradayView>>({});
   const requestRef = useRef(0); const abortRef = useRef<AbortController | null>(null); const initialSnapshotRef = useRef<InsightSnapshot | null>(null); const previousSnapshotRef = useRef<InsightSnapshot | null>(null); const currentSnapshotRef = useRef<InsightSnapshot | null>(null); const stateRef = useRef<Record<number, IntradayState>>({});
 
   const load = useCallback(async (force=true) => {
@@ -157,21 +178,25 @@ function DrctInsightPage() {
       const nextViews = Object.fromEntries(next.stocks.map((row) => [row.stock_id, intradayView(row, previous, initialSnapshotRef.current, stateRef.current[row.stock_id])]));
       stateRef.current = Object.fromEntries(Object.entries(nextViews).map(([key, value]) => [Number(key), value.state])); previousSnapshotRef.current = previous; currentSnapshotRef.current = snapshot;
       const defaultTheme = [...next.themes].filter((row) => row.focus_candidate_count > 0).sort((a,b) => (a.observation_rank ?? 999) - (b.observation_rank ?? 999))[0] || [...next.themes].sort((a,b) => (a.observation_rank ?? 999) - (b.observation_rank ?? 999))[0];
-      setViews(nextViews); setData(next); setThemeId((current) => current && next.themes.some((row) => row.theme_id === current) ? current : defaultTheme?.theme_id ?? null); setSelected((current) => current ? next.stocks.find((row) => row.stock_id === current.stock_id) || null : null);
+      setViews(nextViews); setData(next); setThemeId((current) => current && next.themes.some((row) => row.theme_id === current) ? current : defaultTheme?.theme_id ?? null); setSelected((current) => { const queryStock = Number(searchParams.get("stock")); return current ? next.stocks.find((row) => row.stock_id === current.stock_id) || null : queryStock ? next.stocks.find((row) => row.stock_id === queryStock) || null : null; });
     } catch (cause) { if (requestId === requestRef.current && !controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Insight를 불러오지 못했습니다."); }
     finally { if (requestId === requestRef.current) setLoading(false); }
-  }, []);
+  }, [searchParams]);
   useEffect(() => { void load(false); return () => abortRef.current?.abort(); }, [load]);
 
-  const themes = useMemo(() => { const sorted = [...(data?.themes || [])].sort((a,b) => (a.observation_rank ?? 999) - (b.observation_rank ?? 999)); return themeFilter === "FOCUS" ? sorted.filter((row) => row.focus_candidate_count > 0) : themeFilter === "TOP" ? sorted.slice(0,10) : sorted; }, [data, themeFilter]);
+  const realtimeReady = data?.readiness.realtime.status === "READY";
+  const insightThemes = useMemo(() => [...(data?.themes || [])].map((theme) => { const previous = previousSnapshotRef.current?.themes[theme.theme_id]; const status = themeInsightStatus(theme, previous, Boolean(realtimeReady)); const change = delta(theme.theme_strength, previous?.strength ?? null); const breadthChange = previous ? theme.up_count - previous.up : null; const rankChange = previous?.rank != null && theme.realtime_rank != null ? previous.rank - theme.realtime_rank : null; return { theme, status, change, breadthChange, rankChange, score: themeJudgmentScore(theme) }; }).sort((a,b) => Number(b.status === "MISMATCH")-Number(a.status === "MISMATCH") || (b.score ?? -1)-(a.score ?? -1)), [data, realtimeReady]);
+  const themes = useMemo(() => insightThemes.filter((row) => statusFilter === "ALL" || row.status === statusFilter), [insightThemes, statusFilter]);
   const selectedTheme = data?.themes.find((theme) => theme.theme_id === themeId) || null;
-  const themeStocks = useMemo(() => { const all = (data?.stocks || []).filter((row) => row.theme_id === themeId).sort((a,b) => Number(b.final_candidate)-Number(a.final_candidate) || Number(b.focus_candidate)-Number(a.focus_candidate) || (a.focus_rank ?? 999)-(b.focus_rank ?? 999) || b.success_similarity-a.success_similarity); if (stockFilter === "ALL") return all; const focus = all.filter((row) => row.focus_candidate); return focus.length ? focus : all.filter((row) => row.preliminary_candidate); }, [data, stockFilter, themeId]);
+  const selectedInsight = insightThemes.find((row) => row.theme.theme_id === themeId) || null;
+  const themeStocks = useMemo(() => (data?.stocks || []).filter((row) => row.theme_id === themeId).sort((a,b) => Number(b.final_candidate)-Number(a.final_candidate) || Number(b.focus_candidate)-Number(a.focus_candidate) || (a.focus_rank ?? 999)-(b.focus_rank ?? 999) || b.success_similarity-a.success_similarity), [data, themeId]);
   const watches = useMemo(() => [...(data?.my_watch || [])].sort((a,b) => (watchOrder[a.gates.execution || "WAIT"] ?? 9) - (watchOrder[b.gates.execution || "WAIT"] ?? 9)), [data]);
   const watchIds = useMemo(() => new Set(watches.map((row) => row.stock_id)), [watches]);
-  const maxThemeStrength = useMemo(() => Math.max(.01, ...themes.map((theme) => Math.abs(theme.theme_strength ?? 0))), [themes]);
   const fallbackView: IntradayView = { state: "STABLE", reasons: ["변화 비교 대기"], themeDelta: null, themeChangeDelta: null, initialThemeDelta: null, breadthDelta: null, executionAssist: "KEEP_WATCH" };
   const postMarket = data?.market_mode === "POST_MARKET";
   const judgment = data ? todayJudgment(data, Object.values(views).map((view) => view.state)) : "오늘의 판단을 준비하고 있습니다.";
+  const keyInsights = insightThemes.filter((row) => (statusFilter === "ALL" || row.status === statusFilter) && (row.theme.focus_candidate_count > 0 || row.status !== "STABLE")).slice(0, 4);
+  const changes = insightThemes.filter((row) => (row.change != null && Math.abs(row.change) >= .3) || (row.breadthChange != null && Math.abs(row.breadthChange) >= 1) || (row.rankChange != null && Math.abs(row.rankChange) >= 3) || row.status === "MISMATCH" || row.status === "NEW").slice(0, 4);
 
   const toggleWatch = async (stock: DrctInsightStock) => { const watch = watches.find((row) => row.stock_id === stock.stock_id); if (watch) await repositories.watchlist.update(watch.watchlist_id, { is_active: 0 }); else await repositories.watchlist.bulkAdd({ stock_ids: [stock.stock_id], memo: "DrCT 실시간 인사이트" }); await load(true); };
   const updateWatch = async (row: DrctInsightWatchItem, value: string) => { await repositories.watchlist.update(row.watchlist_id, { status: executionStatus[value] || "관심" }); await load(true); };
@@ -179,13 +204,22 @@ function DrctInsightPage() {
 
   if (workspace === "performance") return <div className="drct-insight-page"><PageHeader title="DrCT 실시간 인사이트" description="D+1 테마 후보를 포함한 집중·검증 후보의 실제 D+N 성과를 확인합니다."/><InsightPerformanceView onToday={() => setWorkspace("today")}/></div>;
   return <div className="drct-insight-page insight-ux-page">
-    <header className="insight-ux-header"><div className="insight-ux-title"><div><h1>DrCT 실시간 인사이트</h1><p className="insight-ux-title-description">장전 국제시장/미국테마/지수·지표/한미연계/실시간 테마/텔레그램(테마)/마커·패턴/종목수급 등 종합 안내</p></div><div className="insight-ux-title-actions"><button type="button" className="insight-watch-button" onClick={() => setWatchOpen(true)}><Star size={16} fill={watches.length ? "currentColor" : "none"}/>내 관찰 <b>{watches.length}</b></button><button type="button" className="btn btn-secondary" disabled={loading} onClick={() => void load()}><RefreshCw size={15}/>{loading ? "갱신 중" : "새로고침"}</button></div></div><div className="insight-ux-judgment"><span>오늘의 판단</span><p>{judgment}</p></div><div className="insight-ux-header-bottom"><nav aria-label="DrCT 실시간 인사이트 화면 전환"><button type="button" className="is-active">오늘의 판단</button><button type="button" onClick={() => setWorkspace("performance")}>후보 성과</button></nav><dl><div><dt>관찰 테마</dt><dd>{data?.summary.observed_theme_count ?? "-"}</dd></div><div><dt>집중 후보</dt><dd>{data?.summary.focus_candidate_count ?? "-"}</dd></div><div><dt>검증 후보</dt><dd>{data?.summary.final_candidate_count ?? "-"}</dd></div><div><dt>실행 검토</dt><dd>{data?.summary.ready_count ?? "-"}</dd></div></dl><div className="insight-ux-meta">{data ? <Readiness data={data}/> : null}<span>{data?.market_mode === "POST_MARKET" ? "장후" : data?.market_mode === "PRE_MARKET" ? "장전" : "장중"} · 마지막 {data?.summary.last_updated_at?.slice(11,16) || "-"}</span></div></div></header>
+    <header className="insight-ux-header insight-v2-header"><div className="insight-ux-title"><div><h1>DrCT 실시간 인사이트</h1><p className="insight-ux-title-description">DrCT 전체 데이터를 연결해 현재 의미 있는 시장 변화와 판단 근거를 보여줍니다.</p></div><div className="insight-ux-title-actions"><button type="button" className="insight-watch-button" onClick={() => setWatchOpen(true)}><Star size={16} fill={watches.length ? "currentColor" : "none"}/>내 관심종목 <b>{watches.length}</b></button><button type="button" className="btn btn-secondary" disabled={loading} onClick={() => void load()}><RefreshCw size={15}/>{loading ? "갱신 중" : "새로고침"}</button></div></div><div className="insight-v2-meta"><span>{judgment}</span><div>{data ? <Readiness data={data}/> : null}<small>{data?.market_mode === "POST_MARKET" ? "장후" : data?.market_mode === "PRE_MARKET" ? "장전" : "장중"} · {data?.summary.last_updated_at?.slice(11,16) || "-"}</small><button type="button" onClick={() => setWorkspace("performance")}>과거 판단 검증 →</button></div></div></header>
     {error ? <div className="insight-error">{error}<button type="button" onClick={() => void load()}>다시 시도</button></div> : null}
-    {postMarket && data ? <PostMarketPanel data={data} views={views} filter={reviewFilter} onFilter={setReviewFilter} onOpen={(stockId) => { const stock = data.stocks.find((row) => row.stock_id === stockId); if (stock) openStock(stock); }}/> : null}
-    <main className="insight-ux-workspace">
-      <section className="insight-ux-column insight-ux-themes" aria-labelledby="insight-theme-title"><header><div><span>01</span><div><h2 id="insight-theme-title">오늘의 테마 흐름</h2><p>강도와 상승 확산을 한눈에 비교합니다.</p></div></div><nav aria-label="테마 범위">{([['FOCUS','집중 테마'],['TOP','관찰 상위'],['ALL','전체']] as const).map(([key,label]) => <button type="button" key={key} className={themeFilter === key ? "is-active" : ""} onClick={() => setThemeFilter(key)}>{label}</button>)}</nav></header><div className="insight-ux-scroll">{themes.map((theme) => { const realtimeReady = data?.readiness.realtime.status === "READY"; const selectedThemeRow = theme.theme_id === themeId; return <button type="button" className={`insight-ux-theme-row${selectedThemeRow ? " is-selected" : ""}`} aria-pressed={selectedThemeRow} key={theme.theme_id} onClick={() => setThemeId(theme.theme_id)}><span className="insight-theme-row-head"><b>#{theme.observation_rank ?? "-"}</b><strong>{theme.theme_name}</strong><small>{themeCompactLead(theme)}</small><em>{theme.focus_candidate_count} 집중</em></span><ThemeBars theme={theme} previous={previousSnapshotRef.current?.themes[theme.theme_id]} maxStrength={maxThemeStrength} realtimeReady={realtimeReady} compact/></button>; })}{data && !themes.length ? <div className="insight-ux-empty"><strong>집중 테마가 없습니다.</strong><p>관찰 상위 테마를 확인해보세요.</p><button type="button" onClick={() => setThemeFilter("TOP")}>관찰 상위 보기</button></div> : null}</div></section>
-      <section className="insight-ux-column insight-ux-stocks" aria-labelledby="insight-stock-title"><header><div><span>02</span><div><h2 id="insight-stock-title">선택 테마 · 집중 후보 Signal</h2><p>후보의 현재·유사도·상대강도·장중 흐름을 비교합니다.</p></div></div><nav aria-label="후보 범위"><button type="button" className={stockFilter === "FOCUS" ? "is-active" : ""} onClick={() => setStockFilter("FOCUS")}>집중 후보</button><button type="button" className={stockFilter === "ALL" ? "is-active" : ""} onClick={() => setStockFilter("ALL")}>전체 후보</button></nav></header><div className="insight-ux-scroll insight-ux-stock-list">{selectedTheme ? <section className="insight-selected-theme"><div><h3>{selectedTheme.theme_name}</h3><small>{themeSignalSummary(selectedTheme, data?.readiness.realtime.status === "READY")}</small></div><strong>관찰 #{selectedTheme.observation_rank ?? "-"} · 집중 {selectedTheme.focus_candidate_count}</strong></section> : <div className="insight-ux-empty"><strong>테마를 선택하세요.</strong></div>}<div className="insight-candidate-heading"><h3>집중 후보 Signal</h3><span>{themeStocks.length}개 비교</span></div><div className="insight-candidate-matrix-head" aria-hidden="true"><span>종목</span><span>현재</span><span>성공 사례</span><span>테마 대비</span><span>현재 흐름</span><span/></div><div className="insight-candidate-matrix">{themeStocks.map((stock) => { const view = views[stock.stock_id] || fallbackView; const watched = watchIds.has(stock.stock_id); const similarity = Math.max(0, Math.min(100, stock.success_similarity || 0)); const relative = stock.relative_strength; return <article key={stock.stock_id} role="button" tabIndex={0} aria-label={`${stock.stock_name} ${stock.focus_candidate ? `집중 후보 #${stock.focus_rank}` : candidateLabel(stock)} 상세 보기`} className={`insight-signal-stock-row is-${view.state.toLowerCase()}`} onClick={() => openStock(stock)} onKeyDown={(event) => { if (event.currentTarget !== event.target) return; if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openStock(stock); } }}><strong>{stock.stock_name}</strong><b className={(stock.change_rate ?? 0) >= 0 ? "is-up" : "is-down"}>{pct(stock.change_rate,2)}</b><div className="insight-matrix-similarity" title="과거 성공 Marker와 현재 차트의 유사도"><span>{number(stock.success_similarity)} / 100</span><i><b style={{width:`${similarity}%`}}/></i></div><span className={relative == null ? "" : relative > 0 ? "is-up" : relative < 0 ? "is-down" : ""} title="현재 종목 등락률 - 해당 테마 기준 등락률">{relative == null ? "데이터 대기" : compactMovement(relative, "%p", .1)}</span><em className={`is-${view.state.toLowerCase()}`}>{signalStateLabel(view.state)}</em><button type="button" className={watched ? "is-watched" : ""} aria-label={`${stock.stock_name} ${watched ? "내 관찰에서 제거" : "내 관찰에 추가"}`} title={watched ? "내 관찰 중" : "내 관찰에 추가"} onClick={(event) => { event.stopPropagation(); void toggleWatch(stock); }}><Star size={17} fill={watched ? "currentColor" : "none"}/></button></article>; })}</div>{data && !themeStocks.length ? <div className="insight-ux-empty"><strong>이 테마에는 현재 집중 후보가 없습니다.</strong><p>연결된 1차 후보를 확인할 수 있습니다.</p><button type="button" onClick={() => setStockFilter("ALL")}>전체 후보 보기</button></div> : null}</div></section>
+    <section className="insight-v2-key"><header><div><h2>현재 핵심 인사이트</h2><p>선행 가설과 오늘 실제 반응이 함께 만든 결론입니다.</p></div><nav aria-label="인사이트 상태 필터">{([['ALL','전체'],['NEW','신규'],['STRENGTHENING','강화'],['WEAKENING','약화'],['MISMATCH','판단 불일치']] as const).map(([key,label]) => <button type="button" key={key} className={statusFilter === key ? "is-active" : ""} onClick={() => setStatusFilter(key)}>{label}</button>)}</nav></header><div className="insight-v2-key-grid">{keyInsights.map(({theme,status,change,score}) => <button type="button" key={theme.theme_id} className={`is-${status.toLowerCase()}`} onClick={() => setThemeId(theme.theme_id)}><div><strong>{theme.theme_name}</strong><em>{insightStatusLabel[status]}</em></div><p>{themeInsightLine(theme,status,Boolean(realtimeReady))}</p><b>{score ?? "대기"} <small>{change == null ? "" : compactMovement(change,"%p",.1)}</small></b><ul>{[themeSignalReason(theme), theme.realtime_avg_change_rate == null ? "장중 반응 대기" : `실시간 ${pct(theme.realtime_avg_change_rate,2)}`, theme.valid_stock_count ? `상승 확산 ${theme.up_count}/${theme.valid_stock_count}` : null].filter(Boolean).slice(0,3).map((item) => <li key={String(item)}>{item}</li>)}</ul></button>)}{data && !keyInsights.length ? <div className="insight-ux-empty"><strong>핵심 인사이트를 준비하고 있습니다.</strong><p>확인된 데이터부터 순차적으로 반영합니다.</p></div> : null}</div></section>
+    <section className="insight-v2-changes"><header><h2>주요 변화</h2><span>강도·순위·상승 확산의 의미 있는 Snapshot 변화</span></header><div>{changes.length ? changes.map(({theme,status,change,breadthChange,rankChange}) => <button type="button" key={theme.theme_id} onClick={() => setThemeId(theme.theme_id)}><time>{theme.realtime_snapshot_at?.slice(11,16) || "현재"}</time><strong>{theme.theme_name}</strong><span>{change != null && Math.abs(change) >= .3 ? `테마강도 ${compactMovement(change,"%p",.1)}` : breadthChange != null && Math.abs(breadthChange) >= 1 ? `상승 종목 ${breadthChange > 0 ? "+" : ""}${breadthChange}개` : rankChange != null ? `실시간 순위 ${rankChange > 0 ? `${rankChange}계단 상승` : `${Math.abs(rankChange)}계단 하락`}` : themeInsightLine(theme,status,Boolean(realtimeReady))}</span><em>{insightStatusLabel[status]}</em></button>) : <p>{realtimeReady ? "판단을 바꿀 만큼 큰 변화가 아직 없습니다." : "장중 데이터 대기 · 준비된 선행 신호는 0점으로 처리하지 않습니다."}</p>}</div></section>
+    <main className="insight-v2-workspace">
+      <section className="insight-v2-column insight-v2-flow"><header><h2>시장 흐름</h2><p>점수보다 변화와 상태를 먼저 봅니다.</p></header><div>{themes.map(({theme,status,change,score}) => <button type="button" className={`${theme.theme_id === themeId ? "is-selected " : ""}is-${status.toLowerCase()}`} key={theme.theme_id} onClick={() => setThemeId(theme.theme_id)}><span><strong>{theme.theme_name}</strong><em>{insightStatusLabel[status]}</em></span><b>{score ?? "대기"} <small>{change == null ? (realtimeReady ? "→" : "장중 대기") : compactMovement(change,"",.1)}</small></b><p>{theme.signal_stage_label || themeCompactLead(theme)}</p></button>)}{data && !themes.length ? <div className="insight-ux-empty"><strong>해당 상태의 테마가 없습니다.</strong></div> : null}</div></section>
+      <section className="insight-v2-column insight-v2-evidence"><header><h2>판단 근거</h2><p>왜 이런 판단을 했는지 신호의 연결로 설명합니다.</p></header>{selectedTheme && selectedInsight ? <div className="insight-v2-evidence-body"><div className="insight-v2-decision"><span>{insightStatusLabel[selectedInsight.status]}</span><h3>{selectedTheme.theme_name}</h3><p>{themeInsightLine(selectedTheme,selectedInsight.status,Boolean(realtimeReady))}</p><strong>종합 판단 {selectedInsight.score ?? "대기"} {selectedInsight.change == null ? "" : compactMovement(selectedInsight.change,"",.1)}</strong></div><div className="insight-v2-reasons">{[
+        ["시장 배경", selectedTheme.us_lead.linked ? `미국 ${selectedTheme.us_lead.us_theme_name || "연결 테마"} ${selectedTheme.us_lead.strength === "STRONG" ? "강세" : "연계 확인"}` : "미국 선행 연계 없음"],
+        ["선행 신호", themeSignalReason(selectedTheme)],
+        ["현재 테마 반응", selectedTheme.realtime_snapshot_at ? `실시간 등락 ${pct(selectedTheme.realtime_avg_change_rate,2)} · 테마강도 ${pct(selectedTheme.theme_strength,2)} · 상승 확산 ${selectedTheme.up_count}/${selectedTheme.valid_stock_count}` : "장중 데이터 대기 · 판단 보류"],
+        ["종목 확인", themeStocks[0] ? `${themeStocks[0].stock_name} 테마 대비 ${themeStocks[0].relative_strength == null ? "확인 대기" : `${point(themeStocks[0].relative_strength)}%p`}` : "연결 종목 확인 대기"],
+        ["과거 사례", themeStocks[0] ? `패턴 유사도 ${number(themeStocks[0].success_similarity)} · ${patternQuality(themeStocks[0])}` : "유사 사례 확인 대기"],
+      ].map(([title,content]) => <article key={title}><strong>{title}</strong><p>{content}</p></article>)}</div><section className="insight-v2-chain"><h3>신호 연결</h3><div>{[selectedTheme.us_lead.linked ? `미국 ${selectedTheme.us_lead.us_theme_name || "테마"} 신호` : null, selectedTheme.us_lead.linked ? "한미 연계 확인" : null, selectedTheme.d1_candidate_score != null ? "D+1 가격·수급 상위" : null, selectedTheme.realtime_avg_change_rate != null ? `실시간 테마 ${pct(selectedTheme.realtime_avg_change_rate,2)}` : null, selectedTheme.valid_stock_count ? `상승 확산 ${selectedTheme.up_count}/${selectedTheme.valid_stock_count}` : null, themeStocks[0]?.relative_strength != null ? `${themeStocks[0].stock_name} 상대강도 ${themeStocks[0].relative_strength > 0 ? "+" : "-"}` : null].filter(Boolean).map((step,index) => <span key={String(step)}>{index ? <i>→</i> : null}{step}</span>)}</div></section></div> : <div className="insight-ux-empty"><strong>시장 흐름에서 테마를 선택하세요.</strong></div>}</section>
+      <section className="insight-v2-column insight-v2-stocks"><header><h2>지금 볼 종목</h2><p>현재·변화·여유·다음 확인을 함께 봅니다.</p></header><div>{themeStocks.slice(0,6).map((stock) => { const view=views[stock.stock_id] || fallbackView; const watched=watchIds.has(stock.stock_id); const live=Boolean(selectedTheme?.realtime_snapshot_at); const status=view.state === "WARNING" ? "확인 필요" : view.state === "STRENGTHENING" || (stock.relative_strength ?? 0) > 0 ? "좋아지는 중" : "관찰 유지"; return <article key={stock.stock_id} role="button" tabIndex={0} onClick={() => openStock(stock)}><div><em>{status}</em><button type="button" aria-label={`${stock.stock_name} 관심종목 ${watched ? "해제" : "추가"}`} onClick={(event) => { event.stopPropagation(); void toggleWatch(stock); }}><Star size={15} fill={watched ? "currentColor" : "none"}/></button></div><div className="insight-v2-stock-identity"><h3>{stock.stock_name}</h3><span>{stock.theme_name || "테마 미지정"}</span><i aria-hidden="true">▶</i><b>{patternQuality(stock).replace("패턴 ", "패턴")}</b></div><dl><div><dt>현재</dt><dd className={(stock.change_rate ?? 0)>=0 ? "is-up" : "is-down"}>{live ? pct(stock.change_rate,2) : `전일 ${pct(stock.change_rate,2)}`}</dd></div><div><dt>변화</dt><dd>{live && stock.relative_strength != null ? `테마 대비 ${point(stock.relative_strength)}%p` : "장중 대기"}</dd></div><div><dt>여유</dt><dd>{selectedInsight?.status === "STRENGTHENING" ? `${selectedTheme?.theme_name} 강화 · ` : ""}수급 {stock.gates.flow === "PASS" ? "양호" : stock.gates.flow === "NO_DATA" ? "대기" : "관찰"} · 패턴 {number(stock.success_similarity)}</dd></div><div><dt>다음 확인</dt><dd>{live ? "테마 확산 / 상대강도 유지" : "실시간 테마 강도 / 테마 대비 상대강도"}</dd></div></dl></article>; })}{selectedTheme && !themeStocks.length ? <div className="insight-ux-empty"><strong>현재 연결된 종목이 없습니다.</strong></div> : null}</div></section>
     </main>
+    {postMarket && data ? <PostMarketPanel data={data} views={views} filter={reviewFilter} onFilter={setReviewFilter} onOpen={(stockId) => { const stock = data.stocks.find((row) => row.stock_id === stockId); if (stock) openStock(stock); }}/> : null}
     {selected ? <InsightDrawer stock={selected} view={views[selected.stock_id] || fallbackView} postMarket={Boolean(postMarket)} analysisDate={data?.analysis_date || null} realtimeStatus={data?.readiness.realtime.status || "NOT_READY"} loading={loading} tab={drawerTab} onTab={setDrawerTab} onRefresh={() => void load()} onClose={() => setSelected(null)}/> : null}
     {watchOpen ? <WatchDrawer watches={watches} views={views} realtimeStatus={data?.readiness.realtime.status || "NOT_READY"} onOpen={openStock} onUpdate={(row,value) => void updateWatch(row,value)} onClose={() => setWatchOpen(false)}/> : null}
   </div>;

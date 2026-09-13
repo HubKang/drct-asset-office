@@ -63,6 +63,9 @@ def test_refresh_fetches_each_unique_stock_once_and_persists_only_change_rate(db
     assert result.valid_stock_count == 2
     assert result.failed_stock_count == 0
     assert [(item.theme_name, item.avg_change_rate) for item in result.themes] == [("AI", 2.5), ("반도체", 0.75)]
+    semiconductor = next(item for item in result.themes if item.theme_name == "반도체")
+    assert (semiconductor.up_count, semiconductor.down_count, semiconductor.flat_count) == (1, 1, 0)
+    assert semiconductor.breadth_ratio == pytest.approx(0.5)
     # The market median is based on two unique stocks (2.5, -1.0), not the
     # three theme links in which Samsung Electronics appears twice.
     assert next(item.theme_strength for item in result.themes if item.theme_name == "AI") == pytest.approx(1.4583)
@@ -102,6 +105,9 @@ def test_partial_failure_excludes_failed_stock_and_does_not_reuse_stale_value(db
     assert semiconductor.linked_stock_count == 2
     assert semiconductor.valid_stock_count == 1
     assert semiconductor.avg_change_rate == 2.5
+    assert semiconductor.up_count == 1
+    assert semiconductor.down_count == 0
+    assert semiconductor.breadth_ratio == 1.0
 
 
 def test_refresh_reconciles_removed_links_and_clears_previous_date(db: Session) -> None:

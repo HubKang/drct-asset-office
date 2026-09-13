@@ -11,6 +11,10 @@ class RealtimeThemeItem(BaseModel):
     theme_strength: float | None = None
     linked_stock_count: int = 0
     valid_stock_count: int = 0
+    up_count: int = 0
+    down_count: int = 0
+    flat_count: int = 0
+    breadth_ratio: float | None = None
 
 
 class RealtimeThemeTreemapResponse(BaseModel):

@@ -17,6 +17,7 @@ OutcomeDirection = Literal["UP", "DOWN", "FLAT", "NOT_READY"]
 MarkerReviewStatus = Literal["UNRECORDED", "UNDECIDED", "S", "F"]
 ReviewPriority = Literal["HIGH", "NORMAL"]
 CandidateOutcomeStatus = Literal["PENDING", "PARTIAL", "COMPLETE"]
+InsightStatus = Literal["NEW", "STRENGTHENING", "STABLE", "WEAKENING", "MISMATCH", "WAITING"]
 
 
 class DrctInsightGateSet(BaseModel):
@@ -131,9 +132,18 @@ class DrctInsightTheme(BaseModel):
     theme_name: str
     observation_rank: int | None = None
     change_rate: float | None = None
+    realtime_avg_change_rate: float | None = None
     theme_strength: float | None = None
     valid_stock_count: int = 0
     linked_stock_count: int = 0
+    realtime_rank: int | None = None
+    up_count: int = 0
+    down_count: int = 0
+    flat_count: int = 0
+    breadth_ratio: float | None = None
+    realtime_snapshot_at: str | None = None
+    insight_status: InsightStatus = "WAITING"
+    insight_interpretation: str = "장중 데이터 대기 · 선행 판단을 유지합니다."
     flow_score: float | None = None
     theme_score: float | None = None
     theme_percentile: float | None = None

@@ -9,6 +9,7 @@ export type MarketMode = "PRE_MARKET" | "INTRADAY" | "POST_MARKET";
 export type OutcomeDirection = "UP" | "DOWN" | "FLAT" | "NOT_READY";
 export type MarkerReviewStatus = "UNRECORDED" | "UNDECIDED" | "S" | "F";
 export type ReadinessStatus = "READY" | "PARTIAL" | "NOT_READY" | "STALE" | "ERROR";
+export type InsightStatus = "NEW" | "STRENGTHENING" | "STABLE" | "WEAKENING" | "MISMATCH" | "WAITING";
 
 export type DrctInsightUsLead = {
   linked: boolean; link_id: number | null; us_theme_id: number | null; us_theme_name: string | null;
@@ -27,8 +28,11 @@ export type InsightGates = {
 
 export type DrctInsightTheme = {
   theme_id: number; theme_name: string; observation_rank: number | null;
-  change_rate: number | null; theme_strength: number | null; flow_score: number | null; breadth: string | null;
+  change_rate: number | null; realtime_avg_change_rate: number | null; theme_strength: number | null; flow_score: number | null; breadth: string | null;
   valid_stock_count: number; linked_stock_count: number;
+  realtime_rank: number | null; up_count: number; down_count: number; flat_count: number;
+  breadth_ratio: number | null; realtime_snapshot_at: string | null;
+  insight_status: InsightStatus; insight_interpretation: string;
   theme_score: number | null; theme_percentile: number | null; flow_percentile: number | null;
   signal_stage_code?: string | null; signal_stage_label?: string | null; d1_candidate_score?: number | null; signal_key_reason?: string | null;
   us_catalyst: "STRONG" | "MODERATE" | "WEAK" | "NONE"; us_lead: DrctInsightUsLead;
