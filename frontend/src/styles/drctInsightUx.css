@@ -239,6 +239,39 @@
 /* Insight UX 2.0: compact post-market summary metrics */
 .insight-ux-post>header{align-items:flex-start}.insight-ux-post>header>dl{align-self:flex-start;align-items:flex-start}.insight-ux-post>header>dl>div{align-self:flex-start;min-height:0;padding:8px 10px}.insight-ux-post>header>dl dd{line-height:1.2}
 
+/* Insight UX 2.0.1: compact stock-detail judgment summary */
+.insight-summary-workspace{display:grid;grid-template-areas:"decision decision decision" "reason warning next";grid-template-columns:minmax(0,1.06fr) minmax(0,1fr) minmax(0,1.06fr);grid-template-rows:auto auto;gap:10px;min-height:0}
+.insight-summary-workspace>.insight-decision-board{grid-area:decision}.insight-summary-workspace>.is-reason{grid-area:reason}.insight-summary-workspace>.is-warning{grid-area:warning}.insight-summary-workspace>.is-next{grid-area:next}
+.insight-summary-workspace .insight-decision-board>header{min-height:38px;padding:8px 11px}.insight-summary-workspace .insight-decision-board>header em{flex:0 0 auto;border-radius:999px;padding:4px 8px;background:#eef4fc;color:#315e9e;font-size:10px;font-style:normal;font-weight:750;white-space:nowrap}
+.insight-summary-workspace .insight-decision-board dl{grid-template-columns:repeat(4,minmax(0,1fr));background:#fff}
+.insight-summary-workspace .insight-decision-board dl>div{border-top:1px solid #e4e9f0;border-right:1px solid #e4e9f0;padding:7px 9px;background:#fff}.insight-summary-workspace .insight-decision-board dl>div:nth-child(-n+4){border-top:0}.insight-summary-workspace .insight-decision-board dl>div:nth-child(4n){border-right:0}
+.insight-summary-workspace .insight-decision-board dl>div.is-positive{background:#fff0f1}.insight-summary-workspace .insight-decision-board dl>div.is-negative{background:#edf5ff}.insight-summary-workspace .insight-decision-board dl>div.is-neutral{background:#f5f7fa}
+.insight-summary-workspace .insight-decision-board dl>div.is-positive dd{color:#d23f49}.insight-summary-workspace .insight-decision-board dl>div.is-negative dd{color:#2463ad}.insight-summary-workspace .insight-decision-board dl>div.is-neutral dd{color:#667085}
+.insight-summary-workspace .insight-decision-board dt{font-size:10px}.insight-summary-workspace .insight-decision-board dd{margin-top:2px;font-size:12px}
+.insight-ux-drawer .insight-summary-workspace .insight-compact-list{align-self:start;min-height:0;padding:10px 12px}.insight-summary-workspace .insight-compact-list h4{margin-bottom:4px!important;font-size:13px!important}.insight-summary-workspace .insight-compact-list p{align-items:flex-start;min-height:28px;gap:7px;padding:5px 0;font-size:12px;line-height:1.4}.insight-summary-workspace .insight-compact-list p>span{margin-top:1px;font-size:14px!important;line-height:1}
+.insight-ux-drawer .insight-summary-workspace+.insight-ux-system{margin-top:0}
+@media(max-width:760px){.insight-summary-workspace{grid-template-areas:"decision decision" "reason next" "warning warning";grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:auto}.insight-summary-workspace .insight-decision-board dl{grid-template-columns:repeat(2,minmax(0,1fr))}.insight-summary-workspace .insight-decision-board dl>div:nth-child(n){border-top:1px solid #e4e9f0;border-right:1px solid #e4e9f0}.insight-summary-workspace .insight-decision-board dl>div:nth-child(-n+2){border-top:0}.insight-summary-workspace .insight-decision-board dl>div:nth-child(2n){border-right:0}}
+@media(max-width:520px){.insight-summary-workspace{grid-template-areas:"decision" "reason" "warning" "next";grid-template-columns:1fr}.insight-summary-workspace .insight-decision-board>header{align-items:flex-start;flex-direction:column}.insight-summary-workspace .insight-decision-board>header em{align-self:flex-start}.insight-ux-drawer .insight-summary-workspace .insight-compact-list{width:100%}}
+
+/* Insight UX 2.0.2: equal summary groups with item cards */
+.insight-summary-workspace{grid-template-columns:repeat(3,minmax(0,1fr));align-items:stretch}
+.insight-ux-drawer .insight-summary-workspace .insight-compact-list{align-self:stretch;height:100%;box-sizing:border-box}
+.insight-summary-workspace .insight-compact-list p{min-height:34px;margin-top:6px;border:1px solid #e4e9f0!important;border-radius:7px;padding:7px 9px;background:#f8fafc}
+.insight-summary-workspace .insight-compact-list p+p{border-top:1px solid #e4e9f0!important}
+.insight-summary-workspace .insight-compact-list.is-reason p{border-color:#dcece4!important;background:#f6fbf8}
+.insight-summary-workspace .insight-compact-list.is-warning p{border-color:#f0dfc4!important;background:#fffaf2}
+.insight-summary-workspace .insight-compact-list.is-next p{border-color:#dce7f5!important;background:#f5f9fe}
+@media(max-width:760px){.insight-summary-workspace{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:520px){.insight-summary-workspace{grid-template-columns:1fr}}
+
+/* Insight UX 2.0.3: chart-pattern section rhythm */
+.insight-ux-drawer .insight-pattern-signal{margin-bottom:12px}
+.insight-ux-drawer .insight-price-position.is-compact{margin-bottom:12px}
+.insight-ux-drawer .insight-price-position.is-compact+.insight-ux-chart-tools{margin-top:0}
+
+/* Insight UX 2.0.4: supply-flow panel separation */
+.insight-ux-drawer .insight-supply-theme-strip+.insight-ux-supply-board{margin-top:12px}
+
 /* Insight UX 2.1: post-market return cards */
 .insight-ux-post>div>button.is-positive{border-color:#f3caca;background:#fff0f0}.insight-ux-post>div>button.is-positive:hover{border-color:#e59b9b;background:#ffe7e7}.insight-ux-post>div>button.is-positive em{color:#c53030;font-weight:750}.insight-ux-post>div>button.is-negative{border-color:#c9dcf5;background:#eef5ff}.insight-ux-post>div>button.is-negative:hover{border-color:#98bce9;background:#e2efff}.insight-ux-post>div>button.is-negative em{color:#2463ad;font-weight:750}.insight-ux-post>div>button.is-flat{background:#f7f9fc}.insight-ux-post>div>button:focus-visible{outline:2px solid #315f9f;outline-offset:2px}
 
@@ -306,3 +339,184 @@
 .insight-v2-stock-identity span{overflow:hidden;min-width:0;color:#526177;font-size:11px;font-weight:650;text-overflow:ellipsis;white-space:nowrap}
 .insight-v2-stock-identity i{flex:0 0 auto;color:#88a0bc;font-size:8px;font-style:normal}
 .insight-v2-stock-identity b{flex:0 0 auto;border:1px solid #e0e6ed;border-radius:999px;padding:3px 6px;background:#f4f6f9;color:#667389;font-size:10px;font-weight:700;white-space:nowrap}
+
+/* Insight UX 4.0: market-flow master and selected-theme detail workspace */
+.insight-v2-workspace{grid-template-columns:minmax(360px,40fr) minmax(0,60fr);align-items:stretch;gap:16px}
+.insight-v2-flow{height:720px}
+.insight-v2-flow>header{display:grid;min-height:112px;flex:0 0 auto;gap:10px;padding:14px 16px}
+.insight-v2-flow>header nav{display:flex;gap:5px;overflow-x:auto;padding-bottom:1px}
+.insight-v2-flow>header nav button{display:flex;align-items:center;gap:4px;border:1px solid #dfe5ed;border-radius:999px;padding:5px 8px;background:#fff;color:#657287;font-size:11px;white-space:nowrap;cursor:pointer}
+.insight-v2-flow>header nav button b{color:inherit;font-size:10px}
+.insight-v2-flow>header nav button.is-active{border-color:#92b1da;background:#edf4ff;color:#245c9d;font-weight:750}
+.insight-v2-flow>div>button{display:block;min-height:0;padding:12px 14px}
+.insight-v3-flow-title{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;align-items:center;gap:7px}
+.insight-v3-flow-title>span{color:#255b9d;font-size:13px;font-weight:800;font-variant-numeric:tabular-nums}
+.insight-v3-flow-title>strong{overflow:hidden;font-size:14px;text-overflow:ellipsis;white-space:nowrap}
+.insight-v3-flow-title>i{min-width:22px;color:#607a9f;font-size:11px;font-style:normal;font-weight:750;text-align:right}
+.insight-v3-flow-judgment{display:flex;align-items:baseline;gap:8px;margin-top:7px}
+.insight-v3-flow-judgment>b{color:#254f88;font-size:20px;font-variant-numeric:tabular-nums}
+.insight-v3-flow-judgment>small{color:#68778c;font-size:11px}
+.insight-v2-flow dl{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:8px 0 0}
+.insight-v2-flow dl>div{display:flex;align-items:center;justify-content:space-between;gap:5px;min-width:0;border-radius:6px;padding:6px 7px;background:#f6f8fb}
+.insight-v2-flow dt{color:#7f8b9d;font-size:10px}
+.insight-v2-flow dd{overflow:hidden;margin:0;color:#3f5068;font-size:11px;font-weight:700;text-overflow:ellipsis;white-space:nowrap}
+.insight-v2-flow button>p{margin-top:7px}
+.insight-v3-detail-stack{display:grid;grid-template-rows:minmax(360px,1.08fr) minmax(310px,.92fr);gap:16px;height:720px;min-width:0}
+.insight-v3-detail-stack>.insight-v2-column{align-self:stretch;height:auto;min-height:0}
+.insight-v3-detail-stack>.insight-v2-column>div{min-height:0;overflow-y:auto}
+.insight-v2-evidence>header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.insight-v3-detail-button,.insight-v3-theme-title{display:inline-flex;align-items:center;gap:4px;border:0;background:transparent;color:#245e9f;font-weight:750;cursor:pointer}
+.insight-v3-detail-button{font-size:12px;white-space:nowrap}
+.insight-v3-theme-title{margin:0;padding:0;font-size:18px}
+.insight-v3-decision-meta{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:6px}
+.insight-v3-decision-meta>b{color:#586b85;font-size:12px}
+.insight-v3-decision-meta>strong{color:#254e87;font-size:14px}
+.insight-v3-compare{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:stretch;gap:10px;margin-top:10px}
+.insight-v3-compare>section{display:grid;gap:3px;border:1px solid #dfe6ef;border-radius:8px;padding:9px 10px;background:#fff}
+.insight-v3-compare>section small{color:#718096;font-size:10px;font-weight:700}
+.insight-v3-compare>section b{color:#294f83;font-size:13px}
+.insight-v3-compare>section span{color:#56667c;font-size:11px}
+.insight-v3-compare>i{align-self:center;color:#88a1bf;font-style:normal}
+.insight-v2-evidence .insight-v2-reasons{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:8px}
+.insight-v2-evidence .insight-v2-reasons article{padding:7px 8px}
+.insight-v2-evidence .insight-v2-reasons article:last-child{grid-column:auto}
+.insight-v2-evidence .insight-v2-reasons p{font-size:11px}
+.insight-v2-evidence .insight-v2-chain{margin-top:8px;padding:8px}
+.insight-v3-drawer-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;border:1px solid #dce5f0;border-radius:10px;padding:10px;background:#f7faff}
+.insight-v3-drawer-summary>div{min-width:0;border-radius:7px;padding:8px;background:#fff}
+.insight-v3-drawer-summary span,.insight-v3-drawer-summary strong{display:block}
+.insight-v3-drawer-summary span{color:#758298;font-size:11px}
+.insight-v3-drawer-summary strong{overflow:hidden;margin-top:4px;color:#324966;font-size:13px;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:980px){
+  .insight-v2-workspace{grid-template-columns:1fr}
+  .insight-v2-flow{height:560px}
+  .insight-v3-detail-stack{display:grid;grid-template-rows:auto auto;height:auto}
+  .insight-v3-detail-stack>.insight-v2-column{height:560px}
+}
+@media(max-width:620px){
+  .insight-v2-flow dl,.insight-v2-evidence .insight-v2-reasons,.insight-v3-drawer-summary{grid-template-columns:1fr}
+  .insight-v3-compare{grid-template-columns:1fr}
+  .insight-v3-compare>i{display:none}
+}
+
+/* Insight UX 4.1: narrower master, scroll-free evidence, compact top-four stocks */
+.insight-v2-workspace{grid-template-columns:minmax(320px,34fr) minmax(0,66fr)}
+.insight-v3-detail-stack{grid-template-rows:340px 364px}
+.insight-v2-evidence>header,.insight-v2-stocks>header{min-height:58px;flex-basis:58px;padding-top:9px;padding-bottom:9px}
+.insight-v3-detail-stack>.insight-v2-evidence>div{overflow-y:hidden;scrollbar-gutter:auto}
+.insight-v2-evidence-body{padding:8px 10px}
+.insight-v2-evidence .insight-v2-decision{padding:7px 9px}
+.insight-v2-evidence .insight-v3-theme-title{font-size:15px}
+.insight-v2-evidence .insight-v3-decision-meta{margin-top:2px}
+.insight-v2-evidence .insight-v2-decision>p{margin:3px 0;font-size:11px;line-height:1.3}
+.insight-v2-evidence .insight-v3-compare{gap:6px;margin-top:6px}
+.insight-v2-evidence .insight-v3-compare>section{gap:1px;padding:5px 7px}
+.insight-v2-evidence .insight-v3-compare>section b{font-size:12px}
+.insight-v2-evidence .insight-v3-compare>section span{font-size:10px}
+.insight-v2-evidence .insight-v2-reasons{grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;margin-top:5px}
+.insight-v2-evidence .insight-v2-reasons article{padding:5px 6px}
+.insight-v2-evidence .insight-v2-reasons p{margin-top:2px;font-size:10px;line-height:1.25}
+.insight-v2-evidence .insight-v2-chain{display:flex;align-items:center;gap:8px;margin-top:5px;padding:5px 7px}
+.insight-v2-evidence .insight-v2-chain h3{flex:0 0 auto;margin:0;font-size:11px}
+.insight-v2-evidence .insight-v2-chain>div{min-width:0}
+.insight-v2-stocks>div{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));align-content:start;gap:8px;padding:9px}
+.insight-v2-stocks>div>article{min-width:0;border:1px solid #e3e9f1;border-radius:9px;padding:7px;background:#fff}
+.insight-v2-stocks>div>article:hover{border-color:#bfd2ea;background:#fafdff}
+.insight-v2-stocks .insight-v2-stock-identity{flex-wrap:wrap;gap:4px;margin:3px 0 5px}
+.insight-v2-stocks .insight-v2-stock-identity h3{overflow:hidden;max-width:100%;padding:4px 6px;text-overflow:ellipsis;white-space:nowrap}
+.insight-v2-stocks .insight-v2-stock-identity span{order:3;flex:1 0 100%;font-size:10px}
+.insight-v2-stocks .insight-v2-stock-identity i{margin-left:auto}
+.insight-v2-stocks dl{grid-template-columns:1fr;gap:3px}
+.insight-v2-stocks dl>div{padding:4px 6px}
+.insight-v2-stocks dt{margin-bottom:1px;font-size:9px}
+.insight-v2-stocks dd{min-height:0;font-size:10px;line-height:1.25}
+.insight-v2-stocks .insight-ux-empty{grid-column:1/-1}
+@media(max-width:1280px){
+  .insight-v2-evidence .insight-v2-reasons{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .insight-v2-stocks>div{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:980px){
+  .insight-v2-workspace{grid-template-columns:1fr}
+  .insight-v3-detail-stack{grid-template-rows:auto auto}
+  .insight-v3-detail-stack>.insight-v2-evidence{height:auto;min-height:340px}
+}
+@media(max-width:620px){
+  .insight-v2-evidence .insight-v2-reasons,.insight-v2-stocks>div{grid-template-columns:1fr}
+  .insight-v3-detail-stack>.insight-v2-evidence>div{overflow-y:visible}
+}
+
+/* Insight UX 4.2: clearly separated market-flow theme cards */
+.insight-v2-flow>div{display:flex;align-items:stretch;flex-direction:column;gap:8px;padding:9px;background:#f7f9fc}
+.insight-v2-flow>div>button{flex:0 0 auto;border:1px solid #d9e1eb;border-left:4px solid #aab9cb;border-radius:9px;background:#fff;box-shadow:0 1px 2px rgba(35,55,80,.04);transition:border-color .16s ease,box-shadow .16s ease,background .16s ease}
+.insight-v2-flow>div>button:hover{border-color:#9fb7d4;border-left-color:#5f86b6;background:#fbfdff;box-shadow:0 3px 9px rgba(37,72,112,.09)}
+.insight-v2-flow>div>button.is-selected{border-color:#78a2d5;border-left-color:#2567ad;background:#edf5ff;box-shadow:0 0 0 1px rgba(37,103,173,.08)}
+.insight-v2-flow>div>button:focus-visible{outline:2px solid #2f73bd;outline-offset:2px}
+
+/* Insight UX 4.3: compact, status-colored change cards */
+.insight-v2-changes.insight-v4-changes>div{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;border-top:1px solid #e8ecf2;padding:9px;background:#f8fafc}
+.insight-v2-changes.insight-v4-changes>div>button{display:flex;align-items:stretch;flex-direction:column;gap:4px;min-width:0;border:1px solid #dfe5ed;border-radius:9px;padding:8px 10px;background:#f5f8fc;text-align:left;cursor:pointer;transition:border-color .16s ease,box-shadow .16s ease,transform .16s ease}
+.insight-v4-changes>div>button:first-child{border-top:1px solid #dfe5ed}
+.insight-v4-changes>div>button:hover{box-shadow:0 4px 10px rgba(36,62,94,.1);transform:translateY(-1px)}
+.insight-v4-changes>div>button:focus-visible{outline:2px solid #2f73bd;outline-offset:2px}
+.insight-v4-changes>div>button>div,.insight-v4-changes footer{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
+.insight-v4-changes>div>button strong{overflow:hidden;color:#22324a;font-size:13px;text-overflow:ellipsis;white-space:nowrap}
+.insight-v4-changes>div>button em{flex:0 0 auto;border-radius:999px;padding:2px 6px;background:rgba(255,255,255,.72);font-size:10px;font-style:normal;font-weight:800}
+.insight-v4-changes>div>button>b{overflow:hidden;color:#294e80;font-size:12px;text-overflow:ellipsis;white-space:nowrap}
+.insight-v4-changes>div>button>span{display:-webkit-box;overflow:hidden;min-height:28px;color:#56667a;font-size:10px;line-height:1.35;white-space:normal;-webkit-box-orient:vertical;-webkit-line-clamp:2}
+.insight-v4-changes footer{margin-top:auto;border-top:1px solid rgba(87,107,132,.14);padding-top:5px}
+.insight-v4-changes time,.insight-v4-changes small{overflow:hidden;color:#758399;font-size:9px;text-overflow:ellipsis;white-space:nowrap}
+.insight-v4-changes>div>button.is-new{border-color:#d8c9f0;background:#f6f1ff}.insight-v4-changes>div>button.is-new em{color:#6b46a5}
+.insight-v4-changes>div>button.is-mismatch{border-color:#efc9a4;background:#fff4e9}.insight-v4-changes>div>button.is-mismatch em{color:#a45c13}
+.insight-v4-changes>div>button.is-strengthening{border-color:#b9dfcb;background:#effaf4}.insight-v4-changes>div>button.is-strengthening em{color:#23764b}
+.insight-v4-changes>div>button.is-weakening{border-color:#ebc1c8;background:#fff1f3}.insight-v4-changes>div>button.is-weakening em{color:#aa4050}
+.insight-v4-changes>div>button.is-stable{border-color:#cbd9ea;background:#f1f6fc}.insight-v4-changes>div>button.is-stable em{color:#42688f}
+.insight-v4-changes>div>button.is-waiting{border-color:#dfe3e8;background:#f7f8fa}.insight-v4-changes>div>button.is-waiting em{color:#687384}
+.insight-v4-changes>div>button.is-selected{border-color:#4d83c2;box-shadow:0 0 0 2px rgba(54,112,180,.13)}
+@media(max-width:1080px){.insight-v2-changes.insight-v4-changes>div{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:620px){.insight-v2-changes.insight-v4-changes>div{grid-template-columns:1fr}}
+
+/* Insight UX 4.4: explicit market-flow number semantics and directional value cells */
+.insight-v2-flow .insight-v3-flow-title{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.insight-v2-flow .insight-v3-flow-title>strong{min-width:0}
+.insight-v4-flow-summary{display:grid;gap:3px;margin-top:7px}
+.insight-v4-flow-summary>div{display:grid;grid-template-columns:82px 54px minmax(0,1fr);align-items:center;gap:6px;min-width:0}
+.insight-v4-flow-summary span{display:flex;align-items:center;gap:3px;color:#778599;font-size:10px;font-weight:650;white-space:nowrap}
+.insight-v4-flow-summary b{color:#254f88;font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.insight-v4-flow-summary i{overflow:hidden;color:#66758a;font-size:10px;font-style:normal;font-weight:700;text-overflow:ellipsis;white-space:nowrap}
+.insight-v4-flow-summary>div:nth-child(2)>i{display:flex;align-items:center;gap:4px}
+.insight-v4-flow-summary>div:nth-child(2)>i::before{content:"점수 변화";color:#8a96a7;font-size:9px;font-weight:600}
+.insight-v4-score-help{display:inline-flex!important;align-items:center;justify-content:center;color:#567394!important;font-size:11px!important;cursor:help}
+.insight-v2-flow dl{margin-top:7px}
+.insight-v2-flow dl>div{border:1px solid transparent}
+.insight-v2-flow dl>div.is-positive{border-color:#f2d4d6;background:#fff0f1}
+.insight-v2-flow dl>div.is-positive dd{color:#c83b45}
+.insight-v2-flow dl>div.is-negative{border-color:#d1e0f3;background:#eef5ff}
+.insight-v2-flow dl>div.is-negative dd{color:#2867ae}
+.insight-v2-flow dl>div.is-neutral{border-color:#e2e6eb;background:#f3f5f7}
+.insight-v2-flow dl>div.is-neutral dd{color:#657184}
+.insight-v2-flow dl>div.is-breadth{border-color:#e5e9ee;background:#f6f8fb}
+.insight-v2-flow dl>div.is-breadth dd{color:#3f5068}
+.insight-v2-flow>div>button>p{font-weight:650}
+
+/* Insight UX 4.5: use horizontal space inside the evidence comparison cards */
+.insight-v2-evidence .insight-v3-compare>section{grid-template-columns:minmax(100px,.9fr) repeat(2,minmax(0,1fr));align-items:center;column-gap:6px}
+.insight-v2-evidence .insight-v3-compare>section small{grid-column:1/-1}
+.insight-v2-evidence .insight-v3-compare>section b{grid-column:1;grid-row:2;align-self:stretch;display:flex;align-items:center}
+.insight-v2-evidence .insight-v3-compare>section span{display:flex;align-items:center;align-self:stretch;min-width:0;border:1px solid #e5eaf0;border-radius:6px;padding:4px 6px;background:#f7f9fc;line-height:1.2}
+.insight-v2-evidence .insight-v3-compare>section span:first-of-type{color:#315f9f}
+@media(max-width:1280px){
+  .insight-v2-evidence .insight-v3-compare>section{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .insight-v2-evidence .insight-v3-compare>section b{grid-column:1/-1;grid-row:auto}
+}
+
+/* Insight UX 4.6: directional value cells across evidence and focus stocks */
+.insight-v2-evidence .insight-v3-compare .is-positive,.insight-v2-stocks dl>div.is-positive{border-color:#f2d4d6;background:#fff0f1;color:#c83b45}
+.insight-v2-evidence .insight-v3-compare .is-negative,.insight-v2-stocks dl>div.is-negative{border-color:#d1e0f3;background:#eef5ff;color:#2867ae}
+.insight-v2-evidence .insight-v3-compare .is-neutral,.insight-v2-stocks dl>div.is-neutral{border-color:#e2e6eb;background:#f3f5f7;color:#657184}
+.insight-v2-evidence .insight-v3-compare b.is-positive,.insight-v2-evidence .insight-v3-compare b.is-negative,.insight-v2-evidence .insight-v3-compare b.is-neutral{border:1px solid;border-radius:6px;padding:4px 6px}
+.insight-v2-evidence .insight-v3-compare span.is-positive{color:#c83b45}
+.insight-v2-evidence .insight-v3-compare span.is-negative{color:#2867ae}
+.insight-v2-evidence .insight-v3-compare span.is-neutral{color:#657184}
+.insight-v2-stocks dl>div.is-positive dd{color:#c83b45;font-weight:750}
+.insight-v2-stocks dl>div.is-negative dd{color:#2867ae;font-weight:750}
+.insight-v2-stocks dl>div.is-neutral dd{color:#657184}
