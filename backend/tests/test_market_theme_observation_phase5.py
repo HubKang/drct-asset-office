@@ -53,10 +53,12 @@ def test_current_mode_never_calls_market_refresh(monkeypatch: pytest.MonkeyPatch
 
 def test_refreshed_mode_runs_refresh_before_observation(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[str] = []
+    refresh_request: dict[str, object] = {}
     service = MarketThemeObservationService(_FakeDB())  # type: ignore[arg-type]
 
-    def refresh(*_args: object, **_kwargs: object) -> dict[str, object]:
+    def refresh(_collector: object, payload: SimpleNamespace) -> dict[str, object]:
         events.append("refresh")
+        refresh_request.update(vars(payload))
         return {"status": "SUCCESS", "run_id": 7, "inserted_count": 2, "updated_count": 3, "failed_count": 0}
 
     def calculate(_target_date: str, **kwargs: object) -> SimpleNamespace:
@@ -67,6 +69,8 @@ def test_refreshed_mode_runs_refresh_before_observation(monkeypatch: pytest.Monk
     monkeypatch.setattr(service, "calculate", calculate)
     result = service.calculate_with_market_option("2026-08-10", refresh_market_indicators=True)
     assert events == ["refresh", "calculate"]
+    assert refresh_request["mode"] == "INCREMENTAL_ALL"
+    assert refresh_request["triggered_by"] == "THEME_OBSERVATION_PHASE5"
     assert result.kwargs["calculation_mode"] == "REFRESHED_MARKET_DATA"
     assert result.kwargs["market_indicator_updated_count"] == 5
 

@@ -428,6 +428,7 @@ function MarketThemesPage() {
   const themeStocksInFlightRef = useRef(new Map<number, Promise<MarketThemeStock[]>>());
   const themeStocksRequestRef = useRef(0);
   const [themeStockSort, setThemeStockSort] = useState<ThemeStockSort>("default");
+  const [showPrimaryStocksOnly, setShowPrimaryStocksOnly] = useState(false);
   const [memoDrafts, setMemoDrafts] = useState<Record<number, string>>({});
   const [memoSaveStatuses, setMemoSaveStatuses] = useState<Record<number, MemoSaveStatus>>({});
   const [editingMemoMappingId, setEditingMemoMappingId] = useState<number | null>(null);
@@ -652,11 +653,12 @@ function MarketThemesPage() {
   );
   const activeThemeStocks = useMemo(() => themeStocks.filter((x) => x.is_active === 1), [themeStocks]);
   const displayedThemeStocks = useMemo(() => {
+    const visibleStocks = showPrimaryStocksOnly ? activeThemeStocks.filter((row) => row.is_primary === 1) : activeThemeStocks;
     if (themeStockSort === "name") {
-      return [...activeThemeStocks].sort((a, b) => a.stock_name.localeCompare(b.stock_name, "ko-KR") || a.stock_id - b.stock_id);
+      return [...visibleStocks].sort((a, b) => a.stock_name.localeCompare(b.stock_name, "ko-KR") || a.stock_id - b.stock_id);
     }
     if (themeStockSort === "memo") {
-      return [...activeThemeStocks].sort((a, b) => {
+      return [...visibleStocks].sort((a, b) => {
         const aMemo = (a.stock_memo ?? "").trim();
         const bMemo = (b.stock_memo ?? "").trim();
         if (!aMemo && bMemo) return 1;
@@ -664,9 +666,9 @@ function MarketThemesPage() {
         return aMemo.localeCompare(bMemo, "ko-KR") || a.stock_name.localeCompare(b.stock_name, "ko-KR") || a.stock_id - b.stock_id;
       });
     }
-    if (supplyCountSort === "default") return activeThemeStocks;
-    return [...activeThemeStocks].sort((a, b) => compareThemeStocksBySupplyCount(a, b, supplyCountSort));
-  }, [activeThemeStocks, supplyCountSort, themeStockSort]);
+    if (supplyCountSort === "default") return visibleStocks;
+    return [...visibleStocks].sort((a, b) => compareThemeStocksBySupplyCount(a, b, supplyCountSort));
+  }, [activeThemeStocks, showPrimaryStocksOnly, supplyCountSort, themeStockSort]);
   const isMappingAllThemesSelected = mappingAllThemesSelected && !selectedThemeId && mappingThemeGroupId === "all";
   const chartSidcode = useMemo(() => {
     const freshnessKey = selectedTheme?.latest_return?.last_refreshed_at
@@ -770,7 +772,7 @@ function MarketThemesPage() {
         setThemeStocks([]);
         return;
       }
-      const results = await Promise.all(targetThemes.map((theme) => fetchThemeStocks(theme.id)));
+      const results = await Promise.all(targetThemes.map((theme) => fetchThemeStocks(theme.id, force)));
       const uniqueByStock = new Map<number, MarketThemeStock>();
       results.flat().forEach((row) => {
         if (row.is_active !== 1) return;
@@ -2123,7 +2125,8 @@ function MarketThemesPage() {
 
           <SectionCard title={`연결 종목 목록${selectedTheme ? ` : ${selectedThemeGroup ? `${selectedThemeGroup.theme_name} ▶ ` : ""}${selectedTheme.theme_name}` : isMappingAllThemesSelected ? " : 테마 전체" : ""} (${activeThemeStocks.length}종목 · 대표 ${primaryCount})`}>
             <div className="theme-linked-stock-sortbar">
-              <label><span>정렬</span><select className="select-control" value={themeStockSort} onChange={(event) => { setThemeStockSort(event.target.value as ThemeStockSort); setSupplyCountSort("default"); }}>
+              <label className="theme-linked-stock-primary-filter"><input type="checkbox" checked={showPrimaryStocksOnly} onChange={(event) => setShowPrimaryStocksOnly(event.target.checked)} /><span>대표종목</span></label>
+              <label className="theme-linked-stock-sort-control"><span>정렬</span><select className="select-control" value={themeStockSort} onChange={(event) => { setThemeStockSort(event.target.value as ThemeStockSort); setSupplyCountSort("default"); }}>
                 <option value="default">기본순</option><option value="name">종목명</option><option value="memo">종목메모</option>
               </select></label>
             </div>
@@ -2174,7 +2177,7 @@ function MarketThemesPage() {
                 </th><th>일봉</th><th>주봉</th><th>월봉</th><th>작업</th></tr></thead>
                 <tbody>
                   {displayedThemeStocks.length === 0 ? (
-                    <tr><td colSpan={9} className="text-center text-muted">연결된 종목이 없습니다.</td></tr>
+                    <tr><td colSpan={9} className="text-center text-muted">{showPrimaryStocksOnly ? "대표종목이 없습니다." : "연결된 종목이 없습니다."}</td></tr>
                   ) : null}
                   {displayedThemeStocks.map((row) => {
                     const stockCode = normalizeNaverStockCode(row.stock_code);

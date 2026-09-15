@@ -52,3 +52,24 @@ def test_yahoo_does_not_replace_same_day_fred_value() -> None:
 
     assert added == 0
     assert rows == fred
+
+
+def test_yahoo_supplements_us_treasury_with_percent_unit() -> None:
+    service = MarketIndicatorService.__new__(MarketIndicatorService)
+    service.yahoo_us = _YahooStub()
+
+    rows, added = service._supplement_daily_from_yahoo(
+        "US_10Y",
+        [{"indicator_code": "US_10Y", "value_date": "2026-09-09", "value": 4.9}],
+        start_date="2026-09-01",
+        end_date="2026-09-11",
+    )
+
+    assert added == 1
+    assert rows[-1]["source_provider"] == "YFINANCE"
+    assert rows[-1]["source_unit"] == "PCT"
+
+
+def test_monthly_price_index_collection_requests_prior_year_basis() -> None:
+    assert MarketIndicatorService._provider_calculation_start("CPI", "2026-08-01") == "2025-07-01"
+    assert MarketIndicatorService._provider_calculation_start("US_CPI", "2026-08-01") == "2025-07-01"

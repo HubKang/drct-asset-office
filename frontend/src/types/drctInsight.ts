@@ -73,6 +73,14 @@ export type DrctInsightWatchItem = DrctInsightStock & {
   watchlist_id: number; watch_status: string;
 };
 
+export type DrctIntradayFocusSignal = {
+  trade_date: string; snapshot_at: string; stock_id: number; stock_code: string; stock_name: string;
+  theme_id: number | null; theme_name: string | null; signal_rank: number; best_rank: number;
+  stock_return: number | null; theme_return: number | null; relative_strength: number | null;
+  theme_strength: number | null; pattern_score: number | null; pattern_status: PatternStatus | null;
+  outcome: DrctInsightOutcome | null;
+};
+
 export type DrctInsightToday = {
   market_mode: MarketMode; analysis_date: string | null; evaluation_captured: boolean;
   summary: { observed_theme_count: number; preliminary_candidate_count: number; focus_candidate_count: number; final_candidate_count: number; my_watch_count: number; ready_count: number; last_updated_at: string | null };
@@ -90,6 +98,7 @@ export type DrctInsightToday = {
   outcome_summary: { focus_count: number; available_count: number; positive_count: number; negative_count: number; average_d0_return: number | null; median_d0_return: number | null; theme_outperform_count: number; review_count: number; high_review_count: number; marker_recorded_count: number; not_ready_count: number };
   review_queue: DrctInsightReviewItem[];
   themes: DrctInsightTheme[]; stocks: DrctInsightStock[]; my_watch: DrctInsightWatchItem[];
+  intraday_focus_signals: DrctIntradayFocusSignal[];
   storage_policy: "RUNTIME_PLUS_COMPACT_CANDIDATE_HISTORY";
 };
 

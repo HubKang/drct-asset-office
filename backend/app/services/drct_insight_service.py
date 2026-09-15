@@ -7,7 +7,7 @@ from threading import Condition, RLock
 from time import monotonic
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import now_kst
@@ -234,6 +234,74 @@ class DrctInsightService:
             GROUP BY stock_id
         """), {"trade_date": trade_date}).mappings().all()
         return {int(row["stock_id"]): float(row["change_rate"]) for row in rows}
+
+    def _has_intraday_focus_schema(self) -> bool:
+        return inspect(self.db.get_bind()).has_table("drct_intraday_focus_signals")
+
+    @staticmethod
+    def _intraday_focus_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        eligible = [
+            row for row in rows
+            if row.get("change_rate") is not None
+            and math.isfinite(float(row["change_rate"]))
+            and row.get("gates", {}).get("execution") != "INVALID"
+        ]
+        eligible.sort(key=lambda row: (
+            -float(row.get("change_rate") or 0),
+            -float(row.get("relative_strength") if row.get("relative_strength") is not None else -math.inf),
+            -float(row.get("theme_strength") if row.get("theme_strength") is not None else -math.inf),
+            -float(row.get("success_similarity") or 0),
+            row.get("stock_name") or "",
+        ))
+        return eligible[:12]
+
+    def _persist_intraday_focus_signals(self, trade_date: str | None, snapshot_at: str | None, rows: list[dict[str, Any]]) -> None:
+        if not trade_date or not snapshot_at or not self._has_intraday_focus_schema():
+            return
+        for rank, row in enumerate(self._intraday_focus_rows(rows), start=1):
+            self.db.execute(text("""
+                INSERT INTO drct_intraday_focus_signals
+                (trade_date, snapshot_at, stock_id, theme_id, signal_rank, best_rank,
+                 stock_return, theme_return, relative_strength, theme_strength,
+                 pattern_score, pattern_status, updated_at)
+                VALUES (:trade_date, :snapshot_at, :stock_id, :theme_id, :signal_rank, :signal_rank,
+                        :stock_return, :theme_return, :relative_strength, :theme_strength,
+                        :pattern_score, :pattern_status, :updated_at)
+                ON CONFLICT(trade_date, stock_id) DO UPDATE SET
+                    best_rank=MIN(drct_intraday_focus_signals.best_rank, excluded.best_rank),
+                    updated_at=excluded.updated_at
+            """), {
+                "trade_date": trade_date, "snapshot_at": snapshot_at,
+                "stock_id": row["stock_id"], "theme_id": row.get("theme_id"),
+                "signal_rank": rank, "stock_return": row.get("change_rate"),
+                "theme_return": row.get("theme_change_rate"),
+                "relative_strength": row.get("relative_strength"),
+                "theme_strength": row.get("theme_strength"),
+                "pattern_score": row.get("success_similarity"),
+                "pattern_status": row.get("pattern_status"), "updated_at": now_kst(),
+            })
+        self.db.commit()
+
+    def _load_intraday_focus_signals(self, trade_date: str | None) -> list[dict[str, Any]]:
+        if not trade_date or not self._has_intraday_focus_schema():
+            return []
+        saved = [dict(row) for row in self.db.execute(text("""
+            SELECT signal.trade_date, signal.snapshot_at, signal.stock_id,
+                   stock.stock_code, stock.stock_name,
+                   signal.theme_id, theme.theme_name,
+                   signal.signal_rank, signal.best_rank, signal.stock_return,
+                   signal.theme_return, signal.relative_strength, signal.theme_strength,
+                   signal.pattern_score, signal.pattern_status
+            FROM drct_intraday_focus_signals signal
+            JOIN stocks stock ON stock.id=signal.stock_id
+            LEFT JOIN market_themes theme ON theme.id=signal.theme_id
+            WHERE signal.trade_date=:trade_date
+            ORDER BY signal.signal_rank, signal.id
+        """), {"trade_date": trade_date}).mappings().all()]
+        outcomes = self._batch_outcomes(trade_date, saved)
+        for row in saved:
+            row["outcome"] = outcomes.get(int(row["stock_id"]))
+        return saved
 
     @staticmethod
     def _select_focus_candidate_ids(rows: list[dict[str, Any]]) -> list[int]:
@@ -612,6 +680,11 @@ class DrctInsightService:
         for row in my_watch:
             row["outcome"] = outcomes.get(int(row["stock_id"]))
         review_queue = self._review_queue(stock_rows, watch_ids)
+        market_mode = self._market_mode()
+        signal_date = realtime.trade_date or analysis_date
+        if market_mode == "INTRADAY":
+            self._persist_intraday_focus_signals(signal_date, realtime.snapshot_at, stock_rows)
+        intraday_focus_signals = self._load_intraday_focus_signals(signal_date)
 
         focus_rows = [row for row in stock_rows if row.get("focus_candidate")]
         available_focus = [row for row in focus_rows if row.get("outcome", {}).get("d0_return") is not None]
@@ -643,7 +716,6 @@ class DrctInsightService:
         theme_status = self._source_status(observation.data_cutoff_date, reference_date, available=bool(observation_items))
         flow_status = self._source_status(observation.data_cutoff_date, reference_date, available=bool(flow_values))
         realtime_status = self._source_status(realtime.trade_date, reference_date, available=bool(realtime.snapshot_at and realtime.themes))
-        market_mode = self._market_mode()
         if market_mode != "POST_MARKET":
             outcome_status = "NOT_READY"
             outcome_note = "장 종료 후 D0 결과를 확인합니다."
@@ -705,6 +777,7 @@ class DrctInsightService:
                 "outcome": {"status": outcome_status, "source_date": analysis_date, "note": outcome_note},
             },
             "themes": themes, "stocks": stock_rows, "my_watch": my_watch,
+            "intraday_focus_signals": intraday_focus_signals,
             "outcome_summary": outcome_summary, "review_queue": review_queue,
             "storage_policy": "RUNTIME_PLUS_COMPACT_CANDIDATE_HISTORY",
         })

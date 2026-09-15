@@ -205,6 +205,25 @@ class DrctInsightWatchItem(DrctInsightStock):
     watch_status: str
 
 
+class DrctIntradayFocusSignal(BaseModel):
+    trade_date: str
+    snapshot_at: str
+    stock_id: int
+    stock_code: str
+    stock_name: str
+    theme_id: int | None = None
+    theme_name: str | None = None
+    signal_rank: int
+    best_rank: int
+    stock_return: float | None = None
+    theme_return: float | None = None
+    relative_strength: float | None = None
+    theme_strength: float | None = None
+    pattern_score: float | None = None
+    pattern_status: PatternStatus | None = None
+    outcome: DrctInsightOutcome | None = None
+
+
 class DrctInsightSummary(BaseModel):
     observed_theme_count: int = 0
     final_candidate_count: int = 0
@@ -226,6 +245,7 @@ class DrctInsightTodayResponse(BaseModel):
     themes: list[DrctInsightTheme] = Field(default_factory=list)
     stocks: list[DrctInsightStock] = Field(default_factory=list)
     my_watch: list[DrctInsightWatchItem] = Field(default_factory=list)
+    intraday_focus_signals: list[DrctIntradayFocusSignal] = Field(default_factory=list)
     outcome_summary: DrctInsightOutcomeSummary
     review_queue: list[DrctInsightReviewItem] = Field(default_factory=list)
     storage_policy: Literal["RUNTIME_PLUS_COMPACT_CANDIDATE_HISTORY"] = "RUNTIME_PLUS_COMPACT_CANDIDATE_HISTORY"

@@ -11,6 +11,8 @@ def _session() -> Session:
     engine = create_engine("sqlite:///:memory:")
     session = Session(engine)
     for statement in (
+        "CREATE TABLE stocks (id INTEGER PRIMARY KEY, stock_code TEXT, stock_name TEXT)",
+        "CREATE TABLE market_themes (id INTEGER PRIMARY KEY, theme_name TEXT)",
         "CREATE TABLE stock_daily_prices (stock_id INTEGER, trade_date TEXT, close_price REAL, change_rate REAL)",
         "CREATE TABLE market_theme_daily_returns (theme_id INTEGER, return_date TEXT, avg_change_rate REAL)",
         "CREATE TABLE chart_marker_events (id INTEGER, stock_id INTEGER, marker_date TEXT, review_result TEXT, reviewed_at TEXT)",
@@ -22,6 +24,11 @@ def _session() -> Session:
             insight_rule_version TEXT, d0_return REAL, d1_return REAL, d3_return REAL, d5_return REAL,
             mfe_5d REAL, mae_5d REAL, outcome_status TEXT DEFAULT 'PENDING', outcome_evaluated_at TEXT,
             UNIQUE(analysis_date, stock_id))""",
+        """CREATE TABLE drct_intraday_focus_signals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, trade_date TEXT, snapshot_at TEXT, stock_id INTEGER,
+            theme_id INTEGER, signal_rank INTEGER, best_rank INTEGER, stock_return REAL, theme_return REAL,
+            relative_strength REAL, theme_strength REAL, pattern_score REAL, pattern_status TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT, UNIQUE(trade_date, stock_id))""",
     ):
         session.execute(text(statement))
     session.commit()
@@ -141,3 +148,32 @@ def test_candidate_evaluation_upsert_is_duplicate_safe() -> None:
     assert db.execute(text("SELECT COUNT(*) FROM drct_insight_candidate_evaluations")).scalar_one() == 1
     saved = db.execute(text("SELECT focus_rank, theme_gate, flow_gate, pattern_status, us_lead_status, insight_rule_version FROM drct_insight_candidate_evaluations")).mappings().one()
     assert dict(saved) == {"focus_rank": 1, "theme_gate": "PASS", "flow_gate": "WATCH", "pattern_status": "PROMISING", "us_lead_status": "STRONG", "insight_rule_version": "P3B_V1"}
+
+
+def test_intraday_focus_preserves_first_entry_and_updates_best_rank() -> None:
+    db = _session()
+    db.execute(text("INSERT INTO stocks VALUES (1,'000001','A'),(2,'000002','B')"))
+    db.execute(text("INSERT INTO market_themes VALUES (10,'테마')"))
+    db.execute(text("INSERT INTO stock_daily_prices VALUES (1,'2026-09-07',12000,7.0),(2,'2026-09-07',9000,6.0)"))
+    db.execute(text("INSERT INTO market_theme_daily_returns VALUES (10,'2026-09-07',2.0)"))
+    db.commit()
+    service = DrctInsightService(db)
+    base = {"theme_id": 10, "theme_change_rate": 2.0, "theme_strength": 1.5,
+            "success_similarity": 60.0, "pattern_status": "WATCH", "gates": {"execution": "WAIT"}}
+
+    service._persist_intraday_focus_signals("2026-09-07", "2026-09-07T10:00:00", [
+        {**base, "stock_id": 1, "stock_name": "A", "change_rate": 5.0, "relative_strength": 3.0},
+        {**base, "stock_id": 2, "stock_name": "B", "change_rate": 4.0, "relative_strength": 2.0},
+    ])
+    service._persist_intraday_focus_signals("2026-09-07", "2026-09-07T11:00:00", [
+        {**base, "stock_id": 2, "stock_name": "B", "change_rate": 8.0, "relative_strength": 6.0},
+        {**base, "stock_id": 1, "stock_name": "A", "change_rate": 6.0, "relative_strength": 4.0},
+    ])
+
+    signals = {row["stock_id"]: row for row in service._load_intraday_focus_signals("2026-09-07")}
+    assert signals[1]["snapshot_at"] == "2026-09-07T10:00:00"
+    assert signals[1]["signal_rank"] == 1
+    assert signals[2]["signal_rank"] == 2
+    assert signals[2]["best_rank"] == 1
+    assert signals[2]["stock_return"] == 4.0
+    assert signals[2]["outcome"]["d0_return"] == 6.0

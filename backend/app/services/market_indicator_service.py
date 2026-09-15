@@ -15,11 +15,20 @@ from backend.app.providers.economic_data.kosis_provider import KosisProvider
 from backend.app.providers.market_data.yfinance_us_daily_price_provider import YFinanceUsDailyPriceProvider
 
 
-YAHOO_US_INDEX_SYMBOLS = {
-    "US_NASDAQ": "^IXIC",
-    "US_SP500": "^GSPC",
-    "US_DOW": "^DJI",
-    "US_SOX": "^SOX",
+YAHOO_DAILY_SUPPLEMENTS = {
+    "US_NASDAQ": {"symbol": "^IXIC", "source_unit": "INDEX"},
+    "US_SP500": {"symbol": "^GSPC", "source_unit": "INDEX"},
+    "US_DOW": {"symbol": "^DJI", "source_unit": "INDEX"},
+    "US_SOX": {"symbol": "^SOX", "source_unit": "INDEX"},
+    # FRED treasury and volatility series can be published after the next
+    # collection run. These equivalent completed-session Yahoo series close
+    # that gap without replacing an observation already supplied by FRED.
+    "US_10Y": {"symbol": "^TNX", "source_unit": "PCT"},
+    "US_30Y": {"symbol": "^TYX", "source_unit": "PCT"},
+    "US_VIX": {"symbol": "^VIX", "source_unit": "INDEX"},
+    # FRED DCOILWTICO is a spot series with a longer publication lag. The
+    # front-month WTI settlement is used only for newer completed sessions.
+    "WTI": {"symbol": "CL=F", "source_unit": "USD"},
 }
 
 ECOS_DISCOVERY_TARGETS: dict[str, dict[str, Any]] = {
@@ -549,9 +558,23 @@ class MarketIndicatorService:
                     if provider == "DERIVED":
                         values = self._collect_derived_values(code, start_date=date_from, end_date=date_to)
                     else:
-                        values = self._provider_client(provider).collect_values(code, mapping, start_date=date_from, end_date=date_to)
+                        provider_start = self._provider_calculation_start(code, date_from)
+                        values = self._provider_client(provider).collect_values(
+                            code,
+                            mapping,
+                            start_date=provider_start,
+                            end_date=date_to,
+                        )
+                        # Extra history is requested only to calculate changes
+                        # and YoY values correctly; preserve the requested
+                        # incremental write window.
+                        values = [
+                            item
+                            for item in values
+                            if date_from <= str(item.get("value_date") or "") <= date_to
+                        ]
                 except Exception as exc:
-                    if provider != "FRED" or code not in YAHOO_US_INDEX_SYMBOLS:
+                    if provider != "FRED" or code not in YAHOO_DAILY_SUPPLEMENTS:
                         raise
                     # A transient FRED outage must not prevent the independent
                     # close-price source from completing a US-index refresh.
@@ -559,9 +582,9 @@ class MarketIndicatorService:
                     primary_error = str(exc)[:200]
                 supplement_count = 0
                 supplement_error: str | None = None
-                if provider == "FRED" and code in YAHOO_US_INDEX_SYMBOLS:
+                if provider == "FRED" and code in YAHOO_DAILY_SUPPLEMENTS:
                     try:
-                        values, supplement_count = self._supplement_us_index_from_yahoo(
+                        values, supplement_count = self._supplement_daily_from_yahoo(
                             code,
                             values,
                             start_date=date_from,
@@ -641,7 +664,7 @@ class MarketIndicatorService:
             "results": results,
         }
 
-    def _supplement_us_index_from_yahoo(
+    def _supplement_daily_from_yahoo(
         self,
         indicator_code: str,
         primary_values: list[dict[str, Any]],
@@ -654,7 +677,8 @@ class MarketIndicatorService:
         FRED remains the durable historical source. Yahoo is used only to close
         its publication lag after a completed US regular session.
         """
-        symbol = YAHOO_US_INDEX_SYMBOLS[indicator_code]
+        supplement = YAHOO_DAILY_SUPPLEMENTS[indicator_code]
+        symbol = str(supplement["symbol"])
         fetched = self.yahoo_us.fetch_recent_daily_prices(symbol=symbol, exchange="INDEX", trading_days=20)
         candles = sorted(fetched.prices, key=lambda item: item.trade_date)
         primary_latest = max((str(item.get("value_date") or "") for item in primary_values), default="")
@@ -675,13 +699,29 @@ class MarketIndicatorService:
                     "mom_pct": None,
                     "yoy_pct": None,
                     "source_provider": "YFINANCE",
-                    "source_unit": "INDEX",
+                    "source_unit": supplement["source_unit"],
                     "is_preliminary": 0,
                     "release_date": None,
                     "raw_payload_json": None,
                 })
             previous_close = close
         return [*primary_values, *yahoo_values], len(yahoo_values)
+
+    # Kept for callers/tests written for the original US-index-only fallback.
+    def _supplement_us_index_from_yahoo(
+        self,
+        indicator_code: str,
+        primary_values: list[dict[str, Any]],
+        *,
+        start_date: str,
+        end_date: str,
+    ) -> tuple[list[dict[str, Any]], int]:
+        return self._supplement_daily_from_yahoo(
+            indicator_code,
+            primary_values,
+            start_date=start_date,
+            end_date=end_date,
+        )
 
     def _resolve_collect_window(
         self,
@@ -698,6 +738,18 @@ class MarketIndicatorService:
         if latest_date:
             return self._apply_overlap(latest_date, item_type, item_code, frequency), "incremental_overlap"
         return self._initial_start_date(item_type, item_code, frequency), "initial_backfill"
+
+    @staticmethod
+    def _provider_calculation_start(indicator_code: str, requested_start: str) -> str:
+        """Add transient provider lookback required by normalized metrics."""
+        base = datetime.strptime(str(requested_start)[:10], "%Y-%m-%d").date()
+        if indicator_code.strip().upper() in {"CPI", "PPI", "US_CPI", "US_CORE_PCE"}:
+            # The providers calculate YoY while normalizing the response, so a
+            # full prior-year basis must be present on every incremental run.
+            return MarketIndicatorService._add_months(base, -13).isoformat()
+        # One prior observation keeps the first returned row's change fields
+        # correct even when the durable write window starts later.
+        return (base - timedelta(days=7)).isoformat()
 
     def _policy(self, item_type: str, item_code: str) -> dict[str, Any]:
         row = self.db.execute(
@@ -927,7 +979,7 @@ class MarketIndicatorService:
                 """
                 SELECT indicator_code
                 FROM market_indicators
-                WHERE is_active = 1 AND category IN ('FX', 'RATE', 'INFLATION', 'ECONOMY', 'GLOBAL_INDEX', 'GLOBAL_RATE')
+                WHERE is_active = 1
                 ORDER BY display_order
                 """
             )
@@ -960,7 +1012,15 @@ class MarketIndicatorService:
             raise RuntimeError("derived formula is not configured")
         formula = str(row["formula_type"]).upper()
         sources = json.loads(str(row["source_codes_json"] or "[]"))
-        source_values = {code: self._source_value_map(str(code), start_date=start_date, end_date=end_date) for code in sources}
+        source_start = start_date
+        if formula == "ROLLING_RETURN_STD_20D":
+            source_start = (
+                datetime.strptime(str(start_date)[:10], "%Y-%m-%d").date() - timedelta(days=45)
+            ).isoformat()
+        source_values = {
+            code: self._source_value_map(str(code), start_date=source_start, end_date=end_date)
+            for code in sources
+        }
         values: list[dict[str, Any]] = []
 
         def emit(value_date: str, value: float | None, period_label: str | None = None) -> None:
@@ -1022,7 +1082,7 @@ class MarketIndicatorService:
         else:
             raise RuntimeError(f"unsupported derived formula: {formula}")
 
-        return values
+        return [item for item in values if start_date <= str(item.get("value_date") or "") <= end_date]
 
     @staticmethod
     def _latest_key_on_or_before(sorted_keys: list[str], target_key: str) -> str | None:

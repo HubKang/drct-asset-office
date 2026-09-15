@@ -5128,7 +5128,7 @@ def ensure_drct_stock_signal_schema() -> None:
 
 
 def ensure_drct_insight_candidate_schema() -> None:
-    """Persist only the compact candidate identity needed for later outcome review."""
+    """Persist only compact candidate and intraday Focus identities needed for review."""
     if not DATABASE_URL.startswith("sqlite"):
         return
     with engine.begin() as conn:
@@ -5176,4 +5176,30 @@ def ensure_drct_insight_candidate_schema() -> None:
         conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_drct_insight_candidate_outcome "
             "ON drct_insight_candidate_evaluations(outcome_status, analysis_date DESC)"
+        )
+        conn.exec_driver_sql("""
+            CREATE TABLE IF NOT EXISTS drct_intraday_focus_signals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                trade_date TEXT NOT NULL,
+                snapshot_at TEXT NOT NULL,
+                stock_id INTEGER NOT NULL,
+                theme_id INTEGER,
+                signal_rank INTEGER NOT NULL,
+                best_rank INTEGER NOT NULL,
+                stock_return REAL,
+                theme_return REAL,
+                relative_strength REAL,
+                theme_strength REAL,
+                pattern_score REAL,
+                pattern_status TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(trade_date, stock_id),
+                FOREIGN KEY(stock_id) REFERENCES stocks(id) ON DELETE RESTRICT,
+                FOREIGN KEY(theme_id) REFERENCES market_themes(id) ON DELETE SET NULL
+            )
+        """)
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_drct_intraday_focus_date_rank "
+            "ON drct_intraday_focus_signals(trade_date, signal_rank)"
         )
