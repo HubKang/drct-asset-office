@@ -226,7 +226,7 @@ function DrctInsightPage() {
 
   const toggleWatch = async (stock: DrctInsightStock) => { const watch = watches.find((row) => row.stock_id === stock.stock_id); if (watch) await repositories.watchlist.update(watch.watchlist_id, { is_active: 0 }); else await repositories.watchlist.bulkAdd({ stock_ids: [stock.stock_id], memo: "DrCT 실시간 인사이트" }); await load(true); };
   const updateWatch = async (row: DrctInsightWatchItem, value: string) => { await repositories.watchlist.update(row.watchlist_id, { status: executionStatus[value] || "관심" }); await load(true); };
-  const openStock = (stock: DrctInsightStock) => { setWatchOpen(false); setSelected(stock); setDrawerTab("summary"); };
+  const openStock = (stock: DrctInsightStock) => { setWatchOpen(false); setSelected(stock); setDrawerTab("pattern"); };
 
   if (workspace === "performance") return <div className="drct-insight-page"><PageHeader title="DrCT 실시간 인사이트" description="D+1 테마 후보를 포함한 집중·검증 후보의 실제 D+N 성과를 확인합니다."/><InsightPerformanceView onToday={() => setWorkspace("today")}/></div>;
   return <div className="drct-insight-page insight-ux-page">

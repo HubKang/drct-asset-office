@@ -15,8 +15,6 @@ import {
   setRealtimeThemeSuspended,
   subscribeRealtimeThemeScheduler,
 } from "@/services/realtimeThemeScheduler";
-import type { CollectionRun } from "@/types/collectionRun";
-import type { MarketDataCollectionRun } from "@/types/marketData";
 import type { MarketCalendarEvent, MarketCalendarImportance } from "@/types/marketCalendar";
 import type { UsThemeDashboardSummary } from "@/types/usMarketTheme";
 import type { UsKrTodayObservation, UsKrTodayObservationItem } from "@/types/usKrThemeLink";
@@ -26,7 +24,6 @@ import type { TelegramItem } from "@/types/telegram";
 import type { Disclosure } from "@/types/disclosure";
 import type { DailyThemeFlowResponse } from "@/types/marketTrend";
 import type {
-  MarketTheme,
   MarketThemeObservationResponse,
   MarketThemeMonthlyReturnResponse,
   MarketThemeMonthlyReturnThemeItem,
@@ -108,8 +105,6 @@ type ReviewBriefing = {
 };
 
 const DOLLAR_INDEX_HELP_URL = "https://blog.naver.com/annalife_/224280737671?photoView=3";
-const THEME_FLOW_COLLECTOR = "market_theme_price_flow_refresh";
-
 const stageMeta: Record<DashboardStage, { number: string; kicker: string; title: string; question: string; description: string }> = {
   plan: { number: "01", kicker: "장전", title: "PLAN", question: "오늘 어디를 볼 것인가?", description: "전일 미국시장과 국내 시장환경을 확인하고 오늘 우선 관찰할 테마와 종목을 정합니다." },
   verify: { number: "02", kicker: "장중", title: "VERIFY", question: "예상한 곳에 실제 돈이 들어오는가?", description: "장전 집중테마와 현재 시장의 실시간 강세를 비교하여 가설을 검증합니다." },
@@ -189,12 +184,6 @@ const maxDate = (values: Array<string | null | undefined>) =>
     const date = value?.slice(0, 10) ?? "";
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return latest;
     return latest == null || date > latest ? date : latest;
-  }, null);
-
-const maxTimestamp = (values: Array<string | null | undefined>) =>
-  values.reduce<string | null>((latest, value) => {
-    if (!value) return latest;
-    return latest == null || value > latest ? value : latest;
   }, null);
 
 const isRunningStatus = (status?: string | null) => {
@@ -967,58 +956,33 @@ function DashboardPage() {
   );
 
   const loadReadiness = useCallback(async (silent = false): Promise<string | null> => {
-    let resolvedThemeDate: string | null = null;
     if (!silent) setIsReadinessLoading(true);
-    const [themeResult, marketResult] = await Promise.allSettled([
-      Promise.all([
-        repositories.marketThemes.list({ is_active: 1, limit: 500, offset: 0 }),
-        repositories.collectionRuns.listCollectionRuns({ collector_name: THEME_FLOW_COLLECTOR, limit: 10, offset: 0 }),
-      ]),
-      Promise.all([
-        repositories.marketIndexes.list({ active_only: true }),
-        repositories.marketIndicators.list({ active_only: true }),
-        repositories.marketData.listRuns({ limit: 20 }),
-      ]),
-    ]);
-
-    if (themeResult.status === "fulfilled") {
-      const [themes, collectionRuns] = themeResult.value;
-      const activeThemes = (themes as MarketTheme[]).filter((theme) => theme.is_active === 1 && theme.theme_level === "THEME");
-      const latestRun = collectionRuns.items[0] as CollectionRun | undefined;
-      const dataDate = maxDate(activeThemes.map((theme) => theme.latest_return?.return_date));
-      resolvedThemeDate = dataDate;
+    try {
+      const response = await repositories.dashboard.readiness();
+      const dataDate = response.theme.data_date;
       setThemeReadiness({
         dataDate,
-        lastSuccessAt: maxTimestamp(activeThemes.map((theme) => theme.latest_return?.last_refreshed_at)),
-        linkedStockCount: activeThemes.reduce((sum, theme) => sum + Number(theme.linked_stock_count ?? theme.stock_count ?? 0), 0),
-        status: resolveReadinessStatus(dataDate, latestRun?.status),
+        lastSuccessAt: response.theme.last_success_at,
+        linkedStockCount: response.theme.linked_stock_count,
+        status: resolveReadinessStatus(dataDate, response.theme.run_status),
+      });
+      setMarketReadiness({
+        dataDate: response.market.data_date,
+        lastRunAt: response.market.last_run_at,
+        activeIndicatorCount: response.market.active_indicator_count,
+        status: resolveReadinessStatus(response.market.data_date, response.market.run_status),
       });
       setThemeError("");
-    } else {
-      setThemeError(errorMessage(themeResult.reason));
-    }
-
-    if (marketResult.status === "fulfilled") {
-      const [indexes, indicators, runs] = marketResult.value;
-      const activeIndexes = indexes.items.filter((item) => item.is_active);
-      const activeIndicators = indicators.items.filter((item) => item.is_active);
-      const latestRun = runs.items.find((run: MarketDataCollectionRun) => run.run_type === "INCREMENTAL_ALL") ?? runs.items[0];
-      const dataDate = maxDate([
-        ...activeIndexes.map((item) => item.latest_price_date),
-        ...activeIndicators.map((item) => item.latest_value_date),
-      ]);
-      setMarketReadiness({
-        dataDate,
-        lastRunAt: latestRun?.finished_at ?? latestRun?.started_at ?? null,
-        activeIndicatorCount: activeIndexes.length + activeIndicators.length,
-        status: resolveReadinessStatus(dataDate, latestRun?.status),
-      });
       setMarketError("");
-    } else {
-      setMarketError(errorMessage(marketResult.reason));
+      return dataDate;
+    } catch (error) {
+      const message = errorMessage(error);
+      setThemeError(message);
+      setMarketError(message);
+      return null;
+    } finally {
+      setIsReadinessLoading(false);
     }
-    setIsReadinessLoading(false);
-    return resolvedThemeDate;
   }, []);
 
   const loadThemeSummary = useCallback(async (dataDate?: string | null) => {

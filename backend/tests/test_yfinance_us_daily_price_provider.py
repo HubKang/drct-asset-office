@@ -155,8 +155,14 @@ def test_incomplete_batch_candle_is_retried_individually() -> None:
     incomplete = _single_frame()
     incomplete.loc[pd.Timestamp("2026-08-26"), "Volume"] = math.nan
     frames = iter([incomplete, _single_frame()])
+    calls: list[dict] = []
+
+    def download(**kwargs):
+        calls.append(kwargs)
+        return next(frames)
+
     provider = YFinanceUsDailyPriceProvider(
-        downloader=lambda **_kwargs: next(frames),
+        downloader=download,
         retry_count=1,
         now_factory=lambda: datetime(2026, 8, 27, 9, tzinfo=NY),
     )
@@ -165,6 +171,8 @@ def test_incomplete_batch_candle_is_retried_individually() -> None:
 
     assert [row.trade_date for row in result.prices] == ["2026-08-25", "2026-08-26"]
     assert result.incomplete_row_count == 0
+    assert calls[0]["repair"] is False
+    assert calls[1]["repair"] is True
 
 
 def test_common_candle_validation_allows_zero_volume_but_rejects_negative() -> None:

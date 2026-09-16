@@ -3,9 +3,15 @@ from sqlalchemy.orm import Session
 
 from backend.app.core.database import get_db
 from backend.app.services.dashboard_activity_service import DashboardActivityService
+from backend.app.services.dashboard_readiness_service import DashboardReadinessService
 
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+
+@router.get("/readiness", response_model=dict)
+def dashboard_readiness(db: Session = Depends(get_db)) -> dict:
+    return DashboardReadinessService(db).get()
 
 
 @router.get("/recent-activities", response_model=dict)

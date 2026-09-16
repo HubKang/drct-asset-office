@@ -77,7 +77,7 @@ class YFinanceUsDailyPriceProvider:
             raise ValueError("symbol_missing")
         return YAHOO_SYMBOL_OVERRIDES.get(normalized, normalized)
 
-    def _download(self, symbols: list[str]) -> pd.DataFrame:
+    def _download(self, symbols: list[str], *, repair: bool = False) -> pd.DataFrame:
         tickers: str | list[str] = symbols[0] if len(symbols) == 1 else symbols
         return self._downloader(
             tickers=tickers,
@@ -86,7 +86,7 @@ class YFinanceUsDailyPriceProvider:
             auto_adjust=False,
             prepost=False,
             actions=False,
-            repair=False,
+            repair=repair,
             group_by="ticker",
             threads=True,
             progress=False,
@@ -209,7 +209,10 @@ class YFinanceUsDailyPriceProvider:
             for symbol in retry_symbols:
                 try:
                     yahoo_symbol = self.yahoo_symbol(symbol)
-                    data = self._download([yahoo_symbol])
+                    # Yahoo occasionally exposes a completed prior-session row
+                    # with volume but a missing Close. Retry only that symbol
+                    # with yfinance's smaller-interval reconstruction enabled.
+                    data = self._download([yahoo_symbol], repair=True)
                     parsed, missing = self._parse_download(data, {symbol: yahoo_symbol}, trading_days=trading_days)
                     if symbol in parsed:
                         results[symbol] = parsed[symbol]
