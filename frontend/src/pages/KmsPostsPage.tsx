@@ -3,10 +3,11 @@ import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Grid2X2, List } from "lucide-react";
 import PageHeader from "@/components/common/PageHeader";
+import { KmsKnowledgeDetailView } from "@/components/kms/KmsKnowledgeDetailDrawer";
 import KmsRichEditor from "@/components/kms/KmsRichEditor";
 import { repositories } from "@/services";
 import type { KmsKnowledgeItem, KmsKnowledgeItemPayload, KmsSettingGroup, KmsSettingItem, KmsSettingItemSummary } from "@/types/kms";
-import { extractKmsImageSources, sanitizeKmsHtml, toKmsDisplayHtml, toKmsEditableHtml, toKmsPlainText } from "@/utils/kmsRichContent";
+import { extractKmsImageSources, sanitizeKmsHtml, toKmsEditableHtml, toKmsPlainText } from "@/utils/kmsRichContent";
 
 const cardPageSize = 12;
 const listPageSize = 20;
@@ -442,8 +443,6 @@ function KmsPostsPage() {
   const summaryHelpText = typeof summaryHelpPayload?.summary === "string" ? summaryHelpPayload.summary.trim() : "";
   const summaryHelpKeywords = Array.isArray(summaryHelpPayload?.keywords) ? summaryHelpPayload.keywords.map(String).filter(Boolean) : [];
   const isSummaryHelpApplied = Boolean(summaryHelpText && selectedItem?.summary?.trim() === summaryHelpText);
-  const selectedConfirmedTags = selectedItem ? confirmedTags(selectedItem) : [];
-
   const renderKnowledgeForm = (target: KmsKnowledgeItemPayload, setTarget: (updater: (prev: KmsKnowledgeItemPayload) => KmsKnowledgeItemPayload) => void, ownerId: number | null) => (
     <>
       <div className="kms-form-grid single">
@@ -596,39 +595,7 @@ function KmsPostsPage() {
                   <div className="kms-action-row"><button type="button" className="btn btn-primary" onClick={() => void saveDrawerItem()} disabled={saving}>저장</button><button type="button" className="btn btn-danger" onClick={() => void deleteItem(selectedItem)} disabled={saving}>삭제</button></div>
                 </div>
               ) : (
-                <>
-                  <div className="kms-card-badges"><SettingBadge item={selectedItem.para_type} fallback="유형" /><SettingBadge item={selectedItem.category} fallback="미분류" /><SettingBadge item={selectedItem.status} fallback="상태" /><SettingBadge item={selectedItem.importance} fallback="중요도" /><SettingBadge item={selectedItem.usage_context} fallback="사용처" /><SettingBadge item={selectedItem.source_type} fallback="출처" /></div>
-                  {selectedItem.summary ? <section className="kms-content-section"><h3>요약</h3><p className="kms-detail-summary">{selectedItem.summary}</p></section> : null}
-                  <section className="kms-content-section"><h3>본문</h3><div className="kms-detail-content kms-rich-content" dangerouslySetInnerHTML={{ __html: toKmsDisplayHtml(selectedItem.content) }} /></section>
-                  <div className="kms-detail-support">
-                    <section className="kms-detail-group" aria-labelledby="kms-knowledge-info-title">
-                      <div className="kms-detail-group-heading">
-                        <div>
-                          <h3 id="kms-knowledge-info-title">지식 정보</h3>
-                          <p>분류에 활용하는 태그와 원문 출처를 확인합니다.</p>
-                        </div>
-                      </div>
-                      <div className="kms-detail-info-grid">
-                        <article className="kms-detail-info-card">
-                          <div className="kms-detail-info-card-heading">
-                            <h4>태그</h4>
-                            {selectedConfirmedTags.length ? <span>{selectedConfirmedTags.length}개</span> : null}
-                          </div>
-                          {selectedConfirmedTags.length ? (
-                            <div className="kms-chip-row">
-                              {selectedConfirmedTags.map((tag) => <button key={tag.id} type="button" className="kms-chip selected" onClick={() => void removeTag(tag.tag_id)}>#{tag.tag_name}</button>)}
-                            </div>
-                          ) : <div className="kms-compact-empty">등록된 태그가 없습니다.</div>}
-                        </article>
-                        <article className="kms-detail-info-card">
-                          <div className="kms-detail-info-card-heading"><h4>출처</h4></div>
-                          {selectedItem.source_url ? (
-                            <a className="kms-source-link kms-detail-source-link" href={selectedItem.source_url} target="_blank" rel="noreferrer">{selectedItem.source_url}</a>
-                          ) : <div className="kms-compact-empty">출처 URL이 없습니다.</div>}
-                        </article>
-                      </div>
-                    </section>
-
+                <KmsKnowledgeDetailView item={selectedItem} onRemoveTag={(tagId) => void removeTag(tagId)}>
                     <section className="kms-detail-group" aria-labelledby="kms-ai-usage-title">
                       <div className="kms-detail-group-heading">
                         <div>
@@ -663,8 +630,7 @@ function KmsPostsPage() {
                         {selectedItem.legacy_source_type ? <p>기존 데이터: {selectedItem.legacy_source_type} #{selectedItem.legacy_source_id}</p> : null}
                       </div>
                     </section>
-                  </div>
-                </>
+                </KmsKnowledgeDetailView>
               )}
             </div>
           </aside>

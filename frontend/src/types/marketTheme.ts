@@ -9,6 +9,7 @@
 };
 
 export type MarketThemeReturnStock = {
+  mapping_id?: number | null;
   stock_id: number;
   stock_code: string | null;
   stock_name: string;

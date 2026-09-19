@@ -1444,17 +1444,19 @@ function MarketThemesPage() {
   };
 
   const onDeactivateMapping = async (mappingId: number) => {
-    if (!selectedThemeId) return;
+    if (!selectedThemeId) return false;
     const ok = window.confirm("선택한 종목을 테마에서 연결 해제하시겠습니까?");
-    if (!ok) return;
+    if (!ok) return false;
     try {
       await repositories.marketThemes.deactivateThemeStock(mappingId);
       invalidateMarketThemeFlowTrendFrontendCache();
       if (selectedLinkedStock?.mapping_id === mappingId) closeStockDrawer();
       await Promise.all([loadThemeStocks(selectedThemeId, true), loadThemes()]);
       setMessage("테마 연결이 해제되었습니다.");
+      return true;
     } catch (e) {
       setError(toErrorMessage(e, "연결 해제 중 오류가 발생했습니다."));
+      return false;
     }
   };
 
@@ -2412,6 +2414,8 @@ function MarketThemesPage() {
         themeId={themeDetailRequest?.themeId ?? null}
         dataDate={themeDetailRequest?.dataDate}
         flowContext={themeDetailRequest?.flowContext}
+        onUnlinkStock={onDeactivateMapping}
+        drawerClassName="market-theme-management-detail-drawer"
         onClose={closeReturnDrawer}
       />
 
