@@ -848,25 +848,9 @@ CREATE INDEX IF NOT EXISTS idx_market_theme_stock_candidates_theme_stock ON mark
 CREATE INDEX IF NOT EXISTS idx_market_theme_realtime_theme_date ON market_theme_realtime_returns(theme_id, trade_date);
 CREATE INDEX IF NOT EXISTS idx_market_theme_realtime_stock_date ON market_theme_realtime_returns(stock_id, trade_date);
 
-INSERT OR IGNORE INTO market_themes
-(theme_name, theme_code, theme_type, theme_level, description, keywords, parent_theme_id, is_supply_theme, is_active, sort_order, created_at, updated_at)
-VALUES
-('AI', 'ai', 'theme', 'THEME', 'AI 관련 시장 테마', '["AI","인공지능","생성형AI","데이터센터","GPU","LLM","AI반도체"]', NULL, 0, 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-('반도체', 'semiconductor', 'theme', 'THEME', '반도체 관련 시장 테마', '["반도체","메모리","파운드리","HBM","시스템반도체","장비"]', NULL, 0, 1, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-('전력기기', 'power_equipment', 'theme', 'THEME', '전력기기 관련 시장 테마', '["전력기기","변압기","송전","배전","전력망","HVDC","초고압","변전소","전선"]', NULL, 0, 1, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-('전력망', 'power_grid', 'theme', 'THEME', '전력망 관련 시장 테마', '["전력망","송전망","배전망","변전","HVDC"]', NULL, 0, 1, 4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-('변압기', 'transformer', 'theme', 'THEME', '변압기 관련 시장 테마', '["변압기","초고압","배전변압기","송전"]', NULL, 0, 1, 5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-('방산', 'defense', 'theme', 'THEME', '방위산업 관련 시장 테마', '["방산","방위산업","무기체계","미사일","장갑차","K9","국방","수출계약"]', NULL, 0, 1, 6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-('조선', 'shipbuilding', 'theme', 'THEME', '조선 관련 시장 테마', '["조선","선박","LNG선","해양플랜트"]', NULL, 0, 1, 7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-('로봇', 'robot', 'theme', 'THEME', '로봇 관련 시장 테마', '["로봇","협동로봇","자동화","휴머노이드"]', NULL, 0, 1, 8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-('바이오', 'bio', 'theme', 'THEME', '바이오 관련 시장 테마', '["바이오","임상","신약","FDA","품목허가","항암제","치료제"]', NULL, 0, 1, 9, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-('원전', 'nuclear_power', 'theme', 'THEME', '원전 관련 시장 테마', '["원전","원자력","SMR","원전수출"]', NULL, 0, 1, 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-('2차전지', 'secondary_battery', 'theme', 'THEME', '2차전지 관련 시장 테마', '["2차전지","배터리","양극재","음극재","전해질"]', NULL, 0, 1, 11, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-('데이터센터', 'data_center', 'theme', 'THEME', '데이터센터 관련 시장 테마', '["데이터센터","서버","전력수요","냉각"]', NULL, 0, 1, 12, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-('우주항공', 'aerospace', 'theme', 'THEME', '우주항공 관련 시장 테마', '["우주항공","위성","발사체","항공엔진"]', NULL, 0, 1, 13, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-('화장품', 'cosmetics', 'theme', 'THEME', '화장품 관련 시장 테마', '["화장품","K뷰티","면세","수출"]', NULL, 0, 1, 14, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-('엔터', 'entertainment', 'theme', 'THEME', '엔터테인먼트 관련 시장 테마', '["엔터","콘서트","음반","IP"]', NULL, 0, 1, 15, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-('자동차부품', 'auto_parts', 'theme', 'THEME', '자동차부품 관련 시장 테마', '["자동차부품","전장","모듈","완성차공급"]', NULL, 0, 1, 16, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+-- Default market themes are seeded once by scripts/init_db.py and the runtime
+-- schema initializer. Keeping this DDL file free of unconditional seed inserts
+-- prevents a user-deleted default theme from being recreated on every restart.
 
 INSERT OR IGNORE INTO schema_comments (table_name, column_name, comment_ko, created_at) VALUES
 ('stocks', NULL, '종목 마스터 정보', CURRENT_TIMESTAMP),

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
+import sqlite3
+
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import create_engine, text
@@ -9,6 +12,7 @@ from sqlalchemy.pool import StaticPool
 from backend.app.core.database import _seed_default_market_themes_once
 from backend.app.entities.market_theme import MarketTheme
 from backend.app.services.market_theme_service import MarketThemeService
+from scripts.init_db import seed_default_market_themes_once as seed_init_db_market_themes_once
 
 
 RELATED_THEME_COLUMNS = {
@@ -134,3 +138,20 @@ def test_existing_database_does_not_restore_missing_defaults_when_seed_history_i
 
         assert connection.execute(text("SELECT COUNT(*) FROM market_themes")).scalar_one() == 1
         assert connection.execute(text("SELECT COUNT(*) FROM runtime_seed_history")).scalar_one() == 1
+
+
+def test_init_db_restart_does_not_restore_deleted_default_theme() -> None:
+    schema_path = Path(__file__).resolve().parents[2] / "backend" / "app" / "sql" / "schema.sql"
+    schema_sql = schema_path.read_text(encoding="utf-8")
+
+    with sqlite3.connect(":memory:") as connection:
+        connection.executescript(schema_sql)
+        seed_init_db_market_themes_once(connection, seed_if_empty=True)
+        assert connection.execute("SELECT COUNT(*) FROM market_themes WHERE theme_code='auto_parts'").fetchone()[0] == 1
+
+        connection.execute("DELETE FROM market_themes WHERE theme_code='auto_parts'")
+
+        # restart_servers.bat runs init_db.py again before starting the API.
+        connection.executescript(schema_sql)
+        seed_init_db_market_themes_once(connection, seed_if_empty=False)
+        assert connection.execute("SELECT COUNT(*) FROM market_themes WHERE theme_code='auto_parts'").fetchone()[0] == 0

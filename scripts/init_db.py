@@ -10,6 +10,41 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.app.core.config import DATABASE_URL, SQLITE_BUSY_TIMEOUT_MS, SQLITE_JOURNAL_MODE, SQLITE_SYNCHRONOUS
+from backend.app.services.market_theme_defaults import DEFAULT_MARKET_THEMES, keywords_json
+
+
+def seed_default_market_themes_once(conn: sqlite3.Connection, *, seed_if_empty: bool) -> None:
+    """Seed a new database once without restoring themes deleted by the user."""
+    seed_key = "market_themes_defaults_v1"
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS runtime_seed_history "
+        "(seed_key TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
+    )
+    if conn.execute("SELECT 1 FROM runtime_seed_history WHERE seed_key = ?", (seed_key,)).fetchone():
+        return
+
+    theme_count = int(conn.execute("SELECT COUNT(*) FROM market_themes").fetchone()[0])
+    if seed_if_empty and theme_count == 0:
+        conn.executemany(
+            """
+            INSERT OR IGNORE INTO market_themes
+            (theme_name, theme_code, theme_type, theme_level, description, keywords,
+             parent_theme_id, is_supply_theme, is_active, sort_order, created_at, updated_at)
+            VALUES (?, ?, ?, 'THEME', ?, ?, NULL, 0, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """,
+            [
+                (
+                    str(row["theme_name"]), str(row["theme_code"]), str(row["theme_type"]),
+                    str(row["description"]), keywords_json(list(row["keywords"])), int(row["sort_order"]),
+                )
+                for row in DEFAULT_MARKET_THEMES
+            ],
+        )
+
+    conn.execute(
+        "INSERT OR IGNORE INTO runtime_seed_history (seed_key, applied_at) VALUES (?, CURRENT_TIMESTAMP)",
+        (seed_key,),
+    )
 
 
 def ensure_markdown_content_column(conn: sqlite3.Connection) -> None:
@@ -188,7 +223,11 @@ def main() -> None:
         conn.execute(f"PRAGMA journal_mode = {SQLITE_JOURNAL_MODE};")
         conn.execute(f"PRAGMA synchronous = {SQLITE_SYNCHRONOUS};")
         conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS};")
+        market_themes_preexisting = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_themes'"
+        ).fetchone() is not None
         conn.executescript(schema_sql)
+        seed_default_market_themes_once(conn, seed_if_empty=not market_themes_preexisting)
         ensure_markdown_content_column(conn)
         ensure_stock_master_columns(conn)
         ensure_stock_daily_prices_table(conn)
