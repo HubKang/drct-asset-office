@@ -48,7 +48,7 @@ const isBrowser = typeof window !== "undefined";
 
 const emptySnapshot = (): RealtimeThemeTreemapResponse => ({
   trade_date: "-", snapshot_at: null, theme_count: 0, linked_stock_count: 0,
-  unique_stock_count: 0, valid_stock_count: 0, failed_stock_count: 0, themes: [],
+  unique_stock_count: 0, valid_stock_count: 0, failed_stock_count: 0, themes: [], top_stocks: [],
 });
 
 const storedInterval = isBrowser ? window.localStorage.getItem(INTERVAL_STORAGE_KEY) : null;

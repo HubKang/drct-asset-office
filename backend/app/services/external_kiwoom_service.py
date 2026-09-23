@@ -3390,7 +3390,8 @@ class ExternalKiwoomService:
             fallback_rows = self.db.execute(
                 text(
                     """
-                    SELECT mts.id AS mapping_id, s.id AS stock_id, s.stock_code, s.stock_name, mts.stock_memo,
+                    SELECT mts.id AS mapping_id, COALESCE(mts.is_primary, 0) AS is_primary,
+                           s.id AS stock_id, s.stock_code, s.stock_name, mts.stock_memo,
                            CASE WHEN p.trading_value IS NULL THEN NULL ELSE p.trading_value / 100.0 END AS trading_value_100m,
                            p.change_rate, CAST(p.close_price AS INTEGER) AS current_price,
                            CASE WHEN p.stock_id IS NULL THEN 'missing' ELSE 'success' END AS data_status,
@@ -3400,7 +3401,8 @@ class ExternalKiwoomService:
                     LEFT JOIN stock_daily_prices p
                       ON p.stock_id=mts.stock_id AND p.trade_date=:return_date
                     WHERE mts.theme_id=:theme_id AND COALESCE(mts.is_active, 1)=1
-                    ORDER BY p.stock_id IS NOT NULL DESC, COALESCE(p.trading_value, 0) DESC, s.stock_name ASC
+                    ORDER BY COALESCE(mts.is_primary, 0) DESC,
+                             COALESCE(p.change_rate, -1000000) DESC, s.stock_name ASC
                     """
                 ),
                 {"theme_id": theme_id, "return_date": return_date},
@@ -3447,7 +3449,8 @@ class ExternalKiwoomService:
         stock_rows = self.db.execute(
             text(
                 """
-                SELECT mts.id AS mapping_id, returns.stock_id, returns.stock_code, returns.stock_name, mts.stock_memo,
+                SELECT mts.id AS mapping_id, COALESCE(mts.is_primary, 0) AS is_primary,
+                       returns.stock_id, returns.stock_code, returns.stock_name, mts.stock_memo,
                        returns.trading_value_100m, returns.change_rate, returns.current_price,
                        returns.data_status, returns.error_message
                 FROM market_theme_stock_daily_returns returns
@@ -3455,7 +3458,8 @@ class ExternalKiwoomService:
                   ON mts.theme_id=:theme_id AND mts.stock_id=returns.stock_id AND mts.is_active=1
                 WHERE returns.theme_daily_return_id=:daily_return_id
                   AND COALESCE(data_status, 'missing')<>'inactive'
-                ORDER BY data_status='success' DESC, COALESCE(trading_value, 0) DESC, stock_name ASC
+                ORDER BY COALESCE(mts.is_primary, 0) DESC,
+                         COALESCE(returns.change_rate, -1000000) DESC, returns.stock_name ASC
                 """
             ),
             {"daily_return_id": int(daily["id"]), "theme_id": theme_id},

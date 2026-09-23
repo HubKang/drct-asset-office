@@ -1467,8 +1467,10 @@ function MarketThemesPage() {
       invalidateMarketThemeFlowTrendFrontendCache();
       await loadThemeStocks(selectedThemeId, true);
       setMessage("대표 여부가 변경되었습니다.");
+      return true;
     } catch (e) {
       setError(toErrorMessage(e, "대표 변경 중 오류가 발생했습니다."));
+      return false;
     } finally {
       setUpdatingPrimaryMappingId(null);
     }
@@ -2415,6 +2417,8 @@ function MarketThemesPage() {
         dataDate={themeDetailRequest?.dataDate}
         flowContext={themeDetailRequest?.flowContext}
         onUnlinkStock={onDeactivateMapping}
+        onTogglePrimaryStock={onTogglePrimary}
+        linkedThemeStocks={themeStocks}
         drawerClassName="market-theme-management-detail-drawer"
         onClose={closeReturnDrawer}
       />

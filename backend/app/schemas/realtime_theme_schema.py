@@ -17,6 +17,16 @@ class RealtimeThemeItem(BaseModel):
     breadth_ratio: float | None = None
 
 
+class RealtimeStockRankItem(BaseModel):
+    stock_id: int
+    stock_code: str
+    stock_name: str
+    theme_id: int
+    theme_name: str
+    change_rate: float
+    collected_at: str | None = None
+
+
 class RealtimeThemeTreemapResponse(BaseModel):
     trade_date: str
     snapshot_at: str | None = None
@@ -26,6 +36,7 @@ class RealtimeThemeTreemapResponse(BaseModel):
     valid_stock_count: int = 0
     failed_stock_count: int = 0
     themes: list[RealtimeThemeItem] = Field(default_factory=list)
+    top_stocks: list[RealtimeStockRankItem] = Field(default_factory=list)
 
 
 class RealtimeThemeRefreshResponse(RealtimeThemeTreemapResponse):

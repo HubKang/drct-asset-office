@@ -33,6 +33,10 @@ class UsKrThemeLinkResponse(BaseModel):
     kr_group_name: str
     kr_theme_name: str
     memo: str | None
+    valid_sample_count: int = 0
+    direction_match_rate: float | None = None
+    us_up_kr_up_rate: float | None = None
+    avg_kr_return: float | None = None
     active: int
     created_at: str
     updated_at: str

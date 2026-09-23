@@ -69,6 +69,11 @@ def test_refresh_fetches_each_unique_stock_once_and_persists_only_change_rate(db
     # The market median is based on two unique stocks (2.5, -1.0), not the
     # three theme links in which Samsung Electronics appears twice.
     assert next(item.theme_strength for item in result.themes if item.theme_name == "AI") == pytest.approx(1.4583)
+    assert [(item.stock_name, item.change_rate, item.theme_name) for item in result.top_stocks] == [
+        ("삼성전자", 2.5, "AI"),
+        ("SK하이닉스", -1.0, "반도체"),
+    ]
+    assert sum(item.stock_id == 10 for item in result.top_stocks) == 1
     rows = db.execute(text("SELECT theme_id, stock_id, change_rate, trading_value FROM market_theme_realtime_returns ORDER BY theme_id, stock_id")).all()
     assert rows == [(1, 10, 2.5, None), (2, 10, 2.5, None), (2, 20, -1.0, None)]
     dumped = result.model_dump()

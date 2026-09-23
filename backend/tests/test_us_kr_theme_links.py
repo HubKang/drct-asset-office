@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import IntegrityError
 
 from backend.app.core.config import now_kst
-from backend.app.core.database import get_db
+from backend.app.core.database import _ensure_us_kr_theme_link_pair_uniqueness, get_db
 from backend.app.entities.market_theme import MarketTheme
 from backend.app.main import app
 
@@ -32,7 +33,7 @@ def _create_kr_theme(client: TestClient, code: str, group: str, name: str) -> di
         session_generator.close()
 
 
-def test_us_kr_theme_link_crud_and_strict_one_to_one(isolated_api_client: TestClient) -> None:
+def test_us_kr_theme_link_crud_supports_one_to_many_pairs(isolated_api_client: TestClient) -> None:
     client = isolated_api_client
     us_one = _create_us_theme(client, "AI", "AI 반도체/GPU")
     us_two = _create_us_theme(client, "클라우드", "AI 서버·네트워크")
@@ -43,18 +44,50 @@ def test_us_kr_theme_link_crud_and_strict_one_to_one(isolated_api_client: TestCl
     assert created.status_code == 201
     assert created.json()["us_theme_name"] == "AI 반도체/GPU"
 
-    assert client.post("/us-kr-theme-links", json={"us_theme_id": us_one["id"], "kr_theme_id": kr_two["id"]}).status_code == 409
-    assert client.post("/us-kr-theme-links", json={"us_theme_id": us_two["id"], "kr_theme_id": kr_one["id"]}).status_code == 409
+    second_for_same_us = client.post("/us-kr-theme-links", json={"us_theme_id": us_one["id"], "kr_theme_id": kr_two["id"]})
+    assert second_for_same_us.status_code == 201
+    assert client.post("/us-kr-theme-links", json={"us_theme_id": us_two["id"], "kr_theme_id": kr_one["id"]}).status_code == 201
+    assert client.post("/us-kr-theme-links", json={"us_theme_id": us_one["id"], "kr_theme_id": kr_one["id"]}).status_code == 409
 
     overview = client.get("/us-kr-theme-links/overview")
     assert overview.status_code == 200
-    assert overview.json()["summary"] == {"us_active_themes": 2, "kr_active_themes": 2, "linked_themes": 1, "unlinked_us_themes": 1, "unlinked_kr_themes": 1}
+    assert overview.json()["summary"] == {"us_active_themes": 2, "kr_active_themes": 2, "linked_themes": 3, "unlinked_us_themes": 0, "unlinked_kr_themes": 0}
 
-    updated = client.patch(f"/us-kr-theme-links/{created.json()['id']}", json={"us_theme_id": us_two["id"], "kr_theme_id": kr_two["id"], "memo": "수정"})
+    updated = client.patch(f"/us-kr-theme-links/{created.json()['id']}", json={"memo": "수정"})
     assert updated.status_code == 200 and updated.json()["memo"] == "수정"
     deleted = client.delete(f"/us-kr-theme-links/{created.json()['id']}")
     assert deleted.status_code == 200
-    assert client.get("/us-kr-theme-links/overview").json()["summary"]["linked_themes"] == 0
+    remaining = client.get("/us-kr-theme-links/overview").json()
+    assert remaining["summary"]["linked_themes"] == 2
+    assert len(remaining["links"]) == 2
+
+
+def test_legacy_one_to_one_table_migrates_to_pair_uniqueness() -> None:
+    test_engine = create_engine("sqlite+pysqlite:///:memory:")
+    with test_engine.begin() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys = ON")
+        connection.exec_driver_sql("CREATE TABLE us_themes (id INTEGER PRIMARY KEY)")
+        connection.exec_driver_sql("CREATE TABLE market_themes (id INTEGER PRIMARY KEY)")
+        connection.exec_driver_sql("INSERT INTO us_themes VALUES (10), (11)")
+        connection.exec_driver_sql("INSERT INTO market_themes VALUES (20), (21)")
+        connection.exec_driver_sql("""CREATE TABLE us_kr_theme_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            us_theme_id INTEGER NOT NULL UNIQUE,
+            kr_theme_id INTEGER NOT NULL UNIQUE,
+            memo TEXT, active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            FOREIGN KEY(us_theme_id) REFERENCES us_themes(id) ON DELETE RESTRICT,
+            FOREIGN KEY(kr_theme_id) REFERENCES market_themes(id) ON DELETE RESTRICT
+        )""")
+        connection.exec_driver_sql("INSERT INTO us_kr_theme_links VALUES (1, 10, 20, NULL, 1, 'now', 'now')")
+        _ensure_us_kr_theme_link_pair_uniqueness(connection)
+        connection.exec_driver_sql("INSERT INTO us_kr_theme_links VALUES (2, 10, 21, NULL, 1, 'now', 'now')")
+        connection.exec_driver_sql("INSERT INTO us_kr_theme_links VALUES (3, 11, 20, NULL, 1, 'now', 'now')")
+        try:
+            connection.exec_driver_sql("INSERT INTO us_kr_theme_links VALUES (4, 10, 20, NULL, 1, 'now', 'now')")
+            raise AssertionError("duplicate pair must be rejected")
+        except IntegrityError:
+            pass
 
 
 def test_lead_analysis_matches_next_real_kr_date_and_calculates_metrics(isolated_api_client: TestClient) -> None:
@@ -140,6 +173,14 @@ def test_lead_analysis_matches_next_real_kr_date_and_calculates_metrics(isolated
     up_thresholds = [row for row in body["thresholds"] if row["direction"] == "UP"]
     assert [row["sample_count"] for row in up_thresholds] == [4, 3, 2, 1]
 
+    overview = client.get("/us-kr-theme-links/overview?window=120&us_metric=theme_strength")
+    assert overview.status_code == 200
+    overview_link = next(row for row in overview.json()["links"] if row["id"] == link["id"])
+    assert overview_link["valid_sample_count"] == body["metrics"]["sample_count"]
+    assert overview_link["direction_match_rate"] == body["metrics"]["direction_match_rate"]
+    assert overview_link["us_up_kr_up_rate"] == body["metrics"]["us_up_kr_up_rate"]
+    assert overview_link["avg_kr_return"] == body["metrics"]["avg_kr_return"]
+
     today = client.get("/us-kr-theme-links/today-observation?window=120&us_metric=theme_strength")
     assert today.status_code == 200
     observation = today.json()
@@ -165,6 +206,7 @@ def test_lead_analysis_matches_next_real_kr_date_and_calculates_metrics(isolated
     assert second_item["previous_kr_return"] == 9.0
     assert client.get(f"/us-kr-theme-links/{link['id']}/lead-analysis?window=61").status_code == 422
     assert client.get("/us-kr-theme-links/today-observation?window=61").status_code == 422
+    assert client.get("/us-kr-theme-links/overview?window=61").status_code == 422
 
 
 def test_lead_analysis_correlation_is_null_for_constant_or_too_small_samples() -> None:

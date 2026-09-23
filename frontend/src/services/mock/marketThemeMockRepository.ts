@@ -46,7 +46,7 @@ const candidates: MarketThemeCandidate[] = [];
 
 export const marketThemeMockRepository = {
   async getRealtimeTreemap(): Promise<RealtimeThemeTreemapResponse> {
-    return { trade_date: new Date().toISOString().slice(0, 10), snapshot_at: null, theme_count: 0, linked_stock_count: 0, unique_stock_count: 0, valid_stock_count: 0, failed_stock_count: 0, themes: [] };
+    return { trade_date: new Date().toISOString().slice(0, 10), snapshot_at: null, theme_count: 0, linked_stock_count: 0, unique_stock_count: 0, valid_stock_count: 0, failed_stock_count: 0, themes: [], top_stocks: [] };
   },
   async refreshRealtimeTreemap(): Promise<RealtimeThemeRefreshResponse> {
     return { ...(await this.getRealtimeTreemap()), success: true, price_api_call_count: 0, kiwoom_fetch_ms: 0, db_upsert_ms: 0, theme_aggregation_ms: 0, snapshot_response_ms: 0, stock_fetch_min_ms: null, stock_fetch_avg_ms: null, stock_fetch_max_ms: null, duration_ms: 0, message: "mock Snapshot" };

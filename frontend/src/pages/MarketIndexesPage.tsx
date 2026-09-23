@@ -1650,7 +1650,10 @@ function MarketIndexesPage() {
             {selectorItems.length ? selectorItems.map((item) => {
               const metric5 = item.source === "MARKET_INDEX" ? item.return5 : (item.dataFrequency === "MONTHLY" ? item.momPct : item.changeValue);
               const metric20 = item.source === "MARKET_INDEX" ? item.return20 : (item.dataFrequency === "MONTHLY" ? item.yoyPct : item.changePct);
-              const statusLabel = getStatusLabel(item.status, Boolean(item.latestDate));
+              const resolvedStatus = getStatusValue(item.status, Boolean(item.latestDate));
+              const statusLabel = item.source === "MARKET_INDICATOR" && item.dataFrequency === "MONTHLY" && resolvedStatus === "LATEST"
+                ? "발표 최신"
+                : getStatusLabel(item.status, Boolean(item.latestDate));
               return (
                 <button
                   key={item.key}
@@ -1690,7 +1693,7 @@ function MarketIndexesPage() {
           <div className="market-index-section-head">
             <div>
               <h3>{selectedMetric.source === "MARKET_INDICATOR" ? `${selectedIndexName} 라인 차트` : `${selectedIndexName} 일봉 차트`}</h3>
-              <p>{chartRangeLabel}</p>
+              <p>{chartRangeLabel}{selectedIsMonthlyIndicator ? " · 발표일이 아닌 관측월 기준" : ""}</p>
             </div>
             <div className="market-index-periods">
               {periodOptions.map((option) => (
@@ -1710,7 +1713,7 @@ function MarketIndexesPage() {
             <div className="market-indicator-selected-summary">
               <div><span>분류</span><strong>{selectedGeneralIndicator.category === "INFLATION" ? "물가" : selectedGeneralIndicator.category === "ECONOMY" ? "경기" : selectedGeneralIndicator.category === "GLOBAL_INDEX" ? "미국지수" : selectedGeneralIndicator.category === "GLOBAL_RATE" ? "미국금리" : selectedGeneralIndicator.category}</strong></div>
               <div><span>최근값</span><strong>{formatNumber(selectedGeneralIndicator.latest_value, 3)}{selectedGeneralIndicator.unit_label ? " " + selectedGeneralIndicator.unit_label : ""}</strong></div>
-              <div><span>기준월</span><strong>{(selectedGeneralIndicator.latest_value_date || "-").slice(0, 7)}</strong></div>
+              <div><span>관측월</span><strong>{(selectedGeneralIndicator.latest_value_date || "-").slice(0, 7)}</strong></div>
               <div><span>{selectedIsMonthlyIndicator ? "전월비" : "변화"}</span><strong className={((selectedGeneralIndicator.latest_mom_pct ?? selectedGeneralIndicator.latest_change_value) ?? 0) >= 0 ? "positive" : "negative"}>{selectedIsMonthlyIndicator ? formatPercent(selectedGeneralIndicator.latest_mom_pct) : formatNumber(selectedGeneralIndicator.latest_change_value, 3)}</strong></div>
               <div><span>{selectedIsMonthlyIndicator ? "전년동월비" : "변화율"}</span><strong className={((selectedGeneralIndicator.latest_yoy_pct ?? selectedGeneralIndicator.latest_change_pct) ?? 0) >= 0 ? "positive" : "negative"}>{selectedIsMonthlyIndicator ? formatPercent(selectedGeneralIndicator.latest_yoy_pct) : formatPercent(selectedGeneralIndicator.latest_change_pct)}</strong></div>
               {selectedGeneralIndicator.chart_type === "LINE_WITH_BASELINE" ? <div><span>기준선</span><strong>{formatNumber(selectedGeneralIndicator.base_line_value, 0)}</strong></div> : null}

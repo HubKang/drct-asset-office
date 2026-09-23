@@ -79,6 +79,46 @@ def _drop_column_if_exists(conn, table_name: str, column_name: str) -> None:  # 
         pass
 
 
+def _ensure_us_kr_theme_link_pair_uniqueness(conn) -> None:  # type: ignore[no-untyped-def]
+    """Migrate legacy 1:1 constraints to a pair-only unique constraint."""
+    if not conn.exec_driver_sql(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='us_kr_theme_links'"
+    ).first():
+        return
+    unique_columns: set[tuple[str, ...]] = set()
+    for index in conn.exec_driver_sql("PRAGMA index_list(us_kr_theme_links)").fetchall():
+        if not bool(index[2]):
+            continue
+        columns = conn.exec_driver_sql(f"PRAGMA index_info('{index[1]}')").fetchall()
+        unique_columns.add(tuple(str(column[2]) for column in columns))
+    if ("us_theme_id", "kr_theme_id") in unique_columns and ("us_theme_id",) not in unique_columns and ("kr_theme_id",) not in unique_columns:
+        return
+
+    conn.exec_driver_sql("DROP TABLE IF EXISTS us_kr_theme_links_pair_unique")
+    conn.exec_driver_sql("""
+        CREATE TABLE us_kr_theme_links_pair_unique (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            us_theme_id INTEGER NOT NULL,
+            kr_theme_id INTEGER NOT NULL,
+            memo TEXT,
+            active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(us_theme_id, kr_theme_id),
+            FOREIGN KEY(us_theme_id) REFERENCES us_themes(id) ON DELETE RESTRICT,
+            FOREIGN KEY(kr_theme_id) REFERENCES market_themes(id) ON DELETE RESTRICT
+        )
+    """)
+    conn.exec_driver_sql("""
+        INSERT INTO us_kr_theme_links_pair_unique
+            (id, us_theme_id, kr_theme_id, memo, active, created_at, updated_at)
+        SELECT id, us_theme_id, kr_theme_id, memo, active, created_at, updated_at
+        FROM us_kr_theme_links
+    """)
+    conn.exec_driver_sql("DROP TABLE us_kr_theme_links")
+    conn.exec_driver_sql("ALTER TABLE us_kr_theme_links_pair_unique RENAME TO us_kr_theme_links")
+
+
 def _ensure_marker_review_result_codes(conn) -> None:  # type: ignore[no-untyped-def]
     """One-way, non-destructive SUCCESS/FAILURE -> S/F normalization."""
     row = conn.exec_driver_sql(
@@ -554,16 +594,18 @@ def ensure_runtime_schema() -> None:
         conn.exec_driver_sql("""
             CREATE TABLE IF NOT EXISTS us_kr_theme_links (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                us_theme_id INTEGER NOT NULL UNIQUE,
-                kr_theme_id INTEGER NOT NULL UNIQUE,
+                us_theme_id INTEGER NOT NULL,
+                kr_theme_id INTEGER NOT NULL,
                 memo TEXT,
                 active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
+                UNIQUE(us_theme_id, kr_theme_id),
                 FOREIGN KEY(us_theme_id) REFERENCES us_themes(id) ON DELETE RESTRICT,
                 FOREIGN KEY(kr_theme_id) REFERENCES market_themes(id) ON DELETE RESTRICT
             )
         """)
+        _ensure_us_kr_theme_link_pair_uniqueness(conn)
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_us_kr_theme_links_active ON us_kr_theme_links(active)")
         conn.exec_driver_sql("""
             CREATE TABLE IF NOT EXISTS chart_marker_groups (

@@ -9,8 +9,7 @@ from backend.app.core.database import Base
 class UsKrThemeLink(Base):
     __tablename__ = "us_kr_theme_links"
     __table_args__ = (
-        UniqueConstraint("us_theme_id", name="uq_us_kr_theme_links_us_theme"),
-        UniqueConstraint("kr_theme_id", name="uq_us_kr_theme_links_kr_theme"),
+        UniqueConstraint("us_theme_id", "kr_theme_id", name="uq_us_kr_theme_links_pair"),
         Index("idx_us_kr_theme_links_active", "active"),
     )
 

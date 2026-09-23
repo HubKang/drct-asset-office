@@ -199,7 +199,9 @@ class RealtimeThemeService:
         rows = self.db.execute(
             text(
                 """
-                SELECT r.theme_id, r.stock_id, r.change_rate, r.collected_at
+                SELECT r.theme_id, t.theme_name, r.stock_id, s.stock_code, s.stock_name,
+                       COALESCE(mts.is_primary, 0) AS is_primary,
+                       r.change_rate, r.collected_at
                 FROM market_theme_realtime_returns r
                 JOIN market_themes t ON t.id=r.theme_id AND t.is_active=1
                 JOIN market_theme_stocks mts
@@ -243,6 +245,27 @@ class RealtimeThemeService:
         items.sort(key=lambda item: (item["avg_change_rate"] is None, -(float(item["avg_change_rate"]) if item["avg_change_rate"] is not None else 0), str(item["theme_name"])))
         for index, item in enumerate(items, start=1):
             item["rank"] = index
+        theme_rank_by_id = {int(item["theme_id"]): int(item["rank"]) for item in items}
+        representative_by_stock: dict[int, dict[str, object]] = {}
+        for row in rows:
+            stock_id = int(row["stock_id"])
+            current = representative_by_stock.get(stock_id)
+            candidate_key = (
+                -int(row["is_primary"] or 0),
+                theme_rank_by_id.get(int(row["theme_id"]), 99999),
+                str(row["theme_name"]),
+            )
+            current_key = (
+                -int(current["is_primary"] or 0),
+                theme_rank_by_id.get(int(current["theme_id"]), 99999),
+                str(current["theme_name"]),
+            ) if current else None
+            if current_key is None or candidate_key < current_key:
+                representative_by_stock[stock_id] = dict(row)
+        top_stocks = sorted(
+            representative_by_stock.values(),
+            key=lambda row: (-float(row["change_rate"]), str(row["stock_name"])),
+        )[:10]
         response = RealtimeThemeTreemapResponse(
             trade_date=trade_date,
             snapshot_at=snapshot_at,
@@ -252,6 +275,7 @@ class RealtimeThemeService:
             valid_stock_count=len(valid_ids),
             failed_stock_count=max(0, len(unique_ids) - len(valid_ids)) if snapshot_at else 0,
             themes=items,
+            top_stocks=top_stocks,
         )
         return response, int((time.perf_counter() - aggregation_started) * 1000)
 

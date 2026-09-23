@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
@@ -28,6 +28,7 @@ import type {
   MarketThemeMonthlyReturnResponse,
   MarketThemeMonthlyReturnThemeItem,
   MarketThemeReturnRefreshResponse,
+  RealtimeStockRankItem,
   RealtimeThemeStocksResponse,
 } from "@/types/marketTheme";
 import {
@@ -308,6 +309,110 @@ type RealtimeThemeRankPanelProps = {
 };
 
 type RealtimeThemeRows = ReturnType<typeof getRealtimeThemeSchedulerState>["snapshot"]["themes"];
+
+const realtimeRankStockToInsightStock = (
+  stock: RealtimeStockRankItem,
+  insight: DrctInsightToday | null,
+  realtimeThemes: RealtimeThemeRows,
+): DrctInsightStock => {
+  const existing = insight?.stocks.find((item) => item.stock_id === stock.stock_id);
+  if (existing) return existing;
+  const insightTheme = insight?.themes.find((theme) => theme.theme_id === stock.theme_id);
+  const realtimeTheme = realtimeThemes.find((theme) => theme.theme_id === stock.theme_id);
+  const themeChangeRate = insightTheme?.realtime_avg_change_rate ?? realtimeTheme?.avg_change_rate ?? null;
+  return {
+    stock_id: stock.stock_id,
+    stock_code: stock.stock_code,
+    stock_name: stock.stock_name,
+    theme_id: stock.theme_id,
+    theme_name: stock.theme_name,
+    observation_rank: insightTheme?.observation_rank ?? null,
+    change_rate: stock.change_rate,
+    theme_change_rate: themeChangeRate,
+    theme_strength: insightTheme?.theme_strength ?? realtimeTheme?.theme_strength ?? null,
+    relative_strength: themeChangeRate == null ? null : stock.change_rate - themeChangeRate,
+    theme_valid_stock_count: insightTheme?.valid_stock_count ?? realtimeTheme?.valid_stock_count ?? 0,
+    theme_linked_stock_count: insightTheme?.linked_stock_count ?? realtimeTheme?.linked_stock_count ?? 0,
+    marker_id: 0,
+    marker_name: "실시간 등락률",
+    candidate_band: "REALTIME_ONLY",
+    success_similarity: 0,
+    failure_similarity: null,
+    pattern_edge: null,
+    success_sample_count: 0,
+    failure_sample_count: 0,
+    required_failure_sample_count: 5,
+    pattern_status: "NOT_READY",
+    candidate_level: "NONE",
+    preliminary_candidate: false,
+    focus_candidate: false,
+    focus_rank: null,
+    final_candidate: false,
+    us_lead: insightTheme?.us_lead ?? {
+      linked: false, link_id: null, us_theme_id: null, us_theme_name: null,
+      metric: null, value: null, direction: null, strength: null, breadth_ratio: null,
+      relation_status: "MISSING", response_rate: null, sample_count: 0,
+      source_date: null, kr_response_date: null,
+    },
+    convergence_level: 0,
+    gates: {
+      theme: insightTheme?.gates.theme ?? "NO_DATA",
+      flow: insightTheme?.gates.flow ?? "NO_DATA",
+      pattern: "NOT_READY",
+      execution: "WAIT",
+    },
+    why_items: [`전체 연결종목 실시간 등락률 Top10 · ${formatSignedPercent(stock.change_rate)}`],
+    warning_items: ["DrCT Pattern Signal 데이터 축적 중"],
+    outcome: null,
+  };
+};
+
+const selectRealtimeHotStocks = (stocks: DrctInsightStock[]) => [...stocks]
+  .filter((row) => row.change_rate != null && Number.isFinite(row.change_rate) && row.gates.execution !== "INVALID")
+  .sort((a, b) =>
+    (b.change_rate ?? -Infinity) - (a.change_rate ?? -Infinity)
+    || (b.relative_strength ?? -Infinity) - (a.relative_strength ?? -Infinity)
+    || (b.theme_strength ?? -Infinity) - (a.theme_strength ?? -Infinity)
+    || b.success_similarity - a.success_similarity)
+  .slice(0, 10);
+
+type OverlapRankStyle = { backgroundColor: string };
+const OVERLAP_RANK_COLORS: OverlapRankStyle[] = [
+  { backgroundColor: "#fee2e2" },
+  { backgroundColor: "#fee3df" },
+  { backgroundColor: "#fee4dc" },
+  { backgroundColor: "#fee5d9" },
+  { backgroundColor: "#fee7d6" },
+  { backgroundColor: "#fee9d3" },
+  { backgroundColor: "#feebd0" },
+  { backgroundColor: "#ffedcc" },
+  { backgroundColor: "#fff1c8" },
+  { backgroundColor: "#fff5d6" },
+];
+
+function RealtimeStockRankPanel({ rows, overlapRankStyles, onOpenStock }: {
+  rows: RealtimeStockRankItem[];
+  overlapRankStyles: Map<number, OverlapRankStyle>;
+  onOpenStock: (stock: RealtimeStockRankItem) => void;
+}) {
+  const rankedRows = [...rows]
+    .filter((row) => Number.isFinite(row.change_rate))
+    .sort((a, b) => b.change_rate - a.change_rate || a.stock_name.localeCompare(b.stock_name, "ko-KR"))
+    .slice(0, 10);
+  return <article className="dashboard-v2-rank-panel dashboard-realtime-stock-top10-panel">
+    <div className="dashboard-v2-rank-head"><div><h4>실시간 종목 강도 Top10</h4><span>연결종목 현재 등락률 기준</span></div></div>
+    {rankedRows.length ? <ol className="dashboard-v2-rank-list dashboard-realtime-stock-top10-list">
+      {rankedRows.map((stock, index) => {
+        const overlapStyle = overlapRankStyles.get(stock.stock_id);
+        return <li key={stock.stock_id}><button type="button" className={directionCardClass(stock.change_rate)} style={overlapStyle ? { "--overlap-card-background": overlapStyle.backgroundColor } as CSSProperties : undefined} onClick={() => onOpenStock(stock)} title={`${stock.stock_name} 상세 보기${overlapStyle ? " · Focus Signal 중복" : ""}`}>
+          <span className={`dashboard-v2-rank-badge ${index < 3 ? "top-three" : ""}`}>{index + 1}</span>
+          <span className="dashboard-v2-rank-copy"><strong>{stock.stock_name} <span className="dashboard-v2-rank-theme-name">({stock.theme_name})</span></strong></span>
+          <strong className={stock.change_rate > 0 ? "dashboard-v2-return-value" : stock.change_rate < 0 ? "dashboard-v2-realtime-negative-value" : "is-neutral"}>{formatSignedPercent(stock.change_rate)}</strong>
+        </button></li>;
+      })}
+    </ol> : <div className="dashboard-v2-rank-state"><p>현재 확인 가능한 연결종목 실시간 데이터가 없습니다.</p></div>}
+  </article>;
+}
 
 function patternQualityLabel(stock: DrctInsightStock) {
   if (!stock.success_sample_count) return "사례 부족";
@@ -594,7 +699,7 @@ function PostMarketReviewWorkspace({ insight, rows, counts, supply, supplyError,
   </>;
 }
 
-function TodayInsightPanel({ stage, insight, previousInsight, themeSummary, reviewCounts, reviewRows, failed, realtimeThemePanel, onOpen, onOpenTheme, onOpenStock }: {
+function TodayInsightPanel({ stage, insight, previousInsight, themeSummary, reviewCounts, reviewRows, failed, realtimeRankPanels, overlapRankStyles, onOpen, onOpenTheme, onOpenStock }: {
   stage: DashboardStage;
   insight: DrctInsightToday | null;
   previousInsight: DrctInsightToday | null;
@@ -602,7 +707,8 @@ function TodayInsightPanel({ stage, insight, previousInsight, themeSummary, revi
   reviewCounts?: { focus: number; confirmed: number; partial: number; weakened: number; new: number };
   reviewRows?: DashboardReviewThemeRow[];
   failed: boolean;
-  realtimeThemePanel?: ReactNode;
+  realtimeRankPanels?: ReactNode;
+  overlapRankStyles?: Map<number, OverlapRankStyle>;
   onOpen: () => void;
   onOpenTheme: (themeId: number) => void;
   onOpenStock: (stock: DrctInsightStock) => void;
@@ -615,14 +721,7 @@ function TodayInsightPanel({ stage, insight, previousInsight, themeSummary, revi
     .filter((row) => row.focus_candidate)
     .sort((a, b) => (a.focus_rank ?? 999) - (b.focus_rank ?? 999))
     .slice(0, 4);
-  const realtimeHotStocks = (insight?.stocks ?? [])
-    .filter((row) => row.change_rate != null && Number.isFinite(row.change_rate) && row.gates.execution !== "INVALID")
-    .sort((a, b) =>
-      (b.change_rate ?? -Infinity) - (a.change_rate ?? -Infinity)
-      || (b.relative_strength ?? -Infinity) - (a.relative_strength ?? -Infinity)
-      || (b.theme_strength ?? -Infinity) - (a.theme_strength ?? -Infinity)
-      || b.success_similarity - a.success_similarity)
-    .slice(0, 12);
+  const realtimeHotStocks = selectRealtimeHotStocks(insight?.stocks ?? []);
   const focusStocks = stage === "verify" ? realtimeHotStocks : planFocusStocks;
   const confirmedCount = focusThemes.filter((row) => ["STRENGTHENING", "STABLE"].includes(row.insight_status)).length;
   const weakenedCount = focusThemes.filter((row) => ["WEAKENING", "MISMATCH"].includes(row.insight_status)).length;
@@ -663,14 +762,14 @@ function TodayInsightPanel({ stage, insight, previousInsight, themeSummary, revi
           <LiveThemePanel title="예상했지만 약화" description="장전 후보의 실시간 약화 점검" badge="약화" themes={liveWeakenedThemes} emptyMessage="현재 약화된 집중테마가 없습니다." onOpen={onOpenTheme}/>
         </div>
         <div className="dashboard-live-top12-grid">
-          {realtimeThemePanel}
+          {realtimeRankPanels}
           <article className="dashboard-v2-rank-panel dashboard-focus-top12-panel">
-            <div className="dashboard-v2-rank-head"><div><h4>Focus 실시간 Signal Top12</h4><span title="현재 실시간 등락률, 테마 대비 상대강도, 테마강도를 기준으로 확인 가치가 높은 종목을 보여줍니다. 매매 적합성을 의미하지 않습니다.">현재 시장 반응이 강한 종목 순입니다. ⓘ</span></div></div>
-            {focusStocks.length ? <ol className="dashboard-v2-rank-list dashboard-focus-top12-list">{focusStocks.map((stock, index) => <li key={stock.stock_id}><button type="button" className={directionCardClass(stock.change_rate)} onClick={() => onOpenStock(stock)}>
-              <span className={`dashboard-v2-rank-badge ${index === 0 ? "first" : ""}`}>{index + 1}</span>
-              <span className="dashboard-v2-rank-copy"><strong>{stock.stock_name}</strong><small>{stock.theme_name ?? "테마 미지정"} · 테마 대비 {stock.relative_strength == null ? "대기" : `${formatSignedPercent(stock.relative_strength)}p`} · 패턴 {Math.round(stock.success_similarity)} · {patternQualityLabel(stock)}</small></span>
+            <div className="dashboard-v2-rank-head"><div><h4>Focus 실시간 Signal Top10</h4><span title="현재 Focus Signal 산정 로직을 유지하며 실시간 등락률, 테마 대비 상대강도, 테마강도를 기준으로 표시합니다. 매매 적합성을 의미하지 않습니다.">Focus Signal 기준 장중 상위 종목입니다. ⓘ</span></div></div>
+            {focusStocks.length ? <ol className="dashboard-v2-rank-list dashboard-focus-top12-list">{focusStocks.map((stock, index) => { const overlapStyle = overlapRankStyles?.get(stock.stock_id); return <li key={stock.stock_id}><button type="button" className={directionCardClass(stock.change_rate)} style={overlapStyle ? { "--overlap-card-background": overlapStyle.backgroundColor } as CSSProperties : undefined} onClick={() => onOpenStock(stock)} title={overlapStyle ? `${stock.stock_name} · 실시간 종목 강도 Top10 중복` : undefined}>
+              <span className={`dashboard-v2-rank-badge ${index < 3 ? "top-three" : ""}`}>{index + 1}</span>
+              <span className="dashboard-v2-rank-copy"><strong>{stock.stock_name} <span className="dashboard-v2-rank-theme-name">({stock.theme_name ?? "테마 미지정"})</span></strong><small>테마 대비 {stock.relative_strength == null ? "대기" : `${formatSignedPercent(stock.relative_strength)}p`} · 패턴 {Math.round(stock.success_similarity)} · {patternQualityLabel(stock)}</small></span>
               <strong className={(stock.change_rate ?? 0) > 0 ? "dashboard-v2-return-value" : (stock.change_rate ?? 0) < 0 ? "dashboard-v2-realtime-negative-value" : "is-neutral"}>{formatSignedPercent(stock.change_rate)}</strong>
-            </button></li>)}</ol> : <p className="dashboard-insight-empty">현재 확인 가능한 실시간 종목이 없습니다.</p>}
+            </button></li>; })}</ol> : <p className="dashboard-insight-empty">현재 확인 가능한 실시간 종목이 없습니다.</p>}
             <button type="button" className="dashboard-insight-all" onClick={onOpen}>실시간 인사이트 전체 →</button>
           </article>
         </div>
@@ -734,20 +833,20 @@ function RealtimeThemeRankPanel({
   const rankedRows = [...rows]
     .filter((row) => row.theme_strength != null && Number.isFinite(row.theme_strength))
     .sort((a, b) => Number(b.theme_strength) - Number(a.theme_strength) || a.theme_name.localeCompare(b.theme_name, "ko-KR"))
-    .slice(0, 12);
+    .slice(0, 10);
   const snapshotTime = snapshotAt?.slice(11, 19) || null;
 
   return (
     <article className="dashboard-v2-rank-panel dashboard-v2-realtime-rank-panel">
       <div className="dashboard-v2-rank-head">
         <div>
-          <h4>실시간 테마 강도 Top12</h4>
+          <h4>실시간 테마 강도 Top10</h4>
           <span>{snapshotTime ? `최근 Snapshot ${snapshotTime} · ${intervalMinutes}분 주기` : "실시간 Snapshot 대기 중"}</span>
         </div>
       </div>
       {loading ? (
         <div className="dashboard-v2-rank-skeleton dashboard-v2-realtime-rank-skeleton" aria-label="실시간 테마 순위 불러오는 중">
-          {Array.from({ length: 12 }, (_, index) => <div key={index}><i /><span /><b /></div>)}
+          {Array.from({ length: 10 }, (_, index) => <div key={index}><i /><span /><b /></div>)}
         </div>
       ) : error ? (
         <div className="dashboard-v2-rank-state error">
@@ -758,8 +857,8 @@ function RealtimeThemeRankPanel({
         <ol className="dashboard-v2-rank-list dashboard-v2-realtime-rank-list">
           {rankedRows.map((row, index) => (
             <li key={`realtime-${row.theme_id}`}>
-              <button type="button" onClick={() => onOpenTheme(row.theme_id)} aria-label={`${row.theme_name} 실시간 테마 보기`} title={row.theme_name}>
-                <span className={`dashboard-v2-rank-badge ${index === 0 ? "first" : ""}`}>{index + 1}</span>
+              <button type="button" className={directionCardClass(row.avg_change_rate)} onClick={() => onOpenTheme(row.theme_id)} aria-label={`${row.theme_name} 실시간 테마 보기`} title={row.theme_name}>
+                <span className={`dashboard-v2-rank-badge ${index < 3 ? "top-three" : ""}`}>{index + 1}</span>
                 <span className="dashboard-v2-rank-copy">
                   <strong title={row.theme_name}>{row.theme_name}</strong>
                   <small>강도 {formatSignedPercent(row.theme_strength)} · 확산 {row.valid_stock_count}/{row.linked_stock_count}</small>
@@ -834,6 +933,45 @@ function ReadinessSkeleton() {
   );
 }
 
+type DashboardInsightDrawerHandle = {
+  open: (stock: DrctInsightStock, tab: DrawerTab) => void;
+  close: () => void;
+};
+
+const DashboardInsightDrawerHost = forwardRef<DashboardInsightDrawerHandle, {
+  insight: DrctInsightToday | null;
+  stage: DashboardStage;
+  onRefresh: () => void;
+}>(function DashboardInsightDrawerHost({ insight, stage, onRefresh }, ref) {
+  const [selectedStock, setSelectedStock] = useState<DrctInsightStock | null>(null);
+  const [tab, setTab] = useState<DrawerTab>("summary");
+
+  useImperativeHandle(ref, () => ({
+    open: (stock, initialTab) => {
+      setTab(initialTab);
+      setSelectedStock(stock);
+    },
+    close: () => setSelectedStock(null),
+  }), []);
+
+  const currentStock = selectedStock
+    ? insight?.stocks.find((stock) => stock.stock_id === selectedStock.stock_id) ?? selectedStock
+    : null;
+
+  return currentStock ? <InsightDrawer
+    stock={currentStock}
+    view={dashboardStockView(currentStock)}
+    postMarket={stage === "review"}
+    analysisDate={insight?.analysis_date ?? null}
+    realtimeStatus={insight?.readiness.realtime.status ?? "NOT_READY"}
+    loading={false}
+    tab={tab}
+    onTab={setTab}
+    onRefresh={onRefresh}
+    onClose={() => setSelectedStock(null)}
+  /> : null;
+});
+
 function DashboardPage() {
   const navigate = useNavigate();
   const [activeStage, setActiveStage] = useState<DashboardStage>(resolveDefaultStage);
@@ -889,9 +1027,8 @@ function DashboardPage() {
   const [isRealtimeThemeDetailLoading, setIsRealtimeThemeDetailLoading] = useState(false);
   const [realtimeThemeDetailError, setRealtimeThemeDetailError] = useState("");
   const [realtimeThemeDetailMetric, setRealtimeThemeDetailMetric] = useState<"average" | "strength">("strength");
-  const [insightStockDetail, setInsightStockDetail] = useState<DrctInsightStock | null>(null);
-  const [insightStockTab, setInsightStockTab] = useState<DrawerTab>("summary");
   const [insight, setInsight] = useState<DrctInsightToday | null>(() => repositories.drctInsight.peekToday());
+  const insightDrawerRef = useRef<DashboardInsightDrawerHandle>(null);
   const previousInsightSnapshotRef = useRef<DrctInsightToday | null>(null);
   const [insightError, setInsightError] = useState("");
   const [performance, setPerformance] = useState<DrctInsightPerformance | null>(null);
@@ -1365,39 +1502,64 @@ function DashboardPage() {
     new: reviewThemeRows.filter((row) => row.tone === "new").length,
   };
   const currentStage = stageMeta[activeStage];
-  const openInsightTheme = (themeId: number) => {
+  const openInsightTheme = (themeId: number, preferRealtime = false) => {
     const theme = insight?.themes.find((row) => row.theme_id === themeId);
-    setInsightStockDetail(null);
+    const liveTheme = preferRealtime
+      ? realtimeThemeScheduler.snapshot.themes.find((row) => row.theme_id === themeId)
+      : null;
+    const realtimeContext = liveTheme ? {
+      themeName: liveTheme.theme_name,
+      rank: liveTheme.rank,
+      strength: liveTheme.theme_strength,
+      validStockCount: liveTheme.valid_stock_count,
+      linkedStockCount: liveTheme.linked_stock_count,
+      snapshotAt: realtimeThemeScheduler.snapshot.snapshot_at,
+      hypothesis: theme?.insight_status === "NEW" ? "NEW" as const : theme && ["WEAKENING", "MISMATCH"].includes(theme.insight_status) ? "WEAKENING" as const : "CONFIRMED" as const,
+    } : theme?.realtime_snapshot_at ? {
+      themeName: theme.theme_name,
+      rank: theme.realtime_rank,
+      strength: theme.theme_strength,
+      validStockCount: theme.up_count,
+      linkedStockCount: theme.valid_stock_count,
+      snapshotAt: theme.realtime_snapshot_at,
+      hypothesis: theme.insight_status === "NEW" ? "NEW" as const : ["WEAKENING", "MISMATCH"].includes(theme.insight_status) ? "WEAKENING" as const : "CONFIRMED" as const,
+    } : undefined;
+    insightDrawerRef.current?.close();
     setThemeDetailRequest({
       themeId,
       dataDate: themeSummary?.dataDate ?? insight?.analysis_date ?? null,
-      realtime: theme?.realtime_snapshot_at ? {
-        themeName: theme.theme_name,
-        rank: theme.realtime_rank,
-        strength: theme.theme_strength,
-        validStockCount: theme.up_count,
-        linkedStockCount: theme.valid_stock_count,
-        snapshotAt: theme.realtime_snapshot_at,
-        hypothesis: theme.insight_status === "NEW" ? "NEW" : ["WEAKENING", "MISMATCH"].includes(theme.insight_status) ? "WEAKENING" : "CONFIRMED",
-      } : undefined,
+      realtime: realtimeContext,
     });
   };
   const openInsightStock = (stock: DrctInsightStock) => {
     setThemeDetailRequest(null);
-    setInsightStockTab(activeStage === "verify" ? "pattern" : "summary");
-    setInsightStockDetail(stock);
+    insightDrawerRef.current?.open(stock, "pattern");
   };
-  const realtimeThemeTop12Panel = activeStage === "verify" ? <RealtimeThemeRankPanel
-    rows={realtimeThemeScheduler.snapshot.themes}
-    snapshotAt={realtimeThemeScheduler.snapshot.snapshot_at}
-    intervalMinutes={realtimeThemeScheduler.intervalMinutes}
-    loading={realtimeThemeScheduler.isRefreshing && !realtimeThemeScheduler.snapshot.snapshot_at}
-    error={realtimeThemeScheduler.error ?? ""}
-    onRetry={() => void ensureRealtimeThemeSnapshot()}
-    onOpenTheme={openInsightTheme}
-    onOpenAll={() => navigate("/realtime-theme-treemap")}
-  /> : null;
-  const todayInsightPanel = <TodayInsightPanel stage={activeStage} insight={insight} previousInsight={previousInsightSnapshotRef.current} themeSummary={themeSummary} reviewCounts={reviewCounts} reviewRows={reviewThemeRows} failed={Boolean(insightError)} realtimeThemePanel={realtimeThemeTop12Panel} onOpen={() => navigate("/drct-insight")} onOpenTheme={openInsightTheme} onOpenStock={openInsightStock} />;
+  const realtimeTopStocks = realtimeThemeScheduler.snapshot.top_stocks ?? [];
+  const focusTopStockIds = new Set(selectRealtimeHotStocks(insight?.stocks ?? []).map((stock) => stock.stock_id));
+  const overlappingStocks = realtimeTopStocks.filter((stock) => focusTopStockIds.has(stock.stock_id));
+  const overlapRankStyles = new Map(overlappingStocks.map((stock, index) => {
+    const colorIndex = overlappingStocks.length <= 1 ? 0 : Math.round(index * (OVERLAP_RANK_COLORS.length - 1) / (overlappingStocks.length - 1));
+    return [stock.stock_id, OVERLAP_RANK_COLORS[colorIndex]] as const;
+  }));
+  const realtimeRankPanels = activeStage === "verify" ? <>
+    <RealtimeThemeRankPanel
+      rows={realtimeThemeScheduler.snapshot.themes}
+      snapshotAt={realtimeThemeScheduler.snapshot.snapshot_at}
+      intervalMinutes={realtimeThemeScheduler.intervalMinutes}
+      loading={realtimeThemeScheduler.isRefreshing && !realtimeThemeScheduler.snapshot.snapshot_at}
+      error={realtimeThemeScheduler.error ?? ""}
+      onRetry={() => void ensureRealtimeThemeSnapshot()}
+      onOpenTheme={(themeId) => openInsightTheme(themeId, true)}
+      onOpenAll={() => navigate("/realtime-theme-treemap")}
+    />
+    <RealtimeStockRankPanel
+      rows={realtimeTopStocks}
+      overlapRankStyles={overlapRankStyles}
+      onOpenStock={(stock) => openInsightStock(realtimeRankStockToInsightStock(stock, insight, realtimeThemeScheduler.snapshot.themes))}
+    />
+  </> : null;
+  const todayInsightPanel = <TodayInsightPanel stage={activeStage} insight={insight} previousInsight={previousInsightSnapshotRef.current} themeSummary={themeSummary} reviewCounts={reviewCounts} reviewRows={reviewThemeRows} failed={Boolean(insightError)} realtimeRankPanels={realtimeRankPanels} overlapRankStyles={overlapRankStyles} onOpen={() => navigate("/drct-insight")} onOpenTheme={openInsightTheme} onOpenStock={openInsightStock} />;
 
   return (
     <div className={`space-y-4 dashboard-v2 dashboard-routine dashboard-stage-${activeStage}`}>
@@ -1749,18 +1911,12 @@ function DashboardPage() {
         dataDate={themeDetailRequest?.dataDate}
         onClose={() => setThemeDetailRequest(null)}
       />}
-      {insightStockDetail ? <InsightDrawer
-        stock={insightStockDetail}
-        view={dashboardStockView(insightStockDetail)}
-        postMarket={activeStage === "review"}
-        analysisDate={insight?.analysis_date ?? null}
-        realtimeStatus={insight?.readiness.realtime.status ?? "NOT_READY"}
-        loading={false}
-        tab={insightStockTab}
-        onTab={setInsightStockTab}
+      <DashboardInsightDrawerHost
+        ref={insightDrawerRef}
+        insight={insight}
+        stage={activeStage}
         onRefresh={() => void loadInsight()}
-        onClose={() => setInsightStockDetail(null)}
-      /> : null}
+      />
 
       {observationCalculationOpen ? (
         <div className="theme-observation-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target && !isObservationCalculating) setObservationCalculationOpen(false); }}>

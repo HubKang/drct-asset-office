@@ -459,12 +459,13 @@ CREATE TABLE IF NOT EXISTS us_themes (
 
 CREATE TABLE IF NOT EXISTS us_kr_theme_links (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    us_theme_id INTEGER NOT NULL UNIQUE,
-    kr_theme_id INTEGER NOT NULL UNIQUE,
+    us_theme_id INTEGER NOT NULL,
+    kr_theme_id INTEGER NOT NULL,
     memo TEXT,
     active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
+    UNIQUE(us_theme_id, kr_theme_id),
     FOREIGN KEY(us_theme_id) REFERENCES us_themes(id) ON DELETE RESTRICT,
     FOREIGN KEY(kr_theme_id) REFERENCES market_themes(id) ON DELETE RESTRICT
 );

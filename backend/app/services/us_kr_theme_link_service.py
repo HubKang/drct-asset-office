@@ -7,7 +7,7 @@ from datetime import date
 from statistics import mean, median
 
 from sqlalchemy import bindparam, func, select, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, aliased
 
 from backend.app.core.config import now_kst
@@ -48,7 +48,7 @@ class UsKrThemeLinkService:
             raise HTTPException(status_code=400, detail="활성 국내 테마만 연결할 수 있습니다.")
         return us_theme, kr_theme
 
-    def _response(self, link: UsKrThemeLink) -> UsKrThemeLinkResponse:
+    def _response(self, link: UsKrThemeLink, metrics: dict[str, int | float | None] | None = None) -> UsKrThemeLinkResponse:
         us_theme = self.db.get(UsTheme, link.us_theme_id)
         kr_theme = self.db.get(MarketTheme, link.kr_theme_id)
         us_group = self.db.get(UsThemeGroup, us_theme.theme_group_id) if us_theme else None
@@ -59,12 +59,67 @@ class UsKrThemeLinkService:
             kr_theme_id=link.kr_theme_id,
             kr_group_name=kr_group.theme_name if kr_group else "미지정", kr_theme_name=kr_theme.theme_name if kr_theme else "-",
             memo=link.memo, active=link.active, created_at=link.created_at, updated_at=link.updated_at,
+            **(metrics or {}),
         )
 
-    def overview(self) -> UsKrThemeLinkOverview:
+    def _overview_metrics(
+        self,
+        links: list[UsKrThemeLink],
+        window: int,
+        us_metric: str,
+    ) -> dict[int, dict[str, int | float | None]]:
+        active_links = [row for row in links if row.active]
+        if not active_links:
+            return {}
+        metric_column = "theme_strength" if us_metric == "theme_strength" else "simple_return"
+        us_ids = sorted({row.us_theme_id for row in active_links})
+        kr_ids = sorted({row.kr_theme_id for row in active_links})
+        try:
+            us_rows = self.db.execute(text(f"""
+                SELECT theme_id, trade_date, {metric_column} AS us_value
+                FROM us_theme_daily_returns
+                WHERE theme_id IN :theme_ids
+                ORDER BY theme_id, trade_date
+            """).bindparams(bindparam("theme_ids", expanding=True)), {"theme_ids": us_ids}).mappings().all()
+            kr_rows = self.db.execute(text("""
+                SELECT theme_id, return_date, avg_change_rate AS kr_return
+                FROM market_theme_daily_returns
+                WHERE theme_id IN :theme_ids
+                ORDER BY theme_id, return_date
+            """).bindparams(bindparam("theme_ids", expanding=True)), {"theme_ids": kr_ids}).mappings().all()
+        except SQLAlchemyError:
+            self.db.rollback()
+            return {}
+        us_by_theme: dict[int, list[object]] = {}
+        kr_by_theme: dict[int, list[object]] = {}
+        for row in us_rows:
+            us_by_theme.setdefault(int(row["theme_id"]), []).append(row)
+        for row in kr_rows:
+            kr_by_theme.setdefault(int(row["theme_id"]), []).append(row)
+        result: dict[int, dict[str, int | float | None]] = {}
+        for link in active_links:
+            pairs, _, _ = self._build_pairs_from_rows(
+                us_by_theme.get(link.us_theme_id, []),
+                kr_by_theme.get(link.kr_theme_id, []),
+                window,
+            )
+            directional = [row for row in pairs if row["direction_match"] is not None]
+            us_up = [row for row in pairs if float(row["us_value"]) > 0]
+            ys = [float(row["kr_return"]) for row in pairs]
+            result[link.id] = {
+                "valid_sample_count": len(pairs),
+                "direction_match_rate": self._rounded(100 * sum(bool(row["direction_match"]) for row in directional) / len(directional), 2) if directional else None,
+                "us_up_kr_up_rate": self._rounded(100 * sum(float(row["kr_return"]) > 0 for row in us_up) / len(us_up), 2) if us_up else None,
+                "avg_kr_return": self._rounded(mean(ys)) if ys else None,
+            }
+        return result
+
+    def overview(self, window: int = 120, us_metric: str = "theme_strength") -> UsKrThemeLinkOverview:
         links = self.db.scalars(select(UsKrThemeLink).order_by(UsKrThemeLink.id.desc())).all()
-        linked_us = {row.us_theme_id for row in links if row.active}
-        linked_kr = {row.kr_theme_id for row in links if row.active}
+        active_links = [row for row in links if row.active]
+        metrics_by_link = self._overview_metrics(links, window, us_metric)
+        linked_us = {row.us_theme_id for row in active_links}
+        linked_kr = {row.kr_theme_id for row in active_links}
         us_rows = self.db.execute(
             select(UsTheme, UsThemeGroup.name).join(UsThemeGroup, UsTheme.theme_group_id == UsThemeGroup.id)
             .where(UsTheme.active == 1).order_by(UsThemeGroup.sort_order, UsTheme.sort_order, UsTheme.name)
@@ -79,10 +134,10 @@ class UsKrThemeLinkService:
         kr_options = [ThemeLinkOption(id=row.id, group_name=group or "미지정", theme_name=row.theme_name, active=row.is_active, linked=row.id in linked_kr) for row, group in kr_rows]
         return UsKrThemeLinkOverview(
             summary=UsKrThemeLinkSummary(
-                us_active_themes=len(us_options), kr_active_themes=len(kr_options), linked_themes=len(linked_us),
+                us_active_themes=len(us_options), kr_active_themes=len(kr_options), linked_themes=len(active_links),
                 unlinked_us_themes=len(us_options) - len(linked_us), unlinked_kr_themes=len(kr_options) - len(linked_kr),
             ),
-            links=[self._response(row) for row in links], us_themes=us_options, kr_themes=kr_options,
+            links=[self._response(row, metrics_by_link.get(row.id)) for row in links], us_themes=us_options, kr_themes=kr_options,
         )
 
     def create(self, payload: UsKrThemeLinkInput) -> UsKrThemeLinkResponse:
@@ -94,7 +149,7 @@ class UsKrThemeLinkService:
             self.db.commit()
         except IntegrityError as exc:
             self.db.rollback()
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="이미 연결된 미국 또는 국내 테마입니다.") from exc
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="이미 연결된 미국·국내 테마 조합입니다.") from exc
         self.db.refresh(link)
         return self._response(link)
 
@@ -114,7 +169,7 @@ class UsKrThemeLinkService:
             self.db.commit()
         except IntegrityError as exc:
             self.db.rollback()
-            raise HTTPException(status_code=409, detail="이미 연결된 미국 또는 국내 테마입니다.") from exc
+            raise HTTPException(status_code=409, detail="이미 연결된 미국·국내 테마 조합입니다.") from exc
         self.db.refresh(link)
         return self._response(link)
 

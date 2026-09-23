@@ -10,8 +10,14 @@ from backend.app.services.us_kr_theme_link_service import UsKrThemeLinkService
 router = APIRouter(prefix="/us-kr-theme-links", tags=["us-kr-theme-links"])
 
 @router.get("/overview", response_model=UsKrThemeLinkOverview)
-def overview(db: Session = Depends(get_db)) -> UsKrThemeLinkOverview:
-    return UsKrThemeLinkService(db).overview()
+def overview(
+    window: int = Query(default=120),
+    us_metric: Literal["theme_strength", "simple_return"] = Query(default="theme_strength"),
+    db: Session = Depends(get_db),
+) -> UsKrThemeLinkOverview:
+    if window not in {0, 60, 120, 250}:
+        raise HTTPException(status_code=422, detail="분석기간은 60, 120, 250 또는 전체(0)만 지원합니다.")
+    return UsKrThemeLinkService(db).overview(window=window, us_metric=us_metric)
 
 
 @router.get("/today-observation", response_model=UsKrTodayObservationResponse)

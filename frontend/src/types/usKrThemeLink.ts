@@ -2,7 +2,9 @@ export type ThemeLinkOption = { id: number; group_name: string; theme_name: stri
 export type UsKrThemeLink = {
   id: number; us_theme_id: number; us_group_name: string; us_theme_name: string;
   kr_theme_id: number; kr_group_name: string; kr_theme_name: string;
-  memo: string | null; active: number; created_at: string; updated_at: string;
+  memo: string | null; valid_sample_count: number; direction_match_rate: number | null;
+  us_up_kr_up_rate: number | null; avg_kr_return: number | null;
+  active: number; created_at: string; updated_at: string;
 };
 export type UsKrThemeLinkSummary = {
   us_active_themes: number; kr_active_themes: number; linked_themes: number;

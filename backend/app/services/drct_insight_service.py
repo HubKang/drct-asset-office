@@ -187,6 +187,31 @@ class DrctInsightService:
             "source_date": item.latest_us_date, "kr_response_date": item.kr_target_date,
         }
 
+    @classmethod
+    def _combined_us_lead(cls, items: list[Any], metric: str = "theme_strength") -> dict[str, Any]:
+        if not items:
+            return cls._us_lead(None, metric)
+        if len(items) == 1:
+            return cls._us_lead(items[0], metric)
+        available = [item for item in items if item.available and item.latest_value is not None]
+        values = [float(item.latest_value) for item in available]
+        value = sum(values) / len(values) if values else None
+        breadth_values = [float(item.breadth_ratio) for item in available if item.breadth_ratio is not None]
+        response_values = [float(item.response_rate) for item in available if item.response_rate is not None]
+        direction = "UP" if value is not None and value > 0 else "DOWN" if value is not None and value < 0 else "FLAT" if value is not None else None
+        return {
+            "linked": True, "link_id": None, "us_theme_id": None,
+            "us_theme_name": " · ".join(dict.fromkeys(item.us_theme_name for item in items)),
+            "metric": metric, "value": value, "direction": direction,
+            "strength": cls._us_strength(value),
+            "breadth_ratio": sum(breadth_values) / len(breadth_values) if breadth_values else None,
+            "relation_status": "AVAILABLE" if available else "MISSING",
+            "response_rate": sum(response_values) / len(response_values) if response_values else None,
+            "sample_count": sum(int(item.sample_count or 0) for item in available),
+            "source_date": max((item.latest_us_date for item in available if item.latest_us_date), default=None),
+            "kr_response_date": max((item.kr_target_date for item in available if item.kr_target_date), default=None),
+        }
+
     @staticmethod
     def _source_status(source_date: str | None, reference_date: str | None, *, available: bool) -> str:
         if not available:
@@ -483,7 +508,9 @@ class DrctInsightService:
         flow_p25 = _percentile(flow_values, 25)
         flow_median = _percentile(flow_values, 50)
         realtime_by_id = {item.theme_id: item for item in realtime.themes}
-        us_by_kr_theme = {item.kr_theme_id: item for item in (us_observation.items if us_observation else [])}
+        us_by_kr_theme: dict[int, list[Any]] = {}
+        for us_item in (us_observation.items if us_observation else []):
+            us_by_kr_theme.setdefault(us_item.kr_theme_id, []).append(us_item)
 
         theme_rows: list[dict[str, Any]] = []
         theme_by_name: dict[str, dict[str, Any]] = {}
@@ -491,8 +518,7 @@ class DrctInsightService:
             theme_gate = self._theme_gate(item.observation_rank, theme_pass_count)
             flow_gate = self._flow_gate(item.flow_score, flow_p25, flow_median)
             live = realtime_by_id.get(item.theme_id)
-            us_item = us_by_kr_theme.get(item.theme_id)
-            us_lead = self._us_lead(us_item)
+            us_lead = self._combined_us_lead(us_by_kr_theme.get(item.theme_id, []))
             us_catalyst = us_lead.get("strength") or "NONE"
             insight_status, insight_interpretation = self._live_insight(theme_gate, flow_gate, live)
             signal_reason = " · ".join(filter(None, [

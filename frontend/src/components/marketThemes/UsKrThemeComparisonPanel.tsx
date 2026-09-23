@@ -9,12 +9,16 @@ import type { ThemeLinkOption, UsKrThemeLink, UsKrThemeLinkSummary } from "@/typ
 
 type Props = { section: "link" | "analysis" | "watch"; onSummaryChange: (value: UsKrThemeLinkSummary) => void; onOpenThemeDetail: (themeId: number) => void };
 type PendingPair = { us: ThemeLinkOption; kr: ThemeLinkOption } | null;
+type LinkContextMenu = { x: number; y: number; row: UsKrThemeLink } | null;
 const EMPTY = { us_active_themes: 0, kr_active_themes: 0, linked_themes: 0, unlinked_us_themes: 0, unlinked_kr_themes: 0 };
 const ALL_GROUPS = "__all__";
 
 const sortThemes = (rows: ThemeLinkOption[]) => [...rows].sort((a, b) =>
   a.group_name.localeCompare(b.group_name, "ko") || a.theme_name.localeCompare(b.theme_name, "ko"),
 );
+const rate = (value: number | null) => value == null ? "-" : `${value.toFixed(2)}%`;
+const signedRate = (value: number | null) => value == null ? "-" : `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+const tone = (value: number | null) => value == null ? "" : value > 0 ? "value-up" : value < 0 ? "value-down" : "";
 
 export default function UsKrThemeComparisonPanel({ section, onSummaryChange, onOpenThemeDetail }: Props) {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -27,9 +31,12 @@ export default function UsKrThemeComparisonPanel({ section, onSummaryChange, onO
   const [pendingPair, setPendingPair] = useState<PendingPair>(null);
   const [connectingUsId, setConnectingUsId] = useState<number | null>(null);
   const [editing, setEditing] = useState<UsKrThemeLink | null>(null);
+  const [contextMenu, setContextMenu] = useState<LinkContextMenu>(null);
+  const [additionalUs, setAdditionalUs] = useState<ThemeLinkOption | null>(null);
+  const [additionalKeyword, setAdditionalKeyword] = useState("");
+  const [additionalKrId, setAdditionalKrId] = useState<number | null>(null);
   const [editUsId, setEditUsId] = useState(0);
   const [editKrId, setEditKrId] = useState(0);
-  const [editMemo, setEditMemo] = useState("");
   const [usGroup, setUsGroup] = useState(ALL_GROUPS);
   const [krGroup, setKrGroup] = useState(ALL_GROUPS);
   const [usKeyword, setUsKeyword] = useState("");
@@ -41,11 +48,15 @@ export default function UsKrThemeComparisonPanel({ section, onSummaryChange, onO
   const [loading, setLoading] = useState(true);
   const usPoolRef = useRef<HTMLDivElement>(null);
   const krPoolRef = useRef<HTMLDivElement>(null);
+  const configuredWindow = [0, 60, 120, 250].includes(Number(searchParams.get("window"))) ? Number(searchParams.get("window")) : 120;
+  const configuredMetric = searchParams.get("metric") === "simple_return" ? "simple_return" : "theme_strength";
+  const configuredDirection = (["ALL", "UP", "DOWN"].includes(searchParams.get("direction") || "") ? searchParams.get("direction") : "ALL") as TodayDirection;
+  const configuredLinkId = Number(searchParams.get("link_id")) || 0;
 
   const load = async () => {
     setLoading(true);
     try {
-      const data = await repositories.usKrThemeLinks.overview();
+      const data = await repositories.usKrThemeLinks.overview(configuredWindow, configuredMetric);
       setLinks(data.links);
       setUsThemes(data.us_themes);
       setKrThemes(data.kr_themes);
@@ -58,12 +69,24 @@ export default function UsKrThemeComparisonPanel({ section, onSummaryChange, onO
       setLoading(false);
     }
   };
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); }, [configuredMetric, configuredWindow]);
   useEffect(() => {
     if (!success) return undefined;
     const timer = window.setTimeout(() => setSuccess(""), 3500);
     return () => window.clearTimeout(timer);
   }, [success]);
+  useEffect(() => {
+    if (!contextMenu && !additionalUs) return undefined;
+    const closeMenu = () => setContextMenu(null);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (additionalUs) setAdditionalUs(null);
+      else setContextMenu(null);
+    };
+    window.addEventListener("click", closeMenu);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => { window.removeEventListener("click", closeMenu); window.removeEventListener("keydown", handleKeyDown); };
+  }, [additionalUs, contextMenu]);
 
   const unlinkedUs = useMemo(() => sortThemes(usThemes.filter((row) => row.active === 1 && !row.linked)), [usThemes]);
   const unlinkedKr = useMemo(() => sortThemes(krThemes.filter((row) => row.active === 1 && !row.linked)), [krThemes]);
@@ -80,15 +103,17 @@ export default function UsKrThemeComparisonPanel({ section, onSummaryChange, onO
       && (!term || `${row.group_name} ${row.theme_name}`.toLowerCase().includes(term)));
   }, [unlinkedKr, krGroup, krKeyword]);
   const filtered = useMemo(() => links.filter((row) => {
-    const text = `${row.us_group_name} ${row.us_theme_name} ${row.kr_group_name} ${row.kr_theme_name} ${row.memo || ""}`.toLowerCase();
+    const text = `${row.us_group_name} ${row.us_theme_name} ${row.kr_group_name} ${row.kr_theme_name}`.toLowerCase();
     return (!keyword.trim() || text.includes(keyword.trim().toLowerCase()))
       && (statusFilter === "all" || (statusFilter === "active" ? row.active === 1 : row.active === 0));
-  }), [links, keyword, statusFilter]);
+  }).sort((a, b) => a.us_theme_name.localeCompare(b.us_theme_name, "ko-KR") || a.kr_theme_name.localeCompare(b.kr_theme_name, "ko-KR")), [links, keyword, statusFilter]);
+  const linkCountsByUs = useMemo(() => links.reduce((counts, row) => counts.set(row.us_theme_id, (counts.get(row.us_theme_id) ?? 0) + 1), new Map<number, number>()), [links]);
+  const linkedKrIdsForAdditionalUs = useMemo(() => new Set(links.filter((row) => row.active === 1 && row.us_theme_id === additionalUs?.id).map((row) => row.kr_theme_id)), [additionalUs, links]);
+  const additionalKrThemes = useMemo(() => {
+    const term = additionalKeyword.trim().toLowerCase();
+    return sortThemes(krThemes.filter((row) => row.active === 1 && (!term || `${row.group_name} ${row.theme_name}`.toLowerCase().includes(term))));
+  }, [additionalKeyword, krThemes]);
 
-  const configuredWindow = [0, 60, 120, 250].includes(Number(searchParams.get("window"))) ? Number(searchParams.get("window")) : 120;
-  const configuredMetric = searchParams.get("metric") === "simple_return" ? "simple_return" : "theme_strength";
-  const configuredDirection = (["ALL", "UP", "DOWN"].includes(searchParams.get("direction") || "") ? searchParams.get("direction") : "ALL") as TodayDirection;
-  const configuredLinkId = Number(searchParams.get("link_id")) || 0;
   const updateObservationConfig = (window: number, metric: TodayMetric, direction: TodayDirection) => {
     if (String(window) === searchParams.get("window") && metric === searchParams.get("metric") && direction === searchParams.get("direction")) return;
     const next = new URLSearchParams(searchParams); next.set("window", String(window)); next.set("metric", metric); next.set("direction", direction); setSearchParams(next, { replace: true });
@@ -117,17 +142,42 @@ export default function UsKrThemeComparisonPanel({ section, onSummaryChange, onO
       setDragOverKrId(null);
     }
   };
+  const openAdditionalLink = (row: UsKrThemeLink) => {
+    const us = usThemes.find((theme) => theme.id === row.us_theme_id);
+    if (!us) return;
+    setAdditionalUs(us);
+    setAdditionalKeyword("");
+    setAdditionalKrId(null);
+    setContextMenu(null);
+    setError("");
+  };
+  const createAdditionalLink = async () => {
+    const kr = krThemes.find((theme) => theme.id === additionalKrId);
+    if (!additionalUs || !kr || linkedKrIdsForAdditionalUs.has(kr.id) || connectingUsId !== null) return;
+    setConnectingUsId(additionalUs.id);
+    setError("");
+    try {
+      await repositories.usKrThemeLinks.create({ us_theme_id: additionalUs.id, kr_theme_id: kr.id, memo: null });
+      setSuccess(`${additionalUs.theme_name} → ${kr.theme_name} 테마를 추가 연결했습니다.`);
+      setAdditionalUs(null);
+      setAdditionalKrId(null);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "국내 테마 추가 연결에 실패했습니다.");
+    } finally {
+      setConnectingUsId(null);
+    }
+  };
   const beginEdit = (row: UsKrThemeLink) => {
     setEditing(row);
     setEditUsId(row.us_theme_id);
     setEditKrId(row.kr_theme_id);
-    setEditMemo(row.memo || "");
   };
   const saveEdit = async () => {
     if (!editing || !editUsId || !editKrId) return;
     setError("");
     try {
-      await repositories.usKrThemeLinks.update(editing.id, { us_theme_id: editUsId, kr_theme_id: editKrId, memo: editMemo.trim() || null });
+      await repositories.usKrThemeLinks.update(editing.id, { us_theme_id: editUsId, kr_theme_id: editKrId });
       setSuccess("테마 연결 정보를 수정했습니다.");
       setEditing(null);
       await load();
@@ -153,7 +203,7 @@ export default function UsKrThemeComparisonPanel({ section, onSummaryChange, onO
   return <div className="space-y-4 us-kr-theme-comparison">
     <SectionCard title="한미 테마 연결" className="us-kr-link-board-card">
       <div className="us-kr-board-heading">
-        <div><p>미국 테마를 국내 테마로 끌어 놓아 1:1로 연결합니다.</p><strong>US D-1 → KR D0</strong></div>
+        <div><p>미국 테마를 국내 테마로 끌어 놓아 연결합니다. 추가 연결은 하단 연결 목록에서 지정할 수 있습니다.</p><strong>US D-1 → KR D0</strong></div>
         {selectedUs ? <p className="us-kr-selection-guide"><strong>{selectedUs.theme_name}</strong> 선택됨 · 연결할 국내 테마를 선택하세요.</p> : null}
       </div>
       <div className={`us-kr-link-board${dragUsId ? " is-dragging" : ""}`}>
@@ -186,12 +236,14 @@ export default function UsKrThemeComparisonPanel({ section, onSummaryChange, onO
       {error ? <p className="form-error-message" role="alert">{error}</p> : null}
     </SectionCard>
     <SectionCard title={`연결된 테마 · ${filtered.length}`} className="us-kr-linked-list-card">
-      <div className="us-kr-link-filters"><select className="select-control" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option value="all">상태 전체</option><option value="active">연결</option><option value="inactive">비활성</option></select><input className="input-control" value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="테마명 또는 메모 검색" /><button className="secondary-button" type="button" onClick={() => { setKeyword(""); setStatusFilter("all"); }}>초기화</button></div>
-      <div className="table-scroll us-kr-link-table-scroll"><table className="data-table us-kr-link-table"><colgroup><col className="us-kr-link-col-status" /><col className="us-kr-link-col-theme" /><col className="us-kr-link-col-arrow" /><col className="us-kr-link-col-theme" /><col className="us-kr-link-col-memo" /><col className="us-kr-link-col-actions" /></colgroup><thead><tr><th>상태</th><th>미국 테마</th><th className="us-kr-table-arrow" aria-label="연결">연결</th><th>국내 테마</th><th>메모</th><th className="us-kr-link-actions-heading">작업</th></tr></thead><tbody>
-        {filtered.map((row) => <tr key={row.id}><td><span className="status-badge active">연결</span></td><td><small>{row.us_group_name}</small><strong>{row.us_theme_name}</strong></td><td className="us-kr-table-arrow">→</td><td><small>{row.kr_group_name}</small><strong>{row.kr_theme_name}</strong></td><td className="us-kr-link-memo">{row.memo || "-"}</td><td className="us-kr-link-actions"><div><button className="secondary-button" type="button" onClick={() => beginEdit(row)}>수정</button><button className="danger-button" type="button" onClick={() => void remove(row)}>연결 해제</button></div></td></tr>)}
-        {!loading && filtered.length === 0 ? <tr><td colSpan={6} className="empty-table-cell">등록된 연결이 없습니다.</td></tr> : null}
+      <div className="us-kr-link-filters"><select className="select-control" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option value="all">상태 전체</option><option value="active">연결</option><option value="inactive">비활성</option></select><input className="input-control" value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="미국 또는 국내 테마명 검색" /><button className="secondary-button" type="button" onClick={() => { setKeyword(""); setStatusFilter("all"); }}>초기화</button></div>
+      <div className="table-scroll us-kr-link-table-scroll"><table className="data-table us-kr-link-table"><colgroup><col className="us-kr-link-col-status" /><col className="us-kr-link-col-theme" /><col className="us-kr-link-col-arrow" /><col className="us-kr-link-col-theme" /><col className="us-kr-link-col-metric" /><col className="us-kr-link-col-metric" /><col className="us-kr-link-col-metric" /><col className="us-kr-link-col-metric" /><col className="us-kr-link-col-actions" /></colgroup><thead><tr><th>상태</th><th>미국 테마</th><th className="us-kr-table-arrow" aria-label="연결">연결</th><th>국내 테마</th><th>유효 표본</th><th>방향 일치율</th><th>상승 → 상승</th><th>국내 평균 반응</th><th className="us-kr-link-actions-heading">작업</th></tr></thead><tbody>
+        {filtered.map((row) => <tr key={row.id}><td><span className="status-badge active">연결</span></td><td className="us-kr-linked-us-theme" onContextMenu={(event) => { event.preventDefault(); setContextMenu({ x: event.clientX, y: event.clientY, row }); }}><small>{row.us_group_name}</small><span><strong>{row.us_theme_name}</strong>{(linkCountsByUs.get(row.us_theme_id) ?? 0) > 1 ? <em>연결 {linkCountsByUs.get(row.us_theme_id)}</em> : null}<button type="button" aria-label={`${row.us_theme_name} 국내 테마 추가 연결`} title="국내 테마 추가 연결" onClick={(event) => { event.stopPropagation(); openAdditionalLink(row); }}>＋</button></span></td><td className="us-kr-table-arrow">→</td><td><small>{row.kr_group_name}</small><strong>{row.kr_theme_name}</strong></td><td className="us-kr-link-metric"><strong>{row.valid_sample_count ? `${row.valid_sample_count}쌍` : "-"}</strong></td><td className="us-kr-link-metric"><strong>{rate(row.direction_match_rate)}</strong></td><td className="us-kr-link-metric"><strong>{rate(row.us_up_kr_up_rate)}</strong></td><td className={`us-kr-link-metric ${tone(row.avg_kr_return)}`}><strong>{signedRate(row.avg_kr_return)}</strong></td><td className="us-kr-link-actions"><div><button className="secondary-button" type="button" onClick={() => beginEdit(row)}>수정</button><button className="danger-button" type="button" onClick={() => void remove(row)}>연결 해제</button></div></td></tr>)}
+        {!loading && filtered.length === 0 ? <tr><td colSpan={9} className="empty-table-cell">등록된 연결이 없습니다.</td></tr> : null}
       </tbody></table></div>
     </SectionCard>
-    {editing ? <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setEditing(null); }}><section className="us-kr-edit-modal" role="dialog" aria-modal="true" aria-labelledby="us-kr-edit-title"><header><div><h2 id="us-kr-edit-title">한미 테마 연결 수정</h2><p>연결 대상과 관찰 메모를 수정합니다.</p></div><button type="button" aria-label="닫기" onClick={() => setEditing(null)}>×</button></header><div className="us-kr-edit-fields"><label><span>미국 테마</span><select className="select-control" value={editUsId} onChange={(e) => setEditUsId(Number(e.target.value))}>{usThemes.filter((row) => !row.linked || row.id === editing.us_theme_id).map((row) => <option key={row.id} value={row.id}>{row.group_name} · {row.theme_name}</option>)}</select></label><div className="us-kr-edit-arrow" aria-hidden="true">→</div><label><span>국내 테마</span><select className="select-control" value={editKrId} onChange={(e) => setEditKrId(Number(e.target.value))}>{krThemes.filter((row) => !row.linked || row.id === editing.kr_theme_id).map((row) => <option key={row.id} value={row.id}>{row.group_name} · {row.theme_name}</option>)}</select></label><label className="us-kr-edit-memo"><span>메모</span><textarea className="input-control" value={editMemo} maxLength={500} onChange={(e) => setEditMemo(e.target.value)} placeholder="연결 근거 또는 관찰 메모" /></label></div><footer><button className="secondary-button" type="button" onClick={() => setEditing(null)}>취소</button><button className="primary-button" type="button" onClick={() => void saveEdit()}>저장</button></footer></section></div> : null}
+    {contextMenu ? <div className="us-kr-link-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}><button type="button" role="menuitem" onClick={() => openAdditionalLink(contextMenu.row)}>국내 테마 추가 연결</button></div> : null}
+    {additionalUs ? <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAdditionalUs(null); }}><section className="us-kr-add-link-modal" role="dialog" aria-modal="true" aria-labelledby="us-kr-add-link-title"><header><div><h2 id="us-kr-add-link-title">국내 테마 추가 연결</h2><p>미국 테마: <strong>{additionalUs.theme_name}</strong></p></div><button type="button" aria-label="닫기" onClick={() => setAdditionalUs(null)}>×</button></header><div className="us-kr-add-link-body"><input className="input-control" value={additionalKeyword} onChange={(event) => setAdditionalKeyword(event.target.value)} placeholder="국내 테마 검색" autoFocus/>{error ? <p className="form-error-message" role="alert">{error}</p> : null}<div className="us-kr-add-link-options" role="radiogroup" aria-label="추가 연결할 국내 테마">{additionalKrThemes.map((theme) => { const linked = linkedKrIdsForAdditionalUs.has(theme.id); return <label key={theme.id} className={linked ? "is-linked" : ""}><input type="radio" name="additional-kr-theme" value={theme.id} checked={additionalKrId === theme.id} disabled={linked} onChange={() => setAdditionalKrId(theme.id)}/><span><strong>{theme.theme_name}</strong><small>{theme.group_name}</small></span>{linked ? <em>연결됨</em> : null}</label>; })}{!additionalKrThemes.length ? <p>검색 결과가 없습니다.</p> : null}</div></div><footer><button className="secondary-button" type="button" onClick={() => setAdditionalUs(null)}>취소</button><button className="primary-button" type="button" disabled={!additionalKrId || connectingUsId !== null} onClick={() => void createAdditionalLink()}>{connectingUsId !== null ? "연결 중" : "연결"}</button></footer></section></div> : null}
+    {editing ? <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setEditing(null); }}><section className="us-kr-edit-modal" role="dialog" aria-modal="true" aria-labelledby="us-kr-edit-title"><header><div><h2 id="us-kr-edit-title">한미 테마 연결 수정</h2><p>미국·국내 테마 연결 대상을 수정합니다.</p></div><button type="button" aria-label="닫기" onClick={() => setEditing(null)}>×</button></header><div className="us-kr-edit-fields"><label><span>미국 테마</span><select className="select-control" value={editUsId} onChange={(e) => setEditUsId(Number(e.target.value))}>{usThemes.map((row) => <option key={row.id} value={row.id}>{row.group_name} · {row.theme_name}</option>)}</select></label><div className="us-kr-edit-arrow" aria-hidden="true">→</div><label><span>국내 테마</span><select className="select-control" value={editKrId} onChange={(e) => setEditKrId(Number(e.target.value))}>{krThemes.map((row) => <option key={row.id} value={row.id}>{row.group_name} · {row.theme_name}</option>)}</select></label></div><footer><button className="secondary-button" type="button" onClick={() => setEditing(null)}>취소</button><button className="primary-button" type="button" onClick={() => void saveEdit()}>저장</button></footer></section></div> : null}
   </div>;
 }

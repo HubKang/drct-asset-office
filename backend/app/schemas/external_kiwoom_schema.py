@@ -414,6 +414,7 @@ class MarketThemePriceFlowJobStatusResponse(BaseModel):
 
 class MarketThemeReturnStockItem(BaseModel):
     mapping_id: int | None = None
+    is_primary: int = 0
     stock_id: int
     stock_code: str | None = None
     stock_name: str

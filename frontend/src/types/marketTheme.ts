@@ -10,6 +10,7 @@
 
 export type MarketThemeReturnStock = {
   mapping_id?: number | null;
+  is_primary: number;
   stock_id: number;
   stock_code: string | null;
   stock_name: string;
@@ -1008,6 +1009,17 @@ export type RealtimeThemeTreemapResponse = {
   valid_stock_count: number;
   failed_stock_count: number;
   themes: RealtimeThemeTreemapItem[];
+  top_stocks: RealtimeStockRankItem[];
+};
+
+export type RealtimeStockRankItem = {
+  stock_id: number;
+  stock_code: string;
+  stock_name: string;
+  theme_id: number;
+  theme_name: string;
+  change_rate: number;
+  collected_at: string | null;
 };
 
 export type RealtimeThemeRefreshResponse = RealtimeThemeTreemapResponse & {
