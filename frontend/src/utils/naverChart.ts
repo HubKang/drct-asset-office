@@ -47,6 +47,14 @@ export function buildNaverStockAnalysisUrl(
   return `https://finance.naver.com/item/coinfo.naver?code=${normalizedCode}`;
 }
 
+export function buildNaverStockFullChartUrl(
+  stockCode: string | number | null | undefined,
+): string {
+  const normalizedCode = normalizeNaverStockCode(stockCode);
+  if (!normalizedCode) return "";
+  return `https://stock.naver.com/fchart/domestic/stock/${normalizedCode}`;
+}
+
 export function buildNaverTraderChartUrl(
   type: NaverTraderChartType,
   stockCode: string | number | null | undefined,

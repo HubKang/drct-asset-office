@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Info } from "lucide-react";
+import NaverStockChartModal, { type NaverStockChartModalData } from "@/components/common/NaverStockChartModal";
 import { StockFlowCompactCard, ThemeFlowOverview, type FlowActor } from "@/components/marketThemes/FlowSummaryCards";
 import MarketThemeFlowChartPanel from "@/components/marketThemes/MarketThemeFlowChartPanel";
 import MarketThemePriceFlowModal from "@/components/marketThemes/MarketThemePriceFlowModal";
@@ -13,7 +14,7 @@ export type MarketThemeRealtimeContext = {
   linkedStockCount: number; snapshotAt: string | null; hypothesis: "CONFIRMED" | "WEAKENING" | "NEW";
 };
 type ThemeStockSort = "default" | "name" | "memo";
-type ZoomedChart = { url: string; alt: string; title?: string };
+type ZoomedChart = NaverStockChartModalData;
 const detailCache = new Map<string, MarketThemeLatestReturnDetail>();
 const loadedChartUrls = new Set<string>();
 
@@ -46,7 +47,7 @@ export function ThemeLinkedStockChart({ stockCode, stockName, period, label, sid
   }, [stockCode, url]);
   if (!stockCode || hasError) return <div className={`theme-linked-stock-chart-fallback${variant === "detail" ? " theme-detail-daily-chart-fallback" : ""}`}>{hasError ? "차트 불러오기 실패" : "차트 없음"}</div>;
   const alt = `${stockName || stockCode} ${label} 차트`;
-  return <button ref={buttonRef} type="button" className={`theme-linked-stock-chart-button${variant === "detail" ? " theme-detail-daily-chart-button" : ""}`} aria-label={`${stockName || stockCode} ${label} 차트 크게 보기`} onClick={(event) => { event.stopPropagation(); onOpen({ url, alt, title: alt }); }}>
+  return <button ref={buttonRef} type="button" className={`theme-linked-stock-chart-button${variant === "detail" ? " theme-detail-daily-chart-button" : ""}`} aria-label={`${stockName || stockCode} ${label} 차트 크게 보기`} onClick={(event) => { event.stopPropagation(); onOpen({ url, alt, title: alt, stockCode }); }}>
     {shouldLoad ? <img src={url} alt={alt} className={`theme-linked-stock-chart${variant === "detail" ? " theme-detail-daily-chart-image" : ""}`} loading="eager" decoding="async" onLoad={() => loadedChartUrls.add(url)} onError={() => setHasError(true)} /> : <span className={`theme-linked-stock-chart-deferred${variant === "detail" ? " theme-detail-daily-chart-image" : ""}`} aria-hidden="true">차트 준비</span>}
   </button>;
 }
@@ -216,7 +217,7 @@ export default function MarketThemeDetailDrawer({ open, themeId, dataDate, flowC
         </div>
       </aside>
     </div>
-    {zoomedChart ? <div className="theme-linked-stock-chart-modal" onClick={() => setZoomedChart(null)}><div className="theme-linked-stock-chart-modal-panel" onClick={(event) => event.stopPropagation()}><div className="theme-linked-stock-chart-modal-header"><h3>{zoomedChart.title || zoomedChart.alt}</h3><button type="button" className="btn btn-secondary btn-table-sm" onClick={() => setZoomedChart(null)}>닫기</button></div><img src={zoomedChart.url} alt={zoomedChart.alt} className="theme-linked-stock-chart-modal-image theme-linked-stock-chart-modal-image-clickable" onClick={() => setZoomedChart(null)} /></div></div> : null}
+    {zoomedChart ? <NaverStockChartModal chart={zoomedChart} onClose={() => setZoomedChart(null)} /> : null}
     {stockFlowModal ? <MarketThemePriceFlowModal stockId={stockFlowModal.stockId} stockName={stockFlowModal.stockName} themeId={stockFlowModal.themeId} focusDate={stockFlowModal.focusDate} onClose={() => setStockFlowModal(null)} /> : null}
     {themeFlowModal ? <div className="market-flow-modal-backdrop" onClick={() => setThemeFlowModal(null)}><section className="market-flow-modal" role="dialog" aria-modal="true" aria-label={`${themeFlowModal.themeName} 테마 가격·수급 추이`} onClick={(event) => event.stopPropagation()}><header className="market-flow-modal-header"><div><h3>{themeFlowModal.themeName}</h3><p>테마 가격·수급 추이</p></div><button type="button" className="btn btn-secondary btn-table-sm" onClick={() => setThemeFlowModal(null)}>닫기</button></header><div className="market-flow-modal-body"><MarketThemeFlowChartPanel themeId={themeFlowModal.themeId} focusDate={themeFlowModal.focusDate} initialActor={themeFlowModal.actor} /></div></section></div> : null}
   </>;

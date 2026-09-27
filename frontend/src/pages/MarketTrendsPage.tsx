@@ -1,6 +1,7 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { CSSProperties, DragEvent } from "react";
+import NaverStockChartModal, { type NaverStockChartModalData } from "@/components/common/NaverStockChartModal";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
 import { StockFlowCompactCard } from "@/components/marketThemes/FlowSummaryCards";
@@ -574,7 +575,7 @@ function MarketTrendsPage() {
   const [flowRankInfoOpen, setFlowRankInfoOpen] = useState(false);
   const chartSidcode = getNaverChartSessionSidcode();
   const [brokenCharts, setBrokenCharts] = useState<Record<string, boolean>>({});
-  const [zoomedChart, setZoomedChart] = useState<{ url: string; alt: string } | null>(null);
+  const [zoomedChart, setZoomedChart] = useState<NaverStockChartModalData | null>(null);
   const [monthlyBaseMonth, setMonthlyBaseMonth] = useState<string>(getMonthInput());
   const [monthlyCalendarDays, setMonthlyCalendarDays] = useState<MonthlyThemeFlowCalendarDay[]>([]);
   const [monthlySummary30d, setMonthlySummary30d] = useState<MonthlySupplySummary30d | null>(null);
@@ -3281,19 +3282,7 @@ ${tableRows}
         />
       ) : null}
 
-      {zoomedChart ? (
-        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4 theme-linked-stock-chart-modal" onClick={() => setZoomedChart(null)}>
-          <img
-            src={zoomedChart.url}
-            alt={zoomedChart.alt}
-            className="h-auto w-[700px] max-w-[95vw] rounded border border-white/30"
-            onClick={(e) => {
-              e.stopPropagation();
-              setZoomedChart(null);
-            }}
-          />
-        </div>
-      ) : null}
+      {zoomedChart ? <NaverStockChartModal chart={zoomedChart} onClose={() => setZoomedChart(null)} /> : null}
     </div>
   );
 }

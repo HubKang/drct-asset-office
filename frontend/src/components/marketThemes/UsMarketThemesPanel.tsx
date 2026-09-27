@@ -10,6 +10,8 @@ import { getThemeReturnHeatmapColor, getThemeReturnTextColor, THEME_RETURN_HEATM
 type Props = { activeTab: "themes" | "mapping"; onSummaryChange: (summary: UsThemeSummary) => void };
 type ViewMode = "group" | "theme" | "trend";
 type EditTarget = { kind: "group"; value: UsThemeGroup | null } | { kind: "theme"; value: UsTheme | null };
+type ThemeSortKey = "group" | "name" | "simpleReturn" | "themeStrength";
+type ThemeSort = { key: ThemeSortKey; direction: "asc" | "desc" } | null;
 const chartCache = new Map<number, Promise<UsStockCharts>>();
 
 const pct = (value: number | null | undefined) => value == null ? "-" : `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
@@ -176,20 +178,52 @@ export default function UsMarketThemesPanel({ activeTab, onSummaryChange }: Prop
   const [refreshing, setRefreshing] = useState(false);
   const [refreshingGroupId, setRefreshingGroupId] = useState<number | null>(null);
   const [refreshingThemeId, setRefreshingThemeId] = useState<number | null>(null);
+  const [themeSort, setThemeSort] = useState<ThemeSort>(null);
 
   const activeGroups = useMemo(() => groups.filter((group) => group.active === 1), [groups]);
   const selectableThemes = useMemo(() => themes.filter((theme) => theme.active === 1 && (groupFilter === "all" || String(theme.theme_group_id) === groupFilter)), [groupFilter, themes]);
   const filteredGroups = useMemo(() => groups.filter((group) => activeFilter === "all" || String(group.active) === activeFilter).filter((group) => !keyword.trim() || `${group.name} ${group.description || ""}`.toLowerCase().includes(keyword.trim().toLowerCase())), [activeFilter, groups, keyword]);
   const filteredThemes = useMemo(() => {
-    return themes
+    const rows = themes
       .filter((theme) => groupFilter === "all" || String(theme.theme_group_id) === groupFilter)
       .filter((theme) => activeFilter === "all" || String(theme.active) === activeFilter)
-      .filter((theme) => !keyword.trim() || `${theme.theme_group_name} ${theme.name} ${theme.keywords.join(" ")}`.toLowerCase().includes(keyword.trim().toLowerCase()))
-      .sort((a, b) => a.theme_group_name.localeCompare(b.theme_group_name, "ko-KR")
-        || a.name.localeCompare(b.name, "ko-KR")
-        || a.id - b.id);
-  }, [activeFilter, groupFilter, keyword, themes]);
+      .filter((theme) => !keyword.trim() || `${theme.theme_group_name} ${theme.name} ${theme.keywords.join(" ")}`.toLowerCase().includes(keyword.trim().toLowerCase()));
+    const defaultCompare = (a: UsTheme, b: UsTheme) => a.theme_group_name.localeCompare(b.theme_group_name, "ko-KR")
+      || a.name.localeCompare(b.name, "ko-KR")
+      || a.id - b.id;
+    if (!themeSort) return rows.sort(defaultCompare);
+    return rows.sort((a, b) => {
+      let result = 0;
+      if (themeSort.key === "group") result = a.theme_group_name.localeCompare(b.theme_group_name, "ko-KR");
+      else if (themeSort.key === "name") result = a.name.localeCompare(b.name, "ko-KR");
+      else {
+        const aValue = themeSort.key === "simpleReturn" ? a.latest_simple_return : a.latest_theme_strength;
+        const bValue = themeSort.key === "simpleReturn" ? b.latest_simple_return : b.latest_theme_strength;
+        if (aValue == null || bValue == null) {
+          if (aValue == null && bValue != null) return 1;
+          if (aValue != null && bValue == null) return -1;
+        } else {
+          result = aValue - bValue;
+        }
+      }
+      if (result !== 0) return themeSort.direction === "asc" ? result : -result;
+      return defaultCompare(a, b);
+    });
+  }, [activeFilter, groupFilter, keyword, themes, themeSort]);
   const connectedIds = useMemo(() => new Set(mappings.map((mapping) => mapping.us_stock_id)), [mappings]);
+
+  const toggleThemeSort = (key: ThemeSortKey) => {
+    setThemeSort((current) => current?.key === key
+      ? { key, direction: current.direction === "asc" ? "desc" : "asc" }
+      : { key, direction: key === "simpleReturn" || key === "themeStrength" ? "desc" : "asc" });
+  };
+  const renderThemeSortHeader = (key: ThemeSortKey, label: string) => {
+    const active = themeSort?.key === key;
+    const directionLabel = active ? (themeSort.direction === "asc" ? "오름차순" : "내림차순") : "정렬 안 함";
+    return <button type="button" className={`us-theme-sort-button${active ? " is-active" : ""}`} aria-label={`${label} 정렬, 현재 ${directionLabel}`} onClick={() => toggleThemeSort(key)}>
+      <span>{label}</span><span className="us-theme-sort-indicator" aria-hidden="true">{active ? themeSort.direction === "asc" ? "↑" : "↓" : "↕"}</span>
+    </button>;
+  };
 
   const loadBase = async () => {
     setLoading(true); setError("");
@@ -290,7 +324,7 @@ export default function UsMarketThemesPanel({ activeTab, onSummaryChange }: Prop
       </div>
       <div className="table-shell"><table className={`data-table compact-table${viewMode === "group" ? " us-theme-group-table" : ""}`}>
         {viewMode === "group" ? <><thead><tr><th>상태</th><th>테마그룹명</th><th>활성 테마</th><th>전체 테마</th><th>연결 종목</th><th>정렬</th><th>작업</th></tr></thead><tbody>{filteredGroups.map((group) => <tr key={group.id}><td><span className={`status-pill ${group.active ? "active" : "inactive"}`}>{group.active ? "활성" : "비활성"}</span></td><td><strong>{group.name}</strong>{group.description ? <small className="us-theme-subtext">{group.description}</small> : null}</td><td>{group.active_theme_count}</td><td>{group.theme_count}</td><td>{group.linked_stock_count}</td><td>{group.sort_order}</td><td><div className="us-theme-row-actions"><button className="btn btn-secondary btn-table-sm" onClick={() => openEditor({ kind: "group", value: group })}>수정</button><button className="btn btn-secondary btn-table-sm" onClick={() => void toggleGroup(group)}>{group.active ? "비활성화" : "활성화"}</button><button className="btn btn-secondary btn-table-sm" disabled={!group.active || refreshing || refreshingGroupId != null} title={group.active ? "연결 종목 가격과 이 그룹의 테마등락률 갱신" : "활성 그룹만 갱신할 수 있습니다."} onClick={() => void refreshGroup(group)}><RefreshCw size={13} className={refreshingGroupId === group.id ? "animate-spin" : ""}/>{refreshingGroupId === group.id ? "갱신 중" : "테마그룹 갱신"}</button></div></td></tr>)}</tbody></>
-          : <><thead><tr><th>상태</th><th>테마그룹</th><th>테마명</th><th>연결</th><th>대표 종목</th><th>기준일</th><th>등락률</th><th>테마강도</th><th>상승비율</th><th>작업</th></tr></thead><tbody>{filteredThemes.map((theme) => <tr key={theme.id} className="us-theme-clickable-row" tabIndex={0} aria-label={`${theme.name} 상세 보기`} onClick={() => setDetailTarget({ themeId: theme.id, tradeDate: theme.latest_return_date })} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setDetailTarget({ themeId: theme.id, tradeDate: theme.latest_return_date }); } }}><td><span className={`status-pill ${theme.active ? "active" : "inactive"}`}>{theme.active ? "활성" : "비활성"}</span></td><td>{theme.theme_group_name}</td><td><button type="button" className="us-theme-name-button" tabIndex={-1}>{theme.name}</button></td><td>{theme.linked_stock_count}</td><td>{theme.representative_symbols.join(", ") || "-"}</td><td>{theme.latest_return_date || "-"}</td><td className={theme.latest_simple_return == null ? "" : theme.latest_simple_return >= 0 ? "value-up" : "value-down"}>{pct(theme.latest_simple_return)}</td><td className={theme.latest_theme_strength == null ? "" : theme.latest_theme_strength >= 0 ? "value-up" : "value-down"}>{pct(theme.latest_theme_strength)}</td><td>{theme.latest_breadth_ratio == null ? "-" : `${(theme.latest_breadth_ratio * 100).toFixed(0)}%`}</td><td><div className="us-theme-row-actions"><button className="btn btn-secondary btn-table-sm" onClick={(event) => { event.stopPropagation(); openEditor({ kind: "theme", value: theme }); }}>수정</button><button className="btn btn-secondary btn-table-sm" onClick={(event) => { event.stopPropagation(); void toggleTheme(theme); }}>{theme.active ? "비활성화" : "활성화"}</button><button className="btn btn-secondary btn-table-sm" disabled={!theme.active || refreshing || refreshingGroupId != null || refreshingThemeId != null} title={theme.active ? "연결 종목 가격과 이 테마의 등락률 갱신" : "활성 테마만 갱신할 수 있습니다."} onClick={(event) => { event.stopPropagation(); void refreshTheme(theme); }}><RefreshCw size={13} className={refreshingThemeId === theme.id ? "animate-spin" : ""}/>{refreshingThemeId === theme.id ? "갱신 중" : "테마 갱신"}</button></div></td></tr>)}</tbody></>}
+          : <><thead><tr><th>상태</th><th aria-sort={themeSort?.key === "group" ? (themeSort.direction === "asc" ? "ascending" : "descending") : "none"}>{renderThemeSortHeader("group", "테마그룹")}</th><th aria-sort={themeSort?.key === "name" ? (themeSort.direction === "asc" ? "ascending" : "descending") : "none"}>{renderThemeSortHeader("name", "테마명")}</th><th>연결</th><th>대표 종목</th><th>기준일</th><th aria-sort={themeSort?.key === "simpleReturn" ? (themeSort.direction === "asc" ? "ascending" : "descending") : "none"}>{renderThemeSortHeader("simpleReturn", "등락률")}</th><th aria-sort={themeSort?.key === "themeStrength" ? (themeSort.direction === "asc" ? "ascending" : "descending") : "none"}>{renderThemeSortHeader("themeStrength", "테마강도")}</th><th>상승비율</th><th>작업</th></tr></thead><tbody>{filteredThemes.map((theme) => <tr key={theme.id} className="us-theme-clickable-row" tabIndex={0} aria-label={`${theme.name} 상세 보기`} onClick={() => setDetailTarget({ themeId: theme.id, tradeDate: theme.latest_return_date })} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setDetailTarget({ themeId: theme.id, tradeDate: theme.latest_return_date }); } }}><td><span className={`status-pill ${theme.active ? "active" : "inactive"}`}>{theme.active ? "활성" : "비활성"}</span></td><td>{theme.theme_group_name}</td><td><button type="button" className="us-theme-name-button" tabIndex={-1}>{theme.name}</button></td><td>{theme.linked_stock_count}</td><td>{theme.representative_symbols.join(", ") || "-"}</td><td>{theme.latest_return_date || "-"}</td><td className={theme.latest_simple_return == null ? "" : theme.latest_simple_return >= 0 ? "value-up" : "value-down"}>{pct(theme.latest_simple_return)}</td><td className={theme.latest_theme_strength == null ? "" : theme.latest_theme_strength >= 0 ? "value-up" : "value-down"}>{pct(theme.latest_theme_strength)}</td><td>{theme.latest_breadth_ratio == null ? "-" : `${(theme.latest_breadth_ratio * 100).toFixed(0)}%`}</td><td><div className="us-theme-row-actions"><button className="btn btn-secondary btn-table-sm" onClick={(event) => { event.stopPropagation(); openEditor({ kind: "theme", value: theme }); }}>수정</button><button className="btn btn-secondary btn-table-sm" onClick={(event) => { event.stopPropagation(); void toggleTheme(theme); }}>{theme.active ? "비활성화" : "활성화"}</button><button className="btn btn-secondary btn-table-sm" disabled={!theme.active || refreshing || refreshingGroupId != null || refreshingThemeId != null} title={theme.active ? "연결 종목 가격과 이 테마의 등락률 갱신" : "활성 테마만 갱신할 수 있습니다."} onClick={(event) => { event.stopPropagation(); void refreshTheme(theme); }}><RefreshCw size={13} className={refreshingThemeId === theme.id ? "animate-spin" : ""}/>{refreshingThemeId === theme.id ? "갱신 중" : "테마 갱신"}</button></div></td></tr>)}</tbody></>}
       </table>{loading ? <div className="us-theme-loading">불러오는 중...</div> : null}{!loading && (viewMode === "group" ? filteredGroups.length : filteredThemes.length) === 0 ? <div className="us-theme-empty">등록된 항목이 없습니다.</div> : null}</div></>}
     </SectionCard> : <div className="space-y-4">
       <SectionCard title="미국 종목 연결">

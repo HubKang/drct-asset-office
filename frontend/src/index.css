@@ -17672,6 +17672,13 @@ a:focus-visible {
   line-height: 1.35;
 }
 
+.theme-linked-stock-chart-modal-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
 .theme-linked-stock-chart-modal-image {
   display: block;
   width: 100%;
@@ -19408,6 +19415,13 @@ a:focus-visible {
 .us-theme-name-button { padding: 0; border: 0; background: transparent; color: #172033; font: inherit; font-weight: 800; text-align: left; cursor: pointer; }
 .us-theme-clickable-row:hover .us-theme-name-button,
 .us-theme-clickable-row:focus-visible .us-theme-name-button { color: #1d4ed8; text-decoration: underline; text-decoration-color: #bfdbfe; text-underline-offset: 3px; }
+.us-theme-sort-button { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-weight: inherit; cursor: pointer; }
+.us-theme-sort-button:hover,
+.us-theme-sort-button:focus-visible,
+.us-theme-sort-button.is-active { color: #1d4ed8; }
+.us-theme-sort-button:focus-visible { border-radius: 3px; outline: 2px solid #93c5fd; outline-offset: 2px; }
+.us-theme-sort-indicator { color: #94a3b8; font-size: 11px; line-height: 1; }
+.us-theme-sort-button.is-active .us-theme-sort-indicator { color: #2563eb; }
 .us-theme-detail-drawer { width: min(1100px, 75vw); max-width: calc(100vw - 24px); height: 100%; overflow: hidden; }
 .us-theme-detail-header { flex: 0 0 auto; align-items: center; padding: 18px 20px; }
 .us-theme-detail-header h3 { font-size: 22px; }

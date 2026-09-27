@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
+import NaverStockChartModal, { type NaverStockChartModalData } from "@/components/common/NaverStockChartModal";
 import EmptyState from "@/components/common/EmptyState";
 import PageHeader from "@/components/common/PageHeader";
 import SectionCard from "@/components/common/SectionCard";
@@ -63,7 +64,7 @@ function StockChartImage({
   period: NaverStockCandlePeriod;
   label: string;
   sidcode: number;
-  onOpen: (chart: { url: string; alt: string }) => void;
+  onOpen: (chart: NaverStockChartModalData) => void;
 }) {
   const [hasError, setHasError] = useState(false);
 
@@ -82,7 +83,7 @@ function StockChartImage({
     <button
       type="button"
       className="stock-management-chart-button"
-      onClick={() => onOpen({ url, alt })}
+      onClick={() => onOpen({ url, alt, stockCode })}
     >
       <img
         src={url}
@@ -110,7 +111,7 @@ function StocksPage() {
   const [typeCounts, setTypeCounts] = useState<Record<SecurityType, number>>(() => createEmptySecurityTypeMap(0));
   const [typeLatestSyncedAt, setTypeLatestSyncedAt] = useState<Record<SecurityType, string | null>>(() => createEmptySecurityTypeMap<string | null>(null));
   const [chartSidcode, setChartSidcode] = useState(createNaverChartSidcode());
-  const [zoomedChart, setZoomedChart] = useState<{ url: string; alt: string } | null>(null);
+  const [zoomedChart, setZoomedChart] = useState<NaverStockChartModalData | null>(null);
   const [syncLoading, setSyncLoading] = useState(false);
   const [syncResult, setSyncResult] = useState<StockSyncResponse | null>(null);
   const [syncError, setSyncError] = useState("");
@@ -420,19 +421,7 @@ function StocksPage() {
         )}
       </SectionCard>
       </>}
-      {zoomedChart ? (
-        <div className="stock-management-chart-modal" onClick={() => setZoomedChart(null)}>
-          <img
-            src={zoomedChart.url}
-            alt={zoomedChart.alt}
-            className="stock-management-chart-modal-image"
-            onClick={(event) => {
-              event.stopPropagation();
-              setZoomedChart(null);
-            }}
-          />
-        </div>
-      ) : null}
+      {zoomedChart ? <NaverStockChartModal chart={zoomedChart} onClose={() => setZoomedChart(null)} /> : null}
     </div>
   );
 }

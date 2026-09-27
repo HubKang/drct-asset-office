@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
+import NaverStockChartModal, { type NaverStockChartModalData } from "@/components/common/NaverStockChartModal";
 import EmptyState from "@/components/common/EmptyState";
 import SectionCard from "@/components/common/SectionCard";
 import StatusBadge from "@/components/common/StatusBadge";
@@ -78,7 +79,7 @@ function WatchlistChartImage({
   period: NaverStockCandlePeriod;
   label: string;
   sidcode: number;
-  onOpen: (chart: { url: string; alt: string }) => void;
+  onOpen: (chart: NaverStockChartModalData) => void;
 }) {
   const [hasError, setHasError] = useState(false);
 
@@ -94,7 +95,7 @@ function WatchlistChartImage({
   const alt = (stockName || stockCode) + " " + label + " 차트";
 
   return (
-    <button type="button" className="stock-management-chart-button" onClick={() => onOpen({ url, alt })}>
+    <button type="button" className="stock-management-chart-button" onClick={() => onOpen({ url, alt, stockCode })}>
       <img src={url} alt={alt} className="stock-management-chart-image" loading="lazy" onError={() => setHasError(true)} />
     </button>
   );
@@ -141,7 +142,7 @@ function WatchlistPage() {
   const [themeModalSaving, setThemeModalSaving] = useState(false);
   const [themeModalStock, setThemeModalStock] = useState<Watchlist | null>(null);
   const [chartSidcode, setChartSidcode] = useState(createNaverChartSidcode());
-  const [zoomedChart, setZoomedChart] = useState<{ url: string; alt: string } | null>(null);
+  const [zoomedChart, setZoomedChart] = useState<NaverStockChartModalData | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [modalKeyword, setModalKeyword] = useState("");
   const [modalLoading, setModalLoading] = useState(false);
@@ -886,19 +887,7 @@ function WatchlistPage() {
         </div>
       ) : null}
 
-      {zoomedChart ? (
-        <div className="stock-management-chart-modal" onClick={() => setZoomedChart(null)}>
-          <img
-            src={zoomedChart.url}
-            alt={zoomedChart.alt}
-            className="stock-management-chart-modal-image"
-            onClick={(event) => {
-              event.stopPropagation();
-              setZoomedChart(null);
-            }}
-          />
-        </div>
-      ) : null}
+      {zoomedChart ? <NaverStockChartModal chart={zoomedChart} onClose={() => setZoomedChart(null)} /> : null}
 
       {themeModalOpen && themeModalStock ? (
         <div className="modal-backdrop" onClick={() => setThemeModalOpen(false)}>

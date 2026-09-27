@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 
+import NaverStockChartModal, { type NaverStockChartModalData } from "@/components/common/NaverStockChartModal";
 import { ThemeLinkedStockChart } from "@/components/marketThemes/MarketThemeDetailDrawer";
 import type { RealtimeThemeStocksResponse } from "@/types/marketTheme";
 import { createNaverChartSidcode, normalizeNaverStockCode } from "@/utils/naverChart";
 
-type ZoomedChart = { url: string; alt: string; title?: string };
+type ZoomedChart = NaverStockChartModalData;
 
 const formatRate = (value: number | null) => value == null ? "-" : `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
 const rateClass = (value: number | null) => value == null ? "is-empty" : value > 0 ? "is-positive" : value < 0 ? "is-negative" : "is-neutral";
@@ -93,6 +94,6 @@ export default function RealtimeThemeDetailDrawer({ open, data, loading, error, 
         </div>
       </aside>
     </div>
-    {zoomedChart ? <div className="theme-linked-stock-chart-modal" onClick={() => setZoomedChart(null)}><div className="theme-linked-stock-chart-modal-panel" onClick={(event) => event.stopPropagation()}><div className="theme-linked-stock-chart-modal-header"><h3>{zoomedChart.title || zoomedChart.alt}</h3><button type="button" className="btn btn-secondary btn-table-sm" onClick={() => setZoomedChart(null)}>닫기</button></div><img src={zoomedChart.url} alt={zoomedChart.alt} className="theme-linked-stock-chart-modal-image theme-linked-stock-chart-modal-image-clickable" onClick={() => setZoomedChart(null)} /></div></div> : null}
+    {zoomedChart ? <NaverStockChartModal chart={zoomedChart} onClose={() => setZoomedChart(null)} /> : null}
   </>;
 }

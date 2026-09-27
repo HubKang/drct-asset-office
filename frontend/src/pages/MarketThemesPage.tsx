@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { CSSProperties } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown, Info, Pencil, RefreshCw } from "lucide-react";
+import NaverStockChartModal, { type NaverStockChartModalData } from "@/components/common/NaverStockChartModal";
 import SectionCard from "@/components/common/SectionCard";
 import StatusBadge from "@/components/common/StatusBadge";
 import MarketThemePriceFlowPanel from "@/components/marketThemes/MarketThemePriceFlowPanel";
@@ -102,7 +103,7 @@ function ThemeLinkedStockTraderChart({
   stockName: string;
   type: NaverTraderChartType;
   title: string;
-  onOpen: (chart: { url: string; alt: string; title?: string }) => void;
+  onOpen: (chart: NaverStockChartModalData) => void;
 }) {
   const [hasError, setHasError] = useState(false);
 
@@ -122,7 +123,7 @@ function ThemeLinkedStockTraderChart({
       type="button"
       className={`theme-stock-trader-chart-card ${hasError ? "is-error" : ""}`}
       onClick={() => {
-        if (!hasError) onOpen({ url, alt, title });
+        if (!hasError) onOpen({ url, alt, title, stockCode });
       }}
       disabled={hasError}
     >
@@ -480,7 +481,7 @@ function MarketThemesPage() {
   const [themeDetailRequest, setThemeDetailRequest] = useState<{ themeId: number; dataDate: string | null; flowContext: MarketThemeDetailFlowContext } | null>(null);
   const [stockDrawerOpen, setStockDrawerOpen] = useState(false);
   const [selectedLinkedStock, setSelectedLinkedStock] = useState<MarketThemeStock | null>(null);
-  const [zoomedChart, setZoomedChart] = useState<{ url: string; alt: string; title?: string } | null>(null);
+  const [zoomedChart, setZoomedChart] = useState<NaverStockChartModalData | null>(null);
   const [stockMemos, setStockMemos] = useState<MarketThemeStockSupplyMemo[]>([]);
   const [stockMemoLoading, setStockMemoLoading] = useState(false);
   const [stockMemoError, setStockMemoError] = useState("");
@@ -2230,22 +2231,7 @@ function MarketThemesPage() {
         </div>
       ) : null}
 
-      {zoomedChart ? (
-        <div className="theme-linked-stock-chart-modal" onClick={() => setZoomedChart(null)}>
-          <div className="theme-linked-stock-chart-modal-panel" onClick={(event) => event.stopPropagation()}>
-            <div className="theme-linked-stock-chart-modal-header">
-              <h3>{zoomedChart.title || zoomedChart.alt}</h3>
-              <button type="button" className="btn btn-secondary btn-table-sm" onClick={() => setZoomedChart(null)}>닫기</button>
-            </div>
-            <img
-              src={zoomedChart.url}
-              alt={zoomedChart.alt}
-              className="theme-linked-stock-chart-modal-image theme-linked-stock-chart-modal-image-clickable"
-              onClick={() => setZoomedChart(null)}
-            />
-          </div>
-        </div>
-      ) : null}
+      {zoomedChart ? <NaverStockChartModal chart={zoomedChart} onClose={() => setZoomedChart(null)} /> : null}
       {stockDrawerOpen && selectedLinkedStock ? (
         <div className="market-theme-stock-drawer-backdrop" onClick={closeStockDrawer}>
           <aside className="market-theme-stock-drawer" onClick={(e) => e.stopPropagation()}>
