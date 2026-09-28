@@ -843,6 +843,35 @@ class MonthlyThemeCellDetailResponse(BaseModel):
     chart_reference: str = "CURRENT"
     queried_at: str
 
+
+class MonthlyThemeHistoryDailyEvent(BaseModel):
+    date: str
+    theme_return: float | None = None
+    stock_codes: list[str] = Field(default_factory=list)
+    stock_names: list[str] = Field(default_factory=list)
+    stock_count: int = 0
+
+
+class MonthlyThemeHistoryStock(BaseModel):
+    stock_id: int
+    stock_code: str | None = None
+    stock_name: str
+    latest_change_rate: float | None = None
+    appearance_count: int = 0
+    latest_occurrence_date: str | None = None
+    occurrence_dates: list[str] = Field(default_factory=list)
+
+
+class MonthlyThemeHistoryResponse(BaseModel):
+    theme: MonthlyThemeCellDetailTheme
+    period: MonthlyThemeCellDetailPeriod
+    appearance_days: int = 0
+    unique_stock_count: int = 0
+    calendar_dates: list[str] = Field(default_factory=list)
+    daily_events: list[MonthlyThemeHistoryDailyEvent] = Field(default_factory=list)
+    stocks: list[MonthlyThemeHistoryStock] = Field(default_factory=list)
+    queried_at: str
+
 class DailyThemeRankUpdateItem(BaseModel):
     market_theme_id: int
     manual_rank: int | None = None

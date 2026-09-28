@@ -21,6 +21,7 @@ import type {
   MonthlyThemeFlowCalendarResponse,
   MonthlyThemeFlowTrendResponse,
   MonthlyThemeCellDetailResponse,
+  MonthlyThemeHistoryResponse,
   SaveKiwoomConditionResultsRequest,
   SaveKiwoomConditionResultsResponse,
   KiwoomMarketEventListResponse,
@@ -198,6 +199,11 @@ export const marketTrendApiRepository = {
       { signal },
     );
   },
+  getMonthlyThemeHistory: (themeId: number, signal?: AbortSignal) =>
+    apiRequest<MonthlyThemeHistoryResponse>(
+      `/external/kiwoom/theme-flow/monthly/themes/${themeId}/history`,
+      { signal },
+    ),
   getExternalMonthlyThemeFlowCalendar: (month: string) =>
     apiRequest<MonthlyThemeFlowCalendarResponse>(`/external/kiwoom/theme-flow/monthly/calendar?month=${month}`),
   getSupplyTopStockReturnTrend: (periodStartDate: string, periodEndDate: string, limit = 20) => {

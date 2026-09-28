@@ -729,6 +729,35 @@ export type MonthlyThemeCellDetailResponse = {
   chart_reference: "CURRENT";
   queried_at: string;
 };
+
+export type MonthlyThemeHistoryDailyEvent = {
+  date: string;
+  theme_return: number | null;
+  stock_codes: string[];
+  stock_names: string[];
+  stock_count: number;
+};
+
+export type MonthlyThemeHistoryStock = {
+  stock_id: number;
+  stock_code: string | null;
+  stock_name: string;
+  latest_change_rate: number | null;
+  appearance_count: number;
+  latest_occurrence_date: string | null;
+  occurrence_dates: string[];
+};
+
+export type MonthlyThemeHistoryResponse = {
+  theme: { id: number; name: string; group_name: string | null };
+  period: { from_date: string; to_date: string };
+  appearance_days: number;
+  unique_stock_count: number;
+  calendar_dates: string[];
+  daily_events: MonthlyThemeHistoryDailyEvent[];
+  stocks: MonthlyThemeHistoryStock[];
+  queried_at: string;
+};
 export type UpdateDailyThemeRanksRequest = {
   trade_date: string;
   items: Array<{

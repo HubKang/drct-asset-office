@@ -1667,6 +1667,8 @@ function MarketThemesPage() {
                 ))}
               </div>
               <div className="theme-strength-sort-row" aria-label="테마등락추이 정렬 기준">
+                <span className="theme-strength-sort-label">테마 순위</span>
+                <div className="theme-strength-sort-buttons">
                 <div className="theme-strength-sort-control" ref={trendStrengthInfoRef}>
                   <button
                     type="button"
@@ -1723,6 +1725,7 @@ function MarketThemesPage() {
                 >
                   최근 등락률
                 </button>
+                </div>
               </div>
               </div>
               {trendViewMode === "heatmap" ? (
@@ -1870,7 +1873,7 @@ function MarketThemesPage() {
               {themeViewMode === "group" ? (
                 <thead><tr><th>상태</th><th>테마그룹명</th><th>하위 테마</th><th>수급 테마</th><th>키워드</th><th>연결 종목</th><th>정렬</th><th>작업</th></tr></thead>
               ) : (
-                <thead><tr><th>상태</th><th>테마그룹</th><th>테마명</th><th>유형</th><th>수급</th><th>키워드</th><th>연결 종목</th><th><button type="button" className="theme-return-sort-button" onClick={toggleThemeReturnSort}>테마등락률{themeReturnSort === "desc" ? " ↓" : themeReturnSort === "asc" ? " ↑" : ""}</button></th><th>정렬</th><th>작업</th></tr></thead>
+                <thead><tr><th>상태</th><th>테마그룹</th><th>테마명</th><th>유형</th><th>수급</th><th>키워드</th><th>연결 종목</th><th aria-sort={themeReturnSort === "asc" ? "ascending" : themeReturnSort === "desc" ? "descending" : "none"}><button type="button" className={`theme-return-sort-button${themeReturnSort !== "default" ? " is-active" : ""}`} onClick={toggleThemeReturnSort} aria-label={`테마등락률 정렬, 현재 ${themeReturnSort === "asc" ? "오름차순" : themeReturnSort === "desc" ? "내림차순" : "정렬 안 함"}`}><span>테마등락률</span>{themeReturnSort === "asc" ? <ArrowUp size={14} aria-hidden="true" /> : themeReturnSort === "desc" ? <ArrowDown size={14} aria-hidden="true" /> : <ArrowUpDown size={14} aria-hidden="true" />}</button></th><th>정렬</th><th>작업</th></tr></thead>
               )}
               <tbody>
                 {filteredThemes.length === 0 ? (

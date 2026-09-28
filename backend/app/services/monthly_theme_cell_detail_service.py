@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -15,6 +15,9 @@ from backend.app.schemas.external_kiwoom_schema import (
     MonthlyThemeCellDetailResponse,
     MonthlyThemeCellDetailSummary,
     MonthlyThemeCellDetailTheme,
+    MonthlyThemeHistoryDailyEvent,
+    MonthlyThemeHistoryResponse,
+    MonthlyThemeHistoryStock,
 )
 from backend.app.services.external_kiwoom_service import ExternalKiwoomService, normalize_stock_code
 from backend.app.services.market_theme_flow_analysis_service import MarketThemeFlowAnalysisService
@@ -151,6 +154,165 @@ class MonthlyThemeCellDetailService:
             selected_date=event_date,
             period=MonthlyThemeCellDetailPeriod(from_date=period_from, to_date=period_to),
             summary=summary,
+            stocks=stocks,
+            queried_at=now_kst(),
+        )
+
+    def get_theme_history(self, *, theme_id: int) -> MonthlyThemeHistoryResponse:
+        """Return the complete saved event history for a theme without rebuilding it from current mappings."""
+        theme = self.db.execute(
+            text(
+                """
+                SELECT mt.id, mt.theme_name,
+                       CASE WHEN mt.theme_level='THEME_GROUP' THEN mt.theme_name ELSE parent.theme_name END AS group_name
+                FROM market_themes mt
+                LEFT JOIN market_themes parent ON parent.id=mt.parent_theme_id
+                WHERE mt.id=:theme_id
+                """
+            ),
+            {"theme_id": theme_id},
+        ).mappings().first()
+        if not theme:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="market theme not found")
+
+        rows = self.db.execute(
+            text(
+                """
+                WITH event_theme_pairs AS (
+                    SELECT event_id, market_theme_id FROM market_trend_event_theme_links
+                    UNION
+                    SELECT id AS event_id, theme_id AS market_theme_id
+                    FROM market_trend_events WHERE theme_id IS NOT NULL
+                )
+                SELECT mte.trade_date,
+                       COALESCE(mte.stock_id, s.id) AS stock_id,
+                       COALESCE(mte.stock_code, s.stock_code) AS stock_code,
+                       COALESCE(mte.stock_name, s.stock_name, mte.stock_code) AS stock_name,
+                       mte.change_rate
+                FROM market_trend_events mte
+                JOIN event_theme_pairs pair ON pair.event_id=mte.id
+                LEFT JOIN stocks s ON s.id=mte.stock_id OR (mte.stock_id IS NULL AND s.stock_code=mte.stock_code)
+                WHERE pair.market_theme_id=:theme_id
+                  AND mte.detection_source IN ('kiwoom_condition', 'kiwoom_rest', 'manual')
+                  AND COALESCE(mte.is_active, 1)=1
+                  AND COALESCE(mte.deleted_at, '')=''
+                ORDER BY mte.trade_date, mte.id
+                """
+            ),
+            {"theme_id": theme_id},
+        ).mappings().all()
+
+        daily: dict[str, dict[str, Any]] = {}
+        stock_buckets: dict[str, dict[str, Any]] = {}
+        for raw in rows:
+            row = dict(raw)
+            event_date = str(row["trade_date"])
+            code = normalize_stock_code(row.get("stock_code"))
+            stock_id = int(row["stock_id"]) if row.get("stock_id") is not None else 0
+            stock_name = str(row.get("stock_name") or code or "-")
+            stock_key = f"id:{stock_id}" if stock_id else f"code:{code}"
+
+            day = daily.setdefault(event_date, {"rates": [], "stocks": {}})
+            if row.get("change_rate") is not None:
+                day["rates"].append(float(row["change_rate"]))
+            day["stocks"][stock_key] = {"code": code, "name": stock_name}
+
+            bucket = stock_buckets.setdefault(
+                stock_key,
+                {"stock_id": stock_id, "stock_code": code or None, "stock_name": stock_name, "dates": set(), "event_rates": []},
+            )
+            bucket["dates"].add(event_date)
+            if row.get("change_rate") is not None:
+                bucket["event_rates"].append((event_date, float(row["change_rate"])))
+
+        event_dates = sorted(daily)
+        today = date.fromisoformat(now_kst()[:10])
+        default_start = today - timedelta(days=34)
+        first_event_date = date.fromisoformat(event_dates[0]) if event_dates else today
+        last_event_date = date.fromisoformat(event_dates[-1]) if event_dates else today
+        period_from = min(first_event_date, default_start).isoformat()
+        period_to = max(last_event_date, today).isoformat()
+        calendar_start = date.fromisoformat(period_from)
+        calendar_end = date.fromisoformat(period_to)
+        calendar_dates = [
+            (calendar_start + timedelta(days=offset)).isoformat()
+            for offset in range((calendar_end - calendar_start).days + 1)
+        ]
+
+        stock_ids = sorted({int(bucket["stock_id"]) for bucket in stock_buckets.values() if bucket["stock_id"]})
+        latest_rates: dict[int, float | None] = {}
+        if stock_ids:
+            placeholders = ",".join(f":stock_{index}" for index in range(len(stock_ids)))
+            params = {f"stock_{index}": stock_id for index, stock_id in enumerate(stock_ids)}
+            price_rows = self.db.execute(
+                text(
+                    f"""
+                    SELECT p.stock_id, p.change_rate
+                    FROM stock_daily_prices p
+                    WHERE p.stock_id IN ({placeholders})
+                      AND p.trade_date=(
+                        SELECT MAX(latest.trade_date) FROM stock_daily_prices latest
+                        WHERE latest.stock_id=p.stock_id
+                      )
+                    """
+                ),
+                params,
+            ).mappings().all()
+            latest_rates = {
+                int(row["stock_id"]): float(row["change_rate"]) if row["change_rate"] is not None else None
+                for row in price_rows
+            }
+
+        daily_events = []
+        for event_date in event_dates:
+            bucket = daily[event_date]
+            event_stocks = sorted(bucket["stocks"].values(), key=lambda item: (item["name"], item["code"]))
+            daily_events.append(
+                MonthlyThemeHistoryDailyEvent(
+                    date=event_date,
+                    theme_return=self._mean(bucket["rates"]),
+                    stock_codes=[item["code"] for item in event_stocks if item["code"]],
+                    stock_names=[item["name"] for item in event_stocks],
+                    stock_count=len(event_stocks),
+                )
+            )
+
+        stocks = []
+        for bucket in stock_buckets.values():
+            occurrence_dates = sorted(bucket["dates"])
+            latest_rate = latest_rates.get(bucket["stock_id"])
+            if latest_rate is None and bucket["event_rates"]:
+                latest_rate = sorted(bucket["event_rates"], key=lambda item: item[0])[-1][1]
+            stocks.append(
+                MonthlyThemeHistoryStock(
+                    stock_id=bucket["stock_id"],
+                    stock_code=bucket["stock_code"],
+                    stock_name=bucket["stock_name"],
+                    latest_change_rate=latest_rate,
+                    appearance_count=len(occurrence_dates),
+                    latest_occurrence_date=occurrence_dates[-1] if occurrence_dates else None,
+                    occurrence_dates=occurrence_dates,
+                )
+            )
+        stocks.sort(
+            key=lambda item: (
+                -item.appearance_count,
+                -(date.fromisoformat(item.latest_occurrence_date).toordinal() if item.latest_occurrence_date else 0),
+                item.stock_name,
+            )
+        )
+
+        return MonthlyThemeHistoryResponse(
+            theme=MonthlyThemeCellDetailTheme(
+                id=int(theme["id"]),
+                name=str(theme["theme_name"]),
+                group_name=str(theme["group_name"]) if theme["group_name"] else None,
+            ),
+            period=MonthlyThemeCellDetailPeriod(from_date=period_from, to_date=period_to),
+            appearance_days=len(event_dates),
+            unique_stock_count=len(stocks),
+            calendar_dates=calendar_dates,
+            daily_events=daily_events,
             stocks=stocks,
             queried_at=now_kst(),
         )

@@ -7,6 +7,7 @@ import SectionCard from "@/components/common/SectionCard";
 import { StockFlowCompactCard } from "@/components/marketThemes/FlowSummaryCards";
 import { ThemeLinkedStockChart } from "@/components/marketThemes/MarketThemeDetailDrawer";
 import MarketThemePriceFlowModal from "@/components/marketThemes/MarketThemePriceFlowModal";
+import MonthlyThemeHistoryDrawer from "@/components/marketTrends/MonthlyThemeHistoryDrawer";
 import { buildTreemapLayout, getTreemapLabelClass, getTreemapTextMetrics } from "@/utils/treemapLayout";
 import {
   buildNaverKoreaMarketChartUrl,
@@ -151,12 +152,14 @@ type MonthlySupplyHeatmapProps = {
   rows: MonthlySupplyHeatmapRow[];
   dates: string[];
   onSelectCell: (row: MonthlySupplyHeatmapRow, date: string, point: MonthlyThemeFlowTrendPoint) => void;
+  onSelectTheme: (row: MonthlySupplyHeatmapRow) => void;
 };
 
 const MonthlySupplyHeatmap = memo(function MonthlySupplyHeatmap({
   rows,
   dates,
   onSelectCell,
+  onSelectTheme,
 }: MonthlySupplyHeatmapProps) {
   return (
     <div className="monthly-supply-heatmap-wrap">
@@ -175,10 +178,16 @@ const MonthlySupplyHeatmap = memo(function MonthlySupplyHeatmap({
           ))}
           {rows.map((row) => (
             <Fragment key={`heat-row-${row.marketThemeId}`}>
-              <div className="monthly-supply-heatmap-theme-cell" title={row.themeGroupName ? `${row.themeGroupName} / ${row.themeName}` : row.themeName}>
+              <button
+                type="button"
+                className="monthly-supply-heatmap-theme-cell monthly-supply-theme-detail-button"
+                title={row.themeGroupName ? `${row.themeGroupName} / ${row.themeName}` : row.themeName}
+                onClick={() => onSelectTheme(row)}
+                aria-label={`${row.themeName} 수급 테마 상세 보기`}
+              >
                 <strong>{row.themeName}</strong>
                 <span>출현 {row.dailyMap.size}일 · {row.stockCount}종목</span>
-              </div>
+              </button>
               {dates.map((date) => {
                 const dayTheme = row.dailyMap.get(date);
                 const value = dayTheme?.avg_change_rate ?? null;
@@ -589,6 +598,7 @@ function MarketTrendsPage() {
   const [monthlyTreemapTooltip, setMonthlyTreemapTooltip] = useState<{ x: number; y: number; item: MonthlyThemeTreemapItem; share: number } | null>(null);
   const [monthlyTrendViewMode, setMonthlyTrendViewMode] = useState<ThemeFlowViewMode>("THEME");
   const [monthlyThemeFlowView, setMonthlyThemeFlowView] = useState<MonthlyThemeFlowView>("heatmap");
+  const [selectedThemeHistory, setSelectedThemeHistory] = useState<MonthlySupplyHeatmapRow | null>(null);
   const [monthlyStartDate, setMonthlyStartDate] = useState<string>("");
   const [monthlyEndDate, setMonthlyEndDate] = useState<string>("");
   const [selectedMonthlyDate, setSelectedMonthlyDate] = useState<string>("");
@@ -2942,6 +2952,7 @@ ${tableRows}
                   rows={monthlySupplyHeatmapRows}
                   dates={monthlyHeatmapDates}
                   onSelectCell={openMonthlyHeatmapCellDetail}
+                  onSelectTheme={setSelectedThemeHistory}
                 />
               )
             ) : monthlyTreemapItems.length === 0 ? (
@@ -3280,6 +3291,10 @@ ${tableRows}
           onClose={closeMonthlyStockFlowModal}
           className="monthly-cell-stock-flow-modal"
         />
+      ) : null}
+
+      {selectedThemeHistory ? (
+        <MonthlyThemeHistoryDrawer theme={selectedThemeHistory} onClose={() => setSelectedThemeHistory(null)} />
       ) : null}
 
       {zoomedChart ? <NaverStockChartModal chart={zoomedChart} onClose={() => setZoomedChart(null)} /> : null}

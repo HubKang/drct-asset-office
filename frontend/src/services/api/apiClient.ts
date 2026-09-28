@@ -24,8 +24,10 @@ export async function apiRequest<T>(path: string, options?: ApiRequestOptions): 
   if (externalSignal?.aborted) controller.abort();
   else externalSignal?.addEventListener("abort", forwardAbort, { once: true });
   const method = requestOptions.method || "GET";
+  let didTimeout = false;
   const timeout = timeoutMs
     ? setTimeout(() => {
+        didTimeout = true;
         controller.abort();
       }, timeoutMs)
     : null;
@@ -58,6 +60,7 @@ export async function apiRequest<T>(path: string, options?: ApiRequestOptions): 
     });
   } catch (error) {
     if ((error as Error)?.name === "AbortError") {
+      if (externalSignal?.aborted && !didTimeout) throw error;
       throw new ApiError(408, "요청 시간이 초과되었습니다.");
     }
     throw new ApiError(

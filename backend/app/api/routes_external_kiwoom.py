@@ -40,6 +40,7 @@ from backend.app.schemas.external_kiwoom_schema import (
     MonthlyThemeFlowCalendarResponse,
     MonthlyThemeFlowTrendResponse,
     MonthlyThemeCellDetailResponse,
+    MonthlyThemeHistoryResponse,
     SupplyTopStockReturnTrendResponse,
     SupplyTopStockPriceCollectRequest,
     SupplyTopStockPriceCollectResponse,
@@ -393,6 +394,18 @@ def get_monthly_theme_cell_detail(
         period_from=period_from,
         period_to=period_to,
     )
+
+
+@router.get(
+    "/external/kiwoom/theme-flow/monthly/themes/{theme_id}/history",
+    response_model=MonthlyThemeHistoryResponse,
+)
+def get_monthly_theme_history(
+    theme_id: int,
+    db: Session = Depends(get_db),
+) -> MonthlyThemeHistoryResponse:
+    """Return the saved event-date and stock participation history for one theme."""
+    return MonthlyThemeCellDetailService(db).get_theme_history(theme_id=theme_id)
 
 @router.get("/external/kiwoom/theme-flow/monthly/calendar", response_model=MonthlyThemeFlowCalendarResponse)
 def get_monthly_theme_flow_calendar(

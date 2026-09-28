@@ -4,6 +4,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
+from backend.app.core.config import now_kst
 from backend.app.services.external_kiwoom_service import ExternalKiwoomService
 from backend.app.services.monthly_theme_cell_detail_service import MonthlyThemeCellDetailService
 
@@ -181,3 +182,29 @@ def test_selected_cell_uses_the_events_that_contributed_to_current_heatmap_class
     assert detail.summary.selected_trading_value_100m == 1028.2817
     assert detail.summary.recent_appearance_dates == ["2026-07-23"]
     assert [(stock.stock_code, stock.change_rate) for stock in detail.stocks] == [("000001", 13.67)]
+
+
+def test_theme_history_uses_saved_event_theme_links_and_sorts_stocks_by_appearance() -> None:
+    db = _session()
+    try:
+        history = MonthlyThemeCellDetailService(db).get_theme_history(theme_id=12)
+    finally:
+        db.close()
+
+    assert history.theme.name == "AI반도체/HBM"
+    assert history.period.from_date == "2026-07-15"
+    assert history.period.to_date == now_kst()[:10]
+    assert history.appearance_days == 2
+    assert history.unique_stock_count == 2
+    assert len(history.calendar_dates) >= 35
+    assert history.calendar_dates[0] == "2026-07-15"
+    assert history.calendar_dates[-1] == now_kst()[:10]
+    assert {"2026-07-15", "2026-08-03"}.issubset(history.calendar_dates)
+    assert [(event.date, event.theme_return, event.stock_count) for event in history.daily_events] == [
+        ("2026-07-15", 3.0, 1),
+        ("2026-08-03", 5.0, 2),
+    ]
+    assert [stock.stock_code for stock in history.stocks] == ["000001", "000002"]
+    assert history.stocks[0].appearance_count == 2
+    assert history.stocks[0].occurrence_dates == ["2026-07-15", "2026-08-03"]
+    assert history.stocks[1].latest_change_rate == -2.0
