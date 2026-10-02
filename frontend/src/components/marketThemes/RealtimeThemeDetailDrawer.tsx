@@ -4,12 +4,29 @@ import { X } from "lucide-react";
 import NaverStockChartModal, { type NaverStockChartModalData } from "@/components/common/NaverStockChartModal";
 import { ThemeLinkedStockChart } from "@/components/marketThemes/MarketThemeDetailDrawer";
 import type { RealtimeThemeStocksResponse } from "@/types/marketTheme";
+import { buildDaumIntradayChartUrl, formatDaumChartTimestamp } from "@/utils/daumChart";
 import { createNaverChartSidcode, normalizeNaverStockCode } from "@/utils/naverChart";
 
 type ZoomedChart = NaverStockChartModalData;
 
 const formatRate = (value: number | null) => value == null ? "-" : `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
 const rateClass = (value: number | null) => value == null ? "is-empty" : value > 0 ? "is-positive" : value < 0 ? "is-negative" : "is-neutral";
+
+function RealtimeIntradayChart({ stockCode, stockName, timestamp, onOpen }: {
+  stockCode: string;
+  stockName: string;
+  timestamp: string;
+  onOpen: (chart: ZoomedChart) => void;
+}) {
+  const [hasError, setHasError] = useState(false);
+  const url = buildDaumIntradayChartUrl(stockCode, timestamp);
+  useEffect(() => setHasError(false), [url]);
+  if (!url || hasError) return <div className="realtime-theme-stock-chart-empty">분봉 없음</div>;
+  const alt = `${stockName || stockCode} 오늘 분봉 차트`;
+  return <button type="button" className="realtime-theme-intraday-chart-button" aria-label={`${alt} 크게 보기`} onClick={() => onOpen({ url, alt, title: alt, stockCode })}>
+    <img src={url} alt={alt} loading="lazy" decoding="async" onError={() => setHasError(true)} />
+  </button>;
+}
 
 export default function RealtimeThemeDetailDrawer({ open, data, loading, error, metric, metricLabel, metricValue, metricRank, onMetricChange, onClose, onRetry }: {
   open: boolean;
@@ -31,6 +48,7 @@ export default function RealtimeThemeDetailDrawer({ open, data, loading, error, 
     const snapshotKey = String(data?.snapshot_at ?? "").replace(/\D/g, "");
     return Number(snapshotKey) || createNaverChartSidcode();
   }, [data?.snapshot_at]);
+  const intradayChartTimestamp = useMemo(() => formatDaumChartTimestamp(), [data?.snapshot_at]);
 
   useEffect(() => {
     if (!open) return;
@@ -78,13 +96,14 @@ export default function RealtimeThemeDetailDrawer({ open, data, loading, error, 
           {data && !loading && !error ? <div className="realtime-theme-stock-table-wrap">
             <div className="realtime-theme-stock-table" role="table" aria-label={`${data.theme_name} 연결 종목`}>
               <div className="realtime-theme-stock-row is-header" role="row">
-                <span role="columnheader">종목</span><span role="columnheader">등락률</span><span role="columnheader">일봉</span><span role="columnheader">주봉</span><span role="columnheader">월봉</span>
+                <span role="columnheader">종목</span><span role="columnheader">실시간등락률</span><span role="columnheader">분봉</span><span role="columnheader">일봉</span><span role="columnheader">주봉</span><span role="columnheader">월봉</span>
               </div>
               {data.stocks.map((stock) => {
                 const stockCode = normalizeNaverStockCode(stock.stock_code);
                 return <div className="realtime-theme-stock-row" role="row" key={stock.stock_id}>
                   <div className="realtime-theme-stock-name" role="cell"><strong>{stock.stock_name || stock.stock_code}</strong><span>{stockCode || stock.stock_code}</span>{stock.memo?.trim() ? <small title={stock.memo}>{stock.memo}</small> : null}</div>
                   <strong className={`realtime-theme-stock-rate ${rateClass(stock.change_rate)}`} role="cell">{formatRate(stock.change_rate)}</strong>
+                  <div className="realtime-theme-stock-chart" role="cell"><RealtimeIntradayChart stockCode={stockCode} stockName={stock.stock_name} timestamp={intradayChartTimestamp} onOpen={setZoomedChart} /></div>
                   {(["day", "week", "month"] as const).map((period, index) => <div className="realtime-theme-stock-chart" role="cell" key={period}><ThemeLinkedStockChart stockCode={stockCode} stockName={stock.stock_name} period={period} label={["일봉", "주봉", "월봉"][index]} sidcode={chartSidcode} onOpen={setZoomedChart} variant="detail" /></div>)}
                 </div>;
               })}

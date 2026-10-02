@@ -16,7 +16,7 @@ export function KmsKnowledgeDetailView({ item, onRemoveTag, children }: {
   return <>
     <div className="kms-card-badges"><SettingBadge item={item.para_type} fallback="유형" /><SettingBadge item={item.category} fallback="미분류" /><SettingBadge item={item.status} fallback="상태" /><SettingBadge item={item.importance} fallback="중요도" /><SettingBadge item={item.usage_context} fallback="사용처" /><SettingBadge item={item.source_type} fallback="출처" /></div>
     {item.summary ? <section className="kms-content-section"><h3>요약</h3><p className="kms-detail-summary">{item.summary}</p></section> : null}
-    <section className="kms-content-section"><h3>본문</h3><div className="kms-detail-content kms-rich-content" dangerouslySetInnerHTML={{ __html: toKmsDisplayHtml(item.content) }} /></section>
+    <section className="kms-content-section"><h3>본문</h3><div className="kms-detail-content kms-rich-content kms-knowledge-content" dangerouslySetInnerHTML={{ __html: toKmsDisplayHtml(item.content) }} /></section>
     <div className="kms-detail-support">
       <section className="kms-detail-group" aria-labelledby={`kms-knowledge-info-title-${item.id}`}>
         <div className="kms-detail-group-heading"><div><h3 id={`kms-knowledge-info-title-${item.id}`}>지식 정보</h3><p>분류에 활용하는 태그와 원문 출처를 확인합니다.</p></div></div>

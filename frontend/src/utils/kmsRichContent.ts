@@ -1,4 +1,9 @@
 import DOMPurify from "dompurify";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import ReactMarkdown from "react-markdown";
+import remarkBreaks from "remark-breaks";
+import remarkGfm from "remark-gfm";
 
 const htmlTagPattern = /<\/?[a-z][\s\S]*>/i;
 
@@ -59,6 +64,9 @@ export const sanitizeKmsHtml = (value: string) =>
         "ol",
         "li",
         "blockquote",
+        "pre",
+        "code",
+        "hr",
         "table",
         "thead",
         "tbody",
@@ -165,6 +173,14 @@ const bustLocalImageCache = (html: string) => {
 
 export const toKmsDisplayHtml = (value: string) =>
   bustLocalImageCache(preserveTrailingParagraphBreaks(linkifyTextUrls(toKmsEditableHtml(value))));
+
+export const markdownToKmsHtml = (value: string) => {
+  if (!value.trim()) return "";
+  const rendered = renderToStaticMarkup(
+    createElement(ReactMarkdown, { remarkPlugins: [remarkGfm, remarkBreaks] }, value),
+  );
+  return sanitizeKmsHtml(rendered);
+};
 
 export const toKmsPlainText = (value: string) => {
   if (!value) return "";

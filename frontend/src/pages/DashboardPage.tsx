@@ -1687,9 +1687,9 @@ function DashboardPage() {
                 <StatusBadge label={marketStatus.label} tone={marketStatus.tone} />
               </div>
               <dl className="dashboard-v2-metrics dashboard-v2-card-metrics">
-                <div><dt>데이터 기준일</dt><dd>{formatDate(marketReadiness?.dataDate ?? null)}</dd></div>
+                <div><dt>최근 전체 증분</dt><dd>{formatDateTime(marketReadiness?.lastRunAt ?? null)}</dd></div>
                 <div><dt>활성 지표</dt><dd>{(marketReadiness?.activeIndicatorCount ?? 0).toLocaleString()}개</dd></div>
-                <div className="dashboard-v2-metric-wide"><dt>최근 전체 증분</dt><dd>{formatDateTime(marketReadiness?.lastRunAt ?? null)}</dd></div>
+                <div className="dashboard-v2-metric-wide"><dt>데이터 기준일</dt><dd>{formatDate(marketReadiness?.dataDate ?? null)}</dd></div>
               </dl>
               <div className="dashboard-v2-operation-footer">
               {!marketFeedback && !marketError ? <p className="dashboard-v2-operation-summary">활성 {(marketReadiness?.activeIndicatorCount ?? 0).toLocaleString()}개 지표 상태 확인</p> : null}

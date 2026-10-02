@@ -811,7 +811,7 @@ function WatchlistPage() {
       ) : null}
       {modalOpen ? (
         <div className="modal-backdrop" onClick={() => setModalOpen(false)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-card watchlist-register-modal" onClick={(e) => e.stopPropagation()}>
             <div className="trade-journal-detail-header">
               <h3>
                 관심종목 등록
@@ -839,7 +839,13 @@ function WatchlistPage() {
             {!modalLoading && modalRows.length === 0 ? <EmptyState message="검색 결과가 없습니다." /> : null}
             {!modalLoading && modalRows.length > 0 ? (
               <div className="table-shell">
-                <table className="data-table compact-table min-w-[760px]">
+                <table className="data-table compact-table watchlist-register-table">
+                  <colgroup>
+                    <col className="watchlist-register-col-name" />
+                    <col className="watchlist-register-col-code" />
+                    <col className="watchlist-register-col-market" />
+                    <col className="watchlist-register-col-action" />
+                  </colgroup>
                   <thead>
                     <tr>
                       <th>종목명</th>

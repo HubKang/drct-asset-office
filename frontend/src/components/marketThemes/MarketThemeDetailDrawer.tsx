@@ -52,16 +52,18 @@ export function ThemeLinkedStockChart({ stockCode, stockName, period, label, sid
   </button>;
 }
 
-export default function MarketThemeDetailDrawer({ open, themeId, dataDate, flowContext = null, realtimeContext, onClose, onUnlinkStock, onTogglePrimaryStock, linkedThemeStocks, headerEyebrow, headerTitle, headerSubtitle, summaryContent, hideReturnKpis = false, hideTitleBlock = false, drawerClassName = "" }: {
+export default function MarketThemeDetailDrawer({ open, themeId, dataDate, flowContext = null, realtimeContext, showRealtimeStockReturn = false, onClose, onUnlinkStock, onTogglePrimaryStock, linkedThemeStocks, headerEyebrow, headerTitle, headerSubtitle, summaryContent, hideReturnKpis = false, hideTitleBlock = false, drawerClassName = "" }: {
   open: boolean; themeId: number | null; dataDate?: string | null; flowContext?: MarketThemeDetailFlowContext; onClose: () => void;
   onUnlinkStock?: (mappingId: number) => Promise<boolean>;
   onTogglePrimaryStock?: (mappingId: number, checked: boolean) => Promise<boolean>;
   linkedThemeStocks?: Pick<MarketThemeStock, "mapping_id" | "is_primary">[];
   realtimeContext?: MarketThemeRealtimeContext;
+  showRealtimeStockReturn?: boolean;
   headerEyebrow?: string; headerTitle?: string; headerSubtitle?: string; summaryContent?: ReactNode;
   hideReturnKpis?: boolean; hideTitleBlock?: boolean; drawerClassName?: string;
 }) {
   const [detail, setDetail] = useState<MarketThemeLatestReturnDetail | null>(null);
+  const [realtimeStockRates, setRealtimeStockRates] = useState<Map<number, number | null>>(new Map());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [stockSort, setStockSort] = useState<ThemeStockSort>("memo");
@@ -71,11 +73,13 @@ export default function MarketThemeDetailDrawer({ open, themeId, dataDate, flowC
   const [unlinkingMappingId, setUnlinkingMappingId] = useState<number | null>(null);
   const [updatingPrimaryMappingId, setUpdatingPrimaryMappingId] = useState<number | null>(null);
   const requestRef = useRef(0);
+  const realtimeRequestRef = useRef(0);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const drawerRef = useRef<HTMLElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const chartSidcode = getNaverChartSessionSidcode();
   const cacheKey = themeId ? `${themeId}:${dataDate || "latest"}` : "";
+  const usesRealtimeStocks = Boolean(realtimeContext) || showRealtimeStockReturn;
 
   const load = async (useCache = true) => {
     if (!themeId) return;
@@ -109,6 +113,24 @@ export default function MarketThemeDetailDrawer({ open, themeId, dataDate, flowC
     void load(Boolean(dataDate));
     return () => { requestRef.current += 1; };
   }, [cacheKey, open, themeId]);
+
+  useEffect(() => {
+    const requestId = ++realtimeRequestRef.current;
+    if (!open || !themeId || !usesRealtimeStocks) {
+      setRealtimeStockRates(new Map());
+      return;
+    }
+    setRealtimeStockRates(new Map());
+    void repositories.marketThemes.getRealtimeThemeStocks(themeId)
+      .then((result) => {
+        if (requestId !== realtimeRequestRef.current) return;
+        setRealtimeStockRates(new Map(result.stocks.map((stock) => [stock.stock_id, stock.change_rate])));
+      })
+      .catch(() => {
+        if (requestId === realtimeRequestRef.current) setRealtimeStockRates(new Map());
+      });
+    return () => { realtimeRequestRef.current += 1; };
+  }, [open, realtimeContext?.snapshotAt, themeId, usesRealtimeStocks]);
 
   const close = () => {
     setZoomedChart(null); setStockFlowModal(null); setThemeFlowModal(null); onClose();
@@ -172,6 +194,13 @@ export default function MarketThemeDetailDrawer({ open, themeId, dataDate, flowC
       : stock.is_primary === 1;
   const stocks = useMemo(() => {
     const rows = [...(detail?.stocks ?? [])];
+    if (usesRealtimeStocks) return rows.sort((a, b) => {
+      const aRate = realtimeStockRates.get(a.stock_id);
+      const bRate = realtimeStockRates.get(b.stock_id);
+      return Number(bRate != null) - Number(aRate != null)
+        || Number(bRate ?? -Infinity) - Number(aRate ?? -Infinity)
+        || a.stock_name.localeCompare(b.stock_name, "ko-KR");
+    });
     if (onTogglePrimaryStock) return rows.sort((a, b) =>
       Number(isPrimaryStock(b)) - Number(isPrimaryStock(a))
       || Number(b.change_rate ?? -Infinity) - Number(a.change_rate ?? -Infinity)
@@ -180,7 +209,7 @@ export default function MarketThemeDetailDrawer({ open, themeId, dataDate, flowC
     return rows.sort((a, b) => stockSort === "name"
       ? a.stock_name.localeCompare(b.stock_name, "ko-KR") || a.stock_id - b.stock_id
       : Number(Boolean(b.stock_memo?.trim())) - Number(Boolean(a.stock_memo?.trim())) || Number(b.trading_value_100m ?? -Infinity) - Number(a.trading_value_100m ?? -Infinity) || a.stock_name.localeCompare(b.stock_name, "ko-KR"));
-  }, [detail, linkedPrimaryByMappingId, onTogglePrimaryStock, stockSort]);
+  }, [detail, linkedPrimaryByMappingId, onTogglePrimaryStock, realtimeStockRates, stockSort, usesRealtimeStocks]);
   const highlightedActors = flowContext ? flowContext.actor === "FOREIGN_INSTITUTION" ? ["foreign", "institution"] : flowContext.actor === "FOREIGN" ? ["foreign"] : flowContext.actor === "INSTITUTION" ? ["institution"] : flowContext.actor === "INDIVIDUAL" ? ["individual"] : ["program"] : [];
   const liveDelta = realtimeContext?.strength != null && detail?.avg_change_rate != null ? realtimeContext.strength - detail.avg_change_rate : null;
   const verdict = realtimeContext?.hypothesis === "CONFIRMED" ? "✓ 가설 확인" : realtimeContext?.hypothesis === "WEAKENING" ? "△ 가설 약화" : "NEW · 장중 급부상";
@@ -209,9 +238,9 @@ export default function MarketThemeDetailDrawer({ open, themeId, dataDate, flowC
               <div className="theme-return-meta"><span>기준일: {detail.return_date}</span><span>최종 갱신: {detail.snapshot_at || "-"}</span>{detail.failed_stock_count > 0 ? <span>조회 실패: {detail.failed_stock_count}개</span> : null}</div>
               {detail.flow_summary ? <ThemeFlowOverview summary={detail.flow_summary} title={realtimeContext ? "전일 확정 수급" : undefined} note={realtimeContext ? "오늘 장중 수급이 아니라 최근 확정 거래일 기준입니다." : undefined} highlightedActors={highlightedActors as FlowActor[]} onActorClick={(actor) => { setZoomedChart(null); setThemeFlowModal({ themeId: detail.theme_id, themeName: detail.theme_name, focusDate: detail.return_date, actor }); }} /> : null}
             </> : detail.stock_count > 0 ? <p className="selected-empty-message">등락률 갱신 전입니다. 연결된 종목을 먼저 표시합니다.</p> : <p className="selected-empty-message">이 테마에 연결된 종목이 없습니다.</p>}
-            {detail.stocks.length ? <><div className="theme-detail-stock-sortbar">{onTogglePrimaryStock ? <span>종목 정렬 · 대표종목 → 등락률</span> : <label><span>종목 정렬</span><select className="select-control" value={stockSort} onChange={(event) => setStockSort(event.target.value as ThemeStockSort)}><option value="memo">메모+거래대금</option><option value="name">종목명</option><option value="default">기존순</option></select></label>}</div>
-                <div className={`theme-detail-stock-list${onUnlinkStock ? " has-action" : ""}`} role="table" aria-label={`${detail.theme_name} 연결 종목`}><div className="theme-detail-stock-header" role="row"><span role="columnheader">종목명</span><span role="columnheader">거래대금(억)</span><span role="columnheader">{realtimeContext ? "전일 등락률" : "등락률(%)"}</span><span role="columnheader">개외기 수급</span><span role="columnheader" title="네이버에서 제공하는 현재 기준 일봉 차트입니다." className="theme-detail-daily-heading">일봉 <Info size={13} aria-hidden="true" /></span><span role="columnheader" title="네이버에서 제공하는 현재 기준 주봉 차트입니다." className="theme-detail-daily-heading">주봉 <Info size={13} aria-hidden="true" /></span><span role="columnheader" title="네이버에서 제공하는 현재 기준 월봉 차트입니다." className="theme-detail-daily-heading">월봉 <Info size={13} aria-hidden="true" /></span>{onUnlinkStock ? <span role="columnheader" className="theme-detail-action-heading">작업</span> : null}</div>
-                  {stocks.map((stock) => { const stockCode = normalizeNaverStockCode(stock.stock_code); return <div className="theme-detail-stock-row" role="row" key={`${stock.stock_id}-${stock.stock_code}`}><div className="stock-cell" role="cell"><strong>{stock.stock_name || stock.stock_code || "-"}</strong>{stock.stock_memo?.trim() ? <small className="theme-detail-stock-memo" title={stock.stock_memo}>{stock.stock_memo}</small> : null}{stock.stock_code ? <span>{stockCode || stock.stock_code}</span> : null}{stock.data_status !== "success" ? <small className="theme-return-fail-text">{stock.data_status === "missing" ? "등락률 미갱신" : "조회 실패"}</small> : null}</div><span className="theme-detail-stock-number" role="cell">{fmtEok(stock.trading_value_100m)}</span><span className={`theme-detail-stock-number ${returnToneClass(stock.change_rate)}`} role="cell">{fmtPct(stock.change_rate)}</span><div className="theme-detail-stock-flow-cell" role="cell"><StockFlowCompactCard summary={stock.flow_summary} baseDate={detail.return_date} onClick={() => { setZoomedChart(null); setStockFlowModal({ stockId: stock.stock_id, stockName: stock.stock_name || stock.stock_code || "종목", themeId: detail.theme_id, focusDate: detail.return_date }); }} /></div><div className="theme-detail-daily-chart-cell" role="cell"><ThemeLinkedStockChart stockCode={stockCode} stockName={stock.stock_name} period="day" label="일봉" sidcode={chartSidcode} onOpen={setZoomedChart} variant="detail" /></div><div className="theme-detail-daily-chart-cell" role="cell"><ThemeLinkedStockChart stockCode={stockCode} stockName={stock.stock_name} period="week" label="주봉" sidcode={chartSidcode} onOpen={setZoomedChart} variant="detail" /></div><div className="theme-detail-daily-chart-cell" role="cell"><ThemeLinkedStockChart stockCode={stockCode} stockName={stock.stock_name} period="month" label="월봉" sidcode={chartSidcode} onOpen={setZoomedChart} variant="detail" /></div>{onUnlinkStock ? <div className="theme-detail-stock-action" role="cell">{stock.mapping_id ? <><label className="theme-detail-primary-check"><input type="checkbox" checked={isPrimaryStock(stock)} disabled={updatingPrimaryMappingId != null} onChange={(event) => void togglePrimaryStock(stock.mapping_id!, event.target.checked)} /><span>대표</span></label><button type="button" className="btn btn-secondary btn-table-sm" disabled={unlinkingMappingId != null || updatingPrimaryMappingId != null} onClick={() => void unlinkStock(stock.mapping_id!)}>{unlinkingMappingId === stock.mapping_id ? "해제 중" : "해제"}</button></> : null}</div> : null}</div>; })}
+            {detail.stocks.length ? <><div className="theme-detail-stock-sortbar">{usesRealtimeStocks ? <span>종목 정렬 · 실시간 등락률 내림차순</span> : onTogglePrimaryStock ? <span>종목 정렬 · 대표종목 → 등락률</span> : <label><span>종목 정렬</span><select className="select-control" value={stockSort} onChange={(event) => setStockSort(event.target.value as ThemeStockSort)}><option value="memo">메모+거래대금</option><option value="name">종목명</option><option value="default">기존순</option></select></label>}</div>
+                <div className={`theme-detail-stock-list${usesRealtimeStocks ? " has-realtime-return" : ""}${onUnlinkStock ? " has-action" : ""}`} role="table" aria-label={`${detail.theme_name} 연결 종목`}><div className="theme-detail-stock-header" role="row"><span role="columnheader">종목명</span><span role="columnheader">거래대금(억)</span><span role="columnheader">{usesRealtimeStocks ? "전일 등락률" : "등락률(%)"}</span>{usesRealtimeStocks ? <span role="columnheader">실시간 등락률</span> : null}<span role="columnheader">개외기수급</span><span role="columnheader" title="네이버에서 제공하는 현재 기준 일봉 차트입니다." className="theme-detail-daily-heading">일봉 <Info size={13} aria-hidden="true" /></span><span role="columnheader" title="네이버에서 제공하는 현재 기준 주봉 차트입니다." className="theme-detail-daily-heading">주봉 <Info size={13} aria-hidden="true" /></span><span role="columnheader" title="네이버에서 제공하는 현재 기준 월봉 차트입니다." className="theme-detail-daily-heading">월봉 <Info size={13} aria-hidden="true" /></span>{onUnlinkStock ? <span role="columnheader" className="theme-detail-action-heading">작업</span> : null}</div>
+                  {stocks.map((stock) => { const stockCode = normalizeNaverStockCode(stock.stock_code); const realtimeRate = realtimeStockRates.get(stock.stock_id); return <div className="theme-detail-stock-row" role="row" key={`${stock.stock_id}-${stock.stock_code}`}><div className="stock-cell" role="cell"><strong>{stock.stock_name || stock.stock_code || "-"}</strong>{stock.stock_memo?.trim() ? <small className="theme-detail-stock-memo" title={stock.stock_memo}>{stock.stock_memo}</small> : null}{stock.stock_code ? <span>{stockCode || stock.stock_code}</span> : null}{stock.data_status !== "success" ? <small className="theme-return-fail-text">{stock.data_status === "missing" ? "등락률 미갱신" : "조회 실패"}</small> : null}</div><span className="theme-detail-stock-number" role="cell">{fmtEok(stock.trading_value_100m)}</span><span className={`theme-detail-stock-number ${returnToneClass(stock.change_rate)}`} role="cell">{fmtPct(stock.change_rate)}</span>{usesRealtimeStocks ? <span className={`theme-detail-stock-number theme-detail-realtime-rate ${returnToneClass(realtimeRate)}`} role="cell">{fmtPct(realtimeRate)}</span> : null}<div className="theme-detail-stock-flow-cell" role="cell"><StockFlowCompactCard summary={stock.flow_summary} baseDate={detail.return_date} onClick={() => { setZoomedChart(null); setStockFlowModal({ stockId: stock.stock_id, stockName: stock.stock_name || stock.stock_code || "종목", themeId: detail.theme_id, focusDate: detail.return_date }); }} /></div><div className="theme-detail-daily-chart-cell" role="cell"><ThemeLinkedStockChart stockCode={stockCode} stockName={stock.stock_name} period="day" label="일봉" sidcode={chartSidcode} onOpen={setZoomedChart} variant="detail" /></div><div className="theme-detail-daily-chart-cell" role="cell"><ThemeLinkedStockChart stockCode={stockCode} stockName={stock.stock_name} period="week" label="주봉" sidcode={chartSidcode} onOpen={setZoomedChart} variant="detail" /></div><div className="theme-detail-daily-chart-cell" role="cell"><ThemeLinkedStockChart stockCode={stockCode} stockName={stock.stock_name} period="month" label="월봉" sidcode={chartSidcode} onOpen={setZoomedChart} variant="detail" /></div>{onUnlinkStock ? <div className="theme-detail-stock-action" role="cell">{stock.mapping_id ? <><label className="theme-detail-primary-check"><input type="checkbox" checked={isPrimaryStock(stock)} disabled={updatingPrimaryMappingId != null} onChange={(event) => void togglePrimaryStock(stock.mapping_id!, event.target.checked)} /><span>대표</span></label><button type="button" className="btn btn-secondary btn-table-sm" disabled={unlinkingMappingId != null || updatingPrimaryMappingId != null} onClick={() => void unlinkStock(stock.mapping_id!)}>{unlinkingMappingId === stock.mapping_id ? "해제 중" : "해제"}</button></> : null}</div> : null}</div>; })}
                 </div></> : null}
           </div> : null}
         </div>

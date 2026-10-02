@@ -252,11 +252,13 @@ function ThemeReturnLineChart({
   dates,
   hoveredThemeId,
   onHoverTheme,
+  onOpenTheme,
 }: {
   themes: MarketThemeMonthlyReturnThemeItem[];
   dates: string[];
   hoveredThemeId: number | null;
   onHoverTheme: (themeId: number | null) => void;
+  onOpenTheme: (theme: MarketThemeMonthlyReturnThemeItem) => void;
 }) {
   const chartWidth = 840;
   const chartHeight = 500;
@@ -289,6 +291,7 @@ function ThemeReturnLineChart({
       .map((date) => dailyMap.get(date)?.avg_change_rate)
       .find((value) => value != null && Number.isFinite(Number(value))) ?? null;
     return {
+      theme,
       themeId: theme.theme_id,
       themeName: theme.theme_name,
       color: THEME_RETURN_LINE_COLORS[index % THEME_RETURN_LINE_COLORS.length],
@@ -395,6 +398,8 @@ function ThemeReturnLineChart({
                   onMouseEnter={() => onHoverTheme(item.themeId)}
                   onFocus={() => onHoverTheme(item.themeId)}
                   onBlur={() => onHoverTheme(null)}
+                  onDoubleClick={() => onOpenTheme(item.theme)}
+                  title={`${item.themeName} · 더블 클릭하여 테마 상세 보기`}
                 >
                   <span className="theme-return-line-legend-color" style={{ background: item.color }} />
                   <span className="theme-return-line-legend-text">
@@ -466,7 +471,7 @@ function MarketThemesPage() {
   const [trendKeyword, setTrendKeyword] = useState("");
   const [trendLimit, setTrendLimit] = useState<"all" | string>("all");
   const [trendViewMode, setTrendViewMode] = useState<ThemeReturnTrendViewMode>("heatmap");
-  const [trendSortMode, setTrendSortMode] = useState<TrendSortMode>("CURRENT_STRENGTH");
+  const [trendSortMode, setTrendSortMode] = useState<TrendSortMode>("ROLLING_30D_RETURN");
   const [trendStrengthInfoOpen, setTrendStrengthInfoOpen] = useState(false);
   const [hoveredTrendThemeId, setHoveredTrendThemeId] = useState<number | null>(null);
   const [trendLoading, setTrendLoading] = useState(false);
@@ -579,7 +584,8 @@ function MarketThemesPage() {
     });
     const activeFirstRows = [...rows].sort((a, b) => b.is_active - a.is_active);
     if (themeViewMode !== "theme" || themeReturnSort === "default") return activeFirstRows;
-    return activeFirstRows.sort((a, b) => {
+    return [...rows].sort((a, b) => {
+      if (a.is_active !== b.is_active) return b.is_active - a.is_active;
       const av = a.latest_return?.avg_change_rate;
       const bv = b.latest_return?.avg_change_rate;
       const aMissing = av == null;
@@ -1803,7 +1809,13 @@ function MarketThemesPage() {
                 </div>
               </div>
               ) : (
-                <ThemeReturnLineChart themes={trendData?.themes ?? []} dates={trendDates} hoveredThemeId={hoveredTrendThemeId} onHoverTheme={setHoveredTrendThemeId} />
+                <ThemeReturnLineChart
+                  themes={trendData?.themes ?? []}
+                  dates={trendDates}
+                  hoveredThemeId={hoveredTrendThemeId}
+                  onHoverTheme={setHoveredTrendThemeId}
+                  onOpenTheme={(theme) => void openThemeReturnDetail(theme)}
+                />
               )}
             </div>
           ) : themeViewMode === "flowTrend" ? (

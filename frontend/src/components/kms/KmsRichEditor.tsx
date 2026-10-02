@@ -14,11 +14,11 @@ import { EditorContent, useEditor } from "@tiptap/react";
 import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
 import { createPortal } from "react-dom";
-import { AlignCenter, AlignLeft, AlignRight, ImagePlus, Link2, List, ListOrdered, Quote, Redo2, Table2, Trash2, Undo2, Upload, X } from "lucide-react";
+import { AlignCenter, AlignLeft, AlignRight, Code2, FileInput, ImagePlus, Link2, List, ListOrdered, Minus, Quote, Redo2, Table2, Trash2, Undo2, Upload, X } from "lucide-react";
 import { imageApiRepository } from "@/services/api/imageApiRepository";
 import { appConfig } from "@/services/config/appConfig";
 import type { AppImageDomain } from "@/types/image";
-import { toKmsEditableHtml } from "@/utils/kmsRichContent";
+import { markdownToKmsHtml, toKmsEditableHtml } from "@/utils/kmsRichContent";
 
 type KmsRichEditorProps = {
   value: string;
@@ -141,6 +141,9 @@ function KmsRichEditor({
   const [imageUploadMessage, setImageUploadMessage] = useState("");
   const [selectionState, setSelectionState] = useState({ isImage: false, isTable: false, imageWidth: 100 });
   const [isImageActionModalOpen, setIsImageActionModalOpen] = useState(false);
+  const [isMarkdownImportOpen, setIsMarkdownImportOpen] = useState(false);
+  const [markdownSource, setMarkdownSource] = useState("");
+  const [markdownImportError, setMarkdownImportError] = useState("");
 
   uploadChangeCallbackRef.current = onSessionUploadedImageUrlsChange;
   removedChangeCallbackRef.current = onRemovedImageUrlsChange;
@@ -388,6 +391,25 @@ function KmsRichEditor({
   };
 
   const insertTable = () => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run());
+  const insertMarkdown = () => {
+    if (!editor || !markdownSource.trim()) {
+      setMarkdownImportError("Markdown 내용을 입력해 주세요.");
+      return;
+    }
+    try {
+      const html = markdownToKmsHtml(markdownSource);
+      if (!html.trim()) {
+        setMarkdownImportError("변환할 내용이 없습니다.");
+        return;
+      }
+      editor.chain().focus(undefined, { scrollIntoView: false }).insertContent(html).run();
+      setMarkdownSource("");
+      setMarkdownImportError("");
+      setIsMarkdownImportOpen(false);
+    } catch {
+      setMarkdownImportError("Markdown을 Rich HTML로 변환하지 못했습니다.");
+    }
+  };
   const setFontSize = (fontSize: string) => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).setMark("textStyle", { fontSize }).run());
   const setTextColor = (color: string) => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).setMark("textStyle", { color }).run());
   const setBackgroundColor = (backgroundColor: string) =>
@@ -439,6 +461,8 @@ function KmsRichEditor({
             <button type="button" title="글머리 목록" className={buttonClass(editor?.isActive("bulletList"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).toggleBulletList().run())}><List size={15} /></button>
             <button type="button" title="번호 목록" className={buttonClass(editor?.isActive("orderedList"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).toggleOrderedList().run())}><ListOrdered size={15} /></button>
             <button type="button" title="인용" className={buttonClass(editor?.isActive("blockquote"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).toggleBlockquote().run())}><Quote size={15} /></button>
+            <button type="button" title="코드 블록" className={buttonClass(editor?.isActive("codeBlock"))} onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).toggleCodeBlock().run())}><Code2 size={15} /></button>
+            <button type="button" title="구분선" className="kms-editor-button icon-only" onMouseDown={keepSelection} onClick={() => run(() => editor?.chain().focus(undefined, { scrollIntoView: false }).setHorizontalRule().run())}><Minus size={15} /></button>
             <button type="button" title="링크" className={buttonClass(editor?.isActive("link"))} onMouseDown={keepSelection} onClick={setLink}><Link2 size={15} /></button>
           </div>
           <div className="kms-editor-tool-group" aria-label="편집 기록">
@@ -449,6 +473,7 @@ function KmsRichEditor({
         <div className="kms-editor-toolbar-row kms-editor-toolbar-context">
           <div className="kms-editor-tool-group" aria-label="삽입">
             <button type="button" title="표 삽입" className="kms-editor-button" onMouseDown={keepSelection} onClick={insertTable}><Table2 size={15} />표</button>
+            <button type="button" title="GPT Markdown을 Rich HTML로 변환해 삽입" className="kms-editor-button" onMouseDown={keepSelection} onClick={() => { setMarkdownImportError(""); setIsMarkdownImportOpen(true); }}><FileInput size={15} />Markdown 붙여넣기</button>
             <button type="button" title="이미지 URL 삽입" className="kms-editor-button" onMouseDown={keepSelection} onClick={insertImageUrl}><ImagePlus size={15} />이미지 URL</button>
             {enableImageUpload ? <><button type="button" title="이미지 업로드" className="kms-editor-button" onMouseDown={keepSelection} onClick={handleUploadImageClick} disabled={isUploadingImage}><Upload size={15} />{isUploadingImage ? "업로드 중" : "이미지 업로드"}</button><input ref={uploadInputRef} className="kms-editor-file-input" type="file" accept="image/png,image/jpeg,image/jpg,image/gif,image/webp" onChange={handleUploadImageChange} /></> : null}
           </div>
@@ -459,6 +484,25 @@ function KmsRichEditor({
       {imageUploadError ? <p className="kms-editor-error">{imageUploadError}</p> : null}
       {imageUploadMessage ? <p className="kms-editor-success">{imageUploadMessage}</p> : null}
       <EditorContent editor={editor} />
+      {isMarkdownImportOpen ? createPortal(
+        <div className="kms-image-action-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setIsMarkdownImportOpen(false); }}>
+          <section className="kms-markdown-import-modal" role="dialog" aria-modal="true" aria-labelledby="kms-markdown-import-title" onMouseDown={(event) => event.stopPropagation()}>
+            <header className="kms-image-action-modal-header">
+              <div><strong id="kms-markdown-import-title">Markdown 붙여넣기</strong><p>GPT에서 작성한 Markdown을 Rich HTML로 변환해 현재 커서 위치에 삽입합니다.</p></div>
+              <button type="button" className="kms-image-action-close" aria-label="Markdown 붙여넣기 닫기" onClick={() => setIsMarkdownImportOpen(false)}><X size={18} /></button>
+            </header>
+            <div className="kms-markdown-import-body">
+              <textarea autoFocus spellCheck={false} value={markdownSource} onChange={(event) => { setMarkdownSource(event.target.value); setMarkdownImportError(""); }} placeholder={"## 핵심 매매 패턴\n\n**강한 테마의 눌림 후 재가속**\n\n- 상승추세\n- 수급 지속"} />
+              {markdownImportError ? <p className="kms-editor-error">{markdownImportError}</p> : null}
+            </div>
+            <footer className="kms-image-action-modal-footer">
+              <button type="button" className="btn btn-secondary" onClick={() => setIsMarkdownImportOpen(false)}>취소</button>
+              <button type="button" className="btn btn-primary" onClick={insertMarkdown}>변환하여 삽입</button>
+            </footer>
+          </section>
+        </div>,
+        document.body,
+      ) : null}
       {isImageSelected && isImageActionModalOpen ? createPortal(
         <div className="kms-image-action-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setIsImageActionModalOpen(false); }}>
           <section ref={imageActionModalRef} className="kms-image-action-modal" role="dialog" aria-modal="true" aria-labelledby="kms-image-action-title" onMouseDown={(event) => event.stopPropagation()}>
