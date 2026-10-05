@@ -1643,7 +1643,7 @@ function DashboardPage() {
               <dl className="dashboard-v2-metrics dashboard-v2-card-metrics">
                 <div><dt>데이터 기준일</dt><dd>{formatDate(themeReadiness?.dataDate ?? null)}</dd></div>
                 <div><dt>연결 종목</dt><dd>{(themeReadiness?.linkedStockCount ?? 0).toLocaleString()}개</dd></div>
-                <div className="dashboard-v2-metric-wide"><dt>최근 성공</dt><dd>{formatDateTime(themeReadiness?.lastSuccessAt ?? null)}</dd></div>
+                <div className="dashboard-v2-metric-wide"><dt>최근 수집일</dt><dd>{formatDateTime(themeReadiness?.lastSuccessAt ?? null)}</dd></div>
               </dl>
               <div className="dashboard-v2-operation-footer">
               {!themeFeedback && !themeError ? <p className="dashboard-v2-operation-summary">최근 {(themeReadiness?.linkedStockCount ?? 0).toLocaleString()}종목 처리 상태 확인</p> : null}
@@ -1664,9 +1664,9 @@ function DashboardPage() {
                 <StatusBadge label={usStatus.label} tone={usStatus.tone} />
               </div>
               <dl className="dashboard-v2-metrics dashboard-v2-card-metrics">
-                <div><dt>최신 미국 데이터</dt><dd>{formatDate(usThemeSummary?.latest_date ?? null)}</dd></div>
+                <div><dt>데이터 기준일</dt><dd>{formatDate(usThemeSummary?.latest_date ?? null)}</dd></div>
                 <div><dt>활성 테마</dt><dd>{(usThemeSummary?.active_theme_count ?? 0).toLocaleString()}개</dd></div>
-                <div className="dashboard-v2-metric-wide"><dt>최근 성공</dt><dd>{formatDateTime(usThemeSummary?.latest_refreshed_at ?? null)}</dd></div>
+                <div className="dashboard-v2-metric-wide"><dt>최근 수집일</dt><dd>{formatDateTime(usThemeSummary?.latest_refreshed_at ?? null)}</dd></div>
               </dl>
               <div className="dashboard-v2-operation-footer">
                 {!usThemeFeedback && !usThemeError ? <p className="dashboard-v2-operation-summary">기존 미국 가격·테마 갱신 흐름을 실행합니다.</p> : null}
@@ -1687,9 +1687,9 @@ function DashboardPage() {
                 <StatusBadge label={marketStatus.label} tone={marketStatus.tone} />
               </div>
               <dl className="dashboard-v2-metrics dashboard-v2-card-metrics">
-                <div><dt>최근 전체 증분</dt><dd>{formatDateTime(marketReadiness?.lastRunAt ?? null)}</dd></div>
+                <div><dt>데이터 기준일</dt><dd>{formatDate(marketReadiness?.dataDate ?? null)}</dd></div>
                 <div><dt>활성 지표</dt><dd>{(marketReadiness?.activeIndicatorCount ?? 0).toLocaleString()}개</dd></div>
-                <div className="dashboard-v2-metric-wide"><dt>데이터 기준일</dt><dd>{formatDate(marketReadiness?.dataDate ?? null)}</dd></div>
+                <div className="dashboard-v2-metric-wide"><dt>최근 수집일</dt><dd>{formatDateTime(marketReadiness?.lastRunAt ?? null)}</dd></div>
               </dl>
               <div className="dashboard-v2-operation-footer">
               {!marketFeedback && !marketError ? <p className="dashboard-v2-operation-summary">활성 {(marketReadiness?.activeIndicatorCount ?? 0).toLocaleString()}개 지표 상태 확인</p> : null}
