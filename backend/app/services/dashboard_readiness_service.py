@@ -14,6 +14,16 @@ class DashboardReadinessService:
     def __init__(self, db: Session) -> None:
         self.db = db
 
+    @staticmethod
+    def _utc_timestamp(value: Any) -> str | None:
+        """Serialize SQLite CURRENT_TIMESTAMP values as UTC for browser clients."""
+        if not value:
+            return None
+        timestamp = str(value).strip().replace(" ", "T")
+        if not timestamp.endswith("Z") and "+" not in timestamp[10:] and "-" not in timestamp[10:]:
+            timestamp += "Z"
+        return timestamp
+
     def get(self) -> dict[str, Any]:
         row = self.db.execute(
             text(
@@ -107,7 +117,7 @@ class DashboardReadinessService:
             },
             "market": {
                 "data_date": market_data_date,
-                "last_run_at": row["market_last_run_at"],
+                "last_run_at": self._utc_timestamp(row["market_last_run_at"]),
                 "active_indicator_count": int(row["market_active_indicator_count"] or 0),
                 "run_status": row["market_run_status"],
             },

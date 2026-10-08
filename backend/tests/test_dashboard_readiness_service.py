@@ -47,7 +47,7 @@ def test_readiness_uses_aggregate_data_without_loading_detail_rows():
         },
         "market": {
             "data_date": "2026-09-16",
-            "last_run_at": "2026-09-15 23:10:00",
+            "last_run_at": "2026-09-15T23:10:00Z",
             "active_indicator_count": 2,
             "run_status": "SUCCESS",
         },
