@@ -137,10 +137,11 @@ const normalizedScoreInterpretation = (value: number) => {
 };
 
 function ThemeFlowTrendLineChart({
-  themes, dates, actor, metric, attribution, amountScaleMode,
+  themes, dates, actor, metric, attribution, amountScaleMode, onOpenTheme,
 }: {
   themes: MarketThemeFlowTrendTheme[]; dates: string[]; actor: MarketThemeFlowTrendActor;
   metric: MarketThemeFlowTrendMetric; attribution: MarketThemeFlowTrendAttribution; amountScaleMode: AmountScaleMode;
+  onOpenTheme: (theme: MarketThemeFlowTrendTheme, date: string) => void;
 }) {
   const chartWidth = 840;
   const chartHeight = 500;
@@ -224,7 +225,28 @@ function ThemeFlowTrendLineChart({
         </svg>
         {hoveredPoint ? <div className="theme-flow-line-tooltip" style={{ left: `${hoveredPoint.x / chartWidth * 100}%`, top: `${hoveredPoint.y / chartHeight * 100}%` }}><strong>{hoveredPoint.themeName}</strong><span>{hoveredPoint.date}</span>{metric === "FLOW_STRENGTH" ? <><span>당일 수급강도 <b>{pct(hoveredPoint.rawValue)}</b></span><span>30일 누적지수 <b>{indexText(hoveredPoint.cumulativeValue)}</b></span><span>기준 100</span></> : metric === "BREADTH" ? <><span>당일 확산도 <b>{metricText(hoveredPoint.rawValue, metric)}</b></span><span>확산 종목 {hoveredPoint.cell.positive_stock_count} / {hoveredPoint.cell.actor_data_stock_count}</span><span>중립 대비 <b>{hoveredPoint.rawValue - 50 > 0 ? "+" : ""}{(hoveredPoint.rawValue - 50).toFixed(1)}%p</b></span><span>30일 누적 확산지수 <b>{indexText(hoveredPoint.cumulativeValue)}</b></span><span>기준 100</span></> : isNormalizedAmount ? <><span>당일 실제 순매수 <b>{amount(hoveredPoint.rawValue)}</b></span><span>당일 표준화 <b>{normalizedScoreText(hoveredPoint.normalizedDaily)}</b></span><span>30일 누적 표준화 <b>{normalizedScoreText(hoveredPoint.cumulativeValue)}</b></span>{hoveredPoint.normalizedDaily != null ? <em>최근 기간 기준 · {normalizedScoreInterpretation(hoveredPoint.normalizedDaily)}</em> : null}</> : <><span>당일 순매수 <b>{amount(hoveredPoint.rawValue)}</b></span><span>30일 누적 순매수 <b>{amount(hoveredPoint.cumulativeValue)}</b></span></>}<span>종목 반영: {ATTRIBUTION_LABEL[attribution]}</span></div> : null}
       </div>
-      <div className="theme-return-line-legend-shell" onMouseLeave={() => setHoveredThemeId(null)}><div className="theme-return-line-legend">{sortedLegendSeries.map((item) => { const active = hoveredThemeId === item.theme.theme_id; const muted = hoveredThemeId != null && !active; return <button key={item.theme.theme_id} type="button" className={`theme-return-line-legend-item ${active ? "theme-return-line-legend-item-active" : ""} ${muted ? "theme-return-line-legend-item-muted" : ""}`} onMouseEnter={() => setHoveredThemeId(item.theme.theme_id)} onFocus={() => setHoveredThemeId(item.theme.theme_id)} onBlur={() => setHoveredThemeId(null)}><span className="theme-return-line-legend-color" style={{ background: item.color }} /><span className="theme-return-line-legend-text"><strong>{item.theme.theme_name}</strong><em>{summaryText(item)}</em></span></button>; })}</div></div>
+      <div className="theme-return-line-legend-shell" onMouseLeave={() => setHoveredThemeId(null)}>
+        <div className="theme-return-line-legend">
+          {sortedLegendSeries.map((item) => {
+            const active = hoveredThemeId === item.theme.theme_id;
+            const muted = hoveredThemeId != null && !active;
+            const latestDate = [...item.values].reverse().find((point) => point.cell != null)?.date;
+            return <button
+              key={item.theme.theme_id}
+              type="button"
+              className={`theme-return-line-legend-item ${active ? "theme-return-line-legend-item-active" : ""} ${muted ? "theme-return-line-legend-item-muted" : ""}`}
+              onMouseEnter={() => setHoveredThemeId(item.theme.theme_id)}
+              onFocus={() => setHoveredThemeId(item.theme.theme_id)}
+              onBlur={() => setHoveredThemeId(null)}
+              onDoubleClick={() => latestDate && onOpenTheme(item.theme, latestDate)}
+              title={`${item.theme.theme_name} · 더블 클릭하여 테마 상세 보기`}
+            >
+              <span className="theme-return-line-legend-color" style={{ background: item.color }} />
+              <span className="theme-return-line-legend-text"><strong>{item.theme.theme_name}</strong><em>{summaryText(item)}</em></span>
+            </button>;
+          })}
+        </div>
+      </div>
     </div>
   </div>;
 }
@@ -363,7 +385,7 @@ export default function MarketThemeFlowTrendPanel(props: Props) {
     {!error && viewMode === "heatmap" && metric === "FLOW_STRENGTH" ? <div className="theme-return-legend">{["-40% 이하", "-30%", "-20%", "-10%", "0%", "+10%", "+20%", "+30%", "+40% 이상"].map((label, index) => <span key={label} className="theme-return-legend__item"><i className="theme-return-legend__chip" style={{ background: FLOW_COLORS[index] }} />{label}</span>)}</div> : null}
     {!error && viewMode === "heatmap" && metric === "BREADTH" ? <div className="theme-return-legend">{BREADTH_BUCKETS.map((bucket) => <span key={bucket.label} className="theme-return-legend__item"><i className="theme-return-legend__chip" style={{ background: bucket.color }} />{bucket.label}</span>)}</div> : null}
     {!error && viewMode === "heatmap" && metric === "NET_AMOUNT" ? <p className="theme-flow-amount-legend">순매수 금액 색상은 현재 응답의 절대값 95 percentile을 상한으로 사용하며 실제 표시 금액은 변경하지 않습니다.</p> : null}
-    {!error && viewMode === "line" && !loading && data?.themes.length ? <ThemeFlowTrendLineChart themes={data.themes} dates={data.dates} actor={actor} metric={metric} attribution={attribution} amountScaleMode={amountScaleMode} /> : null}
+    {!error && viewMode === "line" && !loading && data?.themes.length ? <ThemeFlowTrendLineChart themes={data.themes} dates={data.dates} actor={actor} metric={metric} attribution={attribution} amountScaleMode={amountScaleMode} onOpenTheme={(theme, date) => props.onCellClick(theme, date, actor, metric, attribution)} /> : null}
     {!error && viewMode === "heatmap" ? <div className="theme-return-heatmap-wrap theme-flow-heatmap-wrap">
       <div className="theme-return-heatmap theme-flow-heatmap" style={{ gridTemplateColumns: `var(--theme-flow-theme-column-width) repeat(${Math.max(data?.dates.length ?? 0, 1)}, minmax(var(--theme-flow-date-cell-min-width), 1fr))`, minWidth: `calc(var(--theme-flow-theme-column-width) + ${Math.max(data?.dates.length ?? 0, 1)} * var(--theme-flow-date-cell-min-width))` }}>
         <div className="theme-return-heatmap__theme-cell theme-return-heatmap__header-cell">테마</div>

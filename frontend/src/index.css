@@ -39130,14 +39130,15 @@ button.chip-light {
 .monthly-supply-stock-return-plot svg text { fill: #64748b; font-size: 11px; font-weight: 600; }
 .monthly-supply-stock-return-plot svg path { stroke-width: 2.1; vector-effect: non-scaling-stroke; pointer-events: stroke; transition: opacity 120ms ease, stroke-width 120ms ease; }
 .monthly-supply-stock-return-plot svg path.active { stroke-width: 3.4; }
+.monthly-supply-stock-return-plot svg path.monthly-supply-stock-return-hit-path { stroke-width: 14; cursor: pointer; }
 .monthly-supply-stock-return-plot svg g.dimmed { opacity: .13; }
-.monthly-supply-stock-return-plot svg circle { cursor: crosshair; pointer-events: all; }
+.monthly-supply-stock-return-plot svg circle { cursor: pointer; pointer-events: all; }
 .monthly-supply-stock-return-empty,
 .monthly-supply-stock-return-state { display: flex; min-height: 180px; align-items: center; justify-content: center; gap: 10px; border: 1px dashed #cbd5e1; border-radius: 12px; color: #64748b; font-size: 13px; }
 .monthly-supply-stock-return-state.error { color: #b91c1c; background: #fff7f7; }
 .monthly-supply-stock-return-state button { padding: 7px 10px; border: 1px solid #fecaca; border-radius: 8px; background: #fff; color: #991b1b; font-weight: 700; }
 .monthly-supply-stock-return-legend { max-height: 430px; overflow: auto; margin: 0; padding: 7px; border: 1px solid #e2e8f0; border-radius: 12px; background: #f8fafc; list-style: none; }
-.monthly-supply-stock-return-legend li { display: grid; grid-template-columns: 22px 8px minmax(0, 1fr) 34px 72px; align-items: center; gap: 7px; min-height: 38px; padding: 5px 6px; border-bottom: 1px solid #e8edf3; border-radius: 7px; transition: opacity 120ms ease, background 120ms ease; }
+.monthly-supply-stock-return-legend li { display: grid; grid-template-columns: 22px 8px minmax(0, 1fr) 34px 72px; align-items: center; gap: 7px; min-height: 38px; padding: 5px 6px; border-bottom: 1px solid #e8edf3; border-radius: 7px; cursor: pointer; user-select: none; transition: opacity 120ms ease, background 120ms ease; }
 .monthly-supply-stock-return-legend li:last-child { border-bottom: 0; }
 .monthly-supply-stock-return-legend li.active { background: #fff; box-shadow: 0 1px 4px rgba(15, 23, 42, .08); }
 .monthly-supply-stock-return-legend li.dimmed { opacity: .28; }
@@ -39167,21 +39168,27 @@ button.chip-light {
 .monthly-supply-price-collect-message { margin: 10px 0 0; padding: 9px 11px; border-radius: 8px; background: #f0f9ff; color: #0369a1; font-size: 11px; font-weight: 700; }
 .monthly-supply-stock-return-legend li { grid-template-columns: 22px 8px minmax(0, 1fr) minmax(58px, auto) 86px; }
 .monthly-supply-stock-return-count { white-space: nowrap; }
-.monthly-supply-stock-return-value{display:flex;align-items:center;justify-content:flex-end;min-width:0;min-height:26px;border-radius:6px;outline:none;cursor:help}
-.monthly-supply-stock-return-value:focus-visible{box-shadow:0 0 0 2px rgba(59,130,246,.22)}
-.monthly-supply-stock-return-tooltip{display:none;grid-column:1/-1;gap:8px;margin:2px 0 4px;padding:10px;border:1px solid #dbe4ee;border-radius:9px;background:#fff;box-shadow:0 5px 14px rgba(15,23,42,.08);color:#334155;text-align:left}
-.monthly-supply-stock-return-value:hover+.monthly-supply-stock-return-tooltip,.monthly-supply-stock-return-value:focus+.monthly-supply-stock-return-tooltip{display:grid}
-.monthly-supply-stock-return-tooltip__header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-bottom:7px;border-bottom:1px solid #eef2f7}
-.monthly-supply-stock-return-tooltip__header strong{overflow:hidden;color:#0f172a;font-size:12px;text-align:left;text-overflow:ellipsis;white-space:nowrap}
-.monthly-supply-stock-return-tooltip__header span{flex:0 0 auto;border-radius:999px;padding:3px 7px;background:#eef6ff;color:#2563eb;font-size:10px;font-weight:800}
-.monthly-supply-stock-return-tooltip dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px 12px;margin:0}
-.monthly-supply-stock-return-tooltip dl>div{display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0}
-.monthly-supply-stock-return-tooltip dt{color:#94a3b8;font-size:10px;white-space:nowrap}
-.monthly-supply-stock-return-tooltip dd{margin:0;color:#334155;font-size:10px;font-weight:800;text-align:right;white-space:nowrap}
-.monthly-supply-stock-return-tooltip p{margin:0;padding-top:7px;border-top:1px solid #eef2f7;color:#64748b;font-size:10px;line-height:1.45;overflow-wrap:anywhere}
+.monthly-supply-stock-return-value{display:flex;align-items:center;justify-content:flex-end;min-width:0;min-height:26px;border-radius:6px}
+.monthly-supply-stock-return-legend li:focus-visible{outline:2px solid #2563eb;outline-offset:-2px}
+.supply-top-stock-detail-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:20px 24px;border-bottom:1px solid #e2e8f0}
+.supply-top-stock-detail-header small{color:#2563eb;font-size:11px;font-weight:800}
+.supply-top-stock-detail-header h3{margin:5px 0 3px;color:#0f172a;font-size:22px}
+.supply-top-stock-detail-header p{margin:0;color:#64748b;font-size:13px}
+.insight-drawer.supply-top-stock-detail-drawer>.supply-top-stock-detail-header button{width:auto;height:auto;padding:7px 11px}
+.supply-top-stock-detail-body{display:grid;gap:18px;padding:24px;overflow-y:auto}
+.supply-top-stock-detail-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.supply-top-stock-detail-stats>div{display:grid;gap:6px;padding:12px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc}
+.supply-top-stock-detail-stats span{color:#64748b;font-size:12px}
+.supply-top-stock-detail-stats strong{color:#0f172a;font-size:16px}
+.supply-top-stock-detail-note{margin:0;color:#64748b;font-size:12px}
+.supply-top-stock-detail-charts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.supply-top-stock-detail-charts section{min-width:0;padding:10px;border:1px solid #e2e8f0;border-radius:10px}
+.supply-top-stock-detail-charts h4{margin:0 0 8px;color:#334155;font-size:13px}
+.supply-top-stock-detail-charts .theme-detail-daily-chart-button,.supply-top-stock-detail-charts .theme-detail-daily-chart-image{width:100%;height:auto}
+.supply-top-stock-detail-intraday{min-width:0;margin-top:0}
 @media (max-width: 720px) {
   .monthly-supply-stock-return-actions { justify-content: flex-start; }
-  .monthly-supply-stock-return-tooltip dl{grid-template-columns:1fr}
+  .supply-top-stock-detail-stats,.supply-top-stock-detail-charts{grid-template-columns:1fr}
 }
 
 .training-risk-picker-actions button.reset-action {

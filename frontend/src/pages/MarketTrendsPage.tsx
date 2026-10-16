@@ -8,6 +8,8 @@ import { StockFlowCompactCard } from "@/components/marketThemes/FlowSummaryCards
 import { ThemeLinkedStockChart } from "@/components/marketThemes/MarketThemeDetailDrawer";
 import MarketThemePriceFlowModal from "@/components/marketThemes/MarketThemePriceFlowModal";
 import MonthlyThemeHistoryDrawer from "@/components/marketTrends/MonthlyThemeHistoryDrawer";
+import { InsightDrawer, type DrawerTab, type IntradayView } from "@/pages/DrctInsightPage";
+import { buildDaumIntradayChartUrl, formatDaumChartTimestamp } from "@/utils/daumChart";
 import { buildTreemapLayout, getTreemapLabelClass, getTreemapTextMetrics } from "@/utils/treemapLayout";
 import {
   buildNaverKoreaMarketChartUrl,
@@ -28,6 +30,7 @@ import type {
   MonthlyThemeFlowCalendarDay,
   MonthlySupplySummary30d,
   SupplyTopStockReturnTrendResponse,
+  SupplyTopStockReturnTrendItem,
   MonthlyThemeFlowTrendPoint,
   MonthlyThemeFlowTrendResponse,
   MonthlyThemeCellDetailResponse,
@@ -36,6 +39,7 @@ import type {
 import type { MarketTheme } from "@/types/marketTheme";
 import type { Stock } from "@/types/stock";
 import type { StockTrackingGroup } from "@/types/stockTracking";
+import type { DrctInsightStock, DrctInsightToday } from "@/types/drctInsight";
 
 type ActiveTab = "kiwoom" | "flow" | "monthly";
 type SortOrder = "asc" | "desc";
@@ -229,6 +233,7 @@ type SupplyTopStockReturnChartProps = {
   collectionMessage: string;
   onRetry: () => void;
   onRefreshPrices: () => void;
+  onOpenStock: (stockId: number) => void;
 };
 
 const SupplyTopStockReturnChart = memo(function SupplyTopStockReturnChart({
@@ -239,8 +244,10 @@ const SupplyTopStockReturnChart = memo(function SupplyTopStockReturnChart({
   collectionMessage,
   onRetry,
   onRefreshPrices,
+  onOpenStock,
 }: SupplyTopStockReturnChartProps) {
   const [hoveredStockId, setHoveredStockId] = useState<number | null>(null);
+  const [selectedStockId, setSelectedStockId] = useState<number | null>(null);
   const [chartWidth, setChartWidth] = useState(860);
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
  useEffect(() => {
@@ -259,6 +266,10 @@ const SupplyTopStockReturnChart = memo(function SupplyTopStockReturnChart({
   const plotHeight = height - margin.top - margin.bottom;
   const dates = data?.trade_dates ?? [];
   const stocks = data?.stocks ?? [];
+  const highlightedStockId = hoveredStockId ?? selectedStockId;
+  useEffect(() => {
+    if (selectedStockId != null && data && !data.stocks.some((stock) => stock.stock_id === selectedStockId)) setSelectedStockId(null);
+  }, [data, selectedStockId]);
   const legendStocks = [...stocks].sort((a, b) => {
     const aReturn = a.has_sufficient_price_data && a.latest_cumulative_return != null ? a.latest_cumulative_return : null;
     const bReturn = b.has_sufficient_price_data && b.latest_cumulative_return != null ? b.latest_cumulative_return : null;
@@ -341,12 +352,15 @@ const SupplyTopStockReturnChart = memo(function SupplyTopStockReturnChart({
                 {xTickIndexes.map((index) => <text key={`x-${index}`} x={xOf(index)} y={height - 13} textAnchor={index === 0 ? "start" : index === dates.length - 1 ? "end" : "middle"}>{dates[index]?.slice(5).replace("-", ".")}</text>)}
                 {plottedStocks.map((stock) => {
                   const color = colorByStock.get(stock.stock_id) ?? "#475569";
-                  const isDimmed = hoveredStockId != null && hoveredStockId !== stock.stock_id;
+                  const isDimmed = highlightedStockId != null && highlightedStockId !== stock.stock_id;
                   return (
-                    <g key={`stock-line-${stock.stock_id}`} className={isDimmed ? "dimmed" : ""} onMouseEnter={() => setHoveredStockId(stock.stock_id)}>
+                    <g key={`stock-line-${stock.stock_id}`} className={isDimmed ? "dimmed" : ""} onMouseEnter={() => setHoveredStockId(stock.stock_id)} onClick={() => setSelectedStockId(stock.stock_id)} onDoubleClick={() => onOpenStock(stock.stock_id)}>
                       {segmentsFor(stock).map((segment, segmentIndex) => {
                         const d = segment.map((point, index) => `${index ? "L" : "M"}${xOf(point.index)},${yOf(point.value)}`).join(" ");
-                        return <path key={`${stock.stock_id}-${segmentIndex}`} d={d} fill="none" stroke={color} className={hoveredStockId === stock.stock_id ? "active" : ""}><title>{stock.rank}위 {stock.stock_name} · 수급 {stock.appearance_count}회 · 최신 누적 {fmtSignedPct(stock.latest_cumulative_return)}</title></path>;
+                        return <g key={`${stock.stock_id}-${segmentIndex}`}>
+                          <path d={d} fill="none" stroke={color} className={highlightedStockId === stock.stock_id ? "active" : ""} />
+                          <path d={d} fill="none" stroke="transparent" className="monthly-supply-stock-return-hit-path"><title>{stock.stock_name} · 클릭하여 그래프 선택 · 더블클릭하여 상세 보기</title></path>
+                        </g>;
                       })}
                       {stock.points.filter((point) => point.cumulative_return != null && dates.includes(point.trade_date)).map((point) => {
                         const dateIndex = dates.indexOf(point.trade_date);
@@ -361,38 +375,29 @@ const SupplyTopStockReturnChart = memo(function SupplyTopStockReturnChart({
           <ol className="monthly-supply-stock-return-legend" aria-label="수급 TOP20 종목 범례">
             {legendStocks.map((stock, index) => {
               const color = colorByStock.get(stock.stock_id) ?? "#475569";
-              const isDimmed = hoveredStockId != null && hoveredStockId !== stock.stock_id;
+              const isDimmed = highlightedStockId != null && highlightedStockId !== stock.stock_id;
               return (
                 <li
                   key={`stock-legend-${stock.stock_id}`}
-                  className={`${isDimmed ? "dimmed" : ""} ${hoveredStockId === stock.stock_id ? "active" : ""}`}
+                  className={`${isDimmed ? "dimmed" : ""} ${highlightedStockId === stock.stock_id ? "active" : ""}`}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`${stock.stock_name} · 클릭하여 그래프 선택 · 더블클릭하여 상세 보기`}
                   onMouseEnter={() => setHoveredStockId(stock.stock_id)}
                   onMouseLeave={() => setHoveredStockId(null)}
+                  onClick={() => setSelectedStockId(stock.stock_id)}
+                  onDoubleClick={() => onOpenStock(stock.stock_id)}
+                  onKeyDown={(event) => { if (event.key === "Enter") onOpenStock(stock.stock_id); else if (event.key === " ") { event.preventDefault(); setSelectedStockId(stock.stock_id); } }}
                 >
                   <span className="monthly-supply-stock-return-rank">{index + 1}</span>
                   <i style={{ backgroundColor: stock.has_sufficient_price_data ? color : "#cbd5e1" }} />
                   <span className="monthly-supply-stock-return-name" title={`${stock.stock_name} (${stock.stock_code})`}>{stock.stock_name}</span>
                   <span className="monthly-supply-stock-return-count">출현 {stock.appearance_count}회{stock.price_data_status === "READY_WITH_FALLBACK" ? " · 첫 종가 기준" : ""}</span>
-                  <span className="monthly-supply-stock-return-value" tabIndex={0} aria-describedby={`stock-return-detail-${stock.stock_id}`}>
+                  <span className="monthly-supply-stock-return-value">
                     <strong className={!stock.has_sufficient_price_data ? "insufficient" : (stock.latest_cumulative_return ?? 0) >= 0 ? "positive" : "negative"}>
                       {stock.has_sufficient_price_data ? fmtSignedPct(stock.latest_cumulative_return) : stock.price_data_status_name}
                     </strong>
                   </span>
-                  <div className="monthly-supply-stock-return-tooltip" id={`stock-return-detail-${stock.stock_id}`} role="tooltip">
-                    <div className="monthly-supply-stock-return-tooltip__header">
-                      <strong>{stock.stock_name}</strong>
-                      <span>{stock.price_data_status_name}</span>
-                    </div>
-                    <dl>
-                      <div><dt>누적등락률 순위</dt><dd>{index + 1}위</dd></div>
-                      <div><dt>수급 출현 순위</dt><dd>{stock.rank}위</dd></div>
-                      <div><dt>가격 관측</dt><dd>{stock.price_observation_count}/{stock.expected_trade_date_count}일</dd></div>
-                      <div><dt>커버리지</dt><dd>{stock.price_coverage_rate}%</dd></div>
-                      <div><dt>기준 종가일</dt><dd>{stock.base_price_date ?? "-"}</dd></div>
-                      <div><dt>최근 가격일</dt><dd>{stock.latest_price_date ?? "-"}</dd></div>
-                    </dl>
-                    <p>{stock.has_sufficient_price_data ? "그래프 표시 가능" : "가격 관측 부족"} · {stock.price_data_reason}</p>
-                  </div>
                 </li>
               );
             })}
@@ -404,6 +409,75 @@ const SupplyTopStockReturnChart = memo(function SupplyTopStockReturnChart({
     </section>
   );
 });
+
+function SupplyTopStockDetailDrawer({ stock, onClose }: { stock: SupplyTopStockReturnTrendItem; onClose: () => void }) {
+  const [zoomedChart, setZoomedChart] = useState<NaverStockChartModalData | null>(null);
+  const [intradayChartTimestamp, setIntradayChartTimestamp] = useState(() => formatDaumChartTimestamp());
+  const [intradayChartError, setIntradayChartError] = useState(false);
+  const chartSidcode = getNaverChartSessionSidcode();
+  const intradayChartUrl = buildDaumIntradayChartUrl(stock.stock_code, intradayChartTimestamp);
+  useEffect(() => {
+    setIntradayChartTimestamp(formatDaumChartTimestamp());
+    setIntradayChartError(false);
+  }, [stock.stock_code]);
+  useEffect(() => {
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (zoomedChart) setZoomedChart(null);
+      else onClose();
+    };
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [onClose, zoomedChart]);
+
+  return <div className="insight-drawer-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <aside className="insight-drawer insight-ux-drawer supply-top-stock-detail-drawer" role="dialog" aria-modal="true" aria-label={`${stock.stock_name} 종목 상세`}>
+      <header className="supply-top-stock-detail-header">
+        <div><small>최근 30일 수급 TOP20</small><h3>{stock.stock_name}</h3><p>{stock.stock_code} · 수급 출현 {stock.appearance_count}회</p></div>
+        <button type="button" className="btn btn-secondary" onClick={onClose} aria-label="종목 상세 닫기">닫기</button>
+      </header>
+      <div className="supply-top-stock-detail-body">
+        <div className="supply-top-stock-detail-stats">
+          <div><span>최근 누적등락률</span><strong>{stock.has_sufficient_price_data ? fmtSignedPct(stock.latest_cumulative_return) : stock.price_data_status_name}</strong></div>
+          <div><span>최근 일별등락률</span><strong>{fmtSignedPct(stock.latest_daily_return)}</strong></div>
+          <div><span>최근 가격일</span><strong>{stock.latest_price_date ?? "-"}</strong></div>
+        </div>
+        <p className="supply-top-stock-detail-note">오늘의 Insight 판단 데이터가 없어 수급 출현과 가격 차트를 표시합니다.</p>
+        <div className="supply-top-stock-detail-charts">
+          {(["day", "week", "month"] as const).map((period, index) => <section key={period}>
+            <h4>{["일봉", "주봉", "월봉"][index]}</h4>
+            <ThemeLinkedStockChart stockCode={stock.stock_code} stockName={stock.stock_name} period={period} label={["일봉", "주봉", "월봉"][index]} sidcode={chartSidcode} onOpen={setZoomedChart} variant="detail" />
+          </section>)}
+        </div>
+        <section className="insight-intraday-chart-card supply-top-stock-detail-intraday">
+          <header><strong>분봉 · 오늘 장중 흐름</strong><small>현재 시각 기준</small></header>
+          {intradayChartUrl && !intradayChartError ? <button type="button" aria-label={`${stock.stock_name} 분봉 차트 크게 보기`} onClick={() => setZoomedChart({ url: intradayChartUrl, alt: `${stock.stock_name} 오늘 분봉 차트`, stockCode: stock.stock_code })}>
+            <img key={`${stock.stock_code}-${intradayChartTimestamp}`} className="insight-intraday-chart-image" src={intradayChartUrl} alt={`${stock.stock_name} 오늘 분봉 차트`} onError={() => setIntradayChartError(true)} />
+          </button> : <div className="insight-intraday-chart-empty">분봉 이미지를 불러올 수 없습니다.</div>}
+        </section>
+      </div>
+    </aside>
+    {zoomedChart ? <NaverStockChartModal chart={zoomedChart} onClose={() => setZoomedChart(null)} /> : null}
+  </div>;
+}
+
+const supplyTopStockInsightView = (stock: DrctInsightStock): IntradayView => {
+  const state = stock.gates.execution === "INVALID"
+    ? "WARNING"
+    : (stock.relative_strength ?? 0) > 0
+      ? "STRENGTHENING"
+      : (stock.relative_strength ?? 0) < 0 ? "WEAKENING" : "STABLE";
+  return {
+    state,
+    reasons: [stock.relative_strength == null ? "테마 대비 강도 데이터 대기" : `테마 대비 강도 ${fmtSignedPct(stock.relative_strength)}p`],
+    themeDelta: null,
+    themeChangeDelta: null,
+    initialThemeDelta: null,
+    breadthDelta: null,
+    executionAssist: state === "WARNING" ? "CAUTION" : state === "STRENGTHENING" ? "CONSIDER_READY" : "KEEP_WATCH",
+  };
+};
+
 const getResultRowKey = (row: KiwoomConditionResultItem) => `${row.stock_code || "NA"}|${row.stock_name || "NA"}|${row.detected_at || "NA"}|${row.source_api || "NA"}`;
 const escapeMarkdownCell = (value: string | number | null | undefined) => String(value ?? "-").replace(/\|/g, "\\|").replace(/\r?\n/g, " ").trim() || "-";
 const getConditionResultMarket = (row: KiwoomConditionResultItem) => {
@@ -593,6 +667,11 @@ function MarketTrendsPage() {
   const [topStockReturnError, setTopStockReturnError] = useState("");
   const [topStockPriceCollecting, setTopStockPriceCollecting] = useState(false);
   const [topStockPriceCollectionMessage, setTopStockPriceCollectionMessage] = useState("");
+  const [topStockInsight, setTopStockInsight] = useState<DrctInsightToday | null>(() => repositories.drctInsight.peekToday());
+  const [selectedTopStockInsight, setSelectedTopStockInsight] = useState<DrctInsightStock | null>(null);
+  const [selectedTopStockFallback, setSelectedTopStockFallback] = useState<SupplyTopStockReturnTrendItem | null>(null);
+  const [topStockInsightTab, setTopStockInsightTab] = useState<DrawerTab>("pattern");
+  const [topStockInsightLoading, setTopStockInsightLoading] = useState(false);
   const [monthlyTrendResponses, setMonthlyTrendResponses] = useState<MonthlyThemeFlowTrendResponse[]>([]);
   const [selectedMonthlyTreemapId, setSelectedMonthlyTreemapId] = useState<number | null>(null);
   const [monthlyTreemapTooltip, setMonthlyTreemapTooltip] = useState<{ x: number; y: number; item: MonthlyThemeTreemapItem; share: number } | null>(null);
@@ -1402,6 +1481,34 @@ ${tableRows}
       setTopStockPriceCollectionMessage(toErr(e, "TOP20 가격 갱신에 실패했습니다."));
     } finally {
       setTopStockPriceCollecting(false);
+    }
+  };
+  const openTopStockInsightDetail = async (stockId: number, force = false) => {
+    if (topStockInsightLoading) return;
+    const trendStock = topStockReturnTrend?.stocks.find((item) => item.stock_id === stockId) ?? null;
+    setTopStockInsightLoading(true);
+    try {
+      const cached = force ? null : repositories.drctInsight.peekToday();
+      const insight = cached ?? await repositories.drctInsight.today(undefined, force);
+      const stock = insight.stocks.find((item) => item.stock_id === stockId);
+      if (!stock) {
+        setSelectedTopStockInsight(null);
+        setSelectedTopStockFallback(trendStock);
+        return;
+      }
+      setTopStockInsight(insight);
+      setSelectedTopStockFallback(null);
+      setSelectedTopStockInsight(stock);
+      setTopStockInsightTab("pattern");
+    } catch (e) {
+      if (trendStock) {
+        setSelectedTopStockInsight(null);
+        setSelectedTopStockFallback(trendStock);
+      } else {
+        setTopStockPriceCollectionMessage(toErr(e, "종목 상세를 불러오지 못했습니다."));
+      }
+    } finally {
+      setTopStockInsightLoading(false);
     }
   };
   const loadMonthlyFlow = async (
@@ -3075,6 +3182,7 @@ ${tableRows}
               collecting={topStockPriceCollecting}
               collectionMessage={topStockPriceCollectionMessage}
               onRefreshPrices={() => void refreshTopStockPrices()}
+              onOpenStock={(stockId) => void openTopStockInsightDetail(stockId)}
               onRetry={() => {
                 if (!monthlySummary30d) return;
                 void loadTopStockReturnTrend(monthlySummary30d.period_start_date, monthlySummary30d.period_end_date, true);
@@ -3296,6 +3404,21 @@ ${tableRows}
       {selectedThemeHistory ? (
         <MonthlyThemeHistoryDrawer theme={selectedThemeHistory} onClose={() => setSelectedThemeHistory(null)} />
       ) : null}
+
+      {selectedTopStockInsight ? <InsightDrawer
+        stock={selectedTopStockInsight}
+        view={supplyTopStockInsightView(selectedTopStockInsight)}
+        postMarket={topStockInsight?.market_mode === "POST_MARKET"}
+        analysisDate={topStockInsight?.analysis_date ?? null}
+        realtimeStatus={topStockInsight?.readiness.realtime.status ?? "NOT_READY"}
+        loading={topStockInsightLoading}
+        tab={topStockInsightTab}
+        onTab={setTopStockInsightTab}
+        onRefresh={() => void openTopStockInsightDetail(selectedTopStockInsight.stock_id, true)}
+        onClose={() => setSelectedTopStockInsight(null)}
+      /> : null}
+
+      {selectedTopStockFallback ? <SupplyTopStockDetailDrawer stock={selectedTopStockFallback} onClose={() => setSelectedTopStockFallback(null)} /> : null}
 
       {zoomedChart ? <NaverStockChartModal chart={zoomedChart} onClose={() => setZoomedChart(null)} /> : null}
     </div>
