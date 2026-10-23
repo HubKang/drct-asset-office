@@ -936,7 +936,12 @@ function MarketTrendsPage() {
         source: "kiwoom_rest",
         items: selectedItems,
       });
-      setMessage("수급 이벤트 후보로 저장되었습니다.");
+      const processedCount = res.saved_count + res.updated_count;
+      if (processedCount === 0 && res.unmatched_count > 0) {
+        setError(`종목 마스터와 연결되지 않아 저장하지 못했습니다: ${res.unmatched_items.join(", ")}`);
+      } else {
+        setMessage(`수급 이벤트 후보 ${processedCount}건을 저장했습니다.${res.unmatched_count > 0 ? ` (미연결 ${res.unmatched_count}건)` : ""}`);
+      }
       await loadEvents();
     } catch (e) {
       setError(toErr(e, "수급 이벤트 후보 저장에 실패했습니다."));

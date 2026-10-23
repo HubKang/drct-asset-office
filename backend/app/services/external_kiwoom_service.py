@@ -485,7 +485,9 @@ class ExternalKiwoomService:
 
         for item in payload.items:
             event_trade_date = payload_trade_date or (str(item.detected_at or "")[:10] if item.detected_at else "") or default_trade_date
-            code = normalize_stock_code(item.stock_code or item.stock_code_raw)
+            # The raw Kiwoom value preserves new KRX alphanumeric short codes.
+            # Prefer it because older previews converted e.g. 0035S0 to 000350.
+            code = normalize_stock_code(item.stock_code_raw) or normalize_stock_code(item.stock_code)
             if len(code) != 6:
                 unmatched_items.append(item.stock_code or item.stock_code_raw or "")
                 continue
@@ -493,7 +495,7 @@ class ExternalKiwoomService:
             stock = self.db.execute(
                 text(
                     """
-                    SELECT id, stock_name, market
+                    SELECT id, stock_code, stock_name, market
                     FROM stocks
                     WHERE is_active=1
                       AND (stock_code=:stock_code OR stock_code=:stock_code_prefixed)
@@ -502,11 +504,30 @@ class ExternalKiwoomService:
                 ),
                 {"stock_code": code, "stock_code_prefixed": f"A{code}"},
             ).mappings().first()
+            if not stock and item.stock_name and item.stock_name.strip():
+                # Compatibility for a condition result already loaded before
+                # the alphanumeric-code normalization fix. Only a unique exact
+                # active-name match is safe to link to the stock master.
+                name_matches = self.db.execute(
+                    text(
+                        """
+                        SELECT id, stock_code, stock_name, market
+                        FROM stocks
+                        WHERE is_active=1 AND stock_name=:stock_name
+                        ORDER BY id
+                        LIMIT 2
+                        """
+                    ),
+                    {"stock_name": item.stock_name.strip()},
+                ).mappings().all()
+                if len(name_matches) == 1:
+                    stock = name_matches[0]
             if not stock:
                 unmatched_items.append(code)
                 continue
 
             stock_id = int(stock["id"])
+            canonical_code = str(stock["stock_code"])
             existing = self.db.execute(
                 text(
                     """
@@ -515,11 +536,10 @@ class ExternalKiwoomService:
                     WHERE trade_date=:trade_date
                       AND stock_id=:stock_id
                       AND event_type='kiwoom_condition'
-                      AND COALESCE(condition_seq, '') = :condition_seq
                     LIMIT 1
                     """
                 ),
-                {"trade_date": event_trade_date, "stock_id": stock_id, "condition_seq": payload.condition_seq},
+                {"trade_date": event_trade_date, "stock_id": stock_id},
             ).mappings().first()
 
             estimated_trading_value = self._estimate_trading_value(item.current_price, item.volume)
@@ -547,7 +567,7 @@ class ExternalKiwoomService:
                     ),
                     {
                         "id": int(existing["id"]),
-                        "stock_code": code,
+                        "stock_code": canonical_code,
                         "stock_name": item.stock_name or stock["stock_name"],
                         "market_type": stock["market"],
                         "trading_value": persisted_trading_value,
@@ -587,7 +607,7 @@ class ExternalKiwoomService:
                     {
                         "trade_date": event_trade_date,
                         "stock_id": stock_id,
-                        "stock_code": code,
+                        "stock_code": canonical_code,
                         "stock_name": item.stock_name or stock["stock_name"],
                         "market_type": stock["market"],
                         "trading_value": persisted_trading_value,

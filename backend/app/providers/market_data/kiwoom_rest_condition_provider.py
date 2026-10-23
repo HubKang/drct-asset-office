@@ -12,6 +12,7 @@ import websocket
 from backend.app.clients.kiwoom import KiwoomApiError, KiwoomRestClient
 from backend.app.clients.kiwoom.kiwoom_auth_client import KiwoomAuthClient
 from backend.app.core.config import now_kst
+from backend.app.utils.stock_code import normalize_stock_code
 
 
 class KiwoomRestConditionProvider:
@@ -362,7 +363,7 @@ class KiwoomRestConditionProvider:
                 or row.get("종목코드")
                 or ""
             ).strip()
-            code = "".join(ch for ch in raw_code if ch.isdigit())[-6:].zfill(6) if raw_code else ""
+            code = normalize_stock_code(raw_code)
             if len(code) != 6:
                 continue
             out.append(
