@@ -449,6 +449,8 @@ class MarketThemeMonthlyReturnDailyItem(BaseModel):
     return_date: str
     avg_change_rate: float | None = None
     rolling_30d_change_rate: float | None = None
+    rolling_period_change_rate: float | None = None
+    period_cumulative_change_rate: float | None = None
     total_trading_value_100m: float | None = None
     rising_stock_count: int = 0
     falling_stock_count: int = 0
@@ -470,6 +472,8 @@ class MarketThemeMonthlyReturnThemeItem(BaseModel):
     flat_days: int = 0
     data_days: int = 0
     rolling_30d_change_rate: float | None = None
+    rolling_period_change_rate: float | None = None
+    period_cumulative_change_rate: float | None = None
     weighted_return_10d: float | None = None
     weighted_return_score: float | None = None
     positive_days_10d: int = 0
@@ -520,6 +524,20 @@ class MarketThemeMonthlyReturnSummary(BaseModel):
     persistence_top: MarketThemeMonthlyReturnSummaryTopItem | None = None
 
 
+class MarketThemeMarketBenchmarkDailyItem(BaseModel):
+    return_date: str
+    daily_change_rate: float | None = None
+    rolling_30d_change_rate: float | None = None
+    rolling_period_change_rate: float | None = None
+    period_cumulative_change_rate: float | None = None
+
+
+class MarketThemeMarketBenchmarkSeries(BaseModel):
+    index_code: str
+    index_name: str
+    daily_returns: list[MarketThemeMarketBenchmarkDailyItem] = Field(default_factory=list)
+
+
 class MarketThemeMonthlyReturnResponse(BaseModel):
     month: str | None = None
     end_date: str | None = None
@@ -528,7 +546,9 @@ class MarketThemeMonthlyReturnResponse(BaseModel):
     display_start_date: str
     display_end_date: str
     sort_by: str | None = None
+    rolling_period_days: int = 30
     themes: list[MarketThemeMonthlyReturnThemeItem] = Field(default_factory=list)
+    market_benchmarks: list[MarketThemeMarketBenchmarkSeries] = Field(default_factory=list)
     summary: MarketThemeMonthlyReturnSummary
     prediction: MarketThemeReturnTrendPrediction | None = None
 

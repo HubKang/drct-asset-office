@@ -29,6 +29,8 @@ from backend.app.schemas.external_kiwoom_schema import (
     DailyThemeFlowSummaryResponse,
     MarketThemeLatestReturnResponse,
     MarketThemeMonthlyReturnDailyItem,
+    MarketThemeMarketBenchmarkDailyItem,
+    MarketThemeMarketBenchmarkSeries,
     MarketThemeMonthlyReturnResponse,
     MarketThemeMonthlyReturnSummary,
     MarketThemeMonthlyReturnSummaryTopItem,
@@ -3043,11 +3045,29 @@ class ExternalKiwoomService:
         except Exception:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="end_date는 YYYY-MM-DD 형식이어야 합니다.")
         normalized_sort = str(sort_by or "CURRENT_STRENGTH").upper()
-        if normalized_sort not in {"CURRENT_STRENGTH", "ROLLING_30D_RETURN", "LATEST_RETURN"}:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="sort_by는 CURRENT_STRENGTH, ROLLING_30D_RETURN 또는 LATEST_RETURN이어야 합니다.")
-        normalized_days = max(1, min(int(days or 30), 120))
+        allowed_sorts = {
+            "CURRENT_STRENGTH",
+            "ROLLING_30D_RETURN",
+            "ROLLING_1M_RETURN",
+            "ROLLING_3M_RETURN",
+            "ROLLING_6M_RETURN",
+            "LATEST_RETURN",
+        }
+        if normalized_sort not in allowed_sorts:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="sort_by는 CURRENT_STRENGTH, ROLLING_1M_RETURN, ROLLING_3M_RETURN, ROLLING_6M_RETURN 또는 LATEST_RETURN이어야 합니다.",
+            )
+        sort_period_days = {
+            "ROLLING_30D_RETURN": 30,
+            "ROLLING_1M_RETURN": 30,
+            "ROLLING_3M_RETURN": 90,
+            "ROLLING_6M_RETURN": 180,
+        }.get(normalized_sort)
+        normalized_days = sort_period_days or max(1, min(int(days or 30), 180))
+        rolling_period_days = sort_period_days or normalized_days
         start = end - timedelta(days=normalized_days - 1)
-        calc_start = start - timedelta(days=59)
+        calc_start = start - timedelta(days=max(29, rolling_period_days - 1))
         params: dict[str, object] = {
             "calc_start_date": calc_start.isoformat(),
             "end_date": end.isoformat(),
@@ -3080,6 +3100,13 @@ class ExternalKiwoomService:
             params,
         ).mappings().all()
 
+        market_benchmarks = self._get_market_benchmark_series(
+            display_start=start,
+            calculation_start=calc_start,
+            end=end,
+            rolling_period_days=rolling_period_days,
+        )
+
         grouped: dict[int, dict[str, object]] = {}
         for row in rows:
             theme_id = int(row["theme_id"])
@@ -3100,37 +3127,98 @@ class ExternalKiwoomService:
                     "flat_stock_count": int(row["flat_stock_count"] or 0),
                 })
 
+        # The line chart represents the performance of the stocks that are
+        # currently linked to each theme. Build it transiently from saved close
+        # prices so historical snapshots created with an older member set do
+        # not distort the chart.
+        current_member_rows = self.db.execute(
+            text(
+                """
+                SELECT mts.theme_id, p.stock_id, p.trade_date, p.close_price
+                FROM market_theme_stocks mts
+                JOIN stocks s ON s.id=mts.stock_id AND COALESCE(s.is_active, 1)=1
+                JOIN stock_daily_prices p ON p.stock_id=mts.stock_id
+                WHERE COALESCE(mts.is_active, 1)=1
+                  AND p.trade_date BETWEEN :display_start_date AND :end_date
+                  AND p.close_price IS NOT NULL
+                ORDER BY mts.theme_id, p.stock_id, p.trade_date
+                """
+            ),
+            {"display_start_date": start.isoformat(), "end_date": end.isoformat()},
+        ).mappings().all()
+        member_closes: dict[int, dict[int, list[tuple[date, float]]]] = defaultdict(lambda: defaultdict(list))
+        for row in current_member_rows:
+            theme_id = int(row["theme_id"])
+            if theme_id not in grouped:
+                continue
+            close = float(row["close_price"])
+            if close <= 0:
+                continue
+            member_closes[theme_id][int(row["stock_id"])].append(
+                (date.fromisoformat(str(row["trade_date"])), close)
+            )
+
+        theme_period_cumulative: dict[int, dict[date, float]] = {}
+        for theme_id, stocks_by_id in member_closes.items():
+            values_by_date: dict[date, list[float]] = defaultdict(list)
+            for stock_rows in stocks_by_id.values():
+                if not stock_rows:
+                    continue
+                baseline_close = stock_rows[0][1]
+                for trade_date, close in stock_rows:
+                    values_by_date[trade_date].append(((close / baseline_close) - 1) * 100)
+            theme_period_cumulative[theme_id] = {
+                trade_date: round(sum(values) / len(values), 4)
+                for trade_date, values in values_by_date.items()
+                if values
+            }
+
         candidates: list[dict[str, object]] = []
         for item in grouped.values():
+            theme_id = int(item["theme_id"])
             observations = sorted(item["observations"], key=lambda row: str(row["return_date"]))
             rate_by_date = {
                 date.fromisoformat(str(row["return_date"])): float(row["avg_change_rate"])
                 for row in observations
             }
             rolling_by_date: dict[date, float] = {}
+            rolling_period_by_date: dict[date, float] = {}
             for observation_date in rate_by_date:
                 window_start = observation_date - timedelta(days=29)
                 rolling_by_date[observation_date] = round(sum(
                     rate for rate_date, rate in rate_by_date.items()
                     if window_start <= rate_date <= observation_date
                 ), 4)
+                period_window_start = observation_date - timedelta(days=rolling_period_days - 1)
+                rolling_period_by_date[observation_date] = round(sum(
+                    rate for rate_date, rate in rate_by_date.items()
+                    if period_window_start <= rate_date <= observation_date
+                ), 4)
 
             display_observations = [
                 row for row in observations
                 if start <= date.fromisoformat(str(row["return_date"])) <= end
             ]
-            daily_returns = [
-                MarketThemeMonthlyReturnDailyItem(
-                    return_date=str(row["return_date"]),
-                    avg_change_rate=float(row["avg_change_rate"]),
-                    rolling_30d_change_rate=rolling_by_date.get(date.fromisoformat(str(row["return_date"]))),
-                    total_trading_value_100m=row["total_trading_value_100m"],
-                    rising_stock_count=int(row["rising_stock_count"]),
-                    falling_stock_count=int(row["falling_stock_count"]),
-                    flat_stock_count=int(row["flat_stock_count"]),
-                )
+            display_observations_by_date = {
+                date.fromisoformat(str(row["return_date"])): row
                 for row in display_observations
-            ]
+            }
+            cumulative_by_date = theme_period_cumulative.get(theme_id, {})
+            daily_dates = sorted(set(display_observations_by_date) | set(cumulative_by_date))
+            daily_returns: list[MarketThemeMonthlyReturnDailyItem] = []
+            for daily_date in daily_dates:
+                row = display_observations_by_date.get(daily_date)
+                daily_returns.append(MarketThemeMonthlyReturnDailyItem(
+                    return_date=daily_date.isoformat(),
+                    avg_change_rate=float(row["avg_change_rate"]) if row is not None else None,
+                    rolling_30d_change_rate=rolling_by_date.get(daily_date),
+                    rolling_period_change_rate=rolling_period_by_date.get(daily_date),
+                    period_cumulative_change_rate=cumulative_by_date.get(daily_date),
+                    total_trading_value_100m=row["total_trading_value_100m"] if row is not None else None,
+                    rising_stock_count=int(row["rising_stock_count"]) if row is not None else 0,
+                    falling_stock_count=int(row["falling_stock_count"]) if row is not None else 0,
+                    flat_stock_count=int(row["flat_stock_count"]) if row is not None else 0,
+                ))
             display_rates = [float(row["avg_change_rate"]) for row in display_observations]
             compound: float | None = None
             if display_rates:
@@ -3176,6 +3264,9 @@ class ExternalKiwoomService:
 
             latest_observation_date = max(rate_by_date) if rate_by_date else None
             rolling_30d = rolling_by_date.get(latest_observation_date) if latest_observation_date else None
+            rolling_period = rolling_period_by_date.get(latest_observation_date) if latest_observation_date else None
+            cumulative_values = theme_period_cumulative.get(theme_id, {})
+            period_cumulative = cumulative_values.get(max(cumulative_values)) if cumulative_values else None
             display_rolling_values = [
                 value for rolling_date, value in rolling_by_date.items()
                 if start <= rolling_date <= end
@@ -3196,6 +3287,8 @@ class ExternalKiwoomService:
                 "data_days": len(display_rates),
                 "continuous_rising_days": continuous_rising,
                 "rolling_30d_change_rate": rolling_30d,
+                "rolling_period_change_rate": rolling_period,
+                "period_cumulative_change_rate": period_cumulative,
                 "weighted_return_10d": weighted_return,
                 "positive_days_10d": positive_days,
                 "observed_days_10d": observed_days,
@@ -3335,7 +3428,7 @@ class ExternalKiwoomService:
         )
 
         latest_return_date = max(
-            (daily.return_date for theme in theme_items for daily in theme.daily_returns),
+            (daily.return_date for theme in theme_items for daily in theme.daily_returns if daily.avg_change_rate is not None),
             default=None,
         )
 
@@ -3345,8 +3438,8 @@ class ExternalKiwoomService:
             latest = next((daily for daily in theme.daily_returns if daily.return_date == latest_return_date), None)
             return latest.avg_change_rate if latest is not None else None
 
-        if normalized_sort == "ROLLING_30D_RETURN":
-            theme_items.sort(key=lambda theme: (theme.rolling_30d_change_rate is None, -(theme.rolling_30d_change_rate or 0), theme.theme_name))
+        if normalized_sort in {"ROLLING_30D_RETURN", "ROLLING_1M_RETURN", "ROLLING_3M_RETURN", "ROLLING_6M_RETURN"}:
+            theme_items.sort(key=lambda theme: (theme.period_cumulative_change_rate is None, -(theme.period_cumulative_change_rate or 0), theme.theme_name))
         elif normalized_sort == "LATEST_RETURN":
             theme_items.sort(
                 key=lambda theme: (
@@ -3372,10 +3465,101 @@ class ExternalKiwoomService:
             display_start_date=start.isoformat(),
             display_end_date=end.isoformat(),
             sort_by=normalized_sort,
+            rolling_period_days=rolling_period_days,
             themes=theme_items,
+            market_benchmarks=market_benchmarks,
             summary=summary,
             prediction=prediction,
         )
+
+    def _get_market_benchmark_series(
+        self,
+        *,
+        display_start: date,
+        calculation_start: date,
+        end: date,
+        rolling_period_days: int = 30,
+    ) -> list[MarketThemeMarketBenchmarkSeries]:
+        rows = self.db.execute(
+            text(
+                """
+                SELECT p.index_code, p.price_date, p.close_price, p.change_rate
+                FROM market_index_daily_prices p
+                WHERE p.index_code IN ('KOSPI', 'KOSDAQ')
+                  AND p.price_date <= :end_date
+                  AND (
+                    p.price_date >= :calculation_start
+                    OR p.price_date = (
+                      SELECT MAX(previous.price_date)
+                      FROM market_index_daily_prices previous
+                      WHERE previous.index_code=p.index_code
+                        AND previous.price_date < :calculation_start
+                    )
+                  )
+                ORDER BY p.index_code, p.price_date
+                """
+            ),
+            {"calculation_start": calculation_start.isoformat(), "end_date": end.isoformat()},
+        ).mappings().all()
+        rows_by_code: dict[str, list[dict[str, object]]] = defaultdict(list)
+        for row in rows:
+            rows_by_code[str(row["index_code"])].append(dict(row))
+
+        names = {"KOSPI": "코스피", "KOSDAQ": "코스닥"}
+        series: list[MarketThemeMarketBenchmarkSeries] = []
+        for index_code in ("KOSPI", "KOSDAQ"):
+            previous_close: float | None = None
+            rate_by_date: dict[date, float] = {}
+            close_by_date: dict[date, float] = {}
+            for row in rows_by_code.get(index_code, []):
+                close = float(row["close_price"]) if row.get("close_price") is not None else None
+                rate = float(row["change_rate"]) if row.get("change_rate") is not None else None
+                if rate is None and close is not None and previous_close not in (None, 0):
+                    rate = ((close / previous_close) - 1) * 100
+                if close is not None:
+                    previous_close = close
+                    close_by_date[date.fromisoformat(str(row["price_date"]))] = close
+                if rate is not None:
+                    rate_by_date[date.fromisoformat(str(row["price_date"]))] = rate
+
+            daily_returns: list[MarketThemeMarketBenchmarkDailyItem] = []
+            display_closes = [
+                (price_date, close)
+                for price_date, close in sorted(close_by_date.items())
+                if display_start <= price_date <= end and close > 0
+            ]
+            baseline_close = display_closes[0][1] if display_closes else None
+            for observation_date in sorted(rate_by_date):
+                if observation_date < display_start or observation_date > end:
+                    continue
+                window_start = observation_date - timedelta(days=29)
+                rolling = round(sum(
+                    rate for rate_date, rate in rate_by_date.items()
+                    if window_start <= rate_date <= observation_date
+                ), 4)
+                period_window_start = observation_date - timedelta(days=rolling_period_days - 1)
+                rolling_period = round(sum(
+                    rate for rate_date, rate in rate_by_date.items()
+                    if period_window_start <= rate_date <= observation_date
+                ), 4)
+                daily_returns.append(MarketThemeMarketBenchmarkDailyItem(
+                    return_date=observation_date.isoformat(),
+                    daily_change_rate=round(rate_by_date[observation_date], 4),
+                    rolling_30d_change_rate=rolling,
+                    rolling_period_change_rate=rolling_period,
+                    period_cumulative_change_rate=(
+                        round(((close_by_date[observation_date] / baseline_close) - 1) * 100, 4)
+                        if baseline_close not in (None, 0) and observation_date in close_by_date
+                        else None
+                    ),
+                ))
+            series.append(MarketThemeMarketBenchmarkSeries(
+                index_code=index_code,
+                index_name=names[index_code],
+                daily_returns=daily_returns,
+            ))
+        return series
+
     def get_market_theme_daily_return(self, theme_id: int, return_date: str) -> MarketThemeLatestReturnResponse:
         theme = self.db.execute(
             text(

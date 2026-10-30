@@ -424,6 +424,8 @@ export type MarketThemeMonthlyReturnDailyItem = {
   return_date: string;
   avg_change_rate: number | null;
   rolling_30d_change_rate?: number | null;
+  rolling_period_change_rate?: number | null;
+  period_cumulative_change_rate?: number | null;
   total_trading_value_100m: number | null;
   rising_stock_count: number;
   falling_stock_count: number;
@@ -445,6 +447,8 @@ export type MarketThemeMonthlyReturnThemeItem = {
   flat_days: number;
   data_days: number;
   rolling_30d_change_rate?: number | null;
+  rolling_period_change_rate?: number | null;
+  period_cumulative_change_rate?: number | null;
   weighted_return_10d?: number | null;
   weighted_return_score?: number | null;
   positive_days_10d?: number;
@@ -483,6 +487,18 @@ export type MarketThemeMonthlyReturnSummaryTopItem = {
   strength_status_name?: string | null;
 };
 
+export type MarketThemeMarketBenchmarkSeries = {
+  index_code: "KOSPI" | "KOSDAQ" | string;
+  index_name: string;
+  daily_returns: Array<{
+    return_date: string;
+    daily_change_rate: number | null;
+    rolling_30d_change_rate: number | null;
+    rolling_period_change_rate?: number | null;
+    period_cumulative_change_rate?: number | null;
+  }>;
+};
+
 export type MarketThemeMonthlyReturnResponse = {
   month?: string | null;
   end_date?: string | null;
@@ -490,8 +506,10 @@ export type MarketThemeMonthlyReturnResponse = {
   active_only: boolean;
   display_start_date: string;
   display_end_date: string;
-  sort_by?: "CURRENT_STRENGTH" | "ROLLING_30D_RETURN" | "LATEST_RETURN" | null;
+  sort_by?: "CURRENT_STRENGTH" | "ROLLING_30D_RETURN" | "ROLLING_1M_RETURN" | "ROLLING_3M_RETURN" | "ROLLING_6M_RETURN" | "LATEST_RETURN" | null;
+  rolling_period_days?: number;
   themes: MarketThemeMonthlyReturnThemeItem[];
+  market_benchmarks?: MarketThemeMarketBenchmarkSeries[];
   summary: {
     top_rising_theme: MarketThemeMonthlyReturnSummaryTopItem | null;
     top_falling_theme: MarketThemeMonthlyReturnSummaryTopItem | null;
@@ -763,7 +781,7 @@ export type MarketThemeRangeReturnParams = {
   theme_group_id?: number;
   keyword?: string;
   limit?: number;
-  sort_by?: "CURRENT_STRENGTH" | "ROLLING_30D_RETURN" | "LATEST_RETURN";
+  sort_by?: "CURRENT_STRENGTH" | "ROLLING_30D_RETURN" | "ROLLING_1M_RETURN" | "ROLLING_3M_RETURN" | "ROLLING_6M_RETURN" | "LATEST_RETURN";
 };
 export type MarketThemeType = "industry" | "theme" | "custom" | "telegram";
 export type MarketThemeLevel = "THEME_GROUP" | "THEME";

@@ -1,7 +1,9 @@
 ﻿from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
+from backend.app.clients.kiwoom.kiwoom_models import KiwoomRestResponse
 from backend.app.providers.market_data.kiwoom_rest_condition_provider import KiwoomRestConditionProvider
+from backend.app.providers.market_data.kiwoom_rest_provider import KiwoomRestMarketDataProvider
 from backend.app.schemas.external_kiwoom_schema import KiwoomMarketEventSaveRequest
 from backend.app.services.external_kiwoom_service import ExternalKiwoomService
 
@@ -47,6 +49,39 @@ def test_condition_provider_preserves_alphanumeric_krx_short_code() -> None:
 
     assert items[0]["stock_code"] == "0035S0"
     assert items[0]["stock_code_raw"] == "A0035S0"
+
+
+def test_daily_price_provider_accepts_alphanumeric_krx_short_code() -> None:
+    requested_bodies: list[dict[str, str]] = []
+
+    class FakeClient:
+        def post_json(self, path: str, *, api_id: str, body: dict[str, str], cont_yn: str, next_key: str) -> KiwoomRestResponse:
+            requested_bodies.append(body)
+            return KiwoomRestResponse(
+                status_code=200,
+                headers={},
+                json_body={
+                    "return_code": 0,
+                    "stk_dt_pole_chart_qry": [{"dt": "20261028", "cur_prc": "12345"}],
+                },
+                raw_text_preview="",
+                elapsed_ms=1,
+                cont_yn="N",
+                next_key="",
+            )
+
+    provider = KiwoomRestMarketDataProvider()
+    provider.client = FakeClient()
+    result = provider.get_daily_prices(
+        "0158s0",
+        start_date="2026-10-28",
+        end_date="2026-10-28",
+        max_pages=1,
+    )
+
+    assert result["normalized_stock_code"] == "0158S0"
+    assert requested_bodies == [{"stk_cd": "0158S0", "base_dt": "20261028", "upd_stkpc_tp": "1"}]
+    assert result["items"][0]["trade_date"] == "2026-10-28"
 
 
 def test_market_event_save_resolves_alphanumeric_code_and_updates_same_day_candidate() -> None:

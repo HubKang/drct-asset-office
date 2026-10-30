@@ -27,6 +27,7 @@ import type {
   MarketThemeFlowTrendAttribution,
   MarketThemeFlowTrendMetric,
   MarketThemeFlowTrendTheme,
+  MarketThemeMarketBenchmarkSeries,
   MarketThemeMonthlyReturnResponse,
   MarketThemeMonthlyReturnThemeItem,
   MarketThemeReturnRecalculationPreview,
@@ -49,7 +50,21 @@ type ThemeReturnSort = "default" | "desc" | "asc";
 type ThemeStockSort = "default" | "name" | "memo";
 type MemoSaveStatus = "idle" | "saving" | "saved" | "error";
 type ThemeReturnTrendViewMode = "heatmap" | "line";
-type TrendSortMode = "CURRENT_STRENGTH" | "ROLLING_30D_RETURN" | "LATEST_RETURN";
+type TrendSortMode = "CURRENT_STRENGTH" | "ROLLING_1M_RETURN" | "ROLLING_3M_RETURN" | "ROLLING_6M_RETURN" | "LATEST_RETURN";
+const TREND_PERIOD_DAYS: Record<TrendSortMode, number> = {
+  CURRENT_STRENGTH: 30,
+  ROLLING_1M_RETURN: 30,
+  ROLLING_3M_RETURN: 90,
+  ROLLING_6M_RETURN: 180,
+  LATEST_RETURN: 30,
+};
+const TREND_PERIOD_LABELS: Record<TrendSortMode, string> = {
+  CURRENT_STRENGTH: "1M",
+  ROLLING_1M_RETURN: "1M",
+  ROLLING_3M_RETURN: "3M",
+  ROLLING_6M_RETURN: "6M",
+  LATEST_RETURN: "1M",
+};
 const THEME_PAGE_SIZE = 50;
 const THEME_RETURN_LINE_COLORS = [
   "#2563eb",
@@ -249,13 +264,19 @@ function splitLineSegments(points: Array<{ x: number; y: number } | null>): Arra
 
 function ThemeReturnLineChart({
   themes,
+  marketBenchmarks,
   dates,
+  cumulativeLabel,
+  cumulativeDays,
   hoveredThemeId,
   onHoverTheme,
   onOpenTheme,
 }: {
   themes: MarketThemeMonthlyReturnThemeItem[];
+  marketBenchmarks: MarketThemeMarketBenchmarkSeries[];
   dates: string[];
+  cumulativeLabel: string;
+  cumulativeDays: number;
   hoveredThemeId: number | null;
   onHoverTheme: (themeId: number | null) => void;
   onOpenTheme: (theme: MarketThemeMonthlyReturnThemeItem) => void;
@@ -268,10 +289,18 @@ function ThemeReturnLineChart({
   const validDateSet = new Set<string>();
   themes.forEach((theme) => {
     theme.daily_returns.forEach((day) => {
-      const value = Number(day.rolling_30d_change_rate);
-      if (day.rolling_30d_change_rate != null && Number.isFinite(value)) {
+      const raw = day.period_cumulative_change_rate ?? day.rolling_period_change_rate ?? day.rolling_30d_change_rate;
+      const value = Number(raw);
+      if (raw != null && Number.isFinite(value)) {
         validDateSet.add(day.return_date);
       }
+    });
+  });
+  marketBenchmarks.forEach((benchmark) => {
+    benchmark.daily_returns.forEach((day) => {
+      const raw = day.period_cumulative_change_rate ?? day.rolling_period_change_rate ?? day.rolling_30d_change_rate;
+      const value = Number(raw);
+      if (raw != null && Number.isFinite(value)) validDateSet.add(day.return_date);
     });
   });
   const lineDates = dates.filter((date) => validDateSet.has(date));
@@ -280,7 +309,7 @@ function ThemeReturnLineChart({
     const dailyMap = new Map(theme.daily_returns.map((item) => [item.return_date, item]));
     const values = lineDates.map((date) => {
       const dailyReturn = dailyMap.get(date);
-      const raw = dailyReturn?.rolling_30d_change_rate;
+      const raw = dailyReturn?.period_cumulative_change_rate ?? dailyReturn?.rolling_period_change_rate ?? dailyReturn?.rolling_30d_change_rate;
       const numberValue = Number(raw);
       const value = raw == null || !Number.isFinite(numberValue) ? null : numberValue;
       return { date, returnRate: value };
@@ -300,7 +329,22 @@ function ThemeReturnLineChart({
       values,
     };
   });
-  const allValues = series.flatMap((item) => item.values.map((value) => value.returnRate).filter((value): value is number => value != null));
+  const benchmarkSeries = marketBenchmarks.map((benchmark) => {
+    const dailyMap = new Map(benchmark.daily_returns.map((item) => [item.return_date, item]));
+    const values = lineDates.map((date) => {
+      const day = dailyMap.get(date);
+      const raw = day?.period_cumulative_change_rate ?? day?.rolling_period_change_rate ?? day?.rolling_30d_change_rate;
+      const numberValue = Number(raw);
+      return { date, returnRate: raw == null || !Number.isFinite(numberValue) ? null : numberValue };
+    });
+    return {
+      ...benchmark,
+      values,
+      lastValue: [...values].reverse().find((item) => item.returnRate != null)?.returnRate ?? null,
+      lastDailyValue: [...lineDates].reverse().map((date) => dailyMap.get(date)?.daily_change_rate).find((value) => value != null && Number.isFinite(Number(value))) ?? null,
+    };
+  });
+  const allValues = [...series, ...benchmarkSeries].flatMap((item) => item.values.map((value) => value.returnRate).filter((value): value is number => value != null));
   const hasData = lineDates.length > 0 && allValues.length > 0;
   if (!hasData) {
     return <div className="theme-return-line-empty">선그래프로 표시할 거래일 데이터가 없습니다.</div>;
@@ -332,13 +376,13 @@ function ThemeReturnLineChart({
     <div className="theme-return-line-panel" style={linePanelStyle}>
       <div className="theme-return-line-header">
         <div>
-          <strong>테마별 30일 누적 등락률 선그래프</strong>
-          <span>각 날짜 기준 최근 30일 일별 테마 등락률을 단순 합산해 비교합니다. 히트맵은 기존처럼 일별 등락률을 표시합니다.</span>
+          <strong>{`테마별 ${cumulativeLabel} 누적 등락률 선그래프`}</strong>
+          <span>{`조회 시작일 종가를 0%로 두고 ${cumulativeDays}일 동안의 실제 누적수익률을 비교합니다. 테마는 현재 연결 종목을 동일 비중으로 반영하며, 히트맵은 기존처럼 일별 등락률을 표시합니다.`}</span>
         </div>
       </div>
       <div className="theme-return-line-body">
         <div className="theme-return-line-chart">
-          <svg className="theme-return-line-svg" viewBox={`0 0 ${chartWidth} ${chartHeight}`} preserveAspectRatio="none" role="img" aria-label="테마별 30일 누적 등락률 선그래프">
+          <svg className="theme-return-line-svg" viewBox={`0 0 ${chartWidth} ${chartHeight}`} preserveAspectRatio="none" role="img" aria-label={`테마별 ${cumulativeLabel} 누적 등락률 선그래프`}>
             {yTicks.map((tick) => {
               const y = yScale(tick);
               return (
@@ -379,7 +423,23 @@ function ThemeReturnLineChart({
                   onMouseEnter={() => onHoverTheme(item.themeId)}
                   onMouseLeave={() => onHoverTheme(null)}
                 >
-                  <title>{`${item.themeName} / 30일 누적 ${fmtPct(item.lastValue)} / 최근 일별 ${fmtPct(item.lastDailyValue)}`}</title>
+                  <title>{`${item.themeName} / ${cumulativeLabel} 누적 ${fmtPct(item.lastValue)} / 최근 일별 ${fmtPct(item.lastDailyValue)}`}</title>
+                </path>
+              ));
+            })}
+            {benchmarkSeries.map((item) => {
+              const pointList = item.values.map((value, index) => value.returnRate == null ? null : { x: xScale(index), y: yScale(value.returnRate) });
+              const segments = splitLineSegments(pointList).filter((segment) => segment.length > 1);
+              return segments.map((segment, segmentIndex) => (
+                <path
+                  key={`${item.index_code}-${segmentIndex}`}
+                  className="theme-return-line-benchmark-path"
+                  d={buildLinePath(segment)}
+                  fill="none"
+                  stroke="#111827"
+                  strokeDasharray={item.index_code === "KOSPI" ? "10 6" : "2 6"}
+                >
+                  <title>{`${item.index_name} / ${cumulativeLabel} 누적 ${fmtPct(item.lastValue)} / 최근 일별 ${fmtPct(item.lastDailyValue)}`}</title>
                 </path>
               ));
             })}
@@ -387,6 +447,15 @@ function ThemeReturnLineChart({
         </div>
         <div className="theme-return-line-legend-shell" onMouseLeave={() => onHoverTheme(null)}>
           <div className="theme-return-line-legend">
+            {benchmarkSeries.map((item) => (
+              <div key={item.index_code} className="theme-return-line-legend-item theme-return-line-benchmark-legend-item">
+                <span className={`theme-return-line-benchmark-swatch ${item.index_code === "KOSPI" ? "is-dashed" : "is-dotted"}`} />
+                <span className="theme-return-line-legend-text">
+                  <strong>{item.index_name}</strong>
+                  <em>{cumulativeLabel} 누적 {fmtPct(item.lastValue)} · 최근 일별 {fmtPct(item.lastDailyValue)}</em>
+                </span>
+              </div>
+            ))}
             {series.map((item) => {
               const active = hoveredThemeId === item.themeId;
               const muted = hoveredThemeId != null && !active;
@@ -404,7 +473,7 @@ function ThemeReturnLineChart({
                   <span className="theme-return-line-legend-color" style={{ background: item.color }} />
                   <span className="theme-return-line-legend-text">
                     <strong>{item.themeName}</strong>
-                    <em>30일 누적 {fmtPct(item.lastValue)} · 최근 일별 {fmtPct(item.lastDailyValue)}</em>
+                    <em>{cumulativeLabel} 누적 {fmtPct(item.lastValue)} · 최근 일별 {fmtPct(item.lastDailyValue)}</em>
                   </span>
                 </button>
               );
@@ -471,7 +540,7 @@ function MarketThemesPage() {
   const [trendKeyword, setTrendKeyword] = useState("");
   const [trendLimit, setTrendLimit] = useState<"all" | string>("all");
   const [trendViewMode, setTrendViewMode] = useState<ThemeReturnTrendViewMode>("heatmap");
-  const [trendSortMode, setTrendSortMode] = useState<TrendSortMode>("ROLLING_30D_RETURN");
+  const [trendSortMode, setTrendSortMode] = useState<TrendSortMode>("ROLLING_1M_RETURN");
   const [trendStrengthInfoOpen, setTrendStrengthInfoOpen] = useState(false);
   const [hoveredTrendThemeId, setHoveredTrendThemeId] = useState<number | null>(null);
   const [trendLoading, setTrendLoading] = useState(false);
@@ -604,10 +673,13 @@ function MarketThemesPage() {
   const pagedThemes = filteredThemes.slice((safeThemePage - 1) * THEME_PAGE_SIZE, safeThemePage * THEME_PAGE_SIZE);
 
 
-  const trendDates = useMemo(
-    () => (trendData ? getDateRange(trendData.display_start_date, trendData.display_end_date).slice(-29) : []),
-    [trendData],
-  );
+  const trendPeriodDays = TREND_PERIOD_DAYS[trendSortMode];
+  const trendPeriodLabel = TREND_PERIOD_LABELS[trendSortMode];
+  const trendDates = useMemo(() => {
+    if (!trendData) return [];
+    const dates = getDateRange(trendData.display_start_date, trendData.display_end_date);
+    return trendViewMode === "heatmap" ? dates.slice(-29) : dates;
+  }, [trendData, trendViewMode]);
   const trendThemes = useMemo(() => {
     const rows = trendData?.themes ?? [];
     if (predictionSort === "default") return rows;
@@ -883,7 +955,7 @@ function MarketThemesPage() {
     try {
       const rows = await repositories.marketThemes.listRangeReturns({
         end_date: trendEndDate,
-        days: 30,
+        days: trendPeriodDays,
         active_only: true,
         theme_group_id: trendThemeGroupId === "all" ? undefined : Number(trendThemeGroupId),
         keyword: trendKeyword.trim() || undefined,
@@ -1658,7 +1730,16 @@ function MarketThemesPage() {
                 </select>
                 <button type="button" className="btn btn-secondary market-theme-refresh-button" onClick={() => void loadThemeReturnTrend()} disabled={trendLoading}>{trendLoading ? "조회 중..." : "새로고침"}</button>
                 <div className="theme-return-view-toggle" aria-label="테마등락추이 보기 선택">
-                  <button type="button" className={trendViewMode === "heatmap" ? "active" : ""} onClick={() => setTrendViewMode("heatmap")}>히트맵</button>
+                  <button
+                    type="button"
+                    className={trendViewMode === "heatmap" ? "active" : ""}
+                    onClick={() => {
+                      setTrendViewMode("heatmap");
+                      if (trendSortMode === "ROLLING_3M_RETURN" || trendSortMode === "ROLLING_6M_RETURN") {
+                        setTrendSortMode("ROLLING_1M_RETURN");
+                      }
+                    }}
+                  >히트맵</button>
                   <button type="button" className={trendViewMode === "line" ? "active" : ""} onClick={() => setTrendViewMode("line")}>선그래프</button>
                 </div>
               </div>
@@ -1716,11 +1797,31 @@ function MarketThemesPage() {
                 </div>
                 <button
                   type="button"
-                  className={`theme-strength-sort-button ${trendSortMode === "ROLLING_30D_RETURN" ? "active" : ""}`}
-                  aria-pressed={trendSortMode === "ROLLING_30D_RETURN"}
-                  onClick={() => setTrendSortMode("ROLLING_30D_RETURN")}
+                  className={`theme-strength-sort-button ${trendSortMode === "ROLLING_1M_RETURN" ? "active" : ""}`}
+                  aria-pressed={trendSortMode === "ROLLING_1M_RETURN"}
+                  onClick={() => setTrendSortMode("ROLLING_1M_RETURN")}
                 >
-                  30일 누적
+                  1M누적
+                </button>
+                <button
+                  type="button"
+                  className={`theme-strength-sort-button ${trendSortMode === "ROLLING_3M_RETURN" ? "active" : ""}`}
+                  aria-pressed={trendSortMode === "ROLLING_3M_RETURN"}
+                  onClick={() => setTrendSortMode("ROLLING_3M_RETURN")}
+                  disabled={trendViewMode === "heatmap"}
+                  title={trendViewMode === "heatmap" ? "3M 누적은 선그래프에서 사용할 수 있습니다." : "최근 3개월 누적 등락률이 높은 순서로 정렬"}
+                >
+                  3M누적
+                </button>
+                <button
+                  type="button"
+                  className={`theme-strength-sort-button ${trendSortMode === "ROLLING_6M_RETURN" ? "active" : ""}`}
+                  aria-pressed={trendSortMode === "ROLLING_6M_RETURN"}
+                  onClick={() => setTrendSortMode("ROLLING_6M_RETURN")}
+                  disabled={trendViewMode === "heatmap"}
+                  title={trendViewMode === "heatmap" ? "6M 누적은 선그래프에서 사용할 수 있습니다." : "최근 6개월 누적 등락률이 높은 순서로 정렬"}
+                >
+                  6M누적
                 </button>
                 <button
                   type="button"
@@ -1729,7 +1830,7 @@ function MarketThemesPage() {
                   onClick={() => setTrendSortMode("LATEST_RETURN")}
                   title="가장 최근 거래일의 테마 등락률이 높은 순서로 정렬"
                 >
-                  최근 등락률
+                  최근등락률
                 </button>
                 </div>
               </div>
@@ -1752,6 +1853,35 @@ function MarketThemesPage() {
                     title={trendData?.prediction?.run ? `${trendData.prediction.mode === "PROBABILITY" ? "D+1 실제 Top20 상대강도 확률" : "D+1 후보 상대강도 점수(확률 아님)"}\n${trendData.prediction.run.calculation_mode === "REFRESHED_MARKET_DATA" ? "시장지표 보정 신호" : "기존 시장지표 기준"}\n대상일 ${trendData.prediction.run.target_date}\n테마·종목 기준일 ${trendData.prediction.run.data_cutoff_date}\n시장지표 갱신 ${trendData.prediction.run.market_indicator_refreshed_at ?? "-"}\n방법 ${trendData.prediction.method}\n계산 ${trendData.prediction.calculated_at}` : "저장된 D+1 가격·수급 신호가 없습니다."}
                     onClick={() => setPredictionSort((current) => current === "default" ? "desc" : current === "desc" ? "asc" : "default")}
                   >D+1<small>{trendData?.prediction?.run?.target_date?.slice(5).replace("-", "/") ?? ""}</small></button>
+                  {(trendData?.market_benchmarks ?? []).map((benchmark, benchmarkIndex) => {
+                    const dailyMap = new Map(benchmark.daily_returns.map((item) => [item.return_date, item]));
+                    const rowClass = benchmarkIndex === 0 ? "is-first" : "is-second";
+                    return (
+                      <Fragment key={`heatmap-${benchmark.index_code}`}>
+                        <div className={`theme-return-heatmap__theme-cell theme-return-heatmap__benchmark-cell ${rowClass}`}>
+                          <strong>{benchmark.index_name}</strong>
+                          <span>시장지수 일별 등락률</span>
+                        </div>
+                        {trendDates.map((day) => {
+                          const item = dailyMap.get(day);
+                          const rate = item?.daily_change_rate ?? null;
+                          return (
+                            <div
+                              key={`${benchmark.index_code}-${day}`}
+                              className={`theme-return-heatmap__value-cell theme-return-heatmap__benchmark-cell ${rowClass} ${item ? "" : "theme-return-heatmap__value-cell--empty"}`}
+                              style={{ background: getThemeReturnHeatmapColor(rate) }}
+                              title={`${benchmark.index_name} / ${day} / 등락률 ${fmtPct(rate)} / 30일 누적 ${fmtPct(item?.rolling_30d_change_rate)}`}
+                            >
+                              <span className={heatmapTextClass(rate)}>{item ? fmtHeatmapCellPct(rate) : "-"}</span>
+                            </div>
+                          );
+                        })}
+                        <div className={`theme-return-heatmap__value-cell theme-return-heatmap__benchmark-cell theme-return-heatmap__prediction-cell theme-return-heatmap__value-cell--empty ${rowClass}`} title="시장지수는 D+1 테마 예측 대상이 아닙니다.">
+                          <span>-</span>
+                        </div>
+                      </Fragment>
+                    );
+                  })}
                   {trendLoading ? <div className="theme-return-heatmap__empty-row">테마등락추이를 조회 중입니다.</div> : null}
                   {!trendLoading && (!trendData || trendData.themes.length === 0) ? <div className="theme-return-heatmap__empty-row">조회된 테마등락추이 데이터가 없습니다.</div> : null}
                   {!trendLoading && trendThemes.map((theme) => {
@@ -1811,7 +1941,10 @@ function MarketThemesPage() {
               ) : (
                 <ThemeReturnLineChart
                   themes={trendData?.themes ?? []}
+                  marketBenchmarks={trendData?.market_benchmarks ?? []}
                   dates={trendDates}
+                  cumulativeLabel={trendPeriodLabel}
+                  cumulativeDays={trendPeriodDays}
                   hoveredThemeId={hoveredTrendThemeId}
                   onHoverTheme={setHoveredTrendThemeId}
                   onOpenTheme={(theme) => void openThemeReturnDetail(theme)}

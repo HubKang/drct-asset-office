@@ -18923,6 +18923,28 @@ a:focus-visible {
   stroke-width: 1.1;
 }
 
+.theme-return-line-benchmark-path {
+  pointer-events: none;
+  opacity: 1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.8;
+}
+
+.theme-return-line-benchmark-legend-item {
+  cursor: default;
+}
+
+.theme-return-line-benchmark-swatch {
+  width: 16px;
+  height: 3px;
+  background: repeating-linear-gradient(90deg, #111827 0 8px, transparent 8px 12px);
+}
+
+.theme-return-line-benchmark-swatch.is-dotted {
+  background: repeating-linear-gradient(90deg, #111827 0 2px, transparent 2px 6px);
+}
+
 .theme-return-line-legend-shell {
   position: relative;
   min-height: var(--theme-return-line-chart-height, 500px);
@@ -18963,6 +18985,12 @@ a:focus-visible {
   border-color: #93c5fd;
   background: #eff6ff;
   box-shadow: inset 3px 0 0 rgba(37, 99, 235, 0.45);
+}
+
+.theme-return-line-benchmark-legend-item:hover {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
 }
 
 .theme-return-line-legend-item-muted {
@@ -19105,6 +19133,32 @@ a:focus-visible {
 
 .theme-return-heatmap__value-cell {
   cursor: pointer;
+}
+
+.theme-return-heatmap__benchmark-cell {
+  position: sticky;
+  z-index: 4;
+  cursor: default;
+  outline: none !important;
+  box-shadow: 0 1px 0 #cbd5e1;
+}
+
+.theme-return-heatmap__benchmark-cell.is-first {
+  top: 30px;
+}
+
+.theme-return-heatmap__benchmark-cell.is-second {
+  top: 60px;
+  box-shadow: 0 2px 0 #94a3b8;
+}
+
+.theme-return-heatmap__theme-cell.theme-return-heatmap__benchmark-cell {
+  z-index: 5;
+  background: #f8fafc;
+}
+
+.theme-return-heatmap__benchmark-cell.theme-return-heatmap__prediction-cell {
+  background: #f8fafc;
 }
 
 /* Market theme tab hierarchy and compact spacing. */
@@ -38041,7 +38095,7 @@ button.chip-light {
 
 .theme-return-summary-row .theme-return-summary-card {
   min-width: 0;
-  padding: 8px 10px;
+  padding: 8px;
 }
 
 .theme-return-summary-row .theme-return-summary-card strong {
@@ -38101,7 +38155,7 @@ button.chip-light {
 
 .theme-strength-sort-button {
   border-radius: 8px;
-  padding: 6px 10px;
+  padding: 6px 9px;
 }
 
 .theme-strength-sort-control .theme-strength-sort-button {
@@ -38124,8 +38178,16 @@ button.chip-light {
   color: #ffffff;
 }
 
+.theme-strength-sort-button:disabled {
+  cursor: not-allowed;
+  border-color: #e2e8f0;
+  background: #f8fafc;
+  color: #b0bac8;
+  opacity: .72;
+}
+
 .theme-strength-info-button:hover,
-.theme-strength-sort-button:not(.active):hover {
+.theme-strength-sort-button:not(.active):not(:disabled):hover {
   background: #f1f5f9;
   color: #0f172a;
 }

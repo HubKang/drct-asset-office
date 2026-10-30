@@ -43,7 +43,10 @@ class KiwoomRestMarketDataProvider:
         stop_at_start_date: bool = True,
     ) -> dict[str, Any]:
         normalized = normalize_stock_code(stock_code)
-        if len(normalized) != 6 or not normalized.isdigit():
+        # KRX short codes are six ASCII alphanumeric characters. New listings
+        # can contain letters (for example 0158S0), and Kiwoom accepts that
+        # canonical code directly in stk_cd.
+        if len(normalized) != 6 or not normalized.isascii() or not normalized.isalnum():
             raise RuntimeError(f"INVALID_STOCK_CODE:{stock_code}->{normalized}")
 
         end_dt = self._parse_date(end_date) if end_date else date.today()
